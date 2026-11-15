@@ -15,9 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run --project unit",
-    "test:db": "vitest run --project db",
-    "test:e2e": "playwright test",
-    "dev:stack": "node dev/stack.mjs"
+    "test:db": "vitest run --project db"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",
