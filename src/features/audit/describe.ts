@@ -1,0 +1,61 @@
+import type { AuditLogRow, Json } from '@/lib/database.types';
+import { BRAND_ROLE_LABEL, ORG_ROLE_LABEL } from '@/features/permissions/roles';
+import type { BrandRole, OrgRole } from '@/lib/database.types';
+
+function str(data: Json, key: string): string {
+  if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+    const value = data[key];
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+  }
+  return '';
+}
+
+/** Frase en español para una fila del registro de auditoría. */
+export function describeAudit(log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'>, nameOf: (userId: string) => string): string {
+  const { action, entity_type: entity, data } = log;
+  const name = str(data, 'name');
+  const who = () => nameOf(str(data, 'user_id')) || 'un usuario';
+  const orgRole = () => ORG_ROLE_LABEL[str(data, 'role') as OrgRole] ?? str(data, 'role');
+  const brandRole = () => BRAND_ROLE_LABEL[str(data, 'role') as BrandRole] ?? str(data, 'role');
+
+  switch (`${entity}:${action}`) {
+    case 'organizations:insert':
+      return `creó la organización «${name}»`;
+    case 'organizations:update':
+      return `cambió los datos de la organización`;
+    case 'organization_members:insert':
+      return `añadió a ${who()} como ${orgRole()}`;
+    case 'organization_members:update':
+      return `cambió el rol de ${who()} a ${orgRole()}`;
+    case 'organization_members:delete':
+      return `quitó a ${who()} de la organización`;
+    case 'brands:insert':
+      return `creó la marca «${name}»`;
+    case 'brands:update':
+      return str(data, 'status') === 'archived' ? `archivó la marca «${name}»` : `actualizó la marca «${name}»`;
+    case 'brands:delete':
+      return `eliminó la marca «${name}»`;
+    case 'brand_members:insert':
+      return `dio acceso a ${who()} como ${brandRole()}`;
+    case 'brand_members:update':
+      return `cambió el rol de ${who()} a ${brandRole()}`;
+    case 'brand_members:delete':
+      return `quitó el acceso de ${who()} a la marca`;
+    case 'brand_profiles:insert':
+      return `guardó la versión ${str(data, 'version')} del perfil de marca`;
+    case 'brand_knowledge_sources:insert':
+      return `añadió la fuente «${str(data, 'title')}»`;
+    case 'brand_knowledge_sources:delete':
+      return `eliminó la fuente «${str(data, 'title')}»`;
+    case 'media_assets:delete':
+      return `eliminó el archivo «${str(data, 'file_name')}»`;
+    case 'invitations:insert':
+      return `invitó a ${str(data, 'email')}`;
+    case 'invitations:update':
+      if (str(data, 'accepted_at')) return `${str(data, 'email')} aceptó la invitación`;
+      if (str(data, 'revoked_at')) return `anuló la invitación de ${str(data, 'email')}`;
+      return `actualizó la invitación de ${str(data, 'email')}`;
+    default:
+      return `${action} en ${entity}`;
+  }
+}

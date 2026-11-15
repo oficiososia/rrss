@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens de diseño. Los componentes solo usan estos nombres, nunca colores sueltos. */
+:root {
+  --bg: 220 20% 97%;
+  --surface: 0 0% 100%;
+  --subtle: 220 16% 94%;
+  --border: 220 14% 86%;
+  --fg: 224 28% 12%;
+  --muted: 220 10% 38%;
+  --primary: 243 62% 48%;
+  --primary-fg: 0 0% 100%;
+  --primary-soft: 243 80% 95%;
+  --danger: 0 68% 42%;
+  --danger-soft: 0 80% 95%;
+  --success: 152 62% 26%;
+  --success-soft: 150 55% 92%;
+  --warning: 32 85% 30%;
+  --warning-soft: 40 90% 90%;
+  --shadow: 224 30% 10%;
+}
+
+.dark {
+  --bg: 224 22% 8%;
+  --surface: 224 20% 11%;
+  --subtle: 224 16% 16%;
+  --border: 224 14% 24%;
+  --fg: 220 20% 94%;
+  --muted: 220 12% 68%;
+  --primary: 243 85% 74%;
+  --primary-fg: 243 50% 12%;
+  --primary-soft: 243 40% 20%;
+  --danger: 0 85% 74%;
+  --danger-soft: 0 45% 18%;
+  --success: 150 55% 62%;
+  --success-soft: 150 40% 15%;
+  --warning: 40 90% 66%;
+  --warning-soft: 36 50% 16%;
+  --shadow: 0 0% 0%;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-bg;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-semibold tracking-tight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
