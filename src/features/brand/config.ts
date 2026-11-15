@@ -25,7 +25,9 @@ export const brandConfigSchema = z.object({
     errorMap: () => ({ message: `No es una configuración de marca (se esperaba format: "${BRAND_CONFIG_FORMAT}")` }),
   }),
   version: z.literal(BRAND_CONFIG_VERSION, {
-    errorMap: () => ({ message: `Versión de configuración no admitida (esta aplicación entiende la ${BRAND_CONFIG_VERSION})` }),
+    errorMap: () => ({
+      message: `Versión de configuración no admitida (esta aplicación entiende la ${BRAND_CONFIG_VERSION})`,
+    }),
   }),
   exportedAt: z.string().optional(),
   brand: brandBasicsSchema,
@@ -66,7 +68,13 @@ export function parseBrandConfig(text: string): ImportResult {
   }
   const parsed = brandConfigSchema.safeParse(raw);
   if (parsed.success) {
-    return { ok: true, config: { ...parsed.data, profile: { ...parsed.data.profile, visual: { ...parsed.data.profile.visual, logoAssetIds: [] } } } };
+    return {
+      ok: true,
+      config: {
+        ...parsed.data,
+        profile: { ...parsed.data.profile, visual: { ...parsed.data.profile.visual, logoAssetIds: [] } },
+      },
+    };
   }
   const errors = parsed.error.issues.slice(0, 8).map((issue) => {
     const where = issue.path.join(' › ');

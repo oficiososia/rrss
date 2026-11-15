@@ -44,3 +44,5 @@ export const LOCALES = [
   { value: 'it', label: 'Italiano' },
   { value: 'de', label: 'Alemán' },
 ] as const;
+
+export const LOGO_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;

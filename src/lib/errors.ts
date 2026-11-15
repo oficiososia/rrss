@@ -25,8 +25,14 @@ const AUTH_MESSAGES: [RegExp, string][] = [
 ];
 
 const TRANSPORT_MESSAGES: [RegExp, string][] = [
-  [/failed to fetch|networkerror|load failed|network request failed/i, 'No hay conexión con el servidor. Comprueba tu red.'],
-  [/payload too large|exceeded the maximum allowed size|entity too large/i, 'El archivo supera el tamaño máximo permitido.'],
+  [
+    /failed to fetch|networkerror|load failed|network request failed/i,
+    'No hay conexión con el servidor. Comprueba tu red.',
+  ],
+  [
+    /payload too large|exceeded the maximum allowed size|entity too large/i,
+    'El archivo supera el tamaño máximo permitido.',
+  ],
   [/mime type .* is not supported|invalid mime type/i, 'Ese tipo de archivo no está permitido.'],
   [/resource already exists|duplicate/i, 'Ya existe un elemento igual.'],
 ];
@@ -41,7 +47,7 @@ function field(error: unknown, key: keyof ErrorLike): string {
 
 /** ¿El texto parece escrito por nosotros (RPC en español) y no por Postgres? */
 function isOwnMessage(message: string): boolean {
-  return /[áéíóúñ¿¡]/i.test(message) || /^(No |Solo |Hace falta|La |Has |Hay |Indica |Esta )/.test(message);
+  return /[áéíóúñ¿¡«»]/i.test(message) || /^(No |Solo |Hace falta|La |Has |Hay |Indica |Esta )/.test(message);
 }
 
 export function translateError(error: unknown): string {
@@ -52,10 +58,15 @@ export function translateError(error: unknown): string {
 
   // Mensajes de nuestras funciones: ya están en español y son los más precisos.
   if (message && isOwnMessage(message)) return message;
+  // Errores que lanza la propia aplicación (validaciones): `Error` a secas, sin
+  // código. Los de Supabase y los de red son subclases con otro nombre.
+  if (error instanceof Error && error.name === 'Error' && !code && !status && message) return message;
 
-  if (code === '42501' || status === '403' || /row-level security|permission denied/i.test(message)) return NO_PERMISSION;
+  if (code === '42501' || status === '403' || /row-level security|permission denied/i.test(message))
+    return NO_PERMISSION;
   if (code === '23505') return 'Ya existe un elemento con esos datos.';
-  if (code === '23503') return 'No se puede completar: depende de un elemento que no existe o no es de esta organización.';
+  if (code === '23503')
+    return 'No se puede completar: depende de un elemento que no existe o no es de esta organización.';
   if (code === '23514' || code === '22001' || code === '22P02')
     return 'Alguno de los datos no es válido. Revisa lo que has escrito.';
   if (code === '28000' || status === '401') return 'Tu sesión ha caducado. Vuelve a iniciar sesión.';

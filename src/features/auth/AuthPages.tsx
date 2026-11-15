@@ -7,7 +7,17 @@ import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { redirectTarget, useAuth } from './AuthProvider';
 
-function AuthLayout({ title, subtitle, children, footer }: { title: string; subtitle: string; children: ReactNode; footer?: ReactNode }) {
+function AuthLayout({
+  title,
+  subtitle,
+  children,
+  footer,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
@@ -32,7 +42,11 @@ const linkClass = 'font-medium text-primary underline-offset-4 hover:underline';
 function FormError({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <p role="alert" data-testid="auth-error" className="rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger">
+    <p
+      role="alert"
+      data-testid="auth-error"
+      className="rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger"
+    >
       {message}
     </p>
   );
@@ -72,16 +86,38 @@ export function LoginPage() {
       <form onSubmit={submit} className="space-y-4" data-testid="login-form" noValidate>
         <Field label="Correo electrónico">
           {(p) => (
-            <Input {...p} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} data-testid="login-email" />
+            <Input
+              {...p}
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              data-testid="login-email"
+            />
           )}
         </Field>
         <Field label="Contraseña">
           {(p) => (
-            <Input {...p} type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} data-testid="login-password" />
+            <Input
+              {...p}
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              data-testid="login-password"
+            />
           )}
         </Field>
         <FormError message={error} />
-        <Button type="submit" className="w-full" loading={loading} disabled={!email || !password} data-testid="login-submit">
+        <Button
+          type="submit"
+          className="w-full"
+          loading={loading}
+          disabled={!email || !password}
+          data-testid="login-submit"
+        >
           Entrar
         </Button>
         <p className="text-center text-sm">
@@ -153,18 +189,53 @@ export function RegisterPage() {
     >
       <form onSubmit={submit} className="space-y-4" data-testid="register-form" noValidate>
         <Field label="Nombre">
-          {(p) => <Input {...p} autoComplete="name" required maxLength={120} value={fullName} onChange={(e) => setFullName(e.target.value)} data-testid="register-name" />}
+          {(p) => (
+            <Input
+              {...p}
+              autoComplete="name"
+              required
+              maxLength={120}
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              data-testid="register-name"
+            />
+          )}
         </Field>
         <Field label="Correo electrónico">
-          {(p) => <Input {...p} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} data-testid="register-email" />}
+          {(p) => (
+            <Input
+              {...p}
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              data-testid="register-email"
+            />
+          )}
         </Field>
         <Field label="Contraseña" hint="Mínimo 8 caracteres." error={passwordTooShort ? 'Le faltan caracteres.' : null}>
           {(p) => (
-            <Input {...p} type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} data-testid="register-password" />
+            <Input
+              {...p}
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              data-testid="register-password"
+            />
           )}
         </Field>
         <FormError message={error} />
-        <Button type="submit" className="w-full" loading={loading} disabled={!fullName.trim() || !email || password.length < 8} data-testid="register-submit">
+        <Button
+          type="submit"
+          className="w-full"
+          loading={loading}
+          disabled={!fullName.trim() || !email || password.length < 8}
+          data-testid="register-submit"
+        >
           Crear cuenta
         </Button>
       </form>
@@ -207,7 +278,17 @@ export function RecoverPage() {
       ) : (
         <form onSubmit={submit} className="space-y-4" noValidate>
           <Field label="Correo electrónico">
-            {(p) => <Input {...p} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} data-testid="recover-email" />}
+            {(p) => (
+              <Input
+                {...p}
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                data-testid="recover-email"
+              />
+            )}
           </Field>
           <FormError message={error} />
           <Button type="submit" className="w-full" loading={loading} disabled={!email} data-testid="recover-submit">
@@ -248,10 +329,27 @@ export function ResetPasswordPage() {
       ) : (
         <form onSubmit={submit} className="space-y-4" noValidate>
           <Field label="Contraseña nueva" hint="Mínimo 8 caracteres.">
-            {(p) => <Input {...p} type="password" autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} data-testid="reset-password" />}
+            {(p) => (
+              <Input
+                {...p}
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                data-testid="reset-password"
+              />
+            )}
           </Field>
           <FormError message={error} />
-          <Button type="submit" className="w-full" loading={loading} disabled={password.length < 8} data-testid="reset-submit">
+          <Button
+            type="submit"
+            className="w-full"
+            loading={loading}
+            disabled={password.length < 8}
+            data-testid="reset-submit"
+          >
             Guardar contraseña
           </Button>
         </form>

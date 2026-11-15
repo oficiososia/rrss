@@ -1,0 +1,123 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Settings2 } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { Toaster } from 'sonner';
+import { Card, EmptyState, Spinner } from '@/components/ui';
+import { APP_NAME } from '@/config/app';
+import { LoginPage, RecoverPage, RegisterPage, ResetPasswordPage } from '@/features/auth/AuthPages';
+import { AuthProvider, RequireAuth, RequireGuest } from '@/features/auth/AuthProvider';
+import { InvitationPage } from '@/features/invitations/InvitationPage';
+import { BrandLayout, OrgLayout, RootRedirect } from '@/features/orgs/layouts';
+import { OrgHomePage } from '@/features/orgs/OrgHomePage';
+import {
+  ActivitySettingsPage,
+  GeneralSettingsPage,
+  SettingsLayout,
+  TeamSettingsPage,
+} from '@/features/orgs/SettingsPages';
+import { WelcomePage } from '@/features/orgs/WelcomePage';
+import { ThemeProvider, useTheme } from '@/layout/theme';
+import { supabaseConfigured } from '@/lib/supabase';
+
+// Las pantallas grandes se cargan cuando se visitan.
+const BrandHomePage = lazy(() => import('@/features/brand/BrandHomePage').then((m) => ({ default: m.BrandHomePage })));
+const BrandProfilePage = lazy(() =>
+  import('@/features/brand/BrandProfilePage').then((m) => ({ default: m.BrandProfilePage })),
+);
+const BrandWizardPage = lazy(() =>
+  import('@/features/brand/BrandWizardPage').then((m) => ({ default: m.BrandWizardPage })),
+);
+const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
+const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
+const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
+
+function MissingConfig() {
+  return (
+    <main className="flex min-h-dvh items-center justify-center px-4" data-testid="missing-config">
+      <Card className="max-w-lg">
+        <EmptyState
+          icon={Settings2}
+          title={`Falta configurar ${APP_NAME}`}
+          description="La aplicación no sabe a qué proyecto de Supabase conectarse. Define VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY (en .env.local o en las variables del despliegue) y vuelve a arrancarla."
+        />
+      </Card>
+    </main>
+  );
+}
+
+function NotFound() {
+  return <Navigate to="/" replace />;
+}
+
+function ThemedToaster() {
+  const { choice } = useTheme();
+  return <Toaster position="top-center" richColors closeButton theme={choice} />;
+}
+
+export function App() {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false },
+          mutations: { retry: 0 },
+        },
+      }),
+  );
+
+  if (!supabaseConfigured) {
+    return (
+      <ThemeProvider>
+        <MissingConfig />
+      </ThemeProvider>
+    );
+  }
+
+  return (
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <BrowserRouter>
+            <Suspense fallback={<Spinner className="min-h-dvh" />}>
+              <Routes>
+                <Route element={<RequireGuest />}>
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/registro" element={<RegisterPage />} />
+                  <Route path="/recuperar" element={<RecoverPage />} />
+                </Route>
+                <Route path="/restablecer" element={<ResetPasswordPage />} />
+                <Route path="/invitacion/:token" element={<InvitationPage />} />
+
+                <Route element={<RequireAuth />}>
+                  <Route path="/" element={<RootRedirect />} />
+                  <Route path="/bienvenida" element={<WelcomePage />} />
+                  <Route path="/plataforma" element={<PlatformPage />} />
+                  <Route path="/o/:orgId" element={<OrgLayout />}>
+                    <Route index element={<OrgHomePage />} />
+                    <Route path="marcas/nueva" element={<BrandWizardPage />} />
+                    <Route path="ajustes" element={<SettingsLayout />}>
+                      <Route index element={<Navigate to="general" replace />} />
+                      <Route path="general" element={<GeneralSettingsPage />} />
+                      <Route path="equipo" element={<TeamSettingsPage />} />
+                      <Route path="actividad" element={<ActivitySettingsPage />} />
+                    </Route>
+                    <Route path="m/:brandId" element={<BrandLayout />}>
+                      <Route index element={<Navigate to="inicio" replace />} />
+                      <Route path="inicio" element={<BrandHomePage />} />
+                      <Route path="biblioteca" element={<LibraryPage />} />
+                      <Route path="marca" element={<BrandProfilePage />} />
+                      <Route path="equipo" element={<BrandTeamPage />} />
+                    </Route>
+                  </Route>
+                </Route>
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+          <ThemedToaster />
+        </AuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
+  );
+}

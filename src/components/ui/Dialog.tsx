@@ -81,7 +81,12 @@ export function ConfirmDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={loading}>
             Cancelar
           </Button>
-          <Button variant={destructive ? 'danger' : 'primary'} onClick={onConfirm} loading={loading} data-testid="confirm-action">
+          <Button
+            variant={destructive ? 'danger' : 'primary'}
+            onClick={onConfirm}
+            loading={loading}
+            data-testid="confirm-action"
+          >
             {confirmLabel}
           </Button>
         </>

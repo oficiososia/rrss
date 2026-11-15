@@ -14,16 +14,16 @@ export type SourceStatus = 'pending' | 'processing' | 'ready' | 'failed';
 export type AssetKind = 'image' | 'video' | 'logo' | 'document' | 'audio' | 'template';
 export type AssetOrigin = 'upload' | 'generated' | 'import';
 
-export interface ProfileRow {
+export type ProfileRow = {
   user_id: string;
   email: string;
   full_name: string;
   locale: string;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface OrganizationRow {
+export type OrganizationRow = {
   id: string;
   name: string;
   kind: OrgKind;
@@ -31,16 +31,16 @@ export interface OrganizationRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface OrganizationMemberRow {
+export type OrganizationMemberRow = {
   organization_id: string;
   user_id: string;
   role: OrgRole;
   created_at: string;
-}
+};
 
-export interface BrandRow {
+export type BrandRow = {
   id: string;
   organization_id: string;
   name: string;
@@ -52,17 +52,17 @@ export interface BrandRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface BrandMemberRow {
+export type BrandMemberRow = {
   brand_id: string;
   organization_id: string;
   user_id: string;
   role: BrandRole;
   created_at: string;
-}
+};
 
-export interface BrandProfileRow {
+export type BrandProfileRow = {
   id: string;
   brand_id: string;
   organization_id: string;
@@ -74,9 +74,9 @@ export interface BrandProfileRow {
   change_note: string;
   created_by: string | null;
   created_at: string;
-}
+};
 
-export interface KnowledgeSourceRow {
+export type KnowledgeSourceRow = {
   id: string;
   brand_id: string;
   organization_id: string;
@@ -91,9 +91,9 @@ export interface KnowledgeSourceRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface MediaAssetRow {
+export type MediaAssetRow = {
   id: string;
   brand_id: string;
   organization_id: string;
@@ -113,9 +113,9 @@ export interface MediaAssetRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface InvitationRow {
+export type InvitationRow = {
   id: string;
   organization_id: string;
   email: string;
@@ -129,9 +129,9 @@ export interface InvitationRow {
   accepted_by: string | null;
   revoked_at: string | null;
   created_at: string;
-}
+};
 
-export interface AuditLogRow {
+export type AuditLogRow = {
   id: number;
   organization_id: string;
   brand_id: string | null;
@@ -141,9 +141,9 @@ export interface AuditLogRow {
   entity_id: string | null;
   data: Json;
   created_at: string;
-}
+};
 
-export interface AdminOrganizationRow {
+export type AdminOrganizationRow = {
   id: string;
   name: string;
   kind: OrgKind;
@@ -152,16 +152,16 @@ export interface AdminOrganizationRow {
   brands: number;
   assets: number;
   storage_bytes: number;
-}
+};
 
-export interface InvitationPreview {
+export type InvitationPreview = {
   organization_name: string;
   email: string;
   org_role: OrgRole;
   brand_name: string | null;
   brand_role: BrandRole | null;
   usable: boolean;
-}
+};
 
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
@@ -170,7 +170,7 @@ type Table<Row, Insert = never, Update = never> = {
   Relationships: [];
 };
 
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       profiles: Table<ProfileRow, never, { full_name?: string; locale?: string }>;
@@ -276,4 +276,4 @@ export interface Database {
     };
     CompositeTypes: Record<never, never>;
   };
-}
+};

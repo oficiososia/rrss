@@ -4,19 +4,20 @@ import { formatBytes } from './utils';
 
 /** Nombre apto para una ruta de almacenamiento: ASCII, sin espacios ni separadores. */
 export function sanitizeFileName(name: string): string {
-  const dot = name.lastIndexOf('.');
-  const rawBase = dot > 0 ? name.slice(0, dot) : name;
-  const rawExt = dot > 0 ? name.slice(dot + 1) : '';
+  // Solo cuenta el último tramo: nada de lo que parezca una carpeta sobrevive.
+  const leaf = name.split(/[\\/]/).pop() ?? '';
+  const dot = leaf.lastIndexOf('.');
+  const candidate = dot > 0 ? leaf.slice(dot + 1) : '';
+  const hasExtension = /^[a-zA-Z0-9]{1,10}$/.test(candidate);
   const clean = (s: string) =>
     s
       .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
+      .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-zA-Z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .toLowerCase();
-  const base = clean(rawBase).slice(0, 80) || 'archivo';
-  const ext = clean(rawExt).slice(0, 10);
-  return ext ? `${base}.${ext}` : base;
+  const base = clean(hasExtension ? leaf.slice(0, dot) : leaf).slice(0, 80) || 'archivo';
+  return hasExtension ? `${base}.${candidate.toLowerCase()}` : base;
 }
 
 export type StorageFolder = 'media' | 'sources';
@@ -32,11 +33,15 @@ export function buildStoragePath(
 }
 
 /** Devuelve el motivo por el que el archivo no se puede subir, o null si vale. */
-export function validateFile(file: { size: number; type: string; name: string }, allowed: readonly string[] = ALLOWED_MIME_TYPES): string | null {
+export function validateFile(
+  file: { size: number; type: string; name: string },
+  allowed: readonly string[] = ALLOWED_MIME_TYPES,
+): string | null {
   if (file.size === 0) return `«${file.name}» está vacío.`;
   if (file.size > MAX_FILE_BYTES)
     return `«${file.name}» pesa ${formatBytes(file.size)} y el máximo es ${formatBytes(MAX_FILE_BYTES)}.`;
-  if (!allowed.includes(file.type)) return `«${file.name}» es de un tipo que no se admite (${file.type || 'desconocido'}).`;
+  if (!allowed.includes(file.type))
+    return `«${file.name}» es de un tipo que no se admite (${file.type || 'desconocido'}).`;
   return null;
 }
 
@@ -83,7 +88,8 @@ export function readMediaDimensions(file: File): Promise<MediaDimensions> {
     };
     if (file.type.startsWith('image/')) {
       const img = new Image();
-      img.onload = () => finish({ width: img.naturalWidth || null, height: img.naturalHeight || null, durationMs: null });
+      img.onload = () =>
+        finish({ width: img.naturalWidth || null, height: img.naturalHeight || null, durationMs: null });
       img.onerror = () => finish(NO_DIMENSIONS);
       img.src = url;
     } else if (file.type.startsWith('video/')) {

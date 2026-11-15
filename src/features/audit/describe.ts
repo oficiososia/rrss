@@ -11,7 +11,10 @@ function str(data: Json, key: string): string {
 }
 
 /** Frase en español para una fila del registro de auditoría. */
-export function describeAudit(log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'>, nameOf: (userId: string) => string): string {
+export function describeAudit(
+  log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'>,
+  nameOf: (userId: string) => string,
+): string {
   const { action, entity_type: entity, data } = log;
   const name = str(data, 'name');
   const who = () => nameOf(str(data, 'user_id')) || 'un usuario';
@@ -52,7 +55,7 @@ export function describeAudit(log: Pick<AuditLogRow, 'action' | 'entity_type' | 
     case 'invitations:insert':
       return `invitó a ${str(data, 'email')}`;
     case 'invitations:update':
-      if (str(data, 'accepted_at')) return `${str(data, 'email')} aceptó la invitación`;
+      if (str(data, 'accepted_at')) return `aceptó la invitación enviada a ${str(data, 'email')}`;
       if (str(data, 'revoked_at')) return `anuló la invitación de ${str(data, 'email')}`;
       return `actualizó la invitación de ${str(data, 'email')}`;
     default:

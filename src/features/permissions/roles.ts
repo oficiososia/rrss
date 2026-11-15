@@ -24,12 +24,19 @@ export function isOrgAdmin(role: OrgRole | null | undefined): boolean {
 }
 
 /** Rol efectivo en una marca: los owner/admin de la organización son gestores de todas. */
-export function effectiveBrandRole(orgRole: OrgRole | null | undefined, brandRole: BrandRole | null | undefined): BrandRole | null {
+export function effectiveBrandRole(
+  orgRole: OrgRole | null | undefined,
+  brandRole: BrandRole | null | undefined,
+): BrandRole | null {
   if (isOrgAdmin(orgRole)) return 'manager';
   return brandRole ?? null;
 }
 
-export function can(orgRole: OrgRole | null | undefined, brandRole: BrandRole | null | undefined, capability: Capability): boolean {
+export function can(
+  orgRole: OrgRole | null | undefined,
+  brandRole: BrandRole | null | undefined,
+  capability: Capability,
+): boolean {
   const role = effectiveBrandRole(orgRole, brandRole);
   return role !== null && brandRoleGrants(role, capability);
 }
