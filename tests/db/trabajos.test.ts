@@ -162,8 +162,11 @@ describe('terminar y fallar', () => {
       expect((await claim('t1')).map((j) => j.attempts)).toEqual([intento]);
       const fallido = await fail(id, 't1');
       expect(fallido).toMatchObject({ status: 'queued', last_error: 'Se cayó el render', locked_by: null });
+      // La espera se mide contra `updated_at`, que fail_job fija en la misma
+      // transacción: medirla contra el reloj de ahora depende de lo que tarde
+      // la prueba (con Postgres real salía 29 y 59).
       const [row] = await db.query<{ s: number }>(
-        `select round(extract(epoch from run_after - now()))::int as s from public.jobs where id = $1`,
+        `select round(extract(epoch from run_after - updated_at))::int as s from public.jobs where id = $1`,
         [id],
       );
       esperas.push(row!.s);
