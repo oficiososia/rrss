@@ -104,7 +104,7 @@ entornos. No incluye archivos ni miembros.
 
 | Fase | Entidades | Notas |
 |---|---|---|
-| 2 | `ai_models`, `ai_generations`, `ai_usage`, `usage_quotas`, `jobs`, `content_items`, `content_versions`, `knowledge_chunks` (vectores) | El consumo es un libro de solo añadir; el cupo se reserva de forma atómica |
+| 2 | `ai_models`, `content_items`, `content_versions`, `knowledge_chunks` (vectores) | **Ya existen** `ai_generations`, `ai_usage`, `usage_quotas` y `jobs` (secciones 9 y 10). `ai_models` (registro de modelos y precios como dato) espera a que se elija proveedor: hoy los modelos son configuración del servicio |
 | 3 | `social_accounts`, `social_account_secrets` (cifrada, sin acceso desde el cliente), `campaigns`, `scheduled_publications`, `publication_attempts`, `approvals`, `comments` | El calendario es una vista de `scheduled_publications`, no una tabla |
 | 4 | `automations`, `automation_runs`, `agent_runs`, `agent_steps` | Cada paso reanudable |
 | 5 | `analytics_snapshots` (particionada por fecha) | Datos tal como los da cada red, con su procedencia |
@@ -131,3 +131,90 @@ De la lista inicial del encargo se han fusionado o cambiado:
   `tests/db/aislamiento.test.ts` (la prueba de catálogo obliga).
 - Función `SECURITY DEFINER` → `set search_path = ''` y nombres completos.
 - Nada destructivo sin plan de recuperación aprobado.
+
+## 9. Fase 2 (cimientos): consumo y cupos de IA
+
+Implementado y probado en base de datos; **sin interfaz y sin proveedor real**.
+
+```
+organizations ──< usage_quotas            límite por organización y métrica
+brands ──< ai_generations                 una fila por llamada a un proveedor
+            ·····  ai_usage               libro de consumo (sin FK: sobrevive al borrado)
+```
+
+| Tabla | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `usage_quotas` | Cupo mensual de IA de la organización (`ai_cost_micros`) | Administradores de la organización | `admin_set_ai_quota()` (superadministrador, auditado) o la clave de servicio |
+| `ai_generations` | Tarea, propósito, proveedor, modelo, consumo, coste, latencia, estado, error y resultado | Quien puede crear contenido en la marca (`edit`) | Solo las tres funciones de abajo |
+| `ai_usage` | Libro de consumo de solo añadir | Administradores de la organización | Solo las tres funciones de abajo |
+
+**Unidades.** Todos los importes son enteros en millonésimas («micros») de la
+moneda de cuenta de la plataforma. La moneda es una sola y no se guarda: es una
+decisión pendiente del dueño (ver `docs/ESTADO.md`).
+
+**Ciclo de una generación** (lo ejecuta el servidor con la clave de servicio,
+indicando en nombre de qué usuario):
+
+1. `ai_reserve_generation(usuario, marca, tarea, propósito, proveedor, modelo,
+   reserva, caducidad)` comprueba que el usuario puede crear contenido en la
+   marca, **bloquea la fila del cupo** de la organización, devuelve las reservas
+   caducadas, suma lo comprometido en el mes y, si la reserva cabe, crea la
+   generación (`reserved`) y apunta `reserve +reserva`. Si no cabe falla con
+   `AI001` y un mensaje para personas; sin cupo asignado, con `AI002`.
+2. `ai_complete_generation(id, coste, consumo, resultado, latencia)` apunta
+   `settle −reserva +coste` y la deja `succeeded`.
+3. `ai_fail_generation(id, código, mensaje)` apunta `release −reserva` y la deja
+   `failed`: **un fallo del proveedor no consume cupo**.
+
+Decisiones que conviene conocer:
+
+- **Cupo comprometido** del mes = suma de `reserved_delta_micros +
+  cost_delta_micros` del libro. Las reservas en curso cuentan: por eso la
+  reserva es una cota superior del coste, no una estimación optimista.
+- **Simultaneidad.** El bloqueo de la fila de `usage_quotas` serializa las
+  reservas de una organización; las de organizaciones distintas no se estorban.
+- **Sin cupo asignado no se genera.** No hay cupo por defecto: lo fijará el plan
+  (Fase 6) o un superadministrador.
+- **Periodo**: mes natural en UTC. Una generación se imputa al mes en que se
+  reservó.
+- **Reservas huérfanas.** Si el servidor muere a media llamada, la reserva
+  caduca (`expired`) y su cupo se devuelve en la siguiente reserva de esa
+  organización, sin depender de un reloj. Si el proveedor acaba respondiendo
+  tarde, el coste se apunta igualmente: el gasto es real.
+- **El coste real puede superar la reserva** (el libro dice la verdad); lo que
+  no puede es empezar otra generación sin saldo.
+- **Ni la clave de servicio escribe a mano** `ai_generations` ni `ai_usage`:
+  solo tiene `select`. Todo pasa por las funciones.
+- **Coste por organización**: `ai_cost_by_organization(desde, hasta)` suma los
+  apuntes `settle` del libro. Un administrador ve las organizaciones que
+  administra; un superadministrador, todas (también las borradas, sin nombre).
+  Para desgloses (por marca, por mes) los administradores consultan `ai_usage`.
+
+Pendiente en este bloque: valoración del usuario por generación, clave de
+idempotencia y caché de peticiones idénticas, modelo alternativo si falla,
+registro de modelos como dato (`ai_models`) y cupos por métricas distintas del
+coste.
+
+## 10. Fase 2 (cimientos): cola de trabajos
+
+Implementada y probada en base de datos; **todavía no hay ningún trabajador ni
+ningún tipo de trabajo en uso**.
+
+`jobs`: organización, marca (opcional), tipo (`kind`, texto libre), carga,
+estado (`queued`, `running`, `succeeded`, `failed`, `cancelled`), prioridad,
+clave de idempotencia (única por organización), intentos y máximo, `run_after`,
+reserva (`locked_by`, `locked_until`), resultado y último error.
+
+| Función (solo clave de servicio) | Qué hace |
+|---|---|
+| `enqueue_job` | Encola; con una clave ya usada devuelve el trabajo existente sin tocarlo |
+| `claim_jobs(trabajador, tipos, límite, segundos)` | Reclama con `FOR UPDATE SKIP LOCKED` por prioridad y antigüedad; recoge también los trabajos en curso con la reserva caducada, y cierra como fallidos los caducados sin intentos |
+| `complete_job` / `fail_job` | Solo quien tiene la reserva. Un fallo vuelve a la cola con espera creciente (30 s, 1 min, 2 min… hasta 1 h) y, agotados los intentos, queda `failed` con su error |
+| `cancel_job` | Cancela un trabajo en cola o en curso |
+
+Lectura: los trabajos de una marca los ve quien ve la marca; los de toda la
+organización, sus administradores. Nadie los escribe desde el cliente.
+
+Pendiente: alta en la publicación de Realtime (se hará en el entorno desplegado),
+renovación de la reserva para trabajos largos, limpieza de trabajos antiguos y
+prioridad por plan.
