@@ -12,6 +12,8 @@ import {
   createUser,
   denied,
   join,
+  serviceRpc,
+  setAiQuota,
   type Db,
   type TestUser,
 } from './helpers';
@@ -29,6 +31,9 @@ let ajeno: TestUser, superadmin: TestUser;
 let orgA: string, orgB: string, agencia: string;
 let marcaA1: string, marcaA2: string, marcaB1: string, marcaG1: string, marcaG2: string;
 let assetA1: string, assetB1: string;
+// IA y cola de trabajos (Fase 2): una generación y un trabajo por organización.
+let genA1: string, genB1: string, genG1: string;
+let jobA1: string, jobOrgA: string, jobB1: string;
 
 const PROFILE = { business: { description: 'Negocio de prueba' } };
 
@@ -78,6 +83,40 @@ beforeAll(async () => {
     `insert into public.brand_knowledge_sources (brand_id, organization_id, kind, title, url) values ($1, $2, 'website', 'Web', 'https://b.test')`,
     [marcaB1, orgB],
   );
+
+  // Fase 2: cupo, generaciones (con su coste) y trabajos en cada organización.
+  // Los escribe el servidor (clave de servicio); aquí se prueba quién los ve.
+  for (const org of [orgA, orgB, agencia]) await setAiQuota(db, superadmin, org, 1_000_000);
+  const generate = async (user: TestUser, brand: string, cost: number) => {
+    const gen = await serviceRpc<{ id: string }>(db, 'ai_reserve_generation', {
+      p_user_id: user.id,
+      p_brand_id: brand,
+      p_task: 'text',
+      p_purpose: 'post.caption',
+      p_provider: 'simulated',
+      p_model: 'sim-text-1',
+      p_reserve_micros: 5000,
+    });
+    await serviceRpc(db, 'ai_complete_generation', { p_generation_id: gen.id, p_cost_micros: cost });
+    return gen.id;
+  };
+  genA1 = await generate(editorA, marcaA1, 1200);
+  genB1 = await generate(berta, marcaB1, 3400);
+  genG1 = await generate(gema, marcaG1, 500);
+
+  const enqueue = async (org: string, brand: string | null, key: string) => {
+    const job = await serviceRpc<{ id: string }>(db, 'enqueue_job', {
+      p_organization_id: org,
+      p_brand_id: brand,
+      p_kind: 'media.render',
+      p_payload: { pieza: key },
+      p_idempotency_key: key,
+    });
+    return job.id;
+  };
+  jobA1 = await enqueue(orgA, marcaA1, 'a1');
+  jobOrgA = await enqueue(orgA, null, 'org-a');
+  jobB1 = await enqueue(orgB, marcaB1, 'b1');
 });
 
 afterAll(async () => {
@@ -96,6 +135,10 @@ const TENANT_TABLES = [
   'media_assets',
   'invitations',
   'audit_logs',
+  'usage_quotas',
+  'ai_generations',
+  'ai_usage',
+  'jobs',
 ];
 
 describe('catálogo: nada queda abierto por olvido', () => {
@@ -174,6 +217,10 @@ describe('aislamiento entre organizaciones', () => {
       'media_assets',
       'invitations',
       'audit_logs',
+      'usage_quotas',
+      'ai_generations',
+      'ai_usage',
+      'jobs',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -601,6 +648,128 @@ describe('almacenamiento', () => {
     const ruta = assetPath(orgA, marcaA1);
     await as(db, ana, insert, [ruta]);
     await denied(db, ana, `update storage.objects set name = $2 where name = $1`, [ruta, assetPath(orgB, marcaB1)]);
+  });
+});
+
+describe('IA y cola de trabajos', () => {
+  const ids = async (user: TestUser, table: string) =>
+    (await as<{ id: string }>(db, user, `select id::text as id from public.${table}`)).map((r) => r.id);
+  const orgsOf = async (user: TestUser, table: string) =>
+    (await as<{ org: string }>(db, user, `select distinct organization_id::text as org from public.${table}`)).map(
+      (r) => r.org,
+    );
+
+  it('una organización no ve generaciones, costes, cupos ni trabajos de otra', async () => {
+    // Cada propietaria ve lo suyo (la prueba no pasa «porque no hay nada»)…
+    for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
+      expect(await orgsOf(ana, table), table).toEqual([orgA]);
+      expect(await orgsOf(berta, table), table).toEqual([orgB]);
+    }
+    expect(await ids(ana, 'ai_generations')).toEqual([genA1]);
+    expect(await ids(berta, 'ai_generations')).toEqual([genB1]);
+    expect((await ids(ana, 'jobs')).sort()).toEqual([jobA1, jobOrgA].sort());
+    expect(await ids(berta, 'jobs')).toEqual([jobB1]);
+
+    // …y buscando por identificador tampoco aparece lo ajeno.
+    expect(await as(db, ana, `select 1 from public.ai_generations where id = $1`, [genB1])).toEqual([]);
+    expect(await as(db, ana, `select 1 from public.ai_usage where generation_id = $1`, [genB1])).toEqual([]);
+    expect(await as(db, ana, `select 1 from public.usage_quotas where organization_id = $1`, [orgB])).toEqual([]);
+    expect(await as(db, ana, `select 1 from public.jobs where id = $1`, [jobB1])).toEqual([]);
+
+    // El coste que ve cada una es solo el de su organización.
+    const coste = (user: TestUser) =>
+      as(
+        db,
+        user,
+        `select organization_id, cost_micros::int as cost from public.ai_cost_by_organization(now() - interval '1 day', now() + interval '1 day')`,
+      );
+    expect(await coste(ana)).toEqual([{ organization_id: orgA, cost: 1200 }]);
+    expect(await coste(berta)).toEqual([{ organization_id: orgB, cost: 3400 }]);
+    expect(await coste(ajeno)).toEqual([]);
+  });
+
+  it('dentro de la organización: el dinero es de los administradores', async () => {
+    expect(await orgsOf(adminA, 'usage_quotas')).toEqual([orgA]);
+    expect(await orgsOf(adminA, 'ai_usage')).toEqual([orgA]);
+    for (const user of [editorA, gestorA, clienteA, sinMarcaA]) {
+      expect(await as(db, user, `select 1 from public.usage_quotas`), user.email).toEqual([]);
+      expect(await as(db, user, `select 1 from public.ai_usage`), user.email).toEqual([]);
+    }
+  });
+
+  it('las generaciones las ve quien crea contenido en la marca; los trabajos, quien ve la marca', async () => {
+    expect(await ids(editorA, 'ai_generations')).toEqual([genA1]);
+    expect(await ids(gestorA, 'ai_generations')).toEqual([genA1]);
+    expect(await ids(clienteA, 'ai_generations')).toEqual([]);
+    expect(await ids(sinMarcaA, 'ai_generations')).toEqual([]);
+
+    // El trabajo de toda la organización solo lo ven sus administradores.
+    expect((await ids(adminA, 'jobs')).sort()).toEqual([jobA1, jobOrgA].sort());
+    expect(await ids(editorA, 'jobs')).toEqual([jobA1]);
+    expect(await ids(clienteA, 'jobs')).toEqual([jobA1]);
+    expect(await ids(sinMarcaA, 'jobs')).toEqual([]);
+
+    // Ana solo es lectora en la agencia: no ve allí generaciones ni costes.
+    expect(await as(db, ana, `select 1 from public.ai_generations where id = $1`, [genG1])).toEqual([]);
+    expect(await as(db, ana, `select 1 from public.ai_usage where organization_id = $1`, [agencia])).toEqual([]);
+    expect(await ids(gema, 'ai_generations')).toEqual([genG1]);
+  });
+
+  it('nadie escribe estas tablas ni mueve la cola desde el cliente', async () => {
+    for (const user of [ana, adminA, editorA]) {
+      await denied(
+        db,
+        user,
+        `insert into public.usage_quotas (organization_id, metric, limit_value) values ($1, 'ai_cost_micros', 1)`,
+        [orgA],
+      );
+      await denied(db, user, `update public.usage_quotas set limit_value = limit_value * 10`);
+      await denied(db, user, `update public.ai_generations set cost_micros = 0`);
+      await denied(db, user, `delete from public.ai_generations`);
+      await denied(db, user, `update public.ai_usage set cost_delta_micros = 0`);
+      await denied(db, user, `delete from public.ai_usage`);
+      await denied(db, user, `update public.jobs set status = 'succeeded'`);
+      await denied(db, user, `delete from public.jobs`);
+    }
+    const noFunction = /permission denied for function/;
+    await denied(
+      db,
+      ana,
+      `select public.ai_reserve_generation($1, $2, 'text', 'x', 'p', 'm', 1)`,
+      [ana.id, marcaA1],
+      noFunction,
+    );
+    await denied(db, ana, `select public.ai_complete_generation($1, 0)`, [genA1], noFunction);
+    await denied(db, ana, `select public.ai_fail_generation($1, 'x')`, [genA1], noFunction);
+    await denied(db, ana, `select public.enqueue_job($1, 'media.render', '{}'::jsonb, 'k')`, [orgA], noFunction);
+    await denied(db, ana, `select * from public.claim_jobs('yo')`, [], noFunction);
+    await denied(db, ana, `select public.cancel_job($1)`, [jobA1], noFunction);
+    await denied(db, ana, `select public.admin_set_ai_quota($1, 999999999)`, [orgA]);
+  });
+
+  it('el servidor no puede generar en nombre de quien no pertenece a la marca', async () => {
+    const reservar = (user: TestUser, brand: string) =>
+      serviceRpc(db, 'ai_reserve_generation', {
+        p_user_id: user.id,
+        p_brand_id: brand,
+        p_task: 'text',
+        p_purpose: 'post.caption',
+        p_provider: 'simulated',
+        p_model: 'sim-text-1',
+        p_reserve_micros: 1,
+      });
+    // Ana en la marca de B; el editor de A1 en A2; el cliente y la lectora de la agencia.
+    await expect(reservar(ana, marcaB1)).rejects.toThrow(/No tienes permiso para generar/);
+    await expect(reservar(editorA, marcaA2)).rejects.toThrow(/No tienes permiso para generar/);
+    await expect(reservar(clienteA, marcaA1)).rejects.toThrow(/No tienes permiso para generar/);
+    await expect(reservar(ana, marcaG1)).rejects.toThrow(/No tienes permiso para generar/);
+    await expect(reservar(superadmin, marcaA1)).rejects.toThrow(/No tienes permiso para generar/);
+  });
+
+  it('ser superadministrador no abre las generaciones ni el consumo de los clientes', async () => {
+    for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
+      expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
+    }
   });
 });
 
