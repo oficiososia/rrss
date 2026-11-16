@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { STORAGE_BUCKET } from '@/config/app';
 import type { AssetKind, Json, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
@@ -214,6 +215,48 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   return inserted.data;
 }
 
+/**
+ * Borra archivos de Storage y, solo si se han borrado, sus anotaciones en la
+ * cola de limpieza. Nunca lanza: devuelve si ha podido hacerlo todo.
+ */
+async function removeStoredFiles(paths: string[]): Promise<boolean> {
+  if (paths.length === 0) return true;
+  try {
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).remove(paths);
+    if (error) return false;
+    const cleared = await supabase.from('storage_cleanup_queue').delete().in('storage_path', paths);
+    return !cleared.error;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Limpieza de archivos huérfanos: borra de Storage los que quedaron anotados al
+ * eliminar su recurso y no se pudieron borrar entonces. Devuelve cuántos
+ * archivos se han procesado. Solo tienen acceso a la cola quienes editan la marca.
+ */
+export async function sweepStorageCleanup(brandId: string, limit = 100): Promise<number> {
+  const rows = unwrap(
+    await supabase
+      .from('storage_cleanup_queue')
+      .select('storage_path')
+      .eq('brand_id', brandId)
+      .order('created_at')
+      .limit(limit),
+  );
+  const paths = rows.map((r) => r.storage_path);
+  return (await removeStoredFiles(paths)) ? paths.length : 0;
+}
+
+/** Al abrir la biblioteca, reintenta los borrados pendientes (una vez por visita). Silencioso si falla. */
+export function useStorageCleanup(brandId: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    void sweepStorageCleanup(brandId).catch(() => undefined);
+  }, [brandId, enabled]);
+}
+
 export interface AssetPatch {
   kind: AssetKind;
   file_name: string;
@@ -236,11 +279,13 @@ export function useAssetMutations(brandId: string) {
 
   const remove = useMutation({
     mutationFn: async (asset: Pick<MediaAssetRow, 'id' | 'storage_path'>) => {
-      // Primero la fila (es lo que ve la app); después el objeto.
+      // Primero la fila (es lo que ve la app); un disparador anota la ruta en la
+      // cola de limpieza. Después se intenta borrar el archivo: si falla, la
+      // anotación se queda y se reintenta en la siguiente visita (no es un error
+      // para quien borra, el recurso ya no existe).
       const rows = unwrap(await supabase.from('media_assets').delete().eq('id', asset.id).select('id'));
       if (rows.length === 0) throw { code: '42501', message: 'permission denied' };
-      const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([asset.storage_path]);
-      if (error) throw error;
+      await removeStoredFiles([asset.storage_path]);
     },
     onSuccess,
   });
