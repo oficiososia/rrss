@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   calls: [] as string[],
   queue: [] as { storage_path: string }[],
-  deleteAssetRows: [{ id: 'a1' }] as { id: string }[],
+  deleteAssetRows: [{ id: 'a1', storage_path: 'o/b/media/1-a.png' }] as { id: string; storage_path: string }[],
   removeError: null as { message: string } | null,
 }));
 
@@ -44,7 +44,7 @@ vi.mock('@/lib/supabase', () => {
   };
 });
 
-import { sweepStorageCleanup } from './api';
+import { deleteAssets, sweepStorageCleanup } from './api';
 
 beforeEach(() => {
   state.calls = [];
@@ -69,5 +69,17 @@ describe('sweepStorageCleanup', () => {
     state.removeError = { message: 'boom' };
     expect(await sweepStorageCleanup('brand')).toBe(0);
     expect(state.calls).toEqual(['remove o/b/media/1-a.jpg']);
+  });
+});
+
+describe('deleteAssets', () => {
+  it('borra la fila y después el archivo y su anotación', async () => {
+    await deleteAssets(['a1']);
+    expect(state.calls).toEqual(['delete media_assets', 'remove o/b/media/1-a.png', 'delete storage_cleanup_queue']);
+  });
+
+  it('no hace nada sin ids', async () => {
+    await deleteAssets([]);
+    expect(state.calls).toEqual([]);
   });
 });

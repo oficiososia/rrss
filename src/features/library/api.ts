@@ -231,6 +231,13 @@ async function removeStoredFiles(paths: string[]): Promise<boolean> {
   }
 }
 
+/** Borra recursos (fila y archivo) de una vez. Lo usa quien sube y se arrepiente antes de enlazarlos. */
+export async function deleteAssets(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const rows = unwrap(await supabase.from('media_assets').delete().in('id', ids).select('id, storage_path'));
+  await removeStoredFiles(rows.map((r) => r.storage_path));
+}
+
 /**
  * Limpieza de archivos huérfanos: borra de Storage los que quedaron anotados al
  * eliminar su recurso y no se pudieron borrar entonces. Devuelve cuántos

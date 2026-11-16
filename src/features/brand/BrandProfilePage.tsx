@@ -1,5 +1,6 @@
 import { Archive, ArchiveRestore, Download, History } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -17,6 +18,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { assetKeys, deleteAssets } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { BrandProfileRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -36,6 +38,7 @@ import {
 } from './editor/sections';
 import { HistoryDialog } from './HistoryDialog';
 import { LogoManager } from './LogoManager';
+import { logosToDiscard, settleSaved } from './logos';
 import {
   emptyProfile,
   nextProvenance,
@@ -202,6 +205,24 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
   const [draft, setDraft] = useState<BrandProfileData>(saved);
   const [note, setNote] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const queryClient = useQueryClient();
+  // Logotipos subidos aquí y aún sin guardar, y los que van en el guardado en curso.
+  const pendingLogos = useRef(new Set<string>());
+  const savingLogos = useRef(new Set<string>());
+
+  // Al salir sin guardar, los logotipos subidos que no llegaron a ninguna versión se borran de la biblioteca.
+  useEffect(() => {
+    const brandId = brand.id;
+    const pending = pendingLogos.current;
+    const saving = savingLogos.current;
+    return () => {
+      const orphans = logosToDiscard(pending, saving);
+      if (orphans.length === 0) return;
+      void deleteAssets(orphans)
+        .catch(() => undefined)
+        .finally(() => queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) }));
+    };
+  }, [brand.id, queryClient]);
 
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(saved), [draft, saved]);
   const completeness = useMemo(() => profileCompleteness(draft), [draft]);
@@ -221,14 +242,21 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
   function persist(data: BrandProfileData, changeNote: string, onDone?: () => void) {
     const clean = normalizeProfile(data);
     const provenance = nextProvenance(parseProvenance(active?.provenance), active ? saved : null, clean, 'user');
+    // Las versiones guardadas (también al restaurar) enlazan estos logotipos: no se tocan al salir.
+    savingLogos.current.clear();
+    clean.visual.logoAssetIds.forEach((id) => savingLogos.current.add(id));
     save.mutate(
       { data: clean, provenance, note: changeNote },
       {
         onSuccess: (row) => {
+          settleSaved(pendingLogos.current, clean.visual.logoAssetIds);
           toast.success(`Perfil guardado (versión ${row.version})`);
           onDone?.();
         },
-        onError: (e) => toast.error(translateError(e)),
+        onError: (e) => {
+          savingLogos.current.clear();
+          toast.error(translateError(e));
+        },
       },
     );
   }
@@ -298,6 +326,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
                   brandId={brand.id}
                   ids={draft.visual.logoAssetIds}
                   onChange={(logoAssetIds) => setDraft((d) => ({ ...d, visual: { ...d.visual, logoAssetIds } }))}
+                  pending={pendingLogos}
                   disabled={!canManage}
                 />
                 <VisualSection {...sectionProps} />
