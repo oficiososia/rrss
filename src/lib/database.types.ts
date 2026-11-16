@@ -271,6 +271,7 @@ export type Database = {
         Args: { p_brand_id: string; p_data: Json; p_provenance?: Json; p_change_note?: string };
         Returns: BrandProfileRow;
       };
+      asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     };
     Enums: {

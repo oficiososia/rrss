@@ -678,6 +678,43 @@ describe('limpieza de archivos huérfanos', () => {
   });
 });
 
+describe('filtros de la biblioteca', () => {
+  it('asset_facets devuelve todas las etiquetas y carpetas de la marca, sin pasar por el límite de 1.000', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca de filtros');
+    await as(
+      db,
+      ana,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, folder, tags)
+       select $1::uuid, $2::uuid, 'image', $2::text || '/' || $1::text || '/media/f' || n || '.jpg', 'f.jpg', 'image/jpeg', 1,
+              'carpeta-' || (n % 3), array['etiqueta-' || n]
+       from generate_series(1, 1100) n`,
+      [marca, orgA],
+    );
+    const [f] = await as<{ tags: string[]; folders: string[] }>(db, ana, `select * from public.asset_facets($1)`, [
+      marca,
+    ]);
+    expect(f!.tags).toHaveLength(1100);
+    expect([...f!.folders].sort()).toEqual(['carpeta-0', 'carpeta-1', 'carpeta-2']);
+  });
+
+  it('no filtra nada de otras marcas ni organizaciones', async () => {
+    await as(db, editorA, `select 1`);
+    const vacio = (r: { tags: string[]; folders: string[] }[]) => [r[0]!.tags, r[0]!.folders];
+    const ajena = await as<{ tags: string[]; folders: string[] }>(db, ana, `select * from public.asset_facets($1)`, [
+      marcaB1,
+    ]);
+    expect(vacio(ajena)).toEqual([[], []]);
+    const sinAcceso = await as<{ tags: string[]; folders: string[] }>(
+      db,
+      sinMarcaA,
+      `select * from public.asset_facets($1)`,
+      [marcaA1],
+    );
+    expect(vacio(sinAcceso)).toEqual([[], []]);
+    await denied(db, null, `select * from public.asset_facets($1)`, [marcaA1]);
+  });
+});
+
 describe('auditoría y superadministración', () => {
   it('las acciones quedan registradas con su autor y solo las ven los administradores', async () => {
     const registros = await as(

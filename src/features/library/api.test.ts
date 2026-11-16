@@ -44,7 +44,7 @@ vi.mock('@/lib/supabase', () => {
   };
 });
 
-import { deleteAssets, sweepStorageCleanup } from './api';
+import { deleteAssets, sortFacets, sweepStorageCleanup } from './api';
 
 beforeEach(() => {
   state.calls = [];
@@ -81,5 +81,14 @@ describe('deleteAssets', () => {
   it('no hace nada sin ids', async () => {
     await deleteAssets([]);
     expect(state.calls).toEqual([]);
+  });
+});
+
+describe('sortFacets', () => {
+  it('ordena en castellano y quita repetidos y vacíos', () => {
+    expect(sortFacets(['útil', 'zeta', 'abeto', 'abeto', ''], ['verano', '', 'Ñandú'])).toEqual({
+      tags: ['abeto', 'útil', 'zeta'],
+      folders: ['Ñandú', 'verano'],
+    });
   });
 });

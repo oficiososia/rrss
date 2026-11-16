@@ -59,29 +59,21 @@ export function useAssets(brandId: string, filters: AssetFilters) {
   });
 }
 
-/** Etiquetas y carpetas en uso (para los filtros). Se limita a los 1000 recursos más recientes. */
+/** Etiquetas y carpetas en uso de toda la marca (para los filtros). */
 export function useAssetFacets(brandId: string) {
   return useQuery({
     queryKey: assetKeys.facets(brandId),
     queryFn: async () => {
-      const rows = unwrap(
-        await supabase
-          .from('media_assets')
-          .select('tags, folder')
-          .eq('brand_id', brandId)
-          .order('created_at', { ascending: false })
-          .limit(1000),
-      );
-      const tags = new Set<string>();
-      const folders = new Set<string>();
-      for (const row of rows) {
-        row.tags.forEach((t) => tags.add(t));
-        if (row.folder) folders.add(row.folder);
-      }
-      const sort = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b, 'es'));
-      return { tags: sort(tags), folders: sort(folders) };
+      const [row] = unwrap(await supabase.rpc('asset_facets', { p_brand_id: brandId }));
+      return sortFacets(row?.tags ?? [], row?.folders ?? []);
     },
   });
+}
+
+/** Ordena etiquetas y carpetas alfabéticamente (castellano), sin repetidos ni vacíos. */
+export function sortFacets(tags: string[], folders: string[]) {
+  const sort = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  return { tags: sort(tags), folders: sort(folders) };
 }
 
 export function useAssetCount(brandId: string) {

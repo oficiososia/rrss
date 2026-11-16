@@ -42,3 +42,20 @@ revoke all on function private.queue_storage_cleanup() from public, anon, authen
 
 create trigger media_assets_queue_cleanup after delete on public.media_assets
   for each row execute function private.queue_storage_cleanup();
+
+-- 2. Filtros de la biblioteca: todas las etiquetas y carpetas de una marca, no
+--    las de los 1.000 recursos más recientes. SECURITY INVOKER a propósito: la
+--    RLS de media_assets decide qué marcas puede ver quien pregunta.
+
+create function public.asset_facets(p_brand_id uuid)
+returns table (tags text[], folders text[])
+language sql stable security invoker set search_path = '' as $$
+  select
+    coalesce((select array_agg(distinct t) from public.media_assets a, unnest(a.tags) t
+              where a.brand_id = p_brand_id), '{}'::text[]),
+    coalesce((select array_agg(distinct a.folder) from public.media_assets a
+              where a.brand_id = p_brand_id and a.folder <> ''), '{}'::text[]);
+$$;
+
+revoke all on function public.asset_facets(uuid) from public, anon;
+grant execute on function public.asset_facets(uuid) to authenticated, service_role;
