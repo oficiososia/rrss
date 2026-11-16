@@ -245,18 +245,17 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
     // Las versiones guardadas (también al restaurar) enlazan estos logotipos: no se tocan al salir.
     savingLogos.current.clear();
     clean.visual.logoAssetIds.forEach((id) => savingLogos.current.add(id));
-    save.mutate(
-      { data: clean, provenance, note: changeNote },
-      {
-        onSuccess: (row) => {
-          settleSaved(pendingLogos.current, clean.visual.logoAssetIds);
-          toast.success(`Perfil guardado (versión ${row.version})`);
-          onDone?.();
-        },
-        onError: (e) => {
-          savingLogos.current.clear();
-          toast.error(translateError(e));
-        },
+    // Con la promesa y no con los avisos de `mutate`: al guardar llega una versión nueva, el editor se
+    // vuelve a montar (cambia su `key`) y los avisos de `mutate` de un componente desmontado no se ejecutan.
+    save.mutateAsync({ data: clean, provenance, note: changeNote }).then(
+      (row) => {
+        settleSaved(pendingLogos.current, clean.visual.logoAssetIds);
+        toast.success(`Perfil guardado (versión ${row.version})`);
+        onDone?.();
+      },
+      (e: unknown) => {
+        savingLogos.current.clear();
+        toast.error(translateError(e));
       },
     );
   }
