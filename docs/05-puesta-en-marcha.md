@@ -31,6 +31,44 @@ npm run test:db
 Postgres local, define `DATABASE_URL` con un superusuario; crea y borra una base
 de datos temporal.
 
+### Supabase local y prueba de extremo a extremo
+
+Hace falta Docker en marcha y la CLI de Supabase. El stack local se llama
+`rrss-local` y usa puertos propios (`supabase/config.toml`): API en el 55321,
+Postgres en el 55322 y buzón de correo (Mailpit) en el 55324. No se enlaza con
+ningún proyecto remoto.
+
+```bash
+supabase start
+```
+
+Aplica las migraciones de `supabase/migrations/`. Copia en `.env.local` la URL
+y la clave `anon` que muestra `supabase status -o env`:
+
+```
+VITE_SUPABASE_URL=http://127.0.0.1:55321
+VITE_SUPABASE_ANON_KEY=<ANON_KEY>
+```
+
+```bash
+npm run test:e2e
+```
+
+Playwright (Chromium; la primera vez, `npx playwright install chromium`) arranca
+la aplicación en el puerto 5273 y recorre la Fase 1 en un navegador de verdad:
+registro con confirmación de correo, dos organizaciones, alta de marcas, perfil
+con versiones, biblioteca, invitaciones y roles, aislamiento, recuperación de
+contraseña, ajustes, actividad y panel de plataforma. Los archivos de
+`tests/e2e/` van en orden y cada tanda usa correos con un sufijo nuevo, así que
+no hace falta vaciar la base entre ejecuciones. Para empezar de cero:
+
+```bash
+supabase db reset
+```
+
+Al terminar, `supabase stop` libera los contenedores (los datos quedan en un
+volumen de Docker; `supabase stop --no-backup` los borra).
+
 ## Entornos nuevos (lo hace el dueño; nada de esto está hecho todavía)
 
 El producto usa **cuentas nuevas**, sin relación con las de Casa Tomás.
