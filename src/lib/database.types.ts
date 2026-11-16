@@ -172,6 +172,163 @@ export type StorageCleanupRow = {
   created_at: string;
 };
 
+// ───────────── Fase 2 · IA (generaciones, consumo, cupos) y cola de trabajos ─────────────
+// Migraciones 20261116110000_ai_usage_quotas y 20261116111000_jobs. El cliente
+// solo lee estas tablas; las funciones de servidor exigen la clave de servicio.
+// Los importes van en millonésimas («micros») de la moneda de cuenta.
+
+export type AiTask = 'text' | 'vision' | 'image' | 'video' | 'transcription' | 'embedding';
+export type AiGenerationStatus = 'reserved' | 'succeeded' | 'failed' | 'expired';
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type QuotaMetric = 'ai_cost_micros';
+
+export type UsageQuotaRow = {
+  organization_id: string;
+  metric: QuotaMetric;
+  period: 'month';
+  limit_value: number;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiGenerationRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  requested_by: string | null;
+  task: AiTask;
+  purpose: string;
+  provider: string;
+  model: string;
+  status: AiGenerationStatus;
+  period_start: string;
+  reserved_micros: number;
+  reserved_until: string;
+  cost_micros: number | null;
+  usage: Json;
+  output: Json | null;
+  latency_ms: number | null;
+  provider_request_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
+export type AiUsageRow = {
+  id: number;
+  organization_id: string;
+  brand_id: string | null;
+  generation_id: string;
+  period_start: string;
+  entry: 'reserve' | 'settle' | 'release';
+  reserved_delta_micros: number;
+  cost_delta_micros: number;
+  created_at: string;
+};
+
+export type JobRow = {
+  id: string;
+  organization_id: string;
+  brand_id: string | null;
+  kind: string;
+  payload: Json;
+  status: JobStatus;
+  priority: number;
+  idempotency_key: string;
+  attempts: number;
+  max_attempts: number;
+  run_after: string;
+  locked_by: string | null;
+  locked_until: string | null;
+  result: Json | null;
+  last_error: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type AiCostByOrganizationRow = {
+  organization_id: string;
+  organization_name: string | null;
+  generations: number;
+  cost_micros: number;
+};
+
+type Phase2Tables = {
+  usage_quotas: Table<UsageQuotaRow>;
+  ai_generations: Table<AiGenerationRow>;
+  ai_usage: Table<AiUsageRow>;
+  jobs: Table<JobRow>;
+};
+
+type Phase2Functions = {
+  // Superadministradores.
+  admin_set_ai_quota: { Args: { p_organization_id: string; p_monthly_limit_micros: number }; Returns: UsageQuotaRow };
+  // Administradores de la organización (y superadministradores, para todas).
+  ai_cost_by_organization: { Args: { p_from: string; p_to: string }; Returns: AiCostByOrganizationRow[] };
+  // Solo con la clave de servicio.
+  ai_reserve_generation: {
+    Args: {
+      p_user_id: string;
+      p_brand_id: string;
+      p_task: AiTask;
+      p_purpose: string;
+      p_provider: string;
+      p_model: string;
+      p_reserve_micros: number;
+      p_ttl_seconds?: number;
+    };
+    Returns: AiGenerationRow;
+  };
+  ai_complete_generation: {
+    Args: {
+      p_generation_id: string;
+      p_cost_micros: number;
+      p_usage?: Json;
+      p_output?: Json | null;
+      p_latency_ms?: number | null;
+      p_provider_request_id?: string | null;
+    };
+    Returns: AiGenerationRow;
+  };
+  ai_fail_generation: {
+    Args: { p_generation_id: string; p_error_code: string; p_error_message?: string; p_latency_ms?: number | null };
+    Returns: AiGenerationRow;
+  };
+  enqueue_job: {
+    Args: {
+      p_organization_id: string;
+      p_kind: string;
+      p_payload: Json;
+      p_idempotency_key: string;
+      p_brand_id?: string | null;
+      p_priority?: number;
+      p_max_attempts?: number;
+      p_run_after?: string | null;
+      p_created_by?: string | null;
+    };
+    Returns: JobRow;
+  };
+  claim_jobs: {
+    Args: { p_worker: string; p_kinds?: string[] | null; p_limit?: number; p_lease_seconds?: number };
+    Returns: JobRow[];
+  };
+  complete_job: { Args: { p_job_id: string; p_worker: string; p_result?: Json | null }; Returns: JobRow };
+  fail_job: { Args: { p_job_id: string; p_worker: string; p_error: string; p_retry?: boolean }; Returns: JobRow };
+  cancel_job: { Args: { p_job_id: string }; Returns: JobRow };
+};
+
+type Phase2Enums = {
+  ai_task: AiTask;
+  ai_generation_status: AiGenerationStatus;
+  job_status: JobStatus;
+};
+
+// ───────────────────────────── fin del bloque de la Fase 2 ─────────────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -248,7 +405,7 @@ export type Database = {
       storage_cleanup_queue: Table<StorageCleanupRow>;
       invitations: Table<InvitationRow>;
       audit_logs: Table<AuditLogRow>;
-    };
+    } & Phase2Tables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -273,7 +430,7 @@ export type Database = {
       };
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
-    };
+    } & Phase2Functions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -284,7 +441,7 @@ export type Database = {
       source_status: SourceStatus;
       asset_kind: AssetKind;
       asset_origin: AssetOrigin;
-    };
+    } & Phase2Enums;
     CompositeTypes: Record<never, never>;
   };
 };
