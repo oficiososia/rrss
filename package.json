@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run --project unit",
+    "test": "vitest run --project unit --project components",
+    "test:components": "vitest run --project components",
     "test:db": "vitest run --project db"
   },
   "dependencies": {
