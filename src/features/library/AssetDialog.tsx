@@ -231,16 +231,18 @@ export function AssetDialog({ asset, url, canEdit, onClose }: AssetDialogProps) 
         confirmLabel="Eliminar"
         loading={remove.isPending}
         onConfirm={() =>
-          remove.mutate(asset, {
-            onSuccess: () => {
+          // Con la promesa y no con los avisos de `mutate`: al borrar, la rejilla se refresca y esta ficha se
+          // desmonta; si eso ocurre antes de que termine la mutación, los avisos de `mutate` no se ejecutan.
+          remove.mutateAsync(asset).then(
+            () => {
               toast.success('Archivo eliminado');
               onClose();
             },
-            onError: (e) => {
+            (e: unknown) => {
               setConfirming(false);
               toast.error(translateError(e));
             },
-          })
+          )
         }
       />
     </>
