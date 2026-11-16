@@ -58,6 +58,12 @@ export function describeAudit(
       if (str(data, 'accepted_at')) return `aceptó la invitación enviada a ${str(data, 'email')}`;
       if (str(data, 'revoked_at')) return `anuló la invitación de ${str(data, 'email')}`;
       return `actualizó la invitación de ${str(data, 'email')}`;
+    case 'usage_quotas:insert':
+      return `asignó el cupo mensual de IA`;
+    case 'usage_quotas:update':
+      return `cambió el cupo mensual de IA`;
+    case 'usage_quotas:delete':
+      return `retiró el cupo mensual de IA`;
     default:
       return `${action} en ${entity}`;
   }
