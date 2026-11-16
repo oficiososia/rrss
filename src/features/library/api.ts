@@ -1,9 +1,17 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { STORAGE_BUCKET } from '@/config/app';
 import type { AssetKind, Json, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
-import { assetKindFromMime, buildStoragePath, readMediaDimensions, sha256Hex, validateFile } from '@/lib/files';
-import { supabase } from '@/lib/supabase';
+import {
+  assetKindFromMime,
+  buildStoragePath,
+  readMediaDimensions,
+  sha256Hex,
+  validateFile,
+  xhrUpload,
+} from '@/lib/files';
+import { supabase, supabaseConfigured } from '@/lib/supabase';
 
 export const ASSET_PAGE_SIZE = 48;
 
@@ -51,29 +59,21 @@ export function useAssets(brandId: string, filters: AssetFilters) {
   });
 }
 
-/** Etiquetas y carpetas en uso (para los filtros). Se limita a los 1000 recursos más recientes. */
+/** Etiquetas y carpetas en uso de toda la marca (para los filtros). */
 export function useAssetFacets(brandId: string) {
   return useQuery({
     queryKey: assetKeys.facets(brandId),
     queryFn: async () => {
-      const rows = unwrap(
-        await supabase
-          .from('media_assets')
-          .select('tags, folder')
-          .eq('brand_id', brandId)
-          .order('created_at', { ascending: false })
-          .limit(1000),
-      );
-      const tags = new Set<string>();
-      const folders = new Set<string>();
-      for (const row of rows) {
-        row.tags.forEach((t) => tags.add(t));
-        if (row.folder) folders.add(row.folder);
-      }
-      const sort = (set: Set<string>) => [...set].sort((a, b) => a.localeCompare(b, 'es'));
-      return { tags: sort(tags), folders: sort(folders) };
+      const [row] = unwrap(await supabase.rpc('asset_facets', { p_brand_id: brandId }));
+      return sortFacets(row?.tags ?? [], row?.folders ?? []);
     },
   });
+}
+
+/** Ordena etiquetas y carpetas alfabéticamente (castellano), sin repetidos ni vacíos. */
+export function sortFacets(tags: string[], folders: string[]) {
+  const sort = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  return { tags: sort(tags), folders: sort(folders) };
 }
 
 export function useAssetCount(brandId: string) {
@@ -132,6 +132,38 @@ export interface UploadInput {
   tags?: string[];
   /** Huella ya calculada (para no leer el archivo dos veces). */
   sha256?: string;
+  /** Porcentaje real (0-100) de bytes subidos del archivo. */
+  onProgress?: (percent: number) => void;
+}
+
+/**
+ * Sube el objeto a Storage. Con `onProgress` se usa XMLHttpRequest contra la
+ * misma API REST que usa supabase-js (es lo único que mide bytes reales);
+ * sin él, el cliente normal.
+ */
+async function uploadObject(path: string, file: File, onProgress?: (percent: number) => void): Promise<void> {
+  if (!onProgress || !supabaseConfigured) {
+    const upload = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { contentType: file.type });
+    if (upload.error) throw upload.error;
+    return;
+  }
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  const token = data.session?.access_token;
+  if (!token) throw { message: 'Tu sesión ha caducado. Vuelve a iniciar sesión.', statusCode: 401 };
+  const base = String(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, '');
+  await xhrUpload({
+    url: `${base}/storage/v1/object/${STORAGE_BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: String(import.meta.env.VITE_SUPABASE_ANON_KEY),
+      'Content-Type': file.type,
+      'Cache-Control': 'max-age=3600',
+      'x-upsert': 'false',
+    },
+    body: file,
+    onProgress,
+  });
 }
 
 /**
@@ -146,8 +178,7 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   const [sha256, dimensions] = await Promise.all([input.sha256 ?? sha256Hex(file), readMediaDimensions(file)]);
   const path = buildStoragePath(organizationId, brandId, 'media', file.name);
 
-  const upload = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { contentType: file.type });
-  if (upload.error) throw upload.error;
+  await uploadObject(path, file, input.onProgress);
 
   const inserted = await supabase
     .from('media_assets')
@@ -176,6 +207,55 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   return inserted.data;
 }
 
+/**
+ * Borra archivos de Storage y, solo si se han borrado, sus anotaciones en la
+ * cola de limpieza. Nunca lanza: devuelve si ha podido hacerlo todo.
+ */
+async function removeStoredFiles(paths: string[]): Promise<boolean> {
+  if (paths.length === 0) return true;
+  try {
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).remove(paths);
+    if (error) return false;
+    const cleared = await supabase.from('storage_cleanup_queue').delete().in('storage_path', paths);
+    return !cleared.error;
+  } catch {
+    return false;
+  }
+}
+
+/** Borra recursos (fila y archivo) de una vez. Lo usa quien sube y se arrepiente antes de enlazarlos. */
+export async function deleteAssets(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const rows = unwrap(await supabase.from('media_assets').delete().in('id', ids).select('id, storage_path'));
+  await removeStoredFiles(rows.map((r) => r.storage_path));
+}
+
+/**
+ * Limpieza de archivos huérfanos: borra de Storage los que quedaron anotados al
+ * eliminar su recurso y no se pudieron borrar entonces. Devuelve cuántos
+ * archivos se han procesado. Solo tienen acceso a la cola quienes editan la marca.
+ */
+export async function sweepStorageCleanup(brandId: string, limit = 100): Promise<number> {
+  const rows = unwrap(
+    await supabase
+      .from('storage_cleanup_queue')
+      .select('storage_path')
+      .eq('brand_id', brandId)
+      .order('created_at')
+      .limit(limit),
+  );
+  const paths = rows.map((r) => r.storage_path);
+  return (await removeStoredFiles(paths)) ? paths.length : 0;
+}
+
+/** Al abrir la biblioteca, reintenta los borrados pendientes (una vez por visita). Silencioso si falla. */
+export function useStorageCleanup(brandId: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    void sweepStorageCleanup(brandId).catch(() => undefined);
+  }, [brandId, enabled]);
+}
+
 export interface AssetPatch {
   kind: AssetKind;
   file_name: string;
@@ -198,11 +278,13 @@ export function useAssetMutations(brandId: string) {
 
   const remove = useMutation({
     mutationFn: async (asset: Pick<MediaAssetRow, 'id' | 'storage_path'>) => {
-      // Primero la fila (es lo que ve la app); después el objeto.
+      // Primero la fila (es lo que ve la app); un disparador anota la ruta en la
+      // cola de limpieza. Después se intenta borrar el archivo: si falla, la
+      // anotación se queda y se reintenta en la siguiente visita (no es un error
+      // para quien borra, el recurso ya no existe).
       const rows = unwrap(await supabase.from('media_assets').delete().eq('id', asset.id).select('id'));
       if (rows.length === 0) throw { code: '42501', message: 'permission denied' };
-      const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([asset.storage_path]);
-      if (error) throw error;
+      await removeStoredFiles([asset.storage_path]);
     },
     onSuccess,
   });

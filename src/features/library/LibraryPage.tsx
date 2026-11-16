@@ -4,7 +4,7 @@ import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select,
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
-import { useAssetFacets, useAssets, useSignedUrls, type AssetFilters } from './api';
+import { useAssetFacets, useAssets, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
 import { AssetDialog } from './AssetDialog';
 import { ASSET_KIND_LABEL, ASSET_KINDS } from './labels';
 import { UploadPanel } from './UploadPanel';
@@ -29,6 +29,7 @@ export function LibraryPage() {
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const canEdit = can('edit');
+  useStorageCleanup(brand.id, canEdit);
   const [uploading, setUploading] = useState(false);
   const [kind, setKind] = useState<AssetKind | ''>('');
   const [tag, setTag] = useState('');

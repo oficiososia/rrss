@@ -163,6 +163,15 @@ export type InvitationPreview = {
   usable: boolean;
 };
 
+/** Archivos de Storage pendientes de borrar tras eliminar su recurso (los anota un disparador). */
+export type StorageCleanupRow = {
+  id: number;
+  organization_id: string;
+  brand_id: string;
+  storage_path: string;
+  created_at: string;
+};
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -236,6 +245,7 @@ export type Database = {
         },
         { kind?: AssetKind; file_name?: string; folder?: string; tags?: string[]; rights?: Json }
       >;
+      storage_cleanup_queue: Table<StorageCleanupRow>;
       invitations: Table<InvitationRow>;
       audit_logs: Table<AuditLogRow>;
     };
@@ -261,6 +271,7 @@ export type Database = {
         Args: { p_brand_id: string; p_data: Json; p_provenance?: Json; p_change_note?: string };
         Returns: BrandProfileRow;
       };
+      asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     };
     Enums: {

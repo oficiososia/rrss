@@ -94,6 +94,7 @@ const TENANT_TABLES = [
   'brand_profiles',
   'brand_knowledge_sources',
   'media_assets',
+  'storage_cleanup_queue',
   'invitations',
   'audit_logs',
 ];
@@ -601,6 +602,116 @@ describe('almacenamiento', () => {
     const ruta = assetPath(orgA, marcaA1);
     await as(db, ana, insert, [ruta]);
     await denied(db, ana, `update storage.objects set name = $2 where name = $1`, [ruta, assetPath(orgB, marcaB1)]);
+  });
+});
+
+describe('limpieza de archivos huérfanos', () => {
+  const cola = `select storage_path from public.storage_cleanup_queue where storage_path = $1`;
+
+  it('al borrar un recurso su ruta queda anotada, y solo la ve quien edita esa marca', async () => {
+    const [creado] = await as<{ id: string }>(
+      db,
+      editorA,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'image', $3, 'adios.jpg', 'image/jpeg', 10) returning id`,
+      [marcaA1, orgA, assetPath(orgA, marcaA1, 'adios.jpg')],
+    );
+    const ruta = assetPath(orgA, marcaA1, 'adios.jpg');
+    expect(
+      await as(db, editorA, `delete from public.media_assets where id = $1 returning id`, [creado!.id]),
+    ).toHaveLength(1);
+
+    expect(await as(db, editorA, cola, [ruta])).toHaveLength(1);
+    expect(await as(db, ana, cola, [ruta])).toHaveLength(1);
+    // Ni otra organización, ni el cliente (solo lectura), ni quien no tiene la marca.
+    expect(await as(db, berta, cola, [ruta])).toEqual([]);
+    expect(await as(db, clienteA, cola, [ruta])).toEqual([]);
+    expect(await as(db, sinMarcaA, cola, [ruta])).toEqual([]);
+    expect(await as(db, superadmin, cola, [ruta])).toEqual([]);
+  });
+
+  it('el cliente no escribe en la cola: ni altas, ni cambios ni borrados', async () => {
+    const ruta = assetPath(orgA, marcaA1, 'fantasma.jpg');
+    for (const user of [ana, editorA, clienteA, berta]) {
+      await denied(
+        db,
+        user,
+        `insert into public.storage_cleanup_queue (organization_id, brand_id, storage_path) values ($1, $2, $3)`,
+        [orgA, marcaA1, ruta],
+      );
+      await denied(db, user, `update public.storage_cleanup_queue set storage_path = 'x'`);
+    }
+    await denied(db, null, `select * from public.storage_cleanup_queue`);
+  });
+
+  it('quien edita la marca limpia sus anotaciones; los demás no pueden', async () => {
+    const ruta = assetPath(orgA, marcaA1, 'limpiar.jpg');
+    await db.query(
+      `insert into public.storage_cleanup_queue (organization_id, brand_id, storage_path) values ($1, $2, $3)`,
+      [orgA, marcaA1, ruta],
+    );
+    expect(
+      await as(db, clienteA, `delete from public.storage_cleanup_queue where storage_path = $1 returning id`, [ruta]),
+    ).toEqual([]);
+    expect(
+      await as(db, berta, `delete from public.storage_cleanup_queue where storage_path = $1 returning id`, [ruta]),
+    ).toEqual([]);
+    expect(
+      await as(db, editorA, `delete from public.storage_cleanup_queue where storage_path = $1 returning id`, [ruta]),
+    ).toHaveLength(1);
+  });
+
+  it('al borrar la marca entera también se anotan sus archivos', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca efímera');
+    const ruta = assetPath(orgA, marca, 'cascada.jpg');
+    await as(
+      db,
+      ana,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'image', $3, 'c.jpg', 'image/jpeg', 1)`,
+      [marca, orgA, ruta],
+    );
+    await db.query(`delete from public.brands where id = $1`, [marca]);
+    expect(await db.query(cola, [ruta])).toHaveLength(1);
+    // Con la marca ya borrada nadie del cliente la ve: la barre el servidor.
+    expect(await as(db, ana, cola, [ruta])).toEqual([]);
+  });
+});
+
+describe('filtros de la biblioteca', () => {
+  it('asset_facets devuelve todas las etiquetas y carpetas de la marca, sin pasar por el límite de 1.000', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca de filtros');
+    await as(
+      db,
+      ana,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, folder, tags)
+       select $1::uuid, $2::uuid, 'image', $2::text || '/' || $1::text || '/media/f' || n || '.jpg', 'f.jpg', 'image/jpeg', 1,
+              'carpeta-' || (n % 3), array['etiqueta-' || n]
+       from generate_series(1, 1100) n`,
+      [marca, orgA],
+    );
+    const [f] = await as<{ tags: string[]; folders: string[] }>(db, ana, `select * from public.asset_facets($1)`, [
+      marca,
+    ]);
+    expect(f!.tags).toHaveLength(1100);
+    expect([...f!.folders].sort()).toEqual(['carpeta-0', 'carpeta-1', 'carpeta-2']);
+  });
+
+  it('no filtra nada de otras marcas ni organizaciones', async () => {
+    await as(db, editorA, `select 1`);
+    const vacio = (r: { tags: string[]; folders: string[] }[]) => [r[0]!.tags, r[0]!.folders];
+    const ajena = await as<{ tags: string[]; folders: string[] }>(db, ana, `select * from public.asset_facets($1)`, [
+      marcaB1,
+    ]);
+    expect(vacio(ajena)).toEqual([[], []]);
+    const sinAcceso = await as<{ tags: string[]; folders: string[] }>(
+      db,
+      sinMarcaA,
+      `select * from public.asset_facets($1)`,
+      [marcaA1],
+    );
+    expect(vacio(sinAcceso)).toEqual([[], []]);
+    await denied(db, null, `select * from public.asset_facets($1)`, [marcaA1]);
   });
 });
 
