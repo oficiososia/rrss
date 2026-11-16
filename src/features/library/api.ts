@@ -2,8 +2,15 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { STORAGE_BUCKET } from '@/config/app';
 import type { AssetKind, Json, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
-import { assetKindFromMime, buildStoragePath, readMediaDimensions, sha256Hex, validateFile } from '@/lib/files';
-import { supabase } from '@/lib/supabase';
+import {
+  assetKindFromMime,
+  buildStoragePath,
+  readMediaDimensions,
+  sha256Hex,
+  validateFile,
+  xhrUpload,
+} from '@/lib/files';
+import { supabase, supabaseConfigured } from '@/lib/supabase';
 
 export const ASSET_PAGE_SIZE = 48;
 
@@ -132,6 +139,38 @@ export interface UploadInput {
   tags?: string[];
   /** Huella ya calculada (para no leer el archivo dos veces). */
   sha256?: string;
+  /** Porcentaje real (0-100) de bytes subidos del archivo. */
+  onProgress?: (percent: number) => void;
+}
+
+/**
+ * Sube el objeto a Storage. Con `onProgress` se usa XMLHttpRequest contra la
+ * misma API REST que usa supabase-js (es lo único que mide bytes reales);
+ * sin él, el cliente normal.
+ */
+async function uploadObject(path: string, file: File, onProgress?: (percent: number) => void): Promise<void> {
+  if (!onProgress || !supabaseConfigured) {
+    const upload = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { contentType: file.type });
+    if (upload.error) throw upload.error;
+    return;
+  }
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  const token = data.session?.access_token;
+  if (!token) throw { message: 'Tu sesión ha caducado. Vuelve a iniciar sesión.', statusCode: 401 };
+  const base = String(import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, '');
+  await xhrUpload({
+    url: `${base}/storage/v1/object/${STORAGE_BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: String(import.meta.env.VITE_SUPABASE_ANON_KEY),
+      'Content-Type': file.type,
+      'Cache-Control': 'max-age=3600',
+      'x-upsert': 'false',
+    },
+    body: file,
+    onProgress,
+  });
 }
 
 /**
@@ -146,8 +185,7 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   const [sha256, dimensions] = await Promise.all([input.sha256 ?? sha256Hex(file), readMediaDimensions(file)]);
   const path = buildStoragePath(organizationId, brandId, 'media', file.name);
 
-  const upload = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { contentType: file.type });
-  if (upload.error) throw upload.error;
+  await uploadObject(path, file, input.onProgress);
 
   const inserted = await supabase
     .from('media_assets')
