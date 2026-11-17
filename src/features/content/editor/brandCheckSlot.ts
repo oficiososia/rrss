@@ -1,21 +1,16 @@
-import type { ComponentType } from 'react';
-import type { ContentDocument } from '../document';
+import { lazy, type ComponentType } from 'react';
+import type { BrandCheckPanelProps } from '@/features/brandcheck/ui/BrandCheckPanel';
 
-// Hueco del panel de comprobación de marca en el editor. El panel lo construye
-// otro bloque (`BrandCheckPanel`, en src/features/brandcheck/ui/); hasta que se
-// conecte, este hueco está vacío y el editor no enseña la pestaña: lo que no
-// existe no aparece (CLAUDE.md, honestidad del producto).
+// Hueco del panel de comprobación de marca en el editor. El panel vive en
+// src/features/brandcheck/ui/ y se descarga aparte, solo al abrir la pestaña
+// «Marca». Si algún día se vacía este hueco (`null`), el editor deja de enseñar
+// la pestaña: lo que no existe no aparece (CLAUDE.md, honestidad del producto).
 //
-// Para conectarlo basta con asignar aquí el componente, por ejemplo:
-//   export const BRAND_CHECK_PANEL = lazy(() =>
-//     import('@/features/brandcheck/ui/BrandCheckPanel').then((m) => ({ default: m.BrandCheckPanel })));
+// Lo que el editor le pasa: el documento tal como está (con los cambios sin
+// guardar), la red, el formato, la marca, la paleta dominante de la imagen
+// (si se ha podido leer) y a quién avisar al pulsar un hallazgo.
+export type { BrandCheckPanelProps };
 
-/** Lo que el editor le pasa al panel: el documento tal como está (con los cambios sin guardar), la red, el formato y la marca. */
-export interface BrandCheckPanelProps {
-  document: ContentDocument;
-  network: string;
-  format: string;
-  brandId: string;
-}
-
-export const BRAND_CHECK_PANEL: ComponentType<BrandCheckPanelProps> | null = null;
+export const BRAND_CHECK_PANEL: ComponentType<BrandCheckPanelProps> | null = lazy(() =>
+  import('@/features/brandcheck/ui/BrandCheckPanel').then((m) => ({ default: m.BrandCheckPanel })),
+);

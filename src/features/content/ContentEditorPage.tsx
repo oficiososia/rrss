@@ -40,7 +40,12 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { aiTextEnabled } from '@/config/app';
+import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
+import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { useActiveProfile } from '@/features/brand/api';
+import { publishedText } from '@/features/brandcheck/text';
+import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
 import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
@@ -65,6 +70,7 @@ import { CopyPanel } from './editor/panels/CopyPanel';
 import { LayersPanel } from './editor/panels/LayersPanel';
 import { PropertiesPanel, type BrandStyle } from './editor/panels/PropertiesPanel';
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
+import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
@@ -81,6 +87,14 @@ function startingDocument(spec: NetworkFormatSpec | undefined): ContentDocument 
   const aspectRatio = recommended?.ratio ?? (allowed?.ratios.includes('1:1') ? '1:1' : allowed?.ratios[0]) ?? '1:1';
   return createEmptyDocument({ aspectRatio });
 }
+
+/** Campo del panel «Publicación» al que lleva cada parte del texto señalada por el verificador. */
+const COPY_FIELD: Partial<Record<FindingTarget['part'], string>> = {
+  caption: 'copy-caption',
+  hashtags: 'copy-hashtags',
+  mentions: 'copy-mentions',
+  altText: 'copy-alt',
+};
 
 const isTypingTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
@@ -162,6 +176,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const rootRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [focusText, setFocusText] = useState(0);
+  /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
+  const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
+  const aiEnabled = aiTextEnabled();
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
 
@@ -200,9 +217,50 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
+  // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
+  // contenido se monta después de este efecto.
   useEffect(() => {
-    if (focusText) textRef.current?.focus();
+    if (!focusText) return;
+    const frame = requestAnimationFrame(() => textRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [focusText]);
+
+  useEffect(() => {
+    if (!focusCopy) return;
+    const frame = requestAnimationFrame(() => {
+      const field = rootRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+        `[data-testid="${focusCopy.field}"]`,
+      );
+      if (!field) return;
+      field.focus();
+      if (focusCopy.range) field.setSelectionRange(focusCopy.range.start, focusCopy.range.end);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusCopy]);
+
+  // ── Paleta de la imagen principal, para el verificador ──
+  const paletteLayer = mainImageLayer(state.document);
+  const palette = useImagePalette(imageUrlOf(paletteLayer, images));
+
+  /** Al pulsar un hallazgo del verificador: elegir la capa o llevar al campo señalado. */
+  function selectTarget(target: FindingTarget) {
+    if (target.part === 'textLayer' && target.layerId) {
+      dispatch({ type: 'select', id: target.layerId });
+      setPanel('layer');
+      setFocusText((n) => n + 1);
+      return;
+    }
+    if (target.part === 'image' && paletteLayer) {
+      dispatch({ type: 'select', id: paletteLayer.id });
+      setPanel('layer');
+      return;
+    }
+    const field = COPY_FIELD[target.part];
+    if (field) {
+      setPanel('copy');
+      setFocusCopy((prev) => ({ field, range: target.range, n: (prev?.n ?? 0) + 1 }));
+    }
+  }
 
   // ── Lienzo (el envoltorio guarda estas funciones en una referencia: no hace falta memorizarlas) ──
   const onSelect = (id: string | null) => dispatch({ type: 'select', id });
@@ -695,7 +753,20 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                 dispatch={dispatch}
               />
             </TabsContent>
-            <TabsContent value="copy" className="pt-4">
+            <TabsContent value="copy" className="space-y-4 pt-4">
+              {aiEnabled && !readOnly && (
+                <GenerateCaptionDialog
+                  brandId={brand.id}
+                  network={item.network}
+                  format={item.format}
+                  currentCopy={state.document.copy}
+                  // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
+                  onApply={(copy) => {
+                    dispatch({ type: 'setCopy', patch: copy });
+                    toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
+                  }}
+                />
+              )}
               <CopyPanel
                 copy={state.document.copy}
                 spec={spec}
@@ -706,7 +777,36 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             </TabsContent>
             {BrandCheck && (
               <TabsContent value="brand" className="pt-4">
-                <BrandCheck document={state.document} network={item.network} format={item.format} brandId={brand.id} />
+                <Suspense fallback={<Spinner label="Cargando el verificador…" />}>
+                  <BrandCheck
+                    document={state.document}
+                    network={item.network}
+                    format={item.format}
+                    brandId={brand.id}
+                    imagePalette={palette.status === 'ready' ? palette.palette : undefined}
+                    onSelectTarget={selectTarget}
+                  />
+                </Suspense>
+                {palette.status === 'unavailable' && (
+                  <div className="mt-3" data-testid="brandcheck-palette-unavailable">
+                    <Notice tone="warning">
+                      No se han podido leer los colores de la imagen (el navegador no lo permite para este archivo): la
+                      comparación con la paleta de la marca se omite.
+                    </Notice>
+                  </div>
+                )}
+                {aiEnabled && (
+                  <div className="mt-6 space-y-2 border-t border-border pt-4">
+                    <h2 className="text-base font-semibold">Tono con IA</h2>
+                    <p className="text-xs text-muted">
+                      Revisa el tono y los temas vetados del texto de la publicación. Ayuda a revisar; no aprueba.
+                    </p>
+                    <AiBrandCheck
+                      brandId={brand.id}
+                      text={publishedText(state.document.copy.caption, state.document.copy.hashtags)}
+                    />
+                  </div>
+                )}
               </TabsContent>
             )}
           </Tabs>
