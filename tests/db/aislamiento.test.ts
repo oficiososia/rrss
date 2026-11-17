@@ -34,6 +34,8 @@ let assetA1: string, assetB1: string;
 // IA y cola de trabajos (Fase 2): una generación y un trabajo por organización.
 let genA1: string, genB1: string, genG1: string;
 let jobA1: string, jobOrgA: string, jobB1: string;
+// Contenidos (Fase 2): una pieza con una versión guardada en cada marca.
+let contentA1: string, contentA2: string, contentB1: string, contentG1: string;
 
 const PROFILE = { business: { description: 'Negocio de prueba' } };
 
@@ -117,6 +119,23 @@ beforeAll(async () => {
   jobA1 = await enqueue(orgA, marcaA1, 'a1');
   jobOrgA = await enqueue(orgA, null, 'org-a');
   jobB1 = await enqueue(orgB, marcaB1, 'b1');
+
+  // Contenidos: una pieza con su primera versión en cada marca.
+  const content = async (user: TestUser, org: string, brand: string) => {
+    const [item] = await as<{ id: string }>(
+      db,
+      user,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Pieza', 'instagram', 'post') returning id`,
+      [brand, org],
+    );
+    await as(db, user, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 1)`, [item!.id]);
+    return item!.id;
+  };
+  contentA1 = await content(editorA, orgA, marcaA1);
+  contentA2 = await content(ana, orgA, marcaA2);
+  contentB1 = await content(berta, orgB, marcaB1);
+  contentG1 = await content(gema, agencia, marcaG1);
 });
 
 afterAll(async () => {
@@ -140,6 +159,8 @@ const TENANT_TABLES = [
   'ai_generations',
   'ai_usage',
   'jobs',
+  'content_items',
+  'content_versions',
 ];
 
 describe('catálogo: nada queda abierto por olvido', () => {
@@ -222,6 +243,8 @@ describe('aislamiento entre organizaciones', () => {
       'ai_generations',
       'ai_usage',
       'jobs',
+      'content_items',
+      'content_versions',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -881,6 +904,93 @@ describe('IA y cola de trabajos', () => {
     for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
       expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
     }
+  });
+});
+
+describe('contenidos y versiones', () => {
+  const items = async (user: TestUser) =>
+    (await as<{ id: string }>(db, user, `select id::text as id from public.content_items`)).map((r) => r.id).sort();
+  const versionsOf = async (user: TestUser) =>
+    (await as<{ id: string }>(db, user, `select distinct content_id::text as id from public.content_versions`))
+      .map((r) => r.id)
+      .sort();
+  const insertItem = `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Intrusa', 'instagram', 'post')`;
+  const save = `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 1)`;
+  const noEdit = /No tienes permiso para editar/;
+
+  it('una organización no ve los contenidos ni las versiones de otra', async () => {
+    // Cada una ve lo suyo (la prueba no pasa «porque no hay nada»). Ana ve además
+    // la marca de la agencia donde es lectora; nunca la de B.
+    expect(await items(berta)).toEqual([contentB1]);
+    expect(await versionsOf(berta)).toEqual([contentB1]);
+    expect(await items(ana)).toEqual([contentA1, contentA2, contentG1].sort());
+    expect(await versionsOf(ana)).toEqual([contentA1, contentA2, contentG1].sort());
+    expect(await items(gema)).toEqual([contentG1]);
+
+    expect(await as(db, ana, `select 1 from public.content_items where id = $1`, [contentB1])).toEqual([]);
+    expect(await as(db, ana, `select 1 from public.content_versions where content_id = $1`, [contentB1])).toEqual([]);
+    expect(await as(db, berta, `select 1 from public.content_versions where content_id = $1`, [contentA1])).toEqual([]);
+  });
+
+  it('no se crea, guarda, restaura, aprueba ni archiva en la organización ajena', async () => {
+    await denied(db, ana, insertItem, [marcaB1, orgB]);
+    await denied(db, ana, save, [contentB1], noEdit);
+    await denied(db, ana, `select public.restore_content_version($1, 1)`, [contentB1], noEdit);
+    await denied(db, ana, `select public.set_content_status($1, 'in_review')`, [contentB1]);
+    await denied(db, ana, `select public.set_content_status($1, 'approved', 1)`, [contentB1]);
+    await denied(db, ana, `select public.archive_content_item($1)`, [contentB1]);
+    expect(
+      await as(db, ana, `update public.content_items set title = 'Robada' where id = $1 returning id`, [contentB1]),
+    ).toEqual([]);
+
+    const [item] = await db.query(
+      `select title, status, current_version, archived_at from public.content_items where id = $1`,
+      [contentB1],
+    );
+    expect(item).toEqual({ title: 'Pieza', status: 'draft', current_version: 1, archived_at: null });
+  });
+
+  it('una pieza no se puede mover de marca ni declararse de otra organización', async () => {
+    await denied(db, ana, `update public.content_items set brand_id = $1 where id = $2`, [marcaA2, contentA1]);
+    await denied(db, ana, `update public.content_items set organization_id = $1 where id = $2`, [orgB, contentA1]);
+    // Marca propia con la organización ajena: lo impide la clave foránea compuesta.
+    await denied(db, ana, insertItem, [marcaA1, orgB], /foreign key|row-level security/i);
+  });
+
+  it('dentro de la organización: ve quien ve la marca, escribe quien la edita', async () => {
+    expect(await items(editorA)).toEqual([contentA1]);
+    expect(await items(clienteA)).toEqual([contentA1]);
+    expect(await versionsOf(clienteA)).toEqual([contentA1]);
+    expect(await items(sinMarcaA)).toEqual([]);
+    expect(await versionsOf(sinMarcaA)).toEqual([]);
+    expect(await items(adminA)).toEqual([contentA1, contentA2].sort());
+
+    // El cliente ve pero no crea ni guarda; el editor de A1 no toca A2.
+    await denied(db, clienteA, insertItem, [marcaA1, orgA]);
+    await denied(db, clienteA, save, [contentA1], noEdit);
+    await denied(db, editorA, insertItem, [marcaA2, orgA]);
+    await denied(db, editorA, save, [contentA2], noEdit);
+    await denied(db, editorA, `select public.archive_content_item($1)`, [contentA2]);
+    await denied(db, sinMarcaA, save, [contentA1], noEdit);
+
+    // Ana solo es lectora en la agencia: ve la pieza, no la cambia.
+    await denied(db, ana, save, [contentG1], noEdit);
+    await denied(db, ana, `select public.set_content_status($1, 'draft')`, [contentG1]);
+  });
+
+  it('ser superadministrador no abre los contenidos de los clientes', async () => {
+    expect(await items(superadmin)).toEqual([]);
+    expect(await versionsOf(superadmin)).toEqual([]);
+    await denied(db, superadmin, save, [contentA1], noEdit);
+  });
+
+  it('sin sesión no se ejecuta ninguna función de contenidos', async () => {
+    const noFunction = /permission denied for function/;
+    await denied(db, null, save, [contentA1], noFunction);
+    await denied(db, null, `select public.restore_content_version($1, 1)`, [contentA1], noFunction);
+    await denied(db, null, `select public.set_content_status($1, 'draft')`, [contentA1], noFunction);
+    await denied(db, null, `select public.archive_content_item($1)`, [contentA1], noFunction);
   });
 });
 
