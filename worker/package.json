@@ -1,0 +1,26 @@
+{
+  "name": "rrss-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Trabajador de medios: consume la cola de trabajos y ejecuta FFmpeg",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "job": "node src/cli.ts",
+    "schemas": "node scripts/write-schemas.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:reel": "vitest run tests/reel-template.test.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
