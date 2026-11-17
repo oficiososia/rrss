@@ -44,6 +44,7 @@ async function main(): Promise<number> {
     mode: config.WORKER_MODE,
     concurrency: config.WORKER_CONCURRENCY,
     leaseSeconds: config.WORKER_LEASE_SECONDS,
+    maxAttemptSeconds: config.WORKER_MAX_ATTEMPT_SECONDS,
     pollIntervalMs: config.WORKER_POLL_MS,
     idleExitMs: config.WORKER_IDLE_EXIT_MS,
     shutdownGraceMs: config.WORKER_SHUTDOWN_GRACE_MS,

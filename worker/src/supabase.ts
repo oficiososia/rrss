@@ -60,6 +60,12 @@ export function createSupabaseQueue(options: SupabaseOptions): JobQueue {
     async fail(jobId, worker, error, retry) {
       await rpc('fail_job', { p_job_id: jobId, p_worker: worker, p_error: error, p_retry: retry });
     },
+    async release(jobId, worker) {
+      await rpc('release_job', { p_job_id: jobId, p_worker: worker });
+    },
+    async extendLease(jobId, worker, leaseSeconds) {
+      await rpc('extend_job_lease', { p_job_id: jobId, p_worker: worker, p_lease_seconds: leaseSeconds });
+    },
   };
 }
 

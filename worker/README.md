@@ -79,16 +79,21 @@ local y el SQL real, sin Supabase.
 - **Cierra** con `complete_job` (resultado en `jobs.result`) o `fail_job`.
   Una carga inválida o un archivo ilegible es un fallo **sin reintento**; lo
   demás se reintenta con la espera creciente de la cola.
-- **Respeta la reserva.** La cola no tiene función para renovarla, así que el
-  trabajador pide una reserva larga (`WORKER_LEASE_SECONDS`, 15 min por
-  defecto, 1 h como máximo) y aborta el manejador —mata FFmpeg— un margen antes
-  de que caduque, devolviendo el trabajo. Nunca hay dos trabajadores con el
-  mismo trabajo. Un intento no puede durar más que la reserva.
+- **Renueva la reserva.** Pide una reserva corta (`WORKER_LEASE_SECONDS`,
+  5 min por defecto) y la renueva con `extend_job_lease` cada tercio de ella
+  mientras el manejador avanza. Si no consigue renovarla, aborta el manejador
+  —mata FFmpeg— un margen antes de que caduque y devuelve el trabajo; si al
+  renovar descubre que ya no es suya (cancelado o reclamado por otro), aborta
+  en el acto sin tocar la cola. Nunca hay dos trabajadores con el mismo
+  trabajo. Un intento no pasa de `WORKER_MAX_ATTEMPT_SECONDS` (1 h por
+  defecto), renueve o no. Si el trabajador muere, el trabajo queda libre en
+  cuanto caduca la reserva corta.
 - **Modo `drain`** (por defecto): sale cuando la cola está vacía, con código 0.
   Pensado para alojamientos que escalan a cero. **Modo `continuous`**: sigue
   sondeando cada `WORKER_POLL_MS`.
 - **Apagado ordenado** (`SIGTERM`/`SIGINT`): deja de reclamar, aborta lo que
-  tenga a medias y lo devuelve a la cola con `fail_job(…, retry)`. Con
+  tenga a medias y lo devuelve a la cola con `release_job`, **sin gastar
+  intento** y disponible en el acto (no es un fallo del trabajo). Con
   `WORKER_SHUTDOWN_GRACE_MS` espera antes ese tiempo a que termine.
 - **Registro**: una línea JSON por suceso. Cada intento deja un `job.attempt`
   con trabajo, tipo, número de intento, resultado (`succeeded`, `retry`,
@@ -98,15 +103,10 @@ local y el SQL real, sin Supabase.
   y la marca del trabajo (`assertJobPath`): un trabajo no puede leer ni
   escribir medios de otra marca.
 
-Limitaciones conocidas, por no tener la cola una función para soltar o renovar
-un trabajo (no se ha añadido migración: no era imprescindible):
-
-- Devolver un trabajo al apagarse **gasta un intento** y vuelve con la espera
-  de reintento (30 s la primera vez). Si era su último intento, queda `failed`
-  con el motivo «Apagado ordenado…». Lo arreglaría una función
-  `release_job(job, worker)` que lo devuelva sin contar el intento.
-- Un trabajo más largo que una hora no cabe. Lo arreglaría una función
-  `extend_job_lease(job, worker, seconds)` y un latido en el bucle.
+Las dos funciones de la cola que usa para esto (`release_job` y
+`extend_job_lease`) llegaron con la migración `20261117150000_jobs_release_extend.sql`.
+Si `release_job` falla (sin red), el trabajo vuelve igualmente cuando caduca
+la reserva, pero gastando ese intento.
 
 ## Tipos de trabajo
 
@@ -227,7 +227,8 @@ permitirlos cuando se use.
 | `WORKER_MODE`                 | `drain`                       | `drain` (vacía y sale) o `continuous`                                                                      |
 | `WORKER_ID`                   | `media-<host>-<pid>`          | Nombre con el que reserva (`jobs.locked_by`)                                                               |
 | `WORKER_CONCURRENCY`          | `1`                           | Trabajos a la vez (FFmpeg ya usa todos los núcleos)                                                        |
-| `WORKER_LEASE_SECONDS`        | `900`                         | Reserva y tiempo máximo de un intento (5–3600)                                                             |
+| `WORKER_LEASE_SECONDS`        | `300`                         | Duración de la reserva, que se renueva cada tercio (5–3600)                                                |
+| `WORKER_MAX_ATTEMPT_SECONDS`  | `3600`                        | Tiempo máximo de un intento aunque renueve (5–21600)                                                       |
 | `WORKER_POLL_MS`              | `5000`                        | Espera entre sondeos con la cola vacía                                                                     |
 | `WORKER_IDLE_EXIT_MS`         | `0`                           | En `drain`, cuánto espera con la cola vacía antes de salir                                                 |
 | `WORKER_SHUTDOWN_GRACE_MS`    | `0`                           | Margen para terminar lo que esté en curso al apagar                                                        |

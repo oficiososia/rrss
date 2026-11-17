@@ -2,10 +2,16 @@
 // los cierra. No sabe nada de Supabase ni de FFmpeg: cola, almacenamiento y
 // manejadores se inyectan.
 //
-// Reserva: la cola no tiene (todavía) una función para renovarla, así que el
-// trabajador la *respeta*: pide una reserva larga y aborta el manejador un
-// margen antes de que caduque. Así nunca hay dos trabajadores con el mismo
-// trabajo, que es lo que pasaría si FFmpeg siguiera más allá de la reserva.
+// Reserva: el trabajador pide una reserva corta y la renueva
+// (`extend_job_lease`) mientras el manejador avanza. Si no consigue renovarla,
+// aborta el manejador un margen antes de que caduque: así nunca hay dos
+// trabajadores con el mismo trabajo, que es lo que pasaría si FFmpeg siguiera
+// más allá de la reserva. Si al renovar descubre que la reserva ya no es suya
+// (cancelado o reclamado por otro), aborta en el acto. Cada intento tiene
+// además un tiempo máximo, renueve o no.
+//
+// Apagado ordenado: lo que queda a medias se devuelve con `release_job`, que
+// no gasta intento (no es un fallo del trabajo).
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { errorMessage, LeaseLostError, LeaseTimeoutError, PermanentError, ShutdownError } from './errors.ts';
@@ -28,10 +34,14 @@ export interface WorkerOptions {
   mode: 'drain' | 'continuous';
   /** Trabajos a la vez. FFmpeg ya usa todos los núcleos: 1 suele bastar. */
   concurrency?: number;
-  /** Duración de la reserva (5–3600 s). Es también el tiempo máximo de un intento. */
+  /** Duración de la reserva (5–3600 s). Se renueva mientras el trabajo avanza. */
   leaseSeconds?: number;
-  /** Margen antes de que caduque la reserva en el que se aborta el manejador. */
+  /** Margen antes de que caduque la reserva (sin renovar) en el que se aborta el manejador. */
   leaseMarginSeconds?: number;
+  /** Cada cuánto se renueva la reserva. Por defecto, un tercio de la reserva (y siempre antes del margen). */
+  renewEveryMs?: number;
+  /** Tiempo máximo de un intento, aunque la reserva se vaya renovando. */
+  maxAttemptSeconds?: number;
   /** Espera entre sondeos con la cola vacía (modo continuo). */
   pollIntervalMs?: number;
   /** En modo `drain`, cuánto sigue sondeando con la cola vacía antes de salir. */
@@ -67,8 +77,13 @@ export function createWorker(options: WorkerOptions): Worker {
     workerId,
     mode,
     concurrency = 1,
-    leaseSeconds = 900,
+    leaseSeconds = 300,
     leaseMarginSeconds = Math.min(30, Math.max(1, Math.floor(leaseSeconds * 0.1))),
+    renewEveryMs = Math.max(
+      100,
+      Math.floor(Math.min(leaseSeconds / 3, (leaseSeconds - leaseMarginSeconds) / 2) * 1000),
+    ),
+    maxAttemptSeconds = 3600,
     pollIntervalMs = 5_000,
     idleExitMs = 0,
     shutdownGraceMs = 0,
@@ -77,6 +92,8 @@ export function createWorker(options: WorkerOptions): Worker {
   if (concurrency < 1 || concurrency > 100) throw new Error('La concurrencia debe estar entre 1 y 100');
   if (leaseSeconds < 5 || leaseSeconds > 3600) throw new Error('La reserva debe durar entre 5 segundos y una hora');
   if (leaseMarginSeconds >= leaseSeconds) throw new Error('El margen debe ser menor que la reserva');
+  if (!(renewEveryMs > 0)) throw new Error('La renovación de la reserva debe tener un intervalo positivo');
+  if (!(maxAttemptSeconds > 0)) throw new Error('El tiempo máximo de un intento debe ser positivo');
 
   const handlers = new Map(options.handlers.map((h) => [h.kind, h]));
   const kinds = [...handlers.keys()];
@@ -134,17 +151,69 @@ export function createWorker(options: WorkerOptions): Worker {
     return requeued ? 'retry' : 'failed';
   }
 
+  /** Devuelve a la cola el trabajo a medias, sin gastar intento. */
+  async function release(job: Job): Promise<'released' | 'lease_lost'> {
+    try {
+      await queue.release(job.id, workerId);
+    } catch (error) {
+      if (error instanceof LeaseLostError) return 'lease_lost';
+      // No se pudo devolver: la reserva caducará y la cola lo recuperará (gastando ese intento).
+      logger.error('job.release_failed', { jobId: job.id, kind: job.kind, error: errorMessage(error) });
+    }
+    return 'released';
+  }
+
   async function runJob(job: Job, claimStartedAt: number): Promise<void> {
     const startedAt = Date.now();
     const controller = new AbortController();
     inFlight.set(job.id, controller);
     // Si el apagado ya venció mientras se reclamaba, el trabajo vuelve sin empezar.
     if (graceOver) controller.abort(stopController.signal.reason);
-    const budgetMs = claimStartedAt + (leaseSeconds - leaseMarginSeconds) * 1000 - startedAt;
-    const leaseTimer = setTimeout(
-      () => controller.abort(new LeaseTimeoutError(`El trabajo superó el tiempo reservado (${leaseSeconds} s)`)),
-      Math.max(0, budgetMs),
+
+    // Reserva: vence `leaseSeconds` después de pedirla (o de la última renovación).
+    let leaseUntil = claimStartedAt + leaseSeconds * 1000;
+    let leaseTimer: NodeJS.Timeout | undefined;
+    const armLeaseTimer = () => {
+      clearTimeout(leaseTimer);
+      leaseTimer = setTimeout(
+        () =>
+          controller.abort(
+            new LeaseTimeoutError(`El trabajo superó el tiempo reservado (${leaseSeconds} s) sin poder renovarlo`),
+          ),
+        Math.max(0, leaseUntil - leaseMarginSeconds * 1000 - Date.now()),
+      );
+    };
+    armLeaseTimer();
+    const maxTimer = setTimeout(
+      () =>
+        controller.abort(
+          new LeaseTimeoutError(`El trabajo superó el tiempo máximo de un intento (${maxAttemptSeconds} s)`),
+        ),
+      maxAttemptSeconds * 1000,
     );
+    let renewing = false;
+    const renewTimer = setInterval(() => {
+      if (renewing || controller.signal.aborted) return;
+      renewing = true;
+      const askedAt = Date.now();
+      queue
+        .extendLease(job.id, workerId, leaseSeconds)
+        .then(
+          () => {
+            if (controller.signal.aborted) return;
+            leaseUntil = askedAt + leaseSeconds * 1000;
+            armLeaseTimer();
+          },
+          (error: unknown) => {
+            if (error instanceof LeaseLostError) controller.abort(error);
+            else logger.warn('job.lease_renew_failed', { jobId: job.id, kind: job.kind, error: errorMessage(error) });
+          },
+        )
+        .finally(() => {
+          renewing = false;
+        });
+    }, renewEveryMs);
+
     const fields = { jobId: job.id, kind: job.kind, attempt: job.attempts, maxAttempts: job.max_attempts };
     logger.info('job.started', fields);
 
@@ -171,8 +240,7 @@ export function createWorker(options: WorkerOptions): Worker {
       if (cause instanceof LeaseLostError) {
         outcome = 'lease_lost';
       } else if (cause instanceof ShutdownError) {
-        const closed = await closeFailed(job, 'Apagado ordenado del trabajador: el trabajo vuelve a la cola', true);
-        outcome = closed === 'retry' ? 'released' : closed;
+        outcome = await release(job);
       } else if (cause instanceof LeaseTimeoutError) {
         const closed = await closeFailed(job, failure, true);
         outcome = closed === 'retry' ? 'timeout' : closed;
@@ -181,6 +249,8 @@ export function createWorker(options: WorkerOptions): Worker {
       }
     } finally {
       clearTimeout(leaseTimer);
+      clearTimeout(maxTimer);
+      clearInterval(renewTimer);
       inFlight.delete(job.id);
       if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
     }

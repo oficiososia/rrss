@@ -1,6 +1,7 @@
 // Contrato de la cola, tal como lo necesita el trabajador. Es el mismo de
-// `supabase/migrations/20261116111000_jobs.sql` (reclamar, terminar, fallar),
-// sin nada de Supabase: la conexión se inyecta.
+// `supabase/migrations/20261116111000_jobs.sql` (reclamar, terminar, fallar) y
+// `20261117150000_jobs_release_extend.sql` (devolver, renovar), sin nada de
+// Supabase: la conexión se inyecta.
 
 export type JsonObject = Record<string, unknown>;
 
@@ -31,4 +32,14 @@ export interface JobQueue {
    * quedan intentos. Lanza `LeaseLostError` si la reserva ya no es nuestra.
    */
   fail(jobId: string, worker: string, error: string, retry: boolean): Promise<void>;
+  /**
+   * Devuelve a la cola un trabajo a medias sin gastar intento (apagado
+   * ordenado). Lanza `LeaseLostError` si la reserva ya no es nuestra.
+   */
+  release(jobId: string, worker: string): Promise<void>;
+  /**
+   * Renueva la reserva: caduca dentro de `leaseSeconds` desde ahora. Lanza
+   * `LeaseLostError` si la reserva ya no es nuestra.
+   */
+  extendLease(jobId: string, worker: string, leaseSeconds: number): Promise<void>;
 }

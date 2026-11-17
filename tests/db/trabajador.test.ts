@@ -1,6 +1,6 @@
 // El bucle del trabajador de medios (worker/src/worker.ts) contra la cola
 // REAL de las migraciones: reclamar, cerrar, fallar con reintento, apagado
-// ordenado y cancelación. Los manejadores son de mentira (aquí no hay FFmpeg):
+// ordenado (devolver sin gastar intento), renovar la reserva y cancelación. Los manejadores son de mentira (aquí no hay FFmpeg):
 // lo que se prueba es el contrato entre el trabajador y las funciones SQL.
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -70,6 +70,14 @@ const sqlQueue: JobQueue = {
   async fail(jobId, worker, error, retry) {
     await closing(() =>
       serviceRpc(db, 'fail_job', { p_job_id: jobId, p_worker: worker, p_error: error, p_retry: retry }),
+    );
+  },
+  async release(jobId, worker) {
+    await closing(() => serviceRpc(db, 'release_job', { p_job_id: jobId, p_worker: worker }));
+  },
+  async extendLease(jobId, worker, leaseSeconds) {
+    await closing(() =>
+      serviceRpc(db, 'extend_job_lease', { p_job_id: jobId, p_worker: worker, p_lease_seconds: leaseSeconds }),
     );
   },
 };
@@ -167,7 +175,7 @@ describe('trabajador de medios contra la cola real', () => {
     });
   });
 
-  it('apagado ordenado: el trabajo a medias vuelve a la cola y otro trabajador lo termina', async () => {
+  it('apagado ordenado: el trabajo a medias vuelve a la cola sin gastar intento y otro lo termina', async () => {
     const { id } = await enqueue('media.video.derivatives');
     let started!: () => void;
     const running = new Promise<void>((resolve) => (started = resolve));
@@ -187,16 +195,14 @@ describe('trabajador de medios contra la cola real', () => {
     expect(await job(id)).toMatchObject({ status: 'running', locked_by: 'medios-1' });
     first.stop('SIGTERM');
     expect(await finished).toMatchObject({ stoppedBy: 'shutdown', outcomes: { released: 1 } });
-    expect(await job(id)).toMatchObject({ status: 'queued', locked_by: null, attempts: 1 });
-    expect((await job(id)).last_error).toMatch(/Apagado ordenado/);
+    expect(await job(id)).toMatchObject({ status: 'queued', locked_by: null, attempts: 0, last_error: null });
 
-    // Pasada la espera, otro trabajador lo recoge y lo termina.
-    await db.query(`update public.jobs set run_after = now() - interval '1 second' where id = $1`, [id]);
+    // Sin espera: otro trabajador lo recoge en el acto y lo termina en su primer intento.
     const second = worker([{ kind: 'media.video.derivatives', run: async () => ({ ok: true }) }], {
       workerId: 'medios-2',
     });
     expect(await second.run()).toMatchObject({ outcomes: { succeeded: 1 } });
-    expect(await job(id)).toMatchObject({ status: 'succeeded', attempts: 2, result: { ok: true } });
+    expect(await job(id)).toMatchObject({ status: 'succeeded', attempts: 1, result: { ok: true } });
   });
 
   it('un trabajo cancelado mientras se ejecuta no se cierra: su resultado se descarta', async () => {
@@ -216,7 +222,43 @@ describe('trabajador de medios contra la cola real', () => {
     expect(await job(id)).toMatchObject({ status: 'cancelled', result: null });
   });
 
-  it('respeta la reserva: aborta antes de que caduque, así nadie más recoge el trabajo a la vez', async () => {
+  it('un trabajo largo renueva su reserva en la cola real y nadie más lo recoge mientras', async () => {
+    const { id } = await enqueue('media.reel.template');
+    const leaseLeft = async () =>
+      (
+        await db.query<{ s: number }>(
+          `select extract(epoch from locked_until - now())::float as s from public.jobs where id = $1`,
+          [id],
+        )
+      )[0]!.s;
+    const seen: number[] = [];
+
+    const summary = await worker(
+      [
+        {
+          kind: 'media.reel.template',
+          async run() {
+            // 1,5 s: sin renovar, la reserva de 5 s se habría abortado a los 0,5 s.
+            for (let i = 0; i < 5; i += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 300));
+              seen.push(await leaseLeft());
+            }
+            const rival = rpcStatement('claim_jobs', { p_worker: 'medios-2', p_limit: 10 });
+            expect(await asService(db, rival.sql, rival.params)).toEqual([]);
+            return { ok: true };
+          },
+        },
+      ],
+      { leaseSeconds: 5, leaseMarginSeconds: 4.5, renewEveryMs: 100 },
+    ).run();
+
+    expect(summary.outcomes).toMatchObject({ succeeded: 1, timeout: 0 });
+    // Tras cada renovación a la reserva le quedan casi los 5 s enteros.
+    expect(Math.min(...seen)).toBeGreaterThan(4);
+    expect(await job(id)).toMatchObject({ status: 'succeeded', attempts: 1 });
+  });
+
+  it('respeta la reserva: si no puede renovarla, aborta antes de que caduque y nadie más lo recoge a la vez', async () => {
     const { id } = await enqueue('media.reel.template');
     const startedAt = Date.now();
 
@@ -230,7 +272,18 @@ describe('trabajador de medios contra la cola real', () => {
             }),
         },
       ],
-      { leaseSeconds: 5, leaseMarginSeconds: 4.5 },
+      // Una cola que no deja renovar (la red cae justo en esas llamadas).
+      {
+        leaseSeconds: 5,
+        leaseMarginSeconds: 4.5,
+        renewEveryMs: 100,
+        queue: {
+          ...sqlQueue,
+          extendLease: async () => {
+            throw new Error('La cola respondió 503');
+          },
+        },
+      },
     ).run();
 
     expect(Date.now() - startedAt).toBeLessThan(4_000);

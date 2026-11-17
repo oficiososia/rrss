@@ -85,6 +85,8 @@ describe('cola por PostgREST', () => {
     rpcReply = { status: 200, body: job };
     await queue.complete('j1', 't1', { ok: true });
     await queue.fail('j1', 't1', 'Se cayó', true);
+    await queue.release('j1', 't1');
+    await queue.extendLease('j1', 't1', 300);
 
     expect(seen.map((r) => [r.method, r.url, JSON.parse(r.body.toString())])).toEqual([
       [
@@ -94,6 +96,8 @@ describe('cola por PostgREST', () => {
       ],
       ['POST', '/rest/v1/rpc/complete_job', { p_job_id: 'j1', p_worker: 't1', p_result: { ok: true } }],
       ['POST', '/rest/v1/rpc/fail_job', { p_job_id: 'j1', p_worker: 't1', p_error: 'Se cayó', p_retry: true }],
+      ['POST', '/rest/v1/rpc/release_job', { p_job_id: 'j1', p_worker: 't1' }],
+      ['POST', '/rest/v1/rpc/extend_job_lease', { p_job_id: 'j1', p_worker: 't1', p_lease_seconds: 300 }],
     ]);
     expect(seen[0]!.headers['content-type']).toBe('application/json');
   });
@@ -103,6 +107,8 @@ describe('cola por PostgREST', () => {
     rpcReply = { status: 400, body: { code: 'P0001', message: 'El trabajo no está reservado por este trabajador' } };
     await expect(queue.complete('j1', 't1', {})).rejects.toThrow(LeaseLostError);
     await expect(queue.fail('j1', 't1', 'x', true)).rejects.toThrow(LeaseLostError);
+    await expect(queue.release('j1', 't1')).rejects.toThrow(LeaseLostError);
+    await expect(queue.extendLease('j1', 't1', 60)).rejects.toThrow(LeaseLostError);
 
     rpcReply = { status: 503, body: { message: 'upstream timeout' } };
     await expect(queue.claim({ worker: 't1', kinds: ['k'], limit: 1, leaseSeconds: 60 })).rejects.toThrow(

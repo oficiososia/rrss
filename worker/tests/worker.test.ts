@@ -26,6 +26,8 @@ interface StoredJob extends Job {
 
 function createMemoryQueue() {
   const jobs: StoredJob[] = [];
+  /** Renovaciones pedidas, y si la próxima falla por un error pasajero de la red. */
+  const lease = { renewals: 0, failRenewals: false };
   const owned = (id: string, worker: string) => {
     const job = jobs.find((j) => j.id === id && j.status === 'running' && j.locked_by === worker);
     if (!job) throw new LeaseLostError('El trabajo no está reservado por este trabajador');
@@ -47,6 +49,16 @@ function createMemoryQueue() {
       // Si vuelve a la cola es con espera (`run_after`): aún no se puede reclamar.
       Object.assign(job, { status: again ? 'queued' : 'failed', waiting: again, locked_by: null, last_error: error });
     },
+    // Como release_job: vuelve a la cola ya y sin gastar el intento.
+    async release(id, worker) {
+      const job = owned(id, worker);
+      Object.assign(job, { status: 'queued', waiting: false, locked_by: null, attempts: job.attempts - 1 });
+    },
+    async extendLease(id, worker) {
+      if (lease.failRenewals) throw new Error('La cola respondió 503');
+      owned(id, worker);
+      lease.renewals += 1;
+    },
   };
   let n = 0;
   const add = (kind: string, payload: JsonObject = {}, maxAttempts = 3): StoredJob => {
@@ -65,7 +77,7 @@ function createMemoryQueue() {
     jobs.push(job);
     return job;
   };
-  return { queue, jobs, add };
+  return { queue, jobs, add, lease };
 }
 
 let tmpRoot: string;
@@ -161,8 +173,36 @@ describe('bucle del trabajador', () => {
     ]);
   });
 
-  it('respeta la reserva: aborta el manejador antes de que caduque y devuelve el trabajo', async () => {
-    const t = setup([{ kind: 'largo', run: untilAborted }], { leaseSeconds: 5, leaseMarginSeconds: 4.8 });
+  it('un trabajo largo renueva su reserva y termina aunque dure más que ella', async () => {
+    // Sin renovar, el manejador se abortaría a los 0,2 s (5 s de reserva − 4,8 de margen).
+    const t = setup(
+      [
+        {
+          kind: 'largo',
+          async run() {
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            return { ok: true };
+          },
+        },
+      ],
+      { leaseSeconds: 5, leaseMarginSeconds: 4.8, renewEveryMs: 50 },
+    );
+    const job = t.add('largo');
+
+    const summary = await t.worker.run();
+
+    expect(summary.outcomes).toMatchObject({ succeeded: 1, timeout: 0 });
+    expect(job.status).toBe('succeeded');
+    expect(t.lease.renewals).toBeGreaterThan(3);
+  });
+
+  it('si no consigue renovar, aborta el manejador antes de que caduque y devuelve el trabajo', async () => {
+    const t = setup([{ kind: 'largo', run: untilAborted }], {
+      leaseSeconds: 5,
+      leaseMarginSeconds: 4.8,
+      renewEveryMs: 50,
+    });
+    t.lease.failRenewals = true;
     const job = t.add('largo');
     const startedAt = Date.now();
 
@@ -172,6 +212,46 @@ describe('bucle del trabajador', () => {
     expect(summary.outcomes).toMatchObject({ timeout: 1 });
     expect(job).toMatchObject({ status: 'queued', locked_by: null });
     expect(job.last_error).toMatch(/superó el tiempo reservado/);
+    expect(t.logger.entries.some((e) => e.event === 'job.lease_renew_failed')).toBe(true);
+  });
+
+  it('si al renovar la reserva ya no es suya (cancelado), aborta en el acto sin tocar la cola', async () => {
+    const t = setup(
+      [
+        {
+          kind: 'largo',
+          run(context) {
+            // Lo que hace cancel_job mientras el trabajo avanza.
+            Object.assign(
+              t.jobs.find((j) => j.id === context.job.id)!,
+              { status: 'cancelled', locked_by: null },
+            );
+            return untilAborted(context);
+          },
+        },
+      ],
+      { renewEveryMs: 20 },
+    );
+    const job = t.add('largo');
+    const startedAt = Date.now();
+
+    const summary = await t.worker.run();
+
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+    expect(summary.outcomes).toMatchObject({ lease_lost: 1 });
+    expect(job).toMatchObject({ status: 'cancelled' });
+    expect(job.last_error).toBeUndefined();
+  });
+
+  it('aunque renueve, un intento no pasa de su tiempo máximo', async () => {
+    const t = setup([{ kind: 'eterno', run: untilAborted }], { renewEveryMs: 20, maxAttemptSeconds: 0.3 });
+    const job = t.add('eterno');
+
+    const summary = await t.worker.run();
+
+    expect(summary.outcomes).toMatchObject({ timeout: 1 });
+    expect(job.status).toBe('queued');
+    expect(job.last_error).toMatch(/tiempo máximo de un intento/);
   });
 
   it('apagado ordenado: no reclama más y el trabajo a medias vuelve a la cola', async () => {
@@ -195,8 +275,9 @@ describe('bucle del trabajador', () => {
     const summary = await finished;
 
     expect(summary).toMatchObject({ claimed: 1, stoppedBy: 'shutdown', outcomes: { released: 1 } });
-    expect(enCurso).toMatchObject({ status: 'queued', locked_by: null });
-    expect(enCurso.last_error).toMatch(/Apagado ordenado/);
+    // Devuelto con release_job: sin gastar el intento y sin anotarlo como error.
+    expect(enCurso).toMatchObject({ status: 'queued', locked_by: null, attempts: 0 });
+    expect(enCurso.last_error).toBeUndefined();
     expect(sinEmpezar).toMatchObject({ status: 'queued', attempts: 0 });
   });
 
@@ -312,6 +393,8 @@ describe('bucle del trabajador', () => {
         },
         complete: async () => undefined,
         fail: async () => undefined,
+        release: async () => undefined,
+        extendLease: async () => undefined,
       },
       storage: createFolderStorage(tmpRoot),
       handlers: [{ kind: 'eco', run: async () => ({}) }],
