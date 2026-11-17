@@ -329,6 +329,86 @@ type Phase2Enums = {
 
 // ───────────────────────────── fin del bloque de la Fase 2 ─────────────────────────────
 
+// ───────────── Fase 2 · IA de medios: registro de modelos de imagen y vídeo ─────────────
+// Migración 20261117110000_ai_media_models. Catálogo de la plataforma: lo lee
+// cualquier usuario con sesión y solo lo escribe un superadministrador.
+// `price_micros` va en millonésimas de `price_currency` por unidad de cobro.
+
+export type AiMediaTask = Extract<AiTask, 'image' | 'video'>;
+export type AiMediaBillingUnit = 'image' | 'megapixel' | 'second';
+export type AiMediaDataRegion = 'eu' | 'us' | 'global' | 'unknown';
+export type AiMediaTrainsOnInputs = 'no' | 'yes' | 'unknown';
+
+export type AiMediaModelRow = {
+  id: string;
+  provider: string;
+  model: string;
+  task: AiMediaTask;
+  display_name: string;
+  billing_unit: AiMediaBillingUnit;
+  price_micros: number;
+  price_details: Json;
+  price_currency: string;
+  price_checked_on: string;
+  price_source: string;
+  /** Un modelo con el precio sin verificar no se puede activar. */
+  price_verified: boolean;
+  data_region: AiMediaDataRegion;
+  trains_on_inputs: AiMediaTrainsOnInputs;
+  delivery: 'sync' | 'async';
+  settings: Json;
+  priority: number;
+  active: boolean;
+  notes: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AiMediaModelUpdate = Partial<
+  Pick<
+    AiMediaModelRow,
+    | 'model'
+    | 'display_name'
+    | 'billing_unit'
+    | 'price_micros'
+    | 'price_details'
+    | 'price_currency'
+    | 'price_checked_on'
+    | 'price_source'
+    | 'price_verified'
+    | 'data_region'
+    | 'trains_on_inputs'
+    | 'delivery'
+    | 'settings'
+    | 'priority'
+    | 'active'
+    | 'notes'
+  >
+>;
+
+type AiMediaModelInsert = Pick<
+  AiMediaModelRow,
+  | 'provider'
+  | 'model'
+  | 'task'
+  | 'display_name'
+  | 'billing_unit'
+  | 'price_micros'
+  | 'price_checked_on'
+  | 'price_source'
+  | 'data_region'
+  | 'trains_on_inputs'
+  | 'delivery'
+> &
+  Omit<AiMediaModelUpdate, 'model'>;
+
+type Phase2MediaTables = {
+  ai_media_models: Table<AiMediaModelRow, AiMediaModelInsert, AiMediaModelUpdate>;
+};
+
+// ─────────────────────── fin del bloque de IA de medios (Fase 2) ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -405,7 +485,8 @@ export type Database = {
       storage_cleanup_queue: Table<StorageCleanupRow>;
       invitations: Table<InvitationRow>;
       audit_logs: Table<AuditLogRow>;
-    } & Phase2Tables;
+    } & Phase2Tables &
+      Phase2MediaTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
