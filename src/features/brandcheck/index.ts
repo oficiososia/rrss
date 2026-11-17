@@ -9,5 +9,8 @@ export { checkContrast, checkPalette } from './visual';
 export { checkEmojis, checkReadability, countSyllables, fernandezHuerta, readabilityBand } from './style';
 export { contrastRatio, deltaE2000, deltaEHex, parseHex, relativeLuminance, rgbToLab } from './color';
 export { extractHashtags, extractMentions, findEmojis, findPhrase } from './text';
+export { buildBrandCheckInput, backgroundBehind, limitsFromSpec, textLayersFromDocument } from './document';
+export type { BuildInputOptions } from './document';
+export { extractPalette, quantizePalette } from './palette';
 export * from './thresholds';
 export type * from './types';
