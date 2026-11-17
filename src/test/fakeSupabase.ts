@@ -3,7 +3,9 @@
 // el código real de cada `api.ts` y de los componentes, y solo se finge la red:
 // tablas en memoria, RPC registradas por cada prueba y una sesión que se puede
 // abrir y cerrar. Lo que no se ha registrado falla con un error explícito.
-import type { Session, User } from '@supabase/supabase-js';
+// Las Edge Functions (`functions.invoke`) se simulan igual: cada prueba
+// registra la respuesta (estado HTTP y cuerpo) con `fake.fn(nombre, …)`.
+import { FunctionsFetchError, FunctionsHttpError, type Session, type User } from '@supabase/supabase-js';
 import { vi } from 'vitest';
 
 type Row = Record<string, unknown>;
@@ -13,12 +15,18 @@ interface QueryResult {
   count?: number;
 }
 export type RpcHandler = (args: Record<string, unknown>) => unknown;
+/** Respuesta simulada de una Edge Function. Si el manejador lanza, es un fallo de red. */
+export interface FunctionReply {
+  status: number;
+  body: unknown;
+}
+export type FunctionHandler = (body: unknown) => FunctionReply | Promise<FunctionReply>;
 export interface AuthResult {
   data: { user: User | null; session: Session | null };
   error: unknown;
 }
 export interface Call {
-  kind: 'insert' | 'update' | 'delete' | 'rpc';
+  kind: 'insert' | 'update' | 'delete' | 'rpc' | 'function';
   name: string;
   payload: unknown;
 }
@@ -203,6 +211,7 @@ export class FakeSupabase {
   sequence = 0;
   session: Session | null = null;
   private rpcs = new Map<string, RpcHandler>();
+  private functionHandlers = new Map<string, FunctionHandler>();
   private failures: { table: string; op: string; error: unknown }[] = [];
   private listeners = new Set<Listener>();
 
@@ -224,10 +233,31 @@ export class FakeSupabase {
     }),
   };
 
+  functions = {
+    invoke: async (name: string, options: { body?: unknown } = {}): Promise<{ data: unknown; error: unknown }> => {
+      this.calls.push({ kind: 'function', name, payload: options.body });
+      const handler = this.functionHandlers.get(name);
+      if (!handler) return { data: null, error: new FunctionsFetchError(new Error(`Función sin simular en la prueba: ${name}`)) };
+      let reply: FunctionReply;
+      try {
+        reply = await handler(options.body);
+      } catch (error) {
+        return { data: null, error: new FunctionsFetchError(error) };
+      }
+      if (reply.status >= 200 && reply.status < 300) return { data: structuredClone(reply.body), error: null };
+      const response = new Response(JSON.stringify(reply.body), {
+        status: reply.status,
+        headers: { 'content-type': 'application/json' },
+      });
+      return { data: null, error: new FunctionsHttpError(response) };
+    },
+  };
+
   /** Lo que importa `@/lib/supabase` como `supabase`. */
   client = {
     auth: this.auth,
     storage: this.storage,
+    functions: this.functions,
     from: (table: string) => new Query(this, table),
     rpc: async (name: string, args: Record<string, unknown> = {}): Promise<QueryResult> => {
       this.calls.push({ kind: 'rpc', name, payload: args });
@@ -253,6 +283,7 @@ export class FakeSupabase {
     this.sequence = 0;
     this.session = null;
     this.rpcs = new Map();
+    this.functionHandlers = new Map();
     this.failures = [];
     this.listeners = new Set();
     this.auth.getSession.mockReset().mockImplementation(async () => ({ data: { session: this.session }, error: null }));
@@ -292,6 +323,11 @@ export class FakeSupabase {
 
   rpc(name: string, handler: RpcHandler) {
     this.rpcs.set(name, handler);
+  }
+
+  /** Registra la respuesta de una Edge Function. */
+  fn(name: string, handler: FunctionHandler) {
+    this.functionHandlers.set(name, handler);
   }
 
   /** Hace fallar la próxima operación `op` sobre `table` (o, con `rpc`, la RPC de ese nombre). */
