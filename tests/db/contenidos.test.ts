@@ -20,7 +20,7 @@ let db: Db;
 let ana: TestUser, editor: TestUser, revisor: TestUser, cliente: TestUser, lector: TestUser;
 let org: string, marca: string, otraMarca: string;
 
-interface Item {
+type Item = {
   id: string;
   status: string;
   current_version: number;
@@ -28,8 +28,8 @@ interface Item {
   created_by: string;
   network: string;
   format: string;
-}
-interface Version {
+};
+type Version = {
   id: string;
   version: number;
   schema_version: number;
@@ -37,7 +37,7 @@ interface Version {
   change_note: string;
   restored_from: number | null;
   created_by: string;
-}
+};
 
 const doc = (n: number) => ({ schemaVersion: 1, marca: `documento ${n}` });
 

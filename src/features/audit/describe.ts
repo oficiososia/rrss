@@ -10,6 +10,13 @@ function str(data: Json, key: string): string {
   return '';
 }
 
+const CONTENT_STATUS_TEXT: Record<string, string> = {
+  idea: 'idea',
+  draft: 'borrador',
+  in_review: 'en revisión',
+  approved: 'aprobado',
+};
+
 /** Frase en español para una fila del registro de auditoría. */
 export function describeAudit(
   log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'>,
@@ -64,6 +71,18 @@ export function describeAudit(
       return `cambió el cupo mensual de IA`;
     case 'usage_quotas:delete':
       return `retiró el cupo mensual de IA`;
+    case 'content_items:insert':
+      return `creó el contenido «${str(data, 'title')}»`;
+    case 'content_items:update':
+      // El registro guarda cómo quedó la fila, no qué cambió: se dice el estado en que queda.
+      if (str(data, 'archived_at')) return `archivó el contenido «${str(data, 'title')}»`;
+      return `actualizó el contenido «${str(data, 'title')}» (${CONTENT_STATUS_TEXT[str(data, 'status')] ?? str(data, 'status')})`;
+    case 'content_items:delete':
+      return `eliminó el contenido «${str(data, 'title')}»`;
+    case 'content_versions:insert':
+      return str(data, 'restored_from')
+        ? `restauró la versión ${str(data, 'restored_from')} de un contenido (ahora es la ${str(data, 'version')})`
+        : `guardó la versión ${str(data, 'version')} de un contenido`;
     default:
       return `${action} en ${entity}`;
   }
