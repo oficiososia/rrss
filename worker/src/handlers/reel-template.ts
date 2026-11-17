@@ -52,7 +52,8 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
     async run(context) {
       const payload = parsePayload(reelPayloadSchema, context.job.payload);
       assertOutputPaths(context, [payload.output.path, payload.output.posterPath]);
-      const template = 'schemaVersion' in payload.template ? payload.template : findTemplate(templates, payload.template.id);
+      const template =
+        'schemaVersion' in payload.template ? payload.template : findTemplate(templates, payload.template.id);
       const { plan } = payload;
 
       // ── Bajar y medir las piezas ───────────────────────────────────────

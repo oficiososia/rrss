@@ -64,7 +64,9 @@ describe('plantillas', () => {
     expect(reelTemplateSchema.safeParse(base).success).toBe(true);
     expect(reelTemplateSchema.safeParse({ ...base, schemaVersion: 2 }).success).toBe(false);
     expect(reelTemplateSchema.safeParse({ ...base, cliente: 'x' }).success).toBe(false);
-    expect(reelTemplateSchema.safeParse({ ...base, canvas: { width: 1080, height: 1080, fps: 30 } }).success).toBe(false);
+    expect(reelTemplateSchema.safeParse({ ...base, canvas: { width: 1080, height: 1080, fps: 30 } }).success).toBe(
+      false,
+    );
     expect(
       reelPayloadSchema.safeParse({
         template: { id: 'fundido-suave' },
@@ -76,7 +78,8 @@ describe('plantillas', () => {
 
   it('los esquemas JSON publicados están al día con el código (npm run schemas)', async () => {
     for (const [name, content] of Object.entries(renderSchemas())) {
-      expect(await readFile(path.join(SCHEMAS_DIR, name), 'utf8'), name).toBe(content);
+      // Comparación por contenido: git puede cambiar los finales de línea al descargar.
+      expect(JSON.parse(await readFile(path.join(SCHEMAS_DIR, name), 'utf8')), name).toEqual(JSON.parse(content));
     }
   });
 });
@@ -94,7 +97,11 @@ describe('motor (cálculo de la línea de tiempo)', () => {
       outputWidth: 270,
     });
     expect(build).toMatchObject({ width: 270, height: 480, fps: 30, durationSeconds: 6, transitionSeconds: 0.5 });
-    expect(build.timeline.map((s) => [s.start, s.seconds])).toEqual([[0, 2], [1.5, 2], [3, 3]]); // prettier-ignore
+    expect(build.timeline.map((s) => [s.start, s.seconds])).toEqual([
+      [0, 2],
+      [1.5, 2],
+      [3, 3],
+    ]);
     expect(build.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=1.5');
     expect(build.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=3');
   });
@@ -224,7 +231,12 @@ describe('media.reel.template', () => {
   it('sin música ni sonido de clips, el reel lleva igualmente una pista de sonido (en silencio)', async () => {
     await runHandler(handler, bucket, {
       template: { id: 'pase-lateral' },
-      plan: { media: [{ type: 'photo', path: inBrand('plato.jpg'), seconds: 1 }, { type: 'photo', path: inBrand('detalle.png'), seconds: 1 }] }, // prettier-ignore
+      plan: {
+        media: [
+          { type: 'photo', path: inBrand('plato.jpg'), seconds: 1 },
+          { type: 'photo', path: inBrand('detalle.png'), seconds: 1 },
+        ],
+      },
       output: { path: inBrand('reels/mudo.mp4'), width: 180 },
     });
     const file = bucket.file(inBrand('reels/mudo.mp4'));
@@ -235,7 +247,11 @@ describe('media.reel.template', () => {
   });
 
   it('acepta una plantilla completa en la carga y rechaza lo que no puede montar', async () => {
-    const inline = { ...loadTemplates().get('fundido-suave')!, id: 'a-medida', canvas: { width: 360, height: 640, fps: 24 } };
+    const inline = {
+      ...loadTemplates().get('fundido-suave')!,
+      id: 'a-medida',
+      canvas: { width: 360, height: 640, fps: 24 },
+    };
     const result = await runHandler(handler, bucket, {
       template: inline,
       plan: { media: [{ type: 'photo', path: inBrand('plato.jpg'), seconds: 1 }] },
@@ -246,15 +262,25 @@ describe('media.reel.template', () => {
     const run = (payload: unknown) => runHandler(handler, bucket, payload);
     const output = { path: inBrand('reels/x.mp4') };
     const media = [{ type: 'photo', path: inBrand('plato.jpg') }];
-    await expect(run({ template: { id: 'no-existe' }, plan: { media }, output })).rejects.toThrow(/No existe la plantilla/);
+    await expect(run({ template: { id: 'no-existe' }, plan: { media }, output })).rejects.toThrow(
+      /No existe la plantilla/,
+    );
     await expect(
-      run({ template: { id: 'fundido-suave' }, plan: { media: [{ type: 'video', path: inBrand('plato.jpg') }] }, output }),
+      run({
+        template: { id: 'fundido-suave' },
+        plan: { media: [{ type: 'video', path: inBrand('plato.jpg') }] },
+        output,
+      }),
     ).rejects.toThrow(PermanentError);
     await expect(
       run({ template: { id: 'fundido-suave' }, plan: { media, music: { path: inBrand('plato.jpg') } }, output }),
     ).rejects.toThrow(/no tiene sonido/);
     await expect(
-      run({ template: { id: 'fundido-suave' }, plan: { media }, output: { path: `${ORG}/${OTHER_BRAND}/reels/x.mp4` } }),
+      run({
+        template: { id: 'fundido-suave' },
+        plan: { media },
+        output: { path: `${ORG}/${OTHER_BRAND}/reels/x.mp4` },
+      }),
     ).rejects.toThrow(/no pertenece a la marca/);
   });
 });

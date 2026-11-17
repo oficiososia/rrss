@@ -120,7 +120,9 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     if (item.type === 'photo') return snap(item.seconds ?? template.timing.photoSeconds);
     const available = item.durationSeconds - item.startAt;
     if (available < MIN_SEGMENT_SECONDS) {
-      throw new PermanentError(`El clip ${index + 1} no tiene ${MIN_SEGMENT_SECONDS} s a partir del segundo ${item.startAt}`);
+      throw new PermanentError(
+        `El clip ${index + 1} no tiene ${MIN_SEGMENT_SECONDS} s a partir del segundo ${item.startAt}`,
+      );
     }
     // Por debajo, para no pedir fotogramas que el clip no tiene.
     return Math.floor(Math.min(item.seconds ?? template.timing.maxClipSeconds, available) * fps) / fps;
@@ -242,7 +244,8 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     const block = lineStep * (lines.length - 1) + fontSize;
     const margin = Math.round(style.marginRatio * height);
     const position = item.position ?? style.position;
-    const top = position === 'top' ? margin : position === 'center' ? Math.round((height - block) / 2) : height - margin - block;
+    const top =
+      position === 'top' ? margin : position === 'center' ? Math.round((height - block) / 2) : height - margin - block;
     const fade = Math.min(style.fadeSeconds, (end - start) / 2);
     lines.forEach((line, lineIndex) => {
       const name = `text-${index}-${lineIndex}.txt`;
@@ -339,11 +342,27 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
 
   const filterGraph = chains.join(';\n');
   args.push(
-    '-filter_complex', filterGraph, '-map', '[vout]', '-map', '[aout]',
+    '-filter_complex',
+    filterGraph,
+    '-map',
+    '[vout]',
+    '-map',
+    '[aout]',
     ...h264Args({ crf: template.export.crf, preset: template.export.preset }),
-    '-r', String(fps), '-c:a', 'aac', '-b:a', `${template.export.audioBitrateKbps}k`, '-ar', '48000', '-ac', '2',
-    '-t', num(total), input.outputFile,
-  ); // prettier-ignore
+    '-r',
+    String(fps),
+    '-c:a',
+    'aac',
+    '-b:a',
+    `${template.export.audioBitrateKbps}k`,
+    '-ar',
+    '48000',
+    '-ac',
+    '2',
+    '-t',
+    num(total),
+    input.outputFile,
+  );
 
   return {
     args,

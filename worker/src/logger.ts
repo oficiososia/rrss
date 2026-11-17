@@ -26,8 +26,10 @@ function defaultWrite(line: string): void {
 /** Registro que guarda los sucesos en memoria: para pruebas. */
 export function createMemoryLogger(): Logger & { entries: Array<{ level: string; event: string } & LogFields> } {
   const entries: Array<{ level: string; event: string } & LogFields> = [];
-  const push = (level: string) => (event: string, fields: LogFields = {}) => {
-    entries.push({ level, event, ...fields });
-  };
+  const push =
+    (level: string) =>
+    (event: string, fields: LogFields = {}) => {
+      entries.push({ level, event, ...fields });
+    };
   return { entries, info: push('info'), warn: push('warn'), error: push('error') };
 }

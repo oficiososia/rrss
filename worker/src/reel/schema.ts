@@ -16,7 +16,12 @@ export const REEL_TEMPLATE_SCHEMA_VERSION = 1;
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color en formato #RRGGBB');
 const evenInt = (min: number, max: number) =>
-  z.number().int().min(min).max(max).refine((v) => v % 2 === 0, 'Debe ser par'); // prettier-ignore
+  z
+    .number()
+    .int()
+    .min(min)
+    .max(max)
+    .refine((v) => v % 2 === 0, 'Debe ser par');
 
 export const textPositionSchema = z.enum(['top', 'center', 'bottom']);
 export const photoMotionSchema = z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'alternate']);
@@ -56,7 +61,10 @@ export const reelTemplateSchema = z.strictObject({
   }),
   text: z.strictObject({
     /** `default` o el nombre de una tipografía instalada en el trabajador. */
-    font: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,60}$/).default('default'), // prettier-ignore
+    font: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,60}$/)
+      .default('default'),
     /** Tamaño de letra como fracción del ancho del lienzo. */
     sizeRatio: z.number().min(0.02).max(0.15).default(0.06),
     color: hexColor.default('#FFFFFF'),

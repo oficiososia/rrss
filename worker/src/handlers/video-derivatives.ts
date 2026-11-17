@@ -100,9 +100,17 @@ export function createVideoDerivativesHandler(deps: MediaDeps): Handler {
         const width = Math.min(poster.width ?? video.width, video.width);
         const height = Math.max(1, Math.round((width * video.height) / video.width));
         await run([
-          '-ss', num(at), '-i', source, '-frames:v', '1', '-vf', `scale=${width}:${height}:flags=lanczos`,
-          ...imageEncodeArgs(poster.format, poster.quality), file,
-        ]); // prettier-ignore
+          '-ss',
+          num(at),
+          '-i',
+          source,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale=${width}:${height}:flags=lanczos`,
+          ...imageEncodeArgs(poster.format, poster.quality),
+          file,
+        ]);
         const bytes = await storeOutput(context, file, poster.path, format.contentType);
         result.poster = { path: poster.path, width, height, atSeconds: Number(at.toFixed(3)), bytes };
       }
@@ -116,9 +124,18 @@ export function createVideoDerivativesHandler(deps: MediaDeps): Handler {
         if (video.fps > compressed.maxFps + 0.01) filters.push(`fps=${compressed.maxFps}`);
         const startedAt = Date.now();
         await run([
-          '-i', source, '-map', '0:v:0', '-map', '0:a:0?', '-vf', filters.join(','),
-          ...h264Args({ crf: compressed.crf, preset: 'veryfast' }), ...audioArgs(compressed.audioBitrateKbps), file,
-        ]); // prettier-ignore
+          '-i',
+          source,
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a:0?',
+          '-vf',
+          filters.join(','),
+          ...h264Args({ crf: compressed.crf, preset: 'veryfast' }),
+          ...audioArgs(compressed.audioBitrateKbps),
+          file,
+        ]);
         const ms = Date.now() - startedAt;
         const bytes = await storeOutput(context, file, compressed.path, 'video/mp4');
         result.compressed = { path: compressed.path, width, height, bytes, encodeMs: ms };
@@ -137,9 +154,18 @@ export function createVideoDerivativesHandler(deps: MediaDeps): Handler {
         ];
         const startedAt = Date.now();
         await run([
-          '-i', source, '-map', '0:v:0', '-map', '0:a:0?', '-vf', filters.join(','),
-          ...h264Args({ crf: reframe.crf, preset: 'veryfast' }), ...audioArgs(128), file,
-        ]); // prettier-ignore
+          '-i',
+          source,
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a:0?',
+          '-vf',
+          filters.join(','),
+          ...h264Args({ crf: reframe.crf, preset: 'veryfast' }),
+          ...audioArgs(128),
+          file,
+        ]);
         const ms = Date.now() - startedAt;
         const bytes = await storeOutput(context, file, reframe.path, 'video/mp4');
         result.reframe = { path: reframe.path, aspect: reframe.aspect, width, height, bytes, encodeMs: ms };

@@ -34,7 +34,8 @@ function createMemoryQueue() {
   const queue: JobQueue = {
     async claim({ worker, kinds, limit }) {
       const claimed = jobs.filter((j) => j.status === 'queued' && !j.waiting && kinds.includes(j.kind)).slice(0, limit);
-      for (const job of claimed) Object.assign(job, { status: 'running', locked_by: worker, attempts: job.attempts + 1 });
+      for (const job of claimed)
+        Object.assign(job, { status: 'running', locked_by: worker, attempts: job.attempts + 1 });
       return claimed.map((job) => ({ ...job }));
     },
     async complete(id, worker, result) {
@@ -51,9 +52,16 @@ function createMemoryQueue() {
   const add = (kind: string, payload: JsonObject = {}, maxAttempts = 3): StoredJob => {
     n += 1;
     const job: StoredJob = {
-      id: `job-${n}`, organization_id: 'org', brand_id: 'marca', kind, payload,
-      attempts: 0, max_attempts: maxAttempts, status: 'queued', locked_by: null,
-    }; // prettier-ignore
+      id: `job-${n}`,
+      organization_id: 'org',
+      brand_id: 'marca',
+      kind,
+      payload,
+      attempts: 0,
+      max_attempts: maxAttempts,
+      status: 'queued',
+      locked_by: null,
+    };
     jobs.push(job);
     return job;
   };
@@ -225,7 +233,10 @@ describe('bucle del trabajador', () => {
         kind: 'cancelable',
         async run({ job }) {
           // Lo que hace cancel_job: el trabajo deja de estar reservado.
-          Object.assign(t.jobs.find((j) => j.id === job.id)!, { status: 'cancelled', locked_by: null });
+          Object.assign(
+            t.jobs.find((j) => j.id === job.id)!,
+            { status: 'cancelled', locked_by: null },
+          );
           return { ok: true };
         },
       },

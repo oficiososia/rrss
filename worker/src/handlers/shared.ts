@@ -105,7 +105,10 @@ export function focalCropExpr(axis: 'w' | 'h', size: number, point: number): str
 /** Baja al disco un archivo del cubo, tras comprobar que es de la marca del trabajo. */
 export async function fetchInput(context: HandlerContext, objectPath: string, localName: string): Promise<string> {
   assertJobPath(context.job, objectPath);
-  const extension = path.extname(objectPath).toLowerCase().replace(/[^.a-z0-9]/g, '');
+  const extension = path
+    .extname(objectPath)
+    .toLowerCase()
+    .replace(/[^.a-z0-9]/g, '');
   const file = path.join(context.workDir, `${localName}${extension}`);
   await context.storage.download(objectPath, file, context.signal);
   return file;
@@ -131,7 +134,15 @@ export function assertOutputPaths(context: HandlerContext, paths: Array<string |
 /** Argumentos comunes para exportar H.264 reproducible en cualquier red. */
 export function h264Args(options: { crf: number; preset: string }): string[] {
   return [
-    '-c:v', 'libx264', '-preset', options.preset, '-crf', String(options.crf),
-    '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-  ]; // prettier-ignore
+    '-c:v',
+    'libx264',
+    '-preset',
+    options.preset,
+    '-crf',
+    String(options.crf),
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    '+faststart',
+  ];
 }

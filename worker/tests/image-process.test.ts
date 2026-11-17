@@ -48,8 +48,11 @@ describe('recorte por punto focal (cálculo)', () => {
     expect(cropToAspect(source, '16:9')).toMatchObject({ width: 426, height: 240 });
     // Foto vertical a horizontal: manda el ancho y el punto focal mueve el recorte en vertical.
     expect(cropToAspect({ width: 1080, height: 1920 }, '16:9', { x: 0.5, y: 0.25 })).toEqual({
-      width: 1080, height: 607, x: 0, y: 177,
-    }); // prettier-ignore
+      width: 1080,
+      height: 607,
+      x: 0,
+      y: 177,
+    });
     // Para vídeo, medidas pares.
     expect(cropToAspect(source, '9:16', { x: 0.5, y: 0.5 }, true)).toMatchObject({ width: 134, height: 240 });
   });
@@ -145,5 +148,28 @@ describe('media.image.process', () => {
     await expect(
       runHandler(handler, bucket, { source: { path: inBrand('apaisada.jpg') }, outputs: [good] }, { brand_id: null }),
     ).rejects.toThrow(/debe pertenecer a una marca/);
+  });
+});
+
+describe('medidas exactas', () => {
+  it('una foto de 12 MP a 1080 de ancho da 1080×1920 justos en 9:16, no 1921', async () => {
+    const bucket = await createBucket();
+    try {
+      await makeSplitPhoto(bucket.file(inBrand('grande.jpg')), 4000, 3000);
+      const result = await runHandler(handler, bucket, {
+        source: { path: inBrand('grande.jpg') },
+        outputs: [
+          { path: inBrand('salida/v.jpg'), aspect: '9:16', width: 1080 },
+          { path: inBrand('salida/r.jpg'), aspect: '4:5', width: 1080 },
+        ],
+      });
+      expect(result.outputs).toMatchObject([
+        { width: 1080, height: 1920 },
+        { width: 1080, height: 1350 },
+      ]);
+      expect((await probe(bucket.file(inBrand('salida/v.jpg')))).video).toMatchObject({ width: 1080, height: 1920 });
+    } finally {
+      await bucket.cleanup();
+    }
   });
 });

@@ -31,7 +31,8 @@ async function main(): Promise<number> {
     return 2;
   }
   const defaultFontFile = findDefaultFont();
-  if (!defaultFontFile) logger.warn('worker.font_missing', { hint: 'Define WORKER_FONT_FILE para poner texto en los vídeos' });
+  if (!defaultFontFile)
+    logger.warn('worker.font_missing', { hint: 'Define WORKER_FONT_FILE para poner texto en los vídeos' });
 
   const supabase = { url: config.SUPABASE_URL, serviceKey: config.SUPABASE_SERVICE_ROLE_KEY };
   const worker = createWorker({

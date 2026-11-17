@@ -8,6 +8,7 @@ import { probeMedia } from '../ffmpeg/probe.ts';
 import { runFfmpeg } from '../ffmpeg/run.ts';
 import type { Handler } from '../handler.ts';
 import {
+  ASPECTS,
   aspectSchema,
   assertOutputPaths,
   CENTER,
@@ -50,7 +51,10 @@ export function createImageProcessHandler(deps: MediaDeps): Handler {
     kind: IMAGE_PROCESS_KIND,
     async run(context) {
       const payload = parsePayload(imageProcessPayloadSchema, context.job.payload);
-      assertOutputPaths(context, payload.outputs.map((o) => o.path));
+      assertOutputPaths(
+        context,
+        payload.outputs.map((o) => o.path),
+      );
 
       const source = await fetchInput(context, payload.source.path, 'source');
       // El giro lo decide el trabajador (EXIF) y no la versión de FFmpeg.
@@ -67,7 +71,9 @@ export function createImageProcessHandler(deps: MediaDeps): Handler {
       for (const [index, output] of payload.outputs.entries()) {
         const crop = cropToAspect(size, output.aspect, payload.focalPoint);
         const width = Math.min(output.width, crop.width);
-        const height = Math.max(1, Math.round((width * crop.height) / crop.width));
+        // El alto sale de la proporción pedida, no del recorte: 1080 de ancho en 9:16 son 1920 exactos.
+        const [aw, ah] = ASPECTS[output.aspect];
+        const height = Math.max(1, Math.round((width * ah) / aw));
         const format = IMAGE_FORMATS[output.format];
         const file = path.join(context.workDir, `output-${index}.${format.extension}`);
         const filters = [
@@ -78,9 +84,16 @@ export function createImageProcessHandler(deps: MediaDeps): Handler {
         await runFfmpeg(
           deps.tools,
           [
-            '-noautorotate', '-i', source, '-vf', filters.join(','), '-frames:v', '1',
-            ...imageEncodeArgs(output.format, output.quality), file,
-          ], // prettier-ignore
+            '-noautorotate',
+            '-i',
+            source,
+            '-vf',
+            filters.join(','),
+            '-frames:v',
+            '1',
+            ...imageEncodeArgs(output.format, output.quality),
+            file,
+          ],
           { signal: context.signal },
         );
         const bytes = await storeOutput(context, file, output.path, format.contentType);

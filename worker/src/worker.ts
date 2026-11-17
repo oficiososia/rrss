@@ -165,7 +165,8 @@ export function createWorker(options: WorkerOptions): Worker {
       outcome = 'succeeded';
     } catch (error) {
       // Si se abortó, manda el motivo del aborto y no el error que provocó en el manejador.
-      const cause: unknown = controller.signal.aborted && !(error instanceof LeaseLostError) ? controller.signal.reason : error;
+      const cause: unknown =
+        controller.signal.aborted && !(error instanceof LeaseLostError) ? controller.signal.reason : error;
       failure = errorMessage(cause);
       if (cause instanceof LeaseLostError) {
         outcome = 'lease_lost';

@@ -3,8 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
-const int = (fallback: number, min: number, max: number) =>
-  z.coerce.number().int().min(min).max(max).default(fallback);
+const int = (fallback: number, min: number, max: number) => z.coerce.number().int().min(min).max(max).default(fallback);
 
 export const configSchema = z.object({
   SUPABASE_URL: z.url(),

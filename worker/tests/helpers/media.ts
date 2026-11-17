@@ -49,13 +49,29 @@ const ffmpeg = (args: string[]) => exec(tools.ffmpeg, ['-hide_banner', '-nostdin
 export async function makeSplitPhoto(file: string, width: number, height: number): Promise<void> {
   const half = `${width / 2}x${height}`;
   await ffmpeg([
-    '-f', 'lavfi', '-i', `color=c=red:s=${half}`, '-f', 'lavfi', '-i', `color=c=blue:s=${half}`,
-    '-filter_complex', 'hstack', '-frames:v', '1', file,
-  ]); // prettier-ignore
+    '-f',
+    'lavfi',
+    '-i',
+    `color=c=red:s=${half}`,
+    '-f',
+    'lavfi',
+    '-i',
+    `color=c=blue:s=${half}`,
+    '-filter_complex',
+    'hstack',
+    '-frames:v',
+    '1',
+    file,
+  ]);
 }
 
 /** Foto con una carta de ajuste (mucho detalle y color). */
-export async function makePatternPhoto(file: string, width: number, height: number, pattern = 'testsrc2'): Promise<void> {
+export async function makePatternPhoto(
+  file: string,
+  width: number,
+  height: number,
+  pattern = 'testsrc2',
+): Promise<void> {
   await ffmpeg(['-f', 'lavfi', '-i', `${pattern}=size=${width}x${height}:rate=1`, '-frames:v', '1', file]);
 }
 
@@ -66,18 +82,39 @@ export async function makeClip(
 ): Promise<void> {
   const { width, height, seconds, fps = 25, audio = true } = options;
   await ffmpeg([
-    '-f', 'lavfi', '-i', `testsrc=size=${width}x${height}:rate=${fps}`,
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc=size=${width}x${height}:rate=${fps}`,
     ...(audio ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100'] : []),
-    '-t', String(seconds), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
-    ...(audio ? ['-c:a', 'aac', '-b:a', '64k'] : []), file,
-  ]); // prettier-ignore
+    '-t',
+    String(seconds),
+    '-c:v',
+    'libx264',
+    '-preset',
+    'ultrafast',
+    '-pix_fmt',
+    'yuv420p',
+    ...(audio ? ['-c:a', 'aac', '-b:a', '64k'] : []),
+    file,
+  ]);
 }
 
 /** Pista de música: un tono, en AAC. */
 export async function makeMusic(file: string, seconds: number): Promise<void> {
   await ffmpeg([
-    '-f', 'lavfi', '-i', 'sine=frequency=220:sample_rate=44100', '-t', String(seconds), '-c:a', 'aac', '-b:a', '64k', file,
-  ]); // prettier-ignore
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=220:sample_rate=44100',
+    '-t',
+    String(seconds),
+    '-c:a',
+    'aac',
+    '-b:a',
+    '64k',
+    file,
+  ]);
 }
 
 /** Añade a un JPEG una cabecera EXIF con la orientación dada, como las fotos de móvil. */
@@ -112,9 +149,23 @@ export async function averageColor(
   const { stdout } = await exec(
     tools.ffmpeg,
     [
-      '-hide_banner', '-nostdin', '-v', 'error', ...(atSeconds === undefined ? [] : ['-ss', String(atSeconds)]),
-      '-i', file, '-vf', filters.join(','), '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
-    ], // prettier-ignore
+      '-hide_banner',
+      '-nostdin',
+      '-v',
+      'error',
+      ...(atSeconds === undefined ? [] : ['-ss', String(atSeconds)]),
+      '-i',
+      file,
+      '-vf',
+      filters.join(','),
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      '-',
+    ],
     { encoding: 'buffer' },
   );
   return [stdout[0]!, stdout[1]!, stdout[2]!];
@@ -123,8 +174,17 @@ export async function averageColor(
 /** Volumen medio de la pista de sonido, en dB (−91 ≈ silencio). */
 export async function meanVolume(file: string): Promise<number> {
   const { stderr } = await exec(tools.ffmpeg, [
-    '-hide_banner', '-nostdin', '-i', file, '-vn', '-af', 'volumedetect', '-f', 'null', '-',
-  ]); // prettier-ignore
+    '-hide_banner',
+    '-nostdin',
+    '-i',
+    file,
+    '-vn',
+    '-af',
+    'volumedetect',
+    '-f',
+    'null',
+    '-',
+  ]);
   const match = /mean_volume:\s*(-?[\d.]+) dB/.exec(stderr);
   if (!match) throw new Error('No se pudo medir el volumen');
   return Number(match[1]);

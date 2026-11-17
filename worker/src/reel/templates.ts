@@ -11,7 +11,9 @@ export const TEMPLATES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta
 
 export function loadTemplates(directory: string = TEMPLATES_DIR): Map<string, ReelTemplate> {
   const templates = new Map<string, ReelTemplate>();
-  for (const file of readdirSync(directory).filter((f) => f.endsWith('.json')).sort()) {
+  for (const file of readdirSync(directory)
+    .filter((f) => f.endsWith('.json'))
+    .sort()) {
     const parsed = reelTemplateSchema.safeParse(JSON.parse(readFileSync(path.join(directory, file), 'utf8')));
     if (!parsed.success) throw new Error(`Plantilla inválida «${file}»: ${parsed.error.message}`);
     if (`${parsed.data.id}.json` !== file) throw new Error(`La plantilla «${file}» debe llamarse como su id`);
