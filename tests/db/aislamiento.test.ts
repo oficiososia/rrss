@@ -883,6 +883,8 @@ describe('IA y cola de trabajos', () => {
     await denied(db, ana, `select public.enqueue_job($1, 'media.render', '{}'::jsonb, 'k')`, [orgA], noFunction);
     await denied(db, ana, `select * from public.claim_jobs('yo')`, [], noFunction);
     await denied(db, ana, `select public.cancel_job($1)`, [jobA1], noFunction);
+    await denied(db, ana, `select public.release_job($1, 'yo')`, [jobA1], noFunction);
+    await denied(db, ana, `select public.extend_job_lease($1, 'yo', 60)`, [jobA1], noFunction);
     await denied(db, ana, `select public.admin_set_ai_quota($1, 999999999)`, [orgA]);
   });
 

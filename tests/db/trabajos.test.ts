@@ -69,6 +69,17 @@ const complete = (id: string, worker: string, result: Row = { ok: true }) =>
 const fail = (id: string, worker: string, extra: Row = {}) =>
   serviceRpc<Job>(db, 'fail_job', { p_job_id: id, p_worker: worker, p_error: 'Se cayó el render', ...extra });
 const cancel = (id: string) => serviceRpc<Job>(db, 'cancel_job', { p_job_id: id });
+const release = (id: string, worker: string) => serviceRpc<Job>(db, 'release_job', { p_job_id: id, p_worker: worker });
+const extend = (id: string, worker: string, seconds = 600) =>
+  serviceRpc<Job>(db, 'extend_job_lease', { p_job_id: id, p_worker: worker, p_lease_seconds: seconds });
+/** Segundos que le quedan a la reserva, medidos contra `now()` de la base. */
+const leaseLeft = async (id: string) =>
+  (
+    await db.query<{ s: number }>(
+      `select round(extract(epoch from locked_until - now()))::int as s from public.jobs where id = $1`,
+      [id],
+    )
+  )[0]!.s;
 const job = async (id: string) => (await db.query<Job>(`select * from public.jobs where id = $1`, [id]))[0]!;
 const expireLease = (id: string) =>
   db.query(`update public.jobs set locked_until = now() - interval '1 second' where id = $1`, [id]);
@@ -217,6 +228,67 @@ describe('reserva con caducidad', () => {
   });
 });
 
+describe('devolver y renovar la reserva', () => {
+  it('devolver un trabajo no gasta intento: vuelve a la cola ya, con los intentos de antes', async () => {
+    const { id } = await enqueue({ p_max_attempts: 1 });
+    await expect(release(id, 't1')).rejects.toThrow(/no está reservado/); // aún en cola
+    await claim('t1');
+    await expect(release(id, 'otro')).rejects.toThrow(/no está reservado/);
+
+    const devuelto = await release(id, 't1');
+    expect(devuelto).toMatchObject({ status: 'queued', attempts: 0, locked_by: null, locked_until: null });
+    expect(devuelto.last_error).toBeNull();
+    // Con un solo intento, si hubiera contado, no se podría volver a reclamar.
+    const [otraVez] = await claim('t2');
+    expect(otraVez).toMatchObject({ id, attempts: 1, locked_by: 't2' });
+    await expect(complete(id, 't1')).rejects.toThrow(/no está reservado/);
+    expect((await complete(id, 't2')).status).toBe('succeeded');
+  });
+
+  it('con fail_job sí se gasta: la diferencia que justifica release_job', async () => {
+    const { id } = await enqueue({ p_max_attempts: 1 });
+    await claim('t1');
+    expect(await fail(id, 't1')).toMatchObject({ status: 'failed', attempts: 1 });
+  });
+
+  it('renovar alarga la reserva desde ahora; solo quien la tiene y dentro de los límites', async () => {
+    const { id } = await enqueue();
+    await expect(extend(id, 't1')).rejects.toThrow(/no está reservado/);
+    await claim('t1', { p_lease_seconds: 30 });
+    expect(await leaseLeft(id)).toBeLessThanOrEqual(30);
+
+    const renovado = await extend(id, 't1', 600);
+    expect(renovado).toMatchObject({ status: 'running', locked_by: 't1', attempts: 1 });
+    expect(await leaseLeft(id)).toBeGreaterThan(590);
+    await expect(extend(id, 'otro')).rejects.toThrow(/no está reservado/);
+    await expect(extend(id, 't1', 4)).rejects.toThrow(/entre 5 segundos y una hora/);
+    await expect(extend(id, 't1', 3601)).rejects.toThrow(/entre 5 segundos y una hora/);
+  });
+
+  it('una reserva renovada no la recoge otro; una caducada y ya reclamada no se puede renovar', async () => {
+    const { id } = await enqueue();
+    await claim('lento', { p_lease_seconds: 5 });
+    await expireLease(id);
+    // Caducada pero sin reclamar: sigue siendo suya y la puede renovar.
+    await extend(id, 'lento', 60);
+    expect(await claim('otro')).toEqual([]);
+
+    await expireLease(id);
+    await claim('otro');
+    await expect(extend(id, 'lento')).rejects.toThrow(/no está reservado/);
+    await expect(release(id, 'lento')).rejects.toThrow(/no está reservado/);
+  });
+
+  it('un trabajo cancelado no se renueva ni se devuelve', async () => {
+    const { id } = await enqueue();
+    await claim('t1');
+    await cancel(id);
+    await expect(extend(id, 't1')).rejects.toThrow(/no está reservado/);
+    await expect(release(id, 't1')).rejects.toThrow(/no está reservado/);
+    expect((await job(id)).status).toBe('cancelled');
+  });
+});
+
 describe('cancelar', () => {
   it('un trabajo cancelado no se reclama, y si estaba en curso no se puede cerrar', async () => {
     const enCola = await enqueue();
@@ -241,6 +313,8 @@ describe('quién mueve la cola', () => {
     await denied(db, ana, `select public.complete_job($1, 'yo')`, [id], noFunction);
     await denied(db, ana, `select public.fail_job($1, 'yo', 'x')`, [id], noFunction);
     await denied(db, ana, `select public.cancel_job($1)`, [id], noFunction);
+    await denied(db, ana, `select public.release_job($1, 'yo')`, [id], noFunction);
+    await denied(db, ana, `select public.extend_job_lease($1, 'yo', 60)`, [id], noFunction);
 
     await denied(
       db,

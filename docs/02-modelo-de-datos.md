@@ -211,13 +211,18 @@ reserva (`locked_by`, `locked_until`), resultado y último error.
 | `claim_jobs(trabajador, tipos, límite, segundos)` | Reclama con `FOR UPDATE SKIP LOCKED` por prioridad y antigüedad; recoge también los trabajos en curso con la reserva caducada, y cierra como fallidos los caducados sin intentos |
 | `complete_job` / `fail_job` | Solo quien tiene la reserva. Un fallo vuelve a la cola con espera creciente (30 s, 1 min, 2 min… hasta 1 h) y, agotados los intentos, queda `failed` con su error |
 | `cancel_job` | Cancela un trabajo en cola o en curso |
+| `release_job(trabajo, trabajador)` | Solo quien tiene la reserva. Devuelve el trabajo a la cola **sin gastar intento** y disponible ya (apagado ordenado del trabajador) |
+| `extend_job_lease(trabajo, trabajador, segundos)` | Solo quien tiene la reserva. La renueva desde ahora (5 s a 1 h): el trabajador la va renovando en trabajos largos |
 
 Lectura: los trabajos de una marca los ve quien ve la marca; los de toda la
 organización, sus administradores. Nadie los escribe desde el cliente.
 
+El trabajador de medios (`worker/`) consume esta cola: renueva la reserva
+mientras trabaja y, al apagarse, devuelve lo que tiene a medias con
+`release_job`.
+
 Pendiente: alta en la publicación de Realtime (se hará en el entorno desplegado),
-renovación de la reserva para trabajos largos, limpieza de trabajos antiguos y
-prioridad por plan.
+limpieza de trabajos antiguos y prioridad por plan.
 
 ## 11. Fase 2: contenidos y versiones
 

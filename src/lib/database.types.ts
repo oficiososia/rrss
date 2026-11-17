@@ -397,6 +397,8 @@ type Phase2Functions = {
   complete_job: { Args: { p_job_id: string; p_worker: string; p_result?: Json | null }; Returns: JobRow };
   fail_job: { Args: { p_job_id: string; p_worker: string; p_error: string; p_retry?: boolean }; Returns: JobRow };
   cancel_job: { Args: { p_job_id: string }; Returns: JobRow };
+  release_job: { Args: { p_job_id: string; p_worker: string }; Returns: JobRow };
+  extend_job_lease: { Args: { p_job_id: string; p_worker: string; p_lease_seconds?: number }; Returns: JobRow };
 };
 
 type Phase2Enums = {
