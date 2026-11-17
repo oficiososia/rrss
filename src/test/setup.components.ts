@@ -18,6 +18,8 @@ await Promise.all([
   import('@/features/brand/BrandProfilePage'),
   import('@/features/brand/BrandWizardPage'),
   import('@/features/library/LibraryPage'),
+  import('@/features/content/ContentListPage'),
+  import('@/features/content/ContentEditorPage'),
   import('@/features/platform/PlatformPage'),
   import('@/features/team/BrandTeamPage'),
 ]);

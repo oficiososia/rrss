@@ -93,6 +93,26 @@ class Query implements PromiseLike<QueryResult> {
     this.filters.push((row) => (value === null ? row[column] == null : row[column] === value));
     return this;
   }
+  /** Solo la forma que usa la aplicación: `.not(col, 'is', null)`. */
+  not(column: string, operator: string, value: unknown) {
+    if (operator !== 'is' || value !== null) throw new Error(`not(${operator}) sin simular en la prueba`);
+    this.filters.push((row) => row[column] != null);
+    return this;
+  }
+  /** LIKE sin distinguir mayúsculas, con los comodines escapados por `likePattern`. */
+  ilike(column: string, pattern: string) {
+    let source = '';
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i]!;
+      if (c === '\\' && i + 1 < pattern.length) source += pattern[++i]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      else if (c === '%') source += '.*';
+      else if (c === '_') source += '.';
+      else source += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    const regex = new RegExp(`^${source}$`, 'is');
+    this.filters.push((row) => regex.test(String(row[column] ?? '')));
+    return this;
+  }
   gt(column: string, value: unknown) {
     this.filters.push((row) => String(row[column]) > String(value));
     return this;

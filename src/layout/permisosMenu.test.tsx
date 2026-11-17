@@ -33,7 +33,7 @@ describe('Menú de una marca', () => {
     seedWorkspace({ orgRole, brandRole });
     renderApp(`${BRAND_BASE}/inicio`);
     const nav = await mainNav();
-    expect(linkNames(nav)).toEqual(['Inicio', 'Biblioteca', 'Marca', 'Equipo', 'Configuración']);
+    expect(linkNames(nav)).toEqual(['Inicio', 'Contenidos', 'Biblioteca', 'Marca', 'Equipo', 'Configuración']);
     for (const futura of ['Crear', 'Calendario', 'Campañas', 'Estadísticas', 'Asistente'])
       expect(nav.queryByRole('link', { name: futura })).not.toBeInTheDocument();
   });

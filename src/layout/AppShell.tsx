@@ -1,5 +1,6 @@
 import {
   Building2,
+  FileText,
   Check,
   ChevronsUpDown,
   Home,
@@ -52,6 +53,7 @@ function navItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
   const b = `${base}/m/${brand.id}`;
   return [
     { to: `${b}/inicio`, label: 'Inicio', icon: Home },
+    { to: `${b}/contenidos`, label: 'Contenidos', icon: FileText },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },

@@ -28,6 +28,12 @@ const BrandProfilePage = lazy(() =>
 const BrandWizardPage = lazy(() =>
   import('@/features/brand/BrandWizardPage').then((m) => ({ default: m.BrandWizardPage })),
 );
+const ContentListPage = lazy(() =>
+  import('@/features/content/ContentListPage').then((m) => ({ default: m.ContentListPage })),
+);
+const ContentEditorPage = lazy(() =>
+  import('@/features/content/ContentEditorPage').then((m) => ({ default: m.ContentEditorPage })),
+);
 const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
 const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
@@ -105,6 +111,8 @@ export function App() {
                     <Route path="m/:brandId" element={<BrandLayout />}>
                       <Route index element={<Navigate to="inicio" replace />} />
                       <Route path="inicio" element={<BrandHomePage />} />
+                      <Route path="contenidos" element={<ContentListPage />} />
+                      <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
                       <Route path="biblioteca" element={<LibraryPage />} />
                       <Route path="marca" element={<BrandProfilePage />} />
                       <Route path="equipo" element={<BrandTeamPage />} />
