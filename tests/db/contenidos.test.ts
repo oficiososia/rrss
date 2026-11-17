@@ -3,7 +3,18 @@
 // archivado y auditoría. El aislamiento entre organizaciones está en
 // aislamiento.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { as, asService, createBrand, createDb, createOrg, createUser, denied, join, type Db, type TestUser } from './helpers';
+import {
+  as,
+  asService,
+  createBrand,
+  createDb,
+  createOrg,
+  createUser,
+  denied,
+  join,
+  type Db,
+  type TestUser,
+} from './helpers';
 
 let db: Db;
 let ana: TestUser, editor: TestUser, revisor: TestUser, cliente: TestUser, lector: TestUser;
@@ -66,7 +77,8 @@ const estado = (user: TestUser, id: string, status: string, expected: number | n
 const archivar = (user: TestUser, id: string, archived = true) =>
   as<Item>(db, user, `select * from public.archive_content_item($1, $2)`, [id, archived]).then((rows) => rows[0]!);
 
-const pieza = async (id: string) => (await db.query<Item>(`select * from public.content_items where id = $1`, [id]))[0]!;
+const pieza = async (id: string) =>
+  (await db.query<Item>(`select * from public.content_items where id = $1`, [id]))[0]!;
 const versiones = (id: string) =>
   db.query<Version>(`select * from public.content_versions where content_id = $1 order by version`, [id]);
 
@@ -195,10 +207,7 @@ describe('versiones', () => {
       as(db, editor, `select public.save_content_version($1, '{}'::jsonb, 0)`, [id]),
       /El documento no es válido/,
     );
-    await rechaza(
-      as(db, editor, `select public.save_content_version($1, null, 1)`, [id]),
-      /El documento no es válido/,
-    );
+    await rechaza(as(db, editor, `select public.save_content_version($1, null, 1)`, [id]), /El documento no es válido/);
   });
 
   it('son inmutables: nadie las cambia, las borra ni las inserta a mano', async () => {
@@ -224,7 +233,10 @@ describe('versiones', () => {
       asService(db, `update public.content_versions set data = '{}' where content_id = $1`, [id]),
       /permission denied/,
     );
-    await rechaza(asService(db, `delete from public.content_versions where content_id = $1`, [id]), /permission denied/);
+    await rechaza(
+      asService(db, `delete from public.content_versions where content_id = $1`, [id]),
+      /permission denied/,
+    );
     expect((await versiones(id)).map((v) => v.data)).toEqual([doc(1)]);
   });
 
@@ -380,13 +392,13 @@ describe('archivar', () => {
     await rechaza(guardar(editor, id, doc(2)), /está archivado/);
     await rechaza(restaurar(editor, id, 1), /está archivado/);
     await rechaza(estado(revisor, id, 'approved', 1), /está archivado/);
-    expect(await as(db, editor, `update public.content_items set title = 'x' where id = $1 returning id`, [id])).toEqual(
-      [],
-    );
+    expect(
+      await as(db, editor, `update public.content_items set title = 'x' where id = $1 returning id`, [id]),
+    ).toEqual([]);
     // Se sigue viendo, con su historial.
-    expect(await as(db, lector, `select version from public.content_versions where content_id = $1`, [id])).toHaveLength(
-      1,
-    );
+    expect(
+      await as(db, lector, `select version from public.content_versions where content_id = $1`, [id]),
+    ).toHaveLength(1);
 
     const recuperada = await archivar(ana, id, false);
     expect([recuperada.archived_at, recuperada.status]).toEqual([null, 'in_review']);
@@ -412,7 +424,12 @@ describe('auditoría y borrado en cascada', () => {
     await estado(revisor, id, 'approved', 2);
     await archivar(editor, id);
 
-    const registros = await as<{ action: string; entity_type: string; actor_id: string; data: Record<string, unknown> }>(
+    const registros = await as<{
+      action: string;
+      entity_type: string;
+      actor_id: string;
+      data: Record<string, unknown>;
+    }>(
       db,
       ana,
       `select action, entity_type, actor_id, data from public.audit_logs

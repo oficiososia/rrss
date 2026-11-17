@@ -172,6 +172,84 @@ export type StorageCleanupRow = {
   created_at: string;
 };
 
+// ───────────── Fase 2 · Contenidos y versiones del documento ─────────────
+// Migración 20261117100000_content_items_versions. El cliente crea la pieza y
+// cambia su título, red y formato; el estado, las versiones y el archivado solo
+// cambian por función. `data` es el documento por capas
+// (src/features/content/document), validado en el cliente.
+
+export type ContentStatus = 'idea' | 'draft' | 'in_review' | 'approved';
+
+export type ContentItemRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  title: string;
+  network: string;
+  format: string;
+  status: ContentStatus;
+  /** Número de la última versión guardada; 0 = todavía sin documento. */
+  current_version: number;
+  archived_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ContentVersionRow = {
+  id: string;
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  version: number;
+  schema_version: number;
+  data: Json;
+  change_note: string;
+  /** Si es una restauración, de qué versión se copió. */
+  restored_from: number | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+type ContentTables = {
+  content_items: Table<
+    ContentItemRow,
+    { brand_id: string; organization_id: string; title: string; network: string; format: string },
+    { title?: string; network?: string; format?: string }
+  >;
+  content_versions: Table<ContentVersionRow>;
+};
+
+type ContentFunctions = {
+  // Quien edita la marca. Con p_expected_version fallan (CT001) si otra persona guardó antes.
+  save_content_version: {
+    Args: {
+      p_content_id: string;
+      p_data: Json;
+      p_schema_version: number;
+      p_change_note?: string;
+      p_expected_version?: number | null;
+    };
+    Returns: ContentVersionRow;
+  };
+  restore_content_version: {
+    Args: { p_content_id: string; p_version: number; p_change_note?: string; p_expected_version?: number | null };
+    Returns: ContentVersionRow;
+  };
+  // Quien edita o aprueba, según el cambio. Aprobar exige p_expected_version.
+  set_content_status: {
+    Args: { p_content_id: string; p_status: ContentStatus; p_expected_version?: number | null };
+    Returns: ContentItemRow;
+  };
+  archive_content_item: { Args: { p_content_id: string; p_archived?: boolean }; Returns: ContentItemRow };
+};
+
+type ContentEnums = {
+  content_status: ContentStatus;
+};
+
+// ───────────────────── fin del bloque de contenidos ─────────────────────
+
 // ───────────── Fase 2 · IA (generaciones, consumo, cupos) y cola de trabajos ─────────────
 // Migraciones 20261116110000_ai_usage_quotas y 20261116111000_jobs. El cliente
 // solo lee estas tablas; las funciones de servidor exigen la clave de servicio.
@@ -405,7 +483,8 @@ export type Database = {
       storage_cleanup_queue: Table<StorageCleanupRow>;
       invitations: Table<InvitationRow>;
       audit_logs: Table<AuditLogRow>;
-    } & Phase2Tables;
+    } & Phase2Tables &
+      ContentTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -430,7 +509,8 @@ export type Database = {
       };
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
-    } & Phase2Functions;
+    } & Phase2Functions &
+      ContentFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -441,7 +521,8 @@ export type Database = {
       source_status: SourceStatus;
       asset_kind: AssetKind;
       asset_origin: AssetOrigin;
-    } & Phase2Enums;
+    } & Phase2Enums &
+      ContentEnums;
     CompositeTypes: Record<never, never>;
   };
 };

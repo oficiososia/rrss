@@ -4,7 +4,7 @@ import {
   CANVAS_SIZES,
   DOCUMENT_MIGRATIONS,
   DOCUMENT_SCHEMA_VERSION,
-  DocumentReadError,
+  DocumentError,
   aspectRatioValue,
   createEmptyDocument,
   migrateDocument,
@@ -221,7 +221,7 @@ describe('migrar entre versiones del esquema', () => {
     try {
       fn();
     } catch (error) {
-      if (error instanceof DocumentReadError) return error.reason;
+      if (error instanceof DocumentError) return error.reason;
       throw error;
     }
     return 'sin error';
@@ -258,10 +258,10 @@ describe('migrar entre versiones del esquema', () => {
     } catch (e) {
       error = e;
     }
-    expect(error).toBeInstanceOf(DocumentReadError);
-    expect((error as DocumentReadError).reason).toBe('invalid');
-    expect((error as DocumentReadError).issues[0]?.path).toBe('layers.0.type');
-    expect((error as DocumentReadError).message).toBe('El documento no es válido.');
+    expect(error).toBeInstanceOf(DocumentError);
+    expect((error as DocumentError).reason).toBe('invalid');
+    expect((error as DocumentError).issues[0]?.path).toBe('layers.0.type');
+    expect((error as DocumentError).message).toBe('El documento no es válido.');
     expect(reasonOf(() => migrateDocument({ schemaVersion: 99 }))).toBe('newer_version');
   });
 });

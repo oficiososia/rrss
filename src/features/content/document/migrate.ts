@@ -12,7 +12,7 @@ export type DocumentMigration = (document: Record<string, unknown>) => Record<st
  */
 export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {};
 
-export type DocumentReadFailure =
+export type DocumentFailure =
   /** No es un objeto o no dice su versión de esquema. */
   | 'not_a_document'
   /** Lo guardó una versión de la aplicación más nueva que esta. */
@@ -22,20 +22,20 @@ export type DocumentReadFailure =
   /** Tras migrar, no cumple el esquema actual. */
   | 'invalid';
 
-const MESSAGES: Record<DocumentReadFailure, string> = {
+const MESSAGES: Record<DocumentFailure, string> = {
   not_a_document: 'El documento no es válido.',
   newer_version: 'Este documento se guardó con una versión más reciente de la aplicación. Recarga la página.',
   missing_migration: 'No se puede abrir este documento: falta la conversión desde su versión.',
   invalid: 'El documento no es válido.',
 };
 
-export class DocumentReadError extends Error {
-  readonly reason: DocumentReadFailure;
+export class DocumentError extends Error {
+  readonly reason: DocumentFailure;
   readonly issues: DocumentIssue[];
 
-  constructor(reason: DocumentReadFailure, issues: DocumentIssue[] = []) {
+  constructor(reason: DocumentFailure, issues: DocumentIssue[] = []) {
     super(MESSAGES[reason]);
-    this.name = 'DocumentReadError';
+    this.name = 'DocumentError';
     this.reason = reason;
     this.issues = issues;
   }
@@ -50,17 +50,17 @@ export function runMigrations(
   target: number = DOCUMENT_SCHEMA_VERSION,
   migrations: Record<number, DocumentMigration> = DOCUMENT_MIGRATIONS,
 ): Record<string, unknown> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new DocumentReadError('not_a_document');
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new DocumentError('not_a_document');
   let document = structuredClone(raw) as Record<string, unknown>;
   let version = document.schemaVersion;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
-    throw new DocumentReadError('not_a_document');
+    throw new DocumentError('not_a_document');
   }
-  if (version > target) throw new DocumentReadError('newer_version');
+  if (version > target) throw new DocumentError('newer_version');
 
   while (version < target) {
     const migrate = migrations[version];
-    if (!migrate) throw new DocumentReadError('missing_migration');
+    if (!migrate) throw new DocumentError('missing_migration');
     document = { ...migrate(document), schemaVersion: version + 1 };
     version += 1;
   }
@@ -69,10 +69,10 @@ export function runMigrations(
 
 /**
  * Lee un documento guardado con cualquier versión anterior del esquema y lo
- * devuelve en la actual, validado. Lanza `DocumentReadError` si no puede.
+ * devuelve en la actual, validado. Lanza `DocumentError` si no puede.
  */
 export function migrateDocument(raw: unknown): ContentDocument {
   const result = validateDocument(runMigrations(raw));
-  if (!result.ok) throw new DocumentReadError('invalid', result.issues);
+  if (!result.ok) throw new DocumentError('invalid', result.issues);
   return result.document;
 }
