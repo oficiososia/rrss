@@ -15,6 +15,7 @@ import {
   type MediaStorage,
   type VideoRequest,
 } from '../../supabase/functions/_shared/ai/media/contract.ts';
+import { createHiggsfieldVideoProvider } from '../../supabase/functions/_shared/ai/media/higgsfield-video.ts';
 import { mediaModelsFromRows, type MediaModelRow } from '../../supabase/functions/_shared/ai/media/models.ts';
 import { createMediaService, type MediaServiceConfig } from '../../supabase/functions/_shared/ai/media/service.ts';
 import {
@@ -54,7 +55,13 @@ const rpc: RpcClient = async (fn, args) => {
 
 const reader: MediaReader = {
   getGeneration: async (id) => {
-    const rows = await asService<{ id: string; organization_id: string; brand_id: string; provider: string; status: string }>(
+    const rows = await asService<{
+      id: string;
+      organization_id: string;
+      brand_id: string;
+      provider: string;
+      status: string;
+    }>(
       db,
       `select id, organization_id, brand_id, provider, status::text as status from public.ai_generations where id = $1`,
       [id],
@@ -160,7 +167,12 @@ async function setup(
     ...options.service,
   });
   const generate = (request: ImageRequest | VideoRequest, userId = owner.id) =>
-    service.generate({ userId, brandId: brand, purpose: request.kind === 'image' ? 'post.visual' : 'reel.clip', request });
+    service.generate({
+      userId,
+      brandId: brand,
+      purpose: request.kind === 'image' ? 'post.visual' : 'reel.clip',
+      request,
+    });
   return { owner, org, brand, image, video, files, puts: () => puts, service, generate };
 }
 
@@ -289,7 +301,10 @@ describe('imagen (síncrona)', () => {
       image: {
         failWith: (_request, call) =>
           call === 1
-            ? new MediaProviderFailure('rate_limited', 'Límite de uso (HTTP 429)', { retryable: true, retryAfterSeconds: 7 })
+            ? new MediaProviderFailure('rate_limited', 'Límite de uso (HTTP 429)', {
+                retryable: true,
+                retryAfterSeconds: 7,
+              })
             : null,
       },
     });
@@ -431,7 +446,11 @@ describe('vídeo (asíncrono, por la cola)', () => {
       generationId: pending.generationId,
       code: 'provider_error',
     });
-    expect((await generations(t.org))[0]).toMatchObject({ status: 'failed', error_code: 'provider_error', cost_micros: null });
+    expect((await generations(t.org))[0]).toMatchObject({
+      status: 'failed',
+      error_code: 'provider_error',
+      cost_micros: null,
+    });
     expect(await committed(t.org)).toBe(0);
     expect((await jobs(t.org))[0]).toMatchObject({ status: 'failed' });
   });
@@ -485,7 +504,10 @@ describe('vídeo (asíncrono, por la cola)', () => {
     await t.generate(VIDEO);
     expect((await t.service.processJob(await claim(), 'trabajador-1')).status).toBe('pending');
     expect((await generations(t.org))[0]).toMatchObject({ status: 'reserved' });
-    expect((await jobs(t.org))[0]).toMatchObject({ status: 'queued', last_error: expect.stringMatching(/Límite de uso/) });
+    expect((await jobs(t.org))[0]).toMatchObject({
+      status: 'queued',
+      last_error: expect.stringMatching(/Límite de uso/),
+    });
 
     fail = false;
     expect((await t.service.processJob(await claim(), 'trabajador-1')).status).toBe('completed');
@@ -607,7 +629,10 @@ describe('elección de modelo', () => {
 
   it('sin adaptador disponible lo dice con claridad', () => {
     const sinClave = base({
-      providers: { providers: [image], unavailable: [{ id: 'simulated-video', reason: 'falta la variable CLAVE_DE_VIDEO' }] },
+      providers: {
+        providers: [image],
+        unavailable: [{ id: 'simulated-video', reason: 'falta la variable CLAVE_DE_VIDEO' }],
+      },
     });
     expect(() => sinClave.estimate(VIDEO)).toThrow(/falta la variable CLAVE_DE_VIDEO/);
     expect(() => base({ selection: { preferred: { image: 'otro:modelo' } } }).estimate(IMAGE)).toThrow(
@@ -623,5 +648,105 @@ describe('elección de modelo', () => {
     expect(seeded.length).toBeGreaterThan(0);
     expect(seeded.filter((m) => m.active)).toEqual([]);
     expect(() => base({ models: seeded, selection: { allowNonEu: true } }).estimate(IMAGE)).toThrow(/ningún modelo/);
+  });
+});
+
+describe('de extremo a extremo con un adaptador de verdad y HTTP simulado', () => {
+  const KLING = 'kling-video/v3.0/std/image-to-video';
+
+  it('Higgsfield: reserva, lanza, sondea, descarga el vídeo a nuestro almacenamiento y cobra los segundos', async () => {
+    n += 1;
+    const owner = await createUser(db, `propietaria${n}@medios${n}.test`);
+    const org = await createOrg(db, owner, `Organización ${n}`);
+    const brand = await createBrand(db, owner, org, `Marca ${n}`);
+    await setAiQuota(db, root, org, 1_000_000);
+
+    const requests: string[] = [];
+    const fetch = async (url: string, init: RequestInit = {}) => {
+      requests.push(`${init.method ?? 'GET'} ${url}`);
+      if (url === `https://api.higgsfield.ai/${KLING}`) {
+        return Response.json({
+          status: 'queued',
+          request_id: 'req-1',
+          status_url: 'https://api.higgsfield.ai/requests/req-1/status',
+          cancel_url: 'https://api.higgsfield.ai/requests/req-1/cancel',
+        });
+      }
+      if (url === 'https://api.higgsfield.ai/requests/req-1/status') {
+        return Response.json({
+          status: 'completed',
+          request_id: 'req-1',
+          video: { url: 'https://cdn.higgsfield.test/out.mp4' },
+        });
+      }
+      if (url === 'https://cdn.higgsfield.test/out.mp4') {
+        return new Response(Uint8Array.of(0, 0, 0, 24, 102, 116, 121, 112), {
+          headers: { 'content-type': 'video/mp4' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    };
+    const files = new Map<string, Uint8Array>();
+    // La fila sembrada está inactiva y con el precio sin verificar: aquí se
+    // activa solo en memoria, con un precio de prueba.
+    const seeded = models.find((m) => m.provider === 'higgsfield' && m.model === KLING)!;
+    const service = createMediaService({
+      rpc,
+      reader,
+      storage: {
+        put: async (object) => {
+          const path = `${object.organizationId}/${object.brandId}/generated/${object.generationId}-${object.index}`;
+          files.set(path, object.bytes);
+          return { path };
+        },
+      },
+      fetch,
+      providers: {
+        providers: [createHiggsfieldVideoProvider({ keyId: 'id', keySecret: 'secreto', fetch })],
+        unavailable: [],
+      },
+      models: [{ ...seeded, active: true, priceVerified: true, priceMicros: 100_000 }],
+      // No procesa en la UE: solo se usa porque se fija a propósito.
+      selection: { preferred: { video: `higgsfield:${KLING}` } },
+      pollIntervalMs: 0,
+    });
+
+    const pending = await service.generate({
+      userId: owner.id,
+      brandId: brand,
+      purpose: 'reel.clip',
+      request: { ...VIDEO, durationSeconds: 5 },
+    });
+    expect(pending).toMatchObject({
+      status: 'pending',
+      provider: 'higgsfield',
+      estimatedCostMicros: 500_000,
+      euProcessing: false,
+      trainsOnInputs: 'yes',
+      untestedAdapter: true,
+    });
+    expect(await committed(org)).toBe(500_000);
+
+    const done = await service.processJob(await claim(), 'trabajador-1');
+    if (done.status !== 'completed') throw new Error(`Se esperaba terminado y es ${done.status}`);
+    expect(done.assets).toEqual([{ kind: 'video', path: done.assets[0]!.path, mimeType: 'video/mp4', bytes: 8 }]);
+    expect([...files.get(done.assets[0]!.path)!]).toEqual([0, 0, 0, 24, 102, 116, 121, 112]);
+    expect(requests).toEqual([
+      `POST https://api.higgsfield.ai/${KLING}`,
+      'GET https://api.higgsfield.ai/requests/req-1/status',
+      'GET https://cdn.higgsfield.test/out.mp4',
+    ]);
+
+    const [row] = await generations(org);
+    expect(row).toMatchObject({
+      status: 'succeeded',
+      provider: 'higgsfield',
+      model: KLING,
+      usage: { seconds: 5 },
+      provider_request_id: 'req-1',
+      output: { data_region: 'unknown', trains_on_inputs: 'yes', untested_adapter: true },
+    });
+    expect(Number(row!.cost_micros)).toBe(500_000);
+    expect(await committed(org)).toBe(500_000);
   });
 });

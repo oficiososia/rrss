@@ -929,13 +929,17 @@ describe('registro de modelos de imagen y vídeo (catálogo de plataforma)', () 
     expect(await models(ana)).toEqual(antes);
 
     const [nuevo] = await as<{ id: string }>(db, superadmin, NEW_MODEL, ['modelo-nuevo']);
-    await as(db, superadmin, `update public.ai_media_models set price_micros = 2500, price_verified = true where id = $1`, [
-      nuevo!.id,
-    ]);
+    await as(
+      db,
+      superadmin,
+      `update public.ai_media_models set price_micros = 2500, price_verified = true where id = $1`,
+      [nuevo!.id],
+    );
     await as(db, superadmin, `update public.ai_media_models set active = true where id = $1`, [nuevo!.id]);
-    const [fila] = await db.query(`select price_micros::int as price, active, updated_by from public.ai_media_models where id = $1`, [
-      nuevo!.id,
-    ]);
+    const [fila] = await db.query(
+      `select price_micros::int as price, active, updated_by from public.ai_media_models where id = $1`,
+      [nuevo!.id],
+    );
     expect(fila).toEqual({ price: 2500, active: true, updated_by: superadmin.id });
 
     // Ni un superadministrador cambia de proveedor una fila: se crea otra.

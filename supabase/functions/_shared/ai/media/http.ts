@@ -66,10 +66,14 @@ export function failureFromResponse(provider: string, response: Response, body: 
     return new MediaProviderFailure('insufficient_credits', `${provider} no tiene saldo (HTTP 402)${suffix}`);
   }
   if (status === 408 || status >= 500) {
-    return new MediaProviderFailure('provider_unavailable', `${provider} no está disponible (HTTP ${status})${suffix}`, {
-      retryable: true,
-      retryAfterSeconds: retryAfterSeconds(response),
-    });
+    return new MediaProviderFailure(
+      'provider_unavailable',
+      `${provider} no está disponible (HTTP ${status})${suffix}`,
+      {
+        retryable: true,
+        retryAfterSeconds: retryAfterSeconds(response),
+      },
+    );
   }
   return new MediaProviderFailure('invalid_request', `${provider} ha rechazado la petición (HTTP ${status})${suffix}`);
 }
@@ -140,7 +144,10 @@ export function download(
 ): Promise<{ bytes: Uint8Array; contentType: string | null }> {
   return withTimeout(options, async (signal) => {
     if (!/^https:\/\//i.test(url)) {
-      throw new MediaProviderFailure('bad_response', `${options.provider} ha devuelto una dirección de descarga no válida`);
+      throw new MediaProviderFailure(
+        'bad_response',
+        `${options.provider} ha devuelto una dirección de descarga no válida`,
+      );
     }
     const response = await options.fetch(url, { signal });
     if (!response.ok) {
@@ -167,7 +174,9 @@ export function isTrustedUrl(url: string | undefined, hosts: string[]): url is s
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:' && hosts.some((h) => parsed.hostname === h || parsed.hostname.endsWith(`.${h}`));
+    return (
+      parsed.protocol === 'https:' && hosts.some((h) => parsed.hostname === h || parsed.hostname.endsWith(`.${h}`))
+    );
   } catch {
     return false;
   }

@@ -61,7 +61,9 @@ export function mediaModelsFromRows(rows: MediaModelRow[]): MediaModel[] {
       },
       priceVerified: row.price_verified === true,
       dataRegion: (['eu', 'us', 'global'].includes(row.data_region) ? row.data_region : 'unknown') as DataRegion,
-      trainsOnInputs: (['no', 'yes'].includes(row.trains_on_inputs) ? row.trains_on_inputs : 'unknown') as TrainsOnInputs,
+      trainsOnInputs: (['no', 'yes'].includes(row.trains_on_inputs)
+        ? row.trains_on_inputs
+        : 'unknown') as TrainsOnInputs,
       delivery: row.delivery === 'async' ? 'async' : 'sync',
       settings: record(row.settings) as { [key: string]: Json | undefined },
       priority: Number.isFinite(row.priority) ? row.priority : 0,
@@ -100,10 +102,16 @@ export function priceMediaUsage(model: MediaModel, usage: MediaUsage): { micros:
   return { micros: Math.ceil(total), unpriced };
 }
 
+/** Región efectiva: la que declara el adaptador según su configuración o, si no, la del registro. */
+export function regionOf(model: MediaModel, provider: MediaProvider | undefined): DataRegion {
+  return provider?.dataRegion ?? model.dataRegion;
+}
+
 export function dataHandlingOf(model: MediaModel, provider: MediaProvider): MediaDataHandling {
+  const dataRegion = regionOf(model, provider);
   return {
-    dataRegion: model.dataRegion,
-    euProcessing: model.dataRegion === 'eu',
+    dataRegion,
+    euProcessing: dataRegion === 'eu',
     trainsOnInputs: model.trainsOnInputs,
     untestedAdapter: !provider.testedAgainstRealService,
   };
@@ -178,9 +186,12 @@ export function resolveMediaModel(
 
   const active = models.filter((m) => m.kind === kind && m.active).sort((a, b) => b.priority - a.priority);
   if (active.length === 0) {
-    throw new AiError('not_configured', `No hay ningún modelo de ${KIND_LABEL[kind]} activo en el registro de modelos.`);
+    throw new AiError(
+      'not_configured',
+      `No hay ningún modelo de ${KIND_LABEL[kind]} activo en el registro de modelos.`,
+    );
   }
-  const allowed = selection.allowNonEu ? active : active.filter((m) => m.dataRegion === 'eu');
+  const allowed = selection.allowNonEu ? active : active.filter((m) => regionOf(m, providers.get(m.provider)) === 'eu');
   if (allowed.length === 0) {
     throw new AiError(
       'not_configured',

@@ -277,7 +277,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       p_usage: usage,
       p_output: {
         assets: assets.map((a) => ({ kind: a.kind, path: a.path, mime_type: a.mimeType, bytes: a.bytes })),
-        data_region: context.model?.dataRegion ?? 'unknown',
+        data_region: context.provider.dataRegion ?? context.model?.dataRegion ?? 'unknown',
         trains_on_inputs: context.model?.trainsOnInputs ?? 'unknown',
         untested_adapter: !context.provider.testedAgainstRealService,
       },
@@ -487,7 +487,12 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
   async function processJob(job: ClaimedJob, worker: string): Promise<MediaJobResult> {
     const payload = job.kind === MEDIA_JOB_KIND ? parsePayload(job.payload) : null;
     if (!payload) {
-      await rpc('fail_job', { p_job_id: job.id, p_worker: worker, p_error: 'Trabajo de medios mal formado', p_retry: false });
+      await rpc('fail_job', {
+        p_job_id: job.id,
+        p_worker: worker,
+        p_error: 'Trabajo de medios mal formado',
+        p_retry: false,
+      });
       return { status: 'failed', generationId: '', code: 'bad_job' };
     }
     const generationId = payload.generation_id;
@@ -568,7 +573,9 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
           // El resultado existe pero no se ha podido guardar o anotar: se
           // reintenta (el proveedor conserva el archivo un tiempo).
           const known = error instanceof AiProviderFailure ? error : null;
-          return requeue(known ? `No se pudo guardar el resultado: ${known.message}` : 'No se pudo guardar el resultado');
+          return requeue(
+            known ? `No se pudo guardar el resultado: ${known.message}` : 'No se pudo guardar el resultado',
+          );
         }
       }
 
@@ -629,7 +636,10 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
 
     const generation = await config.reader.getGeneration(generationId);
     if (!generation || generation.provider !== providerId) {
-      throw new MediaProviderFailure('invalid_webhook', 'El aviso no corresponde a ninguna generación de este proveedor');
+      throw new MediaProviderFailure(
+        'invalid_webhook',
+        'El aviso no corresponde a ninguna generación de este proveedor',
+      );
     }
     if (generation.status !== 'reserved') return { status: 'duplicate', generationId };
 

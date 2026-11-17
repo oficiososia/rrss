@@ -151,6 +151,12 @@ export interface MediaProvider {
    */
   readonly testedAgainstRealService: boolean;
   /**
+   * Región a la que apunta de verdad el adaptador, cuando depende de cómo se
+   * ha configurado (un mismo modelo puede servirse desde la UE o desde fuera).
+   * Si está, manda sobre lo que diga el registro de modelos.
+   */
+  readonly dataRegion?: DataRegion;
+  /**
    * Cota superior del consumo de una petición, sin llamar al proveedor. Con
    * ella y el precio del modelo se reserva el cupo antes de gastar nada.
    */

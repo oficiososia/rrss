@@ -88,7 +88,14 @@ export function simulatedPng(seed: string): Uint8Array {
     ...u32(adler32(Uint8Array.from(raw))),
   ];
   return Uint8Array.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
     ...chunk('IHDR', [...u32(size), ...u32(size), 8, 2, 0, 0, 0]),
     ...chunk('IDAT', zlib),
     ...chunk('IEND', []),
