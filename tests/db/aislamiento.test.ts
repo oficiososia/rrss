@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   addAsset,
   as,
+  asService,
   assetPath,
   createBrand,
   createDb,
@@ -163,6 +164,10 @@ const TENANT_TABLES = [
   'content_versions',
 ];
 
+// Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
+// usuario con sesión y solo los escribe un superadministrador.
+const PLATFORM_TABLES = ['ai_media_models'];
+
 describe('catálogo: nada queda abierto por olvido', () => {
   it('todas las tablas de public tienen RLS activado', async () => {
     const rows = await db.query<{ relname: string }>(
@@ -175,7 +180,7 @@ describe('catálogo: nada queda abierto por olvido', () => {
     const rows = await db.query<{ relname: string }>(
       `select relname from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' order by 1`,
     );
-    expect(rows.map((r) => r.relname)).toEqual([...TENANT_TABLES].sort());
+    expect(rows.map((r) => r.relname)).toEqual([...TENANT_TABLES, ...PLATFORM_TABLES].sort());
   });
 
   it('anon no tiene ningún privilegio sobre tablas ni funciones', async () => {
@@ -202,7 +207,7 @@ describe('catálogo: nada queda abierto por olvido', () => {
   });
 
   it('anon no puede leer ninguna tabla ni crear organizaciones', async () => {
-    for (const table of TENANT_TABLES) {
+    for (const table of [...TENANT_TABLES, ...PLATFORM_TABLES]) {
       await denied(db, null, `select * from public.${table}`);
     }
     await denied(db, null, `select public.create_organization('X')`);
@@ -991,6 +996,96 @@ describe('contenidos y versiones', () => {
     await denied(db, null, `select public.restore_content_version($1, 1)`, [contentA1], noFunction);
     await denied(db, null, `select public.set_content_status($1, 'draft')`, [contentA1], noFunction);
     await denied(db, null, `select public.archive_content_item($1)`, [contentA1], noFunction);
+  });
+});
+
+describe('registro de modelos de imagen y vídeo (catálogo de plataforma)', () => {
+  const NEW_MODEL = `insert into public.ai_media_models
+      (provider, model, task, display_name, billing_unit, price_micros, price_checked_on, price_source,
+       data_region, trains_on_inputs, delivery)
+    values ('proveedor-x', $1, 'image', 'Modelo de prueba', 'image', 1000, '2026-11-17', 'prueba', 'eu', 'no', 'sync')
+    returning id`;
+  const models = (user: TestUser) =>
+    as<{ model: string; price: number; active: boolean }>(
+      db,
+      user,
+      `select model, price_micros::int as price, active from public.ai_media_models order by provider, model`,
+    );
+
+  it('lo lee cualquier usuario con sesión, y todos ven lo mismo', async () => {
+    const deAna = await models(ana);
+    expect(deAna.length).toBeGreaterThan(0);
+    for (const user of [berta, clienteA, sinMarcaA, ajeno, superadmin]) {
+      expect(await models(user), user.email).toEqual(deAna);
+    }
+    await denied(db, null, `select * from public.ai_media_models`);
+  });
+
+  it('nace sin nada activo y con el origen de cada precio', async () => {
+    const rows = await db.query(
+      `select 1 from public.ai_media_models where active or price_source = '' or price_checked_on is null`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it('solo lo escribe un superadministrador', async () => {
+    const antes = await models(ana);
+    for (const user of [ana, adminA, editorA, ajeno]) {
+      await denied(db, user, NEW_MODEL, ['intruso']);
+      // Con RLS, cambiar o borrar filas ajenas no da error: no toca ninguna.
+      await as(db, user, `update public.ai_media_models set price_micros = 1, price_verified = true`);
+      await as(db, user, `delete from public.ai_media_models`);
+    }
+    expect(await models(ana)).toEqual(antes);
+
+    const [nuevo] = await as<{ id: string }>(db, superadmin, NEW_MODEL, ['modelo-nuevo']);
+    await as(
+      db,
+      superadmin,
+      `update public.ai_media_models set price_micros = 2500, price_verified = true where id = $1`,
+      [nuevo!.id],
+    );
+    await as(db, superadmin, `update public.ai_media_models set active = true where id = $1`, [nuevo!.id]);
+    const [fila] = await db.query(
+      `select price_micros::int as price, active, updated_by from public.ai_media_models where id = $1`,
+      [nuevo!.id],
+    );
+    expect(fila).toEqual({ price: 2500, active: true, updated_by: superadmin.id });
+
+    // Ni un superadministrador cambia de proveedor una fila: se crea otra.
+    await denied(db, superadmin, `update public.ai_media_models set provider = 'otro' where id = $1`, [nuevo!.id]);
+
+    await as(db, superadmin, `delete from public.ai_media_models where id = $1`, [nuevo!.id]);
+    expect(await models(ana)).toEqual(antes);
+  });
+
+  it('un modelo con el precio sin verificar no se puede activar', async () => {
+    const [nuevo] = await as<{ id: string }>(db, superadmin, NEW_MODEL, ['sin-verificar']);
+    await denied(
+      db,
+      superadmin,
+      `update public.ai_media_models set active = true where id = $1`,
+      [nuevo!.id],
+      /violates check constraint/,
+    );
+    // Tampoco el servidor, con la clave de servicio.
+    await expect(
+      asService(db, `update public.ai_media_models set active = true where id = $1`, [nuevo!.id]),
+    ).rejects.toThrow(/violates check constraint/);
+    await as(db, superadmin, `delete from public.ai_media_models where id = $1`, [nuevo!.id]);
+  });
+
+  it('la unidad de cobro tiene que casar con el tipo de medio', async () => {
+    await denied(
+      db,
+      superadmin,
+      `insert into public.ai_media_models
+         (provider, model, task, display_name, billing_unit, price_micros, price_checked_on, price_source,
+          data_region, trains_on_inputs, delivery)
+       values ('proveedor-x', 'video-por-imagen', 'video', 'Mal', 'image', 1, '2026-11-17', 'prueba', 'eu', 'no', 'async')`,
+      [],
+      /violates check constraint/,
+    );
   });
 });
 
