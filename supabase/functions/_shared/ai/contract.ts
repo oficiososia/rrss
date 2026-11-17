@@ -37,7 +37,26 @@ export interface AiModelSpec {
    * millonésima).
    */
   microsPerUnit: Record<string, number>;
+  /**
+   * Propósitos (`AiGenerateParams.purpose`) que sirve este modelo. Sin lista,
+   * sirve cualquiera de su tarea. Así cada tarea de texto puede usar un modelo
+   * distinto (uno para redactar, otro más barato para comprobar).
+   */
+  purposes?: string[];
 }
+
+/** Esquema JSON (subconjunto que entienden todos los proveedores: ver schema.ts). */
+export type JsonSchema = { [key: string]: Json | undefined };
+
+/** Salida estructurada que se exige al modelo. */
+export interface AiOutputSchema {
+  /** Nombre corto del esquema (`[a-z0-9_]`): algunos proveedores lo piden. */
+  name: string;
+  schema: JsonSchema;
+}
+
+/** Por qué dejó de escribir el modelo, con el mismo nombre en todos los proveedores. */
+export type AiFinishReason = 'stop' | 'length' | 'refusal' | 'other';
 
 export interface AiInput {
   /** Instrucciones del producto. Nunca contienen texto escrito por un cliente. */
@@ -49,9 +68,28 @@ export interface AiInput {
    * Viaja siempre como datos delimitados: el adaptador no puede mezclarlo con
    * las instrucciones.
    */
-  context?: { label: string; content: string }[];
+  context?: {
+    label: string;
+    content: string;
+    /**
+     * Material estable entre peticiones (el perfil de marca): el adaptador lo
+     * coloca delante y lo marca para la caché de prompts del proveedor.
+     */
+    cacheable?: boolean;
+  }[];
   /** Ajustes de la petición: `max_output_tokens`, `count`, `width`… */
   params?: Record<string, string | number | boolean>;
+  /**
+   * Si se indica, el modelo debe responder con un JSON que cumpla el esquema.
+   * El adaptador usa la salida estructurada nativa del proveedor y el servicio
+   * valida el resultado: `output.json` solo existe si lo cumple.
+   */
+  outputSchema?: AiOutputSchema;
+  /**
+   * Clave estable y sin datos sensibles (por ejemplo, marca y propósito) para
+   * los proveedores cuya caché de prompts se orienta con una clave.
+   */
+  cacheKey?: string;
 }
 
 export interface AiProviderRequest {
@@ -63,7 +101,11 @@ export interface AiProviderRequest {
 }
 
 export interface AiProviderResult {
-  /** Resultado serializable: `{ text }`, `{ assets: […] }`, `{ vectors: […] }`… */
+  /**
+   * Resultado serializable: `{ text }`, `{ assets: […] }`, `{ vectors: […] }`…
+   * En las tareas de texto: `{ text, finish_reason }` (`AiFinishReason`); el
+   * servicio añade `json` cuando se pidió salida estructurada y es válida.
+   */
   output: { [key: string]: Json | undefined };
   /** Consumo real, en las mismas unidades con las que el modelo tiene precio. */
   usage: AiUsage;
@@ -106,6 +148,8 @@ export type AiErrorCode =
   | 'not_configured' // no hay modelo, adaptador o precio para la tarea
   | 'provider_failed' // el proveedor respondió con un error
   | 'provider_timeout' // el proveedor no respondió a tiempo
+  | 'invalid_output' // el modelo respondió, pero no con la estructura pedida (el coste queda anotado)
+  | 'refused' // el modelo se negó a responder (el coste queda anotado)
   | 'internal'; // fallo propio (base de datos…)
 
 /** Error del servicio. `message` está en español y se puede enseñar a una persona. */

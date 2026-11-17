@@ -20,6 +20,12 @@ export interface SimulatedProviderOptions {
   failWith?: (request: AiProviderRequest, callNumber: number) => Error | null;
   /** Retraso de la respuesta, para probar el tiempo máximo. */
   delayMs?: number;
+  /**
+   * Texto que responde a una petición de texto (por defecto, «[simulado] …»).
+   * Sirve para probar las tareas con salida estructurada. Puede indicar además
+   * por qué terminó (`finish_reason`).
+   */
+  respond?: (request: AiProviderRequest) => string | { text: string; finish_reason: string } | undefined;
   /** Sustituye el consumo que se declara tras generar (por defecto, el calculado). */
   reportUsage?: (computed: AiUsage, request: AiProviderRequest) => AiUsage;
 }
@@ -87,8 +93,16 @@ export function createSimulatedProvider(options: SimulatedProviderOptions = {}):
         usage = { images: count };
       } else {
         const limit = numberParam(request, 'max_output_tokens', DEFAULT_MAX_OUTPUT_TOKENS);
-        const text = `[simulado] ${request.input.prompt}`.slice(0, limit * 4);
-        output = { simulated: true, text };
+        const scripted = options.respond?.(request);
+        if (scripted === undefined) {
+          const text = `[simulado] ${request.input.prompt}`.slice(0, limit * 4);
+          output = { simulated: true, text };
+        } else if (typeof scripted === 'string') {
+          output = { simulated: true, text: scripted };
+        } else {
+          output = { simulated: true, text: scripted.text, finish_reason: scripted.finish_reason };
+        }
+        const text = String(output.text);
         usage = { input_tokens: inputTokens(request), output_tokens: tokens(text) };
       }
 

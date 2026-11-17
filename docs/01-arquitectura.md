@@ -84,8 +84,9 @@ Un único punto de entrada para toda la IA del producto. El código vive en
 proveedor), `service.ts` (reservar → generar → registrar) y
 `simulated-provider.ts` (proveedor simulado, solo para pruebas). Es TypeScript
 sin dependencias, de modo que las pruebas lo ejecutan tal cual contra la base de
-datos. Todavía no hay ningún adaptador real ni ninguna Edge Function que lo
-exponga.
+datos. La parte de texto (adaptadores reales, tareas y la Edge Function
+`ai-generate`) está en [ia-texto.md](ia-texto.md): implementada y probada con
+simulación, **sin probar contra ningún proveedor real**.
 
 - **Adaptadores por proveedor** tras una interfaz común (texto, visión, imagen,
   vídeo, transcripción, vectores). El resto del producto no sabe qué proveedor
