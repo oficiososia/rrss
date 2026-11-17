@@ -244,8 +244,14 @@ export class FakeSupabase {
     resetPasswordForEmail: vi.fn<(email: string, options?: unknown) => Promise<{ error: unknown }>>(),
     updateUser: vi.fn<(attributes: unknown) => Promise<{ error: unknown }>>(),
   };
+  /** Contenido de los archivos del almacenamiento simulado, por ruta (lo que devuelve `download`). */
+  files: Record<string, string> = {};
   storage = {
     from: () => ({
+      download: async (path: string) =>
+        path in this.files
+          ? { data: new Blob([this.files[path]!], { type: 'text/plain' }), error: null }
+          : { data: null, error: { message: 'Object not found' } },
       upload: async () => ({ data: null, error: null }),
       remove: async () => ({ data: null, error: null }),
       createSignedUrl: async () => ({ data: { signedUrl: 'https://example.test/signed' }, error: null }),
@@ -300,6 +306,7 @@ export class FakeSupabase {
 
   reset() {
     this.tables = {};
+    this.files = {};
     this.calls = [];
     this.sequence = 0;
     this.session = null;

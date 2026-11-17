@@ -20,6 +20,7 @@ import {
 } from '@/components/ui';
 import { assetKeys, deleteAssets } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { aiTextEnabled } from '@/config/app';
 import type { BrandProfileRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { downloadText } from '@/lib/utils';
@@ -48,7 +49,9 @@ import {
   parseProvenance,
   type BrandProfileData,
   type ProfileSectionKey,
+  type ProvenanceSource,
 } from './profile';
+import { ProfileProposalFromSources } from './ProfileProposalFromSources';
 import { SourcesCard } from './SourcesCard';
 
 const TABS = [
@@ -240,9 +243,9 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
     SECTION_TAB[requested as keyof typeof SECTION_TAB] ??
     (TABS.some((t) => t.value === requested) ? (requested as TabValue) : 'negocio');
 
-  function persist(data: BrandProfileData, changeNote: string, onDone?: () => void) {
+  function persist(data: BrandProfileData, changeNote: string, onDone?: () => void, source: ProvenanceSource = 'user') {
     const clean = normalizeProfile(data);
-    const provenance = nextProvenance(parseProvenance(active?.provenance), active ? saved : null, clean, 'user');
+    const provenance = nextProvenance(parseProvenance(active?.provenance), active ? saved : null, clean, source);
     // Las versiones guardadas (también al restaurar) enlazan estos logotipos: no se tocan al salir.
     savingLogos.current.clear();
     clean.visual.logoAssetIds.forEach((id) => savingLogos.current.add(id));
@@ -344,7 +347,18 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
               </CardBody>
             </Card>
           </TabsContent>
-          <TabsContent value="fuentes">
+          <TabsContent value="fuentes" className="space-y-6">
+            {canManage && aiTextEnabled() && (
+              <ProfileProposalFromSources
+                brandId={brand.id}
+                currentProfile={active ? saved : null}
+                blockedReason={dirty ? 'Guarda o descarta antes los cambios del perfil.' : undefined}
+                // Lo aceptado se guarda como versión nueva; las secciones que cambian quedan como «propuestas por la IA».
+                onAccept={(profile, fields) =>
+                  persist(profile, `Propuesta de la IA: ${fields.length} campos aceptados`, undefined, 'ai')
+                }
+              />
+            )}
             <SourcesCard organizationId={org.id} brandId={brand.id} canManage={canManage} />
           </TabsContent>
           <TabsContent value="datos">
