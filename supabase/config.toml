@@ -371,8 +371,10 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
+# Funciones en local (`supabase functions serve`) para la prueba de extremo a extremo de la
+# Fase 2. Su configuración de pruebas, sin secretos, en supabase/functions/e2e.env.
 [edge_runtime]
-enabled = false
+enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
 # `per_worker` (default) — enables hot reload during local development.
 # `oneshot` — fallback mode if hot reload causes issues (e.g. in large repos or with symlinks).

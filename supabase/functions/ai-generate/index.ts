@@ -1,9 +1,9 @@
 // Edge Function `ai-generate`: la puerta de la interfaz a las tareas de IA de texto.
 //
-// ⚠ SIN DESPLEGAR Y SIN EJECUTAR EN DENO. La lógica (handler.ts) está probada
-// en Node con la base de datos real y el proveedor simulado; este archivo, que
-// es el único que depende de Deno y del cliente de Supabase, no se ha podido
-// ejecutar (no hay Deno en la máquina de desarrollo ni proyecto desplegado).
+// SIN DESPLEGAR. La lógica (handler.ts) está probada en Node con la base de
+// datos real y el proveedor simulado; este arranque en Deno solo se ha
+// ejecutado en local (`supabase functions serve`, prueba de extremo a extremo
+// de la Fase 2), con el proveedor simulado de pruebas locales.
 //
 // Secretos: la clave de servicio y las de los proveedores solo existen aquí,
 // en las variables de entorno de la función (ver `.env.example`). Nada de esto
@@ -13,6 +13,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { Json, RpcClient } from '../_shared/ai/contract.ts';
 import { createAiService } from '../_shared/ai/service.ts';
 import { loadAiTextConfig } from '../_shared/ai/text/config.ts';
+import { loadLocalTestTextConfig } from '../_shared/ai/text/local-test.ts';
 import { createAiGenerateHandler } from './handler.ts';
 
 const env = Deno.env.toObject();
@@ -26,7 +27,10 @@ const rpc: RpcClient = (fn, args) => admin.rpc(fn, args);
 
 // Sin proveedor simulado: si falta configuración, la función responde que la
 // IA no está disponible. Los avisos (solo nombres de variables) van al registro.
-const config = loadAiTextConfig(env);
+// Única excepción: la prueba de extremo a extremo en local, que exige
+// AI_E2E_SIMULATED_PROVIDER=true Y un Supabase local; si la variable está en
+// cualquier otro entorno, la función no arranca (ver local-test.ts).
+const config = loadLocalTestTextConfig(env) ?? loadAiTextConfig(env);
 for (const problem of config.problems) console.warn(`[ai-generate] configuración: ${problem}`);
 
 const handler = createAiGenerateHandler({
