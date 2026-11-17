@@ -13,7 +13,7 @@ Cómo leer las marcas: **[OF]** leído en la página oficial por los informes ·
 | Texto y orquestación | Claude Sonnet 5.5 (redacta) y Haiku 5.5 (comprueba) a través de Google Cloud Vertex AI, multi-región UE | Gemini 3.8 Flash en la misma cuenta; Mistral Large 4 por su dirección UE |
 | Imagen | Gemini 3.1 Flash Image («Nano Banana 2») en Vertex AI, UE | FLUX.2 por la dirección UE de Black Forest Labs, solo con baja de entrenamiento por escrito |
 | Vídeo generado con IA | Apagado por defecto. Si se activa: Gemini Omni 1.2 Flash en Vertex AI (misma cuenta) | Runway; fal.ai para modelos baratos |
-| Reels por plantillas | Remotion dentro de nuestro trabajador de medios | FFmpeg directo (montajes sencillos); Creatomate o Shotstack |
+| Reels por plantillas | **Implementado:** FFmpeg directo dentro de nuestro trabajador de medios (`worker/`) | Remotion en el mismo trabajador (plantillas animadas; licencia de empresa a partir de 4 personas); Creatomate o Shotstack |
 | Editor por capas | Construirlo: documento propio + Konva (gratis) | Comprar Polotno (exige React 19 y presupuesto) |
 | Exportación en servidor | El mismo dibujo del editor, ejecutado en un navegador sin pantalla dentro del trabajador | skia-canvas (sin navegador) en el trabajador o en una función de Vercel |
 | Trabajador de medios y cola | Contenedor en Fly.io (Fráncfort), encendido solo cuando hay trabajo; la cola `jobs` que ya existe | Cloud Run Jobs en Europa (misma cuenta de Google); Render Fráncfort |
@@ -48,9 +48,9 @@ El texto incluye el recargo regional del 10 % y un 25 % por la llamada de planif
 | Trabajador en Fly.io | ≈ 2 USD | Supuesto de 20 empresas con 2 marcas; solo paga cuando trabaja |
 | Almacenamiento extra | 2,5 USD (mes 3) → 16 USD (mes 12) | Mismo supuesto, sin política de borrado |
 | Google Cloud | 0 fijo | Se paga por uso |
-| Remotion | 0, o 100 USD | Gratis hasta 3 personas en la empresa; si no, mínimo de 100 USD al mes [OF] |
+| FFmpeg (reels) | 0 | Es lo implementado. Remotion, solo si se adopta como alternativa: gratis hasta 3 personas en la empresa; si no, mínimo de 100 USD al mes [OF] |
 | Música (Epidemic Sound) | Sin precio público | Hay nivel gratuito para pruebas [OF 17/11] |
-| **Total de partida** | **≈ 47 USD al mes** | Sin licencia de Remotion ni música |
+| **Total de partida** | **≈ 47 USD al mes** | Sin música (los reels con FFmpeg no pagan licencia) |
 
 ### Decisiones que solo puede tomar el dueño
 
@@ -59,7 +59,7 @@ El texto incluye el recargo regional del 10 % y un 25 % por la llamada de planif
 | 1 | Criterio de datos | «UE por defecto» (apartado 3). Relajarlo se decide por organización, no para todo el producto |
 | 2 | Vídeo generado con IA | Apagado; se activa por organización con un aviso de que ese material puede salir de la UE |
 | 3 | Dónde vive el trabajador de medios | Fly.io en Fráncfort |
-| 4 | Cuántas personas tiene la empresa (licencia de Remotion) | Se supone 3 o menos: gratis. Con más, 100 USD al mes o empezar con FFmpeg |
+| 4 | Si se quieren reels con plantillas animadas (Remotion) | No: se sigue con FFmpeg, que ya está construido y no tiene licencia. Remotion pediría saber cuántas personas tiene la empresa (gratis hasta 3; con más, 100 USD al mes) |
 | 5 | Cupo mensual de IA | Propuesta: 45 USD por cada marca activa de la organización (escenario recomendado), revisable con el primer mes de consumo real. Se anota en USD, que es como facturan los proveedores |
 | 6 | Música | Abrir cuenta gratuita de Epidemic Sound y pedir precio; mientras, audio del cliente |
 | 7 | Prueba ciega antes de fijar proveedores | Sí, con tope de 100 USD (apartado 6) |
@@ -119,11 +119,11 @@ Descartados: Sora (cerrada el 24/09/2026 [OF]) y Higgsfield (puede entrenar con 
 
 | Opción | Precio | Datos | Uso en nuestro producto | Esfuerzo | Riesgo |
 |---|---|---|---|---|---|
-| **Remotion en nuestro trabajador** | Gratis hasta 3 personas; si no, 0,01 por vídeo con mínimo de 100 al mes [OF] | No salen de nuestra infraestructura | Un producto que monta vídeos automáticamente entra en esa licencia (interpretación del informe; confirmar) [SV] | Alto: 3–5 plantillas animadas | Tiempo de montaje sin medir |
-| FFmpeg directo | Gratis | No salen | Licencia según la compilación [SV] | Medio | Solo zoom, fundidos, rótulos y música |
+| **FFmpeg directo en nuestro trabajador (implementado)** | Gratis | No salen | Licencia según la compilación [SV] | Medio: hecho (`media.reel.template`) | Solo zoom, fundidos, rótulos y música |
+| Remotion en nuestro trabajador (alternativa) | Gratis hasta 3 personas; si no, 0,01 por vídeo con mínimo de 100 al mes [OF] | No salen de nuestra infraestructura | Un producto que monta vídeos automáticamente entra en esa licencia (interpretación del informe; confirmar) [SV] | Alto: 3–5 plantillas animadas | Tiempo de montaje sin medir |
 | Creatomate / Shotstack | 45 al mes (2.000 créditos) / 0,20 por minuto [OF] | Servicio externo; región UE [SV] | API en todos los planes | Bajo | El resultado no es idéntico a nuestro editor |
 
-**Recomendación.** Remotion en el trabajador, leyendo el mismo documento de capas con el tiempo como parámetro, y FFmpeg para unir, comprimir y poner la música. Es la base del vídeo del producto: coste casi nulo, sin inventos sobre la comida y sin enviar nada a terceros. **Qué contratar:** nada si la empresa tiene 3 personas o menos; si no, la licencia de empresa. **Sin verificar:** confirmación escrita de la licencia; que el dibujo del editor se anime bien dentro de Remotion (prototipo).
+**Lo implementado.** Los informes recomendaban Remotion para las plantillas y FFmpeg para unir, comprimir y poner la música. Se construyó **todo con FFmpeg directo** en el trabajador (`worker/`, trabajo `media.reel.template`, probado con archivos reales y dentro del contenedor) para no depender de la licencia de Remotion: coste de licencia cero, sin inventos sobre la comida y sin enviar nada a terceros. El precio es que las plantillas se limitan a zoom, fundidos, rótulos y música. **Alternativa:** Remotion en el mismo trabajador, leyendo el documento de capas con el tiempo como parámetro, si se quieren plantillas animadas más ricas; exige confirmar por escrito la licencia (gratis hasta 3 personas en la empresa; si no, licencia de empresa) y un prototipo de que el dibujo del editor se anima bien dentro de Remotion. **Qué contratar:** nada.
 
 ### 2.5 Editor por capas
 
@@ -143,7 +143,7 @@ Recomendación y razones en el apartado 4. **Qué contratar:** nada. **Sin verif
 | skia-canvas en el trabajador o en una función de Vercel | 0 de licencia [OF] | UE si se fija la región de la función | Medio | Pequeñas diferencias de texto con el navegador |
 | Servicio externo (Creatomate, Bannerbear, Templated) | 39–49 al mes por 1.000–2.000 imágenes [OF] | Externo; región [SV] | Bajo | Motor distinto: lo exportado no coincide con lo editado |
 
-**Recomendación.** Navegador sin pantalla dentro del trabajador. Los informes se contradecían: el 04 proponía una función de Vercel con skia-canvas y el 05 un contenedor aparte. Se resuelve a favor del contenedor porque el vídeo lo exige de todos modos, porque Remotion ya trae ese navegador (un solo motor para imagen y vídeo, que es además el del propio editor) y porque coincide con la arquitectura escrita (`01-arquitectura.md`). La función de Vercel queda como plan B solo para imagen. Lo que no cabe en ningún caso es una función de Supabase (2 segundos de procesador, 256 MB [OF]). «Idéntico» se comprueba con capturas de referencia por plantilla.
+**Recomendación.** Navegador sin pantalla dentro del trabajador. Los informes se contradecían: el 04 proponía una función de Vercel con skia-canvas y el 05 un contenedor aparte. Se resuelve a favor del contenedor porque el vídeo lo exige de todos modos (el trabajador con FFmpeg ya existe), porque es el mismo motor de dibujo del propio editor (y, si algún día se adopta Remotion, este trae ese mismo navegador) y porque coincide con la arquitectura escrita (`01-arquitectura.md`). La función de Vercel queda como plan B solo para imagen. Lo que no cabe en ningún caso es una función de Supabase (2 segundos de procesador, 256 MB [OF]). «Idéntico» se comprueba con capturas de referencia por plantilla.
 
 ### 2.7 Trabajador de medios y cola
 
@@ -207,7 +207,7 @@ Recomendación y razones en el apartado 4. **Qué contratar:** nada. **Sin verif
 | Vertex AI: vídeo (opcional) | Una foto o clip corto y la instrucción | Bloqueado por diseño | Sin confirmar | No sin permiso |
 | Fly.io (trabajador) | Fotos y vídeos de paso, para exportar y montar | Sí, de paso; no se guardan | UE (Fráncfort) | No aplica |
 | Epidemic Sound | Búsquedas de música | No | [SV] | — |
-| Remotion, Konva | Nada: son programas que corren en nuestro sistema | — | — | — |
+| FFmpeg, Konva (y Remotion si se adopta) | Nada: son programas que corren en nuestro sistema | — | — | — |
 
 ### Diseño «UE por defecto»
 
@@ -274,7 +274,7 @@ Además: guardar quién revisó y aprobó cada pieza (la revisión humana cuenta
 5. Nuestro contrato de tratamiento con los clientes, la lista de proveedores, la base legal para fotos con empleados o clientes y qué cambia si una organización acepta proveedores de fuera de la UE.
 6. Derechos de autor, de marca y de imagen sobre lo generado, y qué indemnización dan los proveedores.
 7. Cláusulas de responsabilidad si el verificador da por buena una pieza que no lo era.
-8. Licencias: tipografías de marca subidas al servidor, música sublicenciada y Remotion.
+8. Licencias: tipografías de marca subidas al servidor, música sublicenciada, la compilación de FFmpeg del contenedor y, si se adopta, Remotion.
 
 ## 6. Plan de pruebas de calidad antes de fijar proveedores
 
@@ -303,7 +303,7 @@ Además: guardar quién revisó y aprobó cada pieza (la revisión humana cuenta
 | 4 | Fly.io | Exportación idéntica, reels por plantillas, FFmpeg y lectura de webs | Token de despliegue |
 | 5 | Cuentas de prueba: Mistral, Black Forest Labs, Runway, fal y una entre Ideogram u OpenAI | La prueba ciega del apartado 6 | Una clave por cuenta, con saldo mínimo |
 | 6 | Epidemic Sound (desarrollador) y petición de precio | Música en los reels | Clave de API |
-| 7 | Remotion: licencia solo si la empresa pasa de 3 personas | Reels a la venta | Confirmación escrita |
+| 7 | Remotion: solo si se adopta como alternativa a FFmpeg y la empresa pasa de 3 personas | Plantillas de reel animadas | Confirmación escrita |
 | 8 | Abogado | Vender a terceros con el etiquetado y los contratos resueltos | Respuestas del apartado 5 |
 
 Sin esperar a ninguna cuenta se puede avanzar en el documento de capas con sus versiones, el editor, las reglas sin IA del verificador y la tabla de formatos por red. El trámite de Meta para publicar (Fase 3) conviene iniciarlo ya porque su plazo no depende de nosotros.
