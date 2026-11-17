@@ -2,6 +2,7 @@ import { Sparkles } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Badge, Button, Dialog, Field, Notice, Select, Spinner, Textarea } from '@/components/ui';
 import type { PostCopy } from '@/features/content/document';
+import { LENGTH_UNIT_NOTE } from '@/features/content/textUnits';
 import { cn } from '@/lib/utils';
 import { AiErrorNotice } from './AiErrorNotice';
 import { useGeneratePostCaption, type PostCaptionResult, type PostCaptionVariant } from './api';
@@ -95,6 +96,7 @@ function LimitsNotice({ limits }: { limits: CaptionLimits }) {
       {target}: hasta {number.format(limits.maxChars)} caracteres contando los hashtags
       {limits.maxHashtags !== null ? ` y ${limits.maxHashtags} hashtags como máximo` : ''}.
       {limits.provenance === 'unverified' ? ' Dato sin confirmar en la documentación oficial de la red.' : ''}
+      {` ${LENGTH_UNIT_NOTE}`}
     </Notice>
   );
 }

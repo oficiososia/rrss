@@ -123,7 +123,7 @@ describe('límites de la red para la IA', () => {
     const ig = captionLimits('instagram', 'post');
     expect(ig.request).toMatchObject({ id: 'instagram', name: 'Instagram', maxChars: 2200, maxHashtags: 30 });
     expect(ig.maxChars).toBe(2200);
-    expect(ig.unit).toBe('codepoints');
+    expect(ig.unit).toBe('utf16');
     expect(captionLimits('tiktok', 'video').unit).toBe('utf16');
   });
 

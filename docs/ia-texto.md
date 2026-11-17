@@ -137,9 +137,16 @@ delimitado y se trata como dato.
 
 | Tarea (`purpose`) | Entra | Sale |
 |---|---|---|
-| `post.caption` | Perfil de marca, encargo breve, red con sus límites (dato) y número de variantes (1–5) | Variantes con texto, etiquetas, longitud medida y `withinLimits`. No se recortan |
+| `post.caption` | Perfil de marca, encargo breve, red con sus límites (dato) y número de variantes (1–5) | Variantes con texto, etiquetas, longitud medida (en unidades UTF-16, ver abajo) y `withinLimits`. No se recortan |
 | `profile.proposal` | Texto ya extraído de las fuentes (hasta 20 fuentes y 400.000 caracteres) y, si existe, el perfil actual | Una **propuesta** con la forma del perfil y notas para quien revisa. No guarda nada |
 | `brand.check` | Perfil de marca y el texto | Veredicto por criterio (`tone`, `banned_topics`): `pass`, `fail` o `uncertain`, con explicación y citas. Global: `pass`, `fail` o `review` |
+
+**Unidad de los límites de texto.** Todo el producto cuenta en unidades UTF-16:
+el contador del editor, la ventana «Redactar con IA», el verificador de marca y
+esta tarea. Si una red dice «caracteres» sin precisar, se toma UTF-16 porque es
+la cuenta más estricta (un emoji puede contar 2): nunca se da por bueno un texto
+que la red pudiera rechazar. La correspondencia está en
+`src/features/content/textUnits.ts` y la vigila `textUnits.test.ts`.
 
 En la comprobación de marca el veredicto global lo calcula el producto (fallo >
 duda > visto bueno). Un `fail` sin una cita que esté en el texto se rebaja a

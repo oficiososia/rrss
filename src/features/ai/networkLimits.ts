@@ -5,6 +5,7 @@ import { publishedText, textLength } from '@/features/brandcheck/text';
 import type { LengthUnit } from '@/features/brandcheck/types';
 import { getFormatSpec, NETWORKS, type SpecProvenance } from '@/features/content/networks';
 import { postCopySchema, type PostCopy } from '@/features/content/document';
+import { lengthUnitOf } from '@/features/content/textUnits';
 import type { AiNetworkLimits, PostCaptionVariant } from './api';
 
 /**
@@ -49,8 +50,8 @@ export function captionLimits(network: string, format: string): CaptionLimits {
     maxChars,
     maxHashtags: hashtags?.value ?? null,
     provenance: caption?.provenance ?? null,
-    // El servidor cuenta puntos de código; si la red cuenta en UTF-16 (un emoji vale dos), se mide así.
-    unit: caption?.value.unit === 'utf16' ? 'utf16' : 'codepoints',
+    // Unidad común a editor, verificador y servidor (content/textUnits.ts).
+    unit: lengthUnitOf(caption?.value),
   };
 }
 

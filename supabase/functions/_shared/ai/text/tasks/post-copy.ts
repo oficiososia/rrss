@@ -48,7 +48,7 @@ export interface PostCopyVariant {
   hashtags: string[];
   /** Texto completo tal como se publicaría: el texto y, debajo, las etiquetas. */
   caption: string;
-  /** Caracteres del texto completo. */
+  /** Caracteres del texto completo, en unidades UTF-16 (un emoji puede contar 2): la cuenta común del producto, ver src/features/content/textUnits.ts. */
   characters: number;
   /** ¿Cabe en la red? (caracteres y número de etiquetas). */
   withinLimits: boolean;
@@ -119,7 +119,8 @@ export function measureVariant(text: string, hashtags: string[], network: Networ
   const tags = hashtags.map(normalizeHashtag).filter((tag) => tag !== '');
   const body = text.trim();
   const caption = tags.length > 0 ? `${body}\n\n${tags.join(' ')}` : body;
-  const characters = [...caption].length;
+  // UTF-16, como el editor y el verificador (src/features/content/textUnits.ts).
+  const characters = caption.length;
   const withinLimits =
     characters <= network.maxChars && (network.maxHashtags === undefined || tags.length <= network.maxHashtags);
   return { text: body, hashtags: tags, caption, characters, withinLimits };

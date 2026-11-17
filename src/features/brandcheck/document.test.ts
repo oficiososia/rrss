@@ -93,8 +93,8 @@ describe('límites de la red', () => {
     });
     expect(limitsFromSpec(undefined)).toEqual({});
   });
-  it('si la red no precisa la unidad, deja la más estricta por defecto', () => {
-    expect(limitsFromSpec(getFormatSpec('instagram', 'post')).lengthUnit).toBeUndefined();
+  it('cuenta con la unidad común del producto (UTF-16), también si la red dice «caracteres»', () => {
+    expect(limitsFromSpec(getFormatSpec('instagram', 'post')).lengthUnit).toBe('utf16');
   });
 });
 

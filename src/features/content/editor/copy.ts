@@ -1,7 +1,7 @@
 import { pieceHashtagKeys, pieceMentionKeys, publishedText, textLength } from '@/features/brandcheck/text';
-import type { LengthUnit } from '@/features/brandcheck/types';
 import type { PostCopy } from '../document';
-import type { NetworkFormatSpec, SpecProvenance, TextLimit } from '../networks';
+import type { NetworkFormatSpec, SpecProvenance } from '../networks';
+import { lengthUnitOf } from '../textUnits';
 
 // Contadores del texto de la publicación frente a los límites de la red. Se
 // cuenta igual que el verificador de marca (mismas funciones de texto), para
@@ -19,20 +19,15 @@ export interface CopyCounter {
   note?: string;
 }
 
-/** Cómo cuenta cada red: «caracteres» se cuenta como lo que se ve (grafemas: un emoji es uno). */
-export function lengthUnitOf(limit: TextLimit): LengthUnit {
-  return limit.unit === 'utf16' ? 'utf16' : 'graphemes';
-}
-
 export function copyCounters(copy: PostCopy, spec: NetworkFormatSpec | undefined): CopyCounter[] {
   const text = spec?.text ?? {};
   const caption = text.caption;
-  const unit = caption ? lengthUnitOf(caption.value) : 'graphemes';
-  const captionLength = textLength(publishedText(copy.caption, copy.hashtags), unit);
+  // Unidad común a editor, IA y verificador: ver ../textUnits.ts.
+  const captionLength = textLength(publishedText(copy.caption, copy.hashtags), lengthUnitOf(caption?.value));
   const hashtags = pieceHashtagKeys(copy.caption, copy.hashtags).length;
   const mentions = pieceMentionKeys(copy.caption, copy.mentions).length;
   const alt = text.altText;
-  const altLength = textLength(copy.altText, alt ? lengthUnitOf(alt.value) : 'graphemes');
+  const altLength = textLength(copy.altText, lengthUnitOf(alt?.value));
 
   const counter = (
     field: CopyCounter['field'],

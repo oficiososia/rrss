@@ -208,7 +208,7 @@ describe('texto de una publicación con variantes', () => {
     const corta = { id: 'x', name: 'Red X', maxChars: 20, maxHashtags: 1 };
     expect(measureVariant('Este texto es claramente más largo', [], corta)).toMatchObject({ characters: 34, withinLimits: false });
     expect(measureVariant('Corto', ['#a', '#b'], corta)).toMatchObject({ withinLimits: false, hashtags: ['#a', '#b'] });
-    expect(measureVariant('Corto 🍂', ['a'], corta)).toMatchObject({ caption: 'Corto 🍂\n\n#a', characters: 11, withinLimits: true });
+    expect(measureVariant('Corto 🍂', ['a'], corta)).toMatchObject({ caption: 'Corto 🍂\n\n#a', characters: 12, withinLimits: true });
   });
 
   it('si llegan menos variantes de las pedidas, se ve en el resultado', async () => {

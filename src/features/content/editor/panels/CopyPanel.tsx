@@ -2,6 +2,7 @@ import { useState, type Dispatch } from 'react';
 import { cn } from '@/lib/utils';
 import type { PostCopy } from '../../document';
 import type { NetworkFormatSpec } from '../../networks';
+import { LENGTH_UNIT_NOTE } from '../../textUnits';
 import { copyCounters, formatTagList, parseTagList, type CopyCounter } from '../copy';
 import type { EditorAction } from '../history';
 import { Labeled } from './controls';
@@ -45,7 +46,9 @@ export function CopyPanel({ copy, spec, networkName, readOnly, dispatch }: CopyP
 
   return (
     <div className="space-y-4" data-testid="copy-panel">
-      <p className="text-xs text-muted">Límites de {networkName}. Lo que la red no publica no se cuenta como límite.</p>
+      <p className="text-xs text-muted">
+        Límites de {networkName}. Lo que la red no publica no se cuenta como límite. {LENGTH_UNIT_NOTE}
+      </p>
       <Labeled label="Pie de la publicación">
         {(id) => (
           <>

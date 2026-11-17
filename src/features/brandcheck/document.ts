@@ -4,6 +4,7 @@
 
 import type { ContentDocument, Layer, ShapeLayer } from '@/features/content/document';
 import { NETWORKS, type NetworkFormatSpec } from '@/features/content/networks';
+import { lengthUnitOf } from '@/features/content/textUnits';
 import { blendOver, parseHex, type Rgb } from './color';
 import { brandRulesFromProfile, type ProfileLike } from './profile';
 import type { BrandCheckInput, NetworkLimits, PaletteColor, TextLayer } from './types';
@@ -32,8 +33,8 @@ export interface BuildInputOptions {
 /**
  * Límites de texto de la especificación de la red. Lo que la especificación no
  * trae queda sin definir (el verificador lo notifica como dato desconocido).
- * Si la red cuenta «caracteres» sin precisar la unidad, no se fija `lengthUnit`
- * y el verificador usa UTF-16, que es la más estricta.
+ * La unidad de cuenta es la común del producto (`content/textUnits.ts`), la
+ * misma que el contador del editor y la ventana «Redactar con IA».
  */
 export function limitsFromSpec(spec: NetworkFormatSpec | undefined): NetworkLimits {
   if (!spec) return {};
@@ -41,7 +42,7 @@ export function limitsFromSpec(spec: NetworkFormatSpec | undefined): NetworkLimi
   const limits: NetworkLimits = { label: NETWORKS.find((n) => n.id === spec.network)?.label ?? spec.label };
   if (text.caption) {
     limits.maxCaptionLength = text.caption.value.maxLength;
-    if (text.caption.value.unit === 'utf16') limits.lengthUnit = 'utf16';
+    limits.lengthUnit = lengthUnitOf(text.caption.value);
   }
   if (text.maxHashtags) limits.maxHashtags = text.maxHashtags.value;
   if (text.maxMentions) limits.maxMentions = text.maxMentions.value;
