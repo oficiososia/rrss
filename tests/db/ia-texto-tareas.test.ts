@@ -18,7 +18,6 @@ import {
 } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
 import { loadAiTextConfig } from '../../supabase/functions/_shared/ai/text/config.ts';
 import type { FetchLike } from '../../supabase/functions/_shared/ai/text/http.ts';
-import { createMistralProvider } from '../../supabase/functions/_shared/ai/text/mistral.ts';
 import {
   BRAND_CHECK_INSTRUCTIONS,
   BRAND_CHECK_SCHEMA,
