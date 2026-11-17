@@ -5,6 +5,7 @@ import { useUser } from '@/features/auth/AuthProvider';
 import { useAdminOrganizations, useIsPlatformAdmin } from '@/features/orgs/api';
 import { UserMenu } from '@/layout/AppShell';
 import { formatBytes, formatDate } from '@/lib/utils';
+import { AiQuotaPanel } from './AiQuotaPanel';
 
 export function PlatformPage() {
   const user = useUser();
@@ -85,6 +86,11 @@ export function PlatformPage() {
                 </div>
               )}
             </Card>
+            {orgs.data && (
+              <div className="mt-6">
+                <AiQuotaPanel organizations={orgs.data} />
+              </div>
+            )}
           </>
         )}
       </main>
