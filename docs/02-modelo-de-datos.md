@@ -104,8 +104,8 @@ entornos. No incluye archivos ni miembros.
 
 | Fase | Entidades | Notas |
 |---|---|---|
-| 2 | `ai_models`, `content_items`, `content_versions`, `knowledge_chunks` (vectores) | **Ya existen** `ai_generations`, `ai_usage`, `usage_quotas` y `jobs` (secciones 9 y 10). `ai_models` (registro de modelos y precios como dato) espera a que se elija proveedor: hoy los modelos son configuración del servicio |
-| 3 | `social_accounts`, `social_account_secrets` (cifrada, sin acceso desde el cliente), `campaigns`, `scheduled_publications`, `publication_attempts`, `approvals`, `comments` | El calendario es una vista de `scheduled_publications`, no una tabla |
+| 2 | `ai_models`, `knowledge_chunks` (vectores) | **Ya existen** `ai_generations`, `ai_usage`, `usage_quotas` y `jobs` (secciones 9 y 10), y `content_items` y `content_versions` (sección 11). `ai_models` (registro de modelos y precios como dato) espera a que se elija proveedor: hoy los modelos son configuración del servicio |
+| 3 | `social_accounts`, `social_account_secrets` (cifrada, sin acceso desde el cliente), `campaigns`, `scheduled_publications`, `publication_attempts`, `approvals`, `comments` | El calendario es una vista de `scheduled_publications`, no una tabla. Una publicación programada apuntará a una pieza y a una versión concreta de `content_versions` (sección 11) |
 | 4 | `automations`, `automation_runs`, `agent_runs`, `agent_steps` | Cada paso reanudable |
 | 5 | `analytics_snapshots` (particionada por fecha) | Datos tal como los da cada red, con su procedencia |
 | 6 | `plans`, `subscriptions`, `entitlements`, `feature_flags`, `notification_events` | Suscripción (Stripe), derechos y consumo, separados |
@@ -218,3 +218,83 @@ organización, sus administradores. Nadie los escribe desde el cliente.
 Pendiente: alta en la publicación de Realtime (se hará en el entorno desplegado),
 renovación de la reserva para trabajos largos, limpieza de trabajos antiguos y
 prioridad por plan.
+
+## 11. Fase 2: contenidos y versiones
+
+Implementado y probado en base de datos y en la capa de acceso a datos; **sin
+pantallas, sin editor y sin render**. No hay nada de programación ni de
+publicación: eso es la Fase 3.
+
+```
+brands ──< content_items ──< content_versions
+            pieza              instantáneas inmutables del documento
+```
+
+| Tabla | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `content_items` | Una publicación de una marca: nombre interno, red y formato de destino, estado, número de la versión vigente, archivado y autor | Quien ve la marca (`view`) | Quien edita (`edit`) la crea y cambia su nombre, red y formato. El estado, la versión vigente y el archivado solo cambian por función |
+| `content_versions` | El documento de la pieza en cada guardado: número, versión del esquema, documento (`data`), nota, autor y, si es una restauración, de qué versión se copió | Quien ve la marca | Solo `save_content_version()` y `restore_content_version()`. Nadie las cambia ni las borra, tampoco con la clave de servicio |
+
+| Función | Quién | Qué hace |
+|---|---|---|
+| `save_content_version(pieza, documento, versión del esquema, nota, versión esperada)` | `edit` | Guarda una versión nueva (la vigente + 1) |
+| `restore_content_version(pieza, versión, nota, versión esperada)` | `edit` | Copia el documento de una versión antigua en una versión nueva; el historial no se toca |
+| `set_content_status(pieza, estado, versión esperada)` | `edit` o `approve`, según el cambio | Cambia el estado |
+| `archive_content_item(pieza, archivar)` | `edit` | Archiva o recupera; no se borra nada |
+
+**Estados**: `idea` → `draft` → `in_review` → `approved`. El estado termina en
+«aprobada» a propósito: «programada» y «publicada» no son estados de la pieza
+sino hechos de la Fase 3 (`scheduled_publications`, `publication_attempts`).
+
+- Quien edita mueve la pieza entre idea, borrador y revisión, y puede retirar
+  una aprobación. Una idea puede no tener documento; para pasar a revisión hace
+  falta al menos una versión guardada.
+- Aprobar exige la capacidad `approve` (gestor, revisor, cliente), que la pieza
+  esté en revisión —o en borrador si quien aprueba también edita— y **decir qué
+  versión se aprueba**.
+- Quien solo aprueba puede devolver a borrador lo que está en revisión o
+  aprobado, y nada más.
+- **Una aprobación vale para la versión que se aprobó**: guardar o restaurar
+  otra versión, o cambiar la red o el formato, devuelve la pieza a borrador.
+  Así, «aprobada» significa siempre «la versión vigente está aprobada».
+- Guardar el primer documento de una idea la pasa a borrador.
+
+**Guardado sin pisar a nadie.** No hay edición simultánea. Quien guarda, restaura
+o aprueba puede indicar sobre qué versión trabajaba; si otra persona guardó
+después, la función falla con el código `CT001` (y las cifras en `DETAIL`) y no
+escribe nada. La fila de la pieza se bloquea durante el guardado, así que dos
+guardados a la vez no pueden repetir número.
+
+**Archivar.** `archived_at` marca la pieza como archivada sin perder su estado.
+Una pieza archivada se sigue viendo, con su historial, pero no admite ningún
+cambio hasta recuperarla. Los contenidos no se borran desde el cliente; solo
+desaparecen en cascada al borrar la marca.
+
+**El documento** es un JSON validado en el cliente, igual que el perfil de
+marca (sección 5): formato propio por capas, independiente del editor, con
+`schemaVersion` y migraciones al leer (`src/features/content/document/`). La
+base de datos solo exige que sea un objeto de menos de 512 KB y guarda aparte
+su versión de esquema. La columna se llama `data`, como en `brand_profiles`,
+porque el registro de auditoría no copia esa columna.
+
+**Red y formato** son texto con forma de identificador (`instagram`, `reel`…).
+Qué redes y formatos existen, con sus medidas y límites y la procedencia de cada
+cifra, es un catálogo de la aplicación (`src/features/content/networks.ts`), no
+de la base de datos: añadir una red no pide migración.
+
+**Auditoría.** De la pieza se registran el alta, el borrado y los cambios de
+nombre, red, formato, estado y archivado; de cada versión, el alta, sin el
+documento. El avance del número de versión no genera un apunte propio.
+
+**Previsto para la Fase 3, sin simular nada.** No hay columnas de fecha de
+publicación ni estados de programada o publicada. Lo que queda preparado son
+las dos claves únicas a las que apuntarán las publicaciones programadas:
+`content_items (id, brand_id, organization_id)` y `content_versions
+(content_id, version)`. Una publicación podrá así fijar la pieza y la versión
+exacta que se aprobó, y comprobar al publicar que sigue siendo la vigente y que
+la pieza sigue aprobada.
+
+Pendiente en este bloque: enlazar las variantes de una misma idea para varias
+redes (hoy cada red es una pieza distinta, que se obtiene adaptando el
+documento), comentarios y registro de aprobaciones por pieza (Fase 3), y
+recursos generados o exportados asociados a una versión (llegan con el render).
