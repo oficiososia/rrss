@@ -1,0 +1,144 @@
+// Adaptadores de Supabase contra un servidor HTTP local que habla como
+// PostgREST y como la API de Storage. No se conecta a ningún Supabase: lo que
+// se comprueba es el formato de las peticiones y el tratamiento de errores.
+import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { LeaseLostError, PermanentError } from '../src/errors.ts';
+import { createSupabaseQueue, createSupabaseStorage } from '../src/supabase.ts';
+
+const KEY = 'clave-de-servicio-de-prueba';
+
+interface Seen {
+  method: string;
+  url: string;
+  headers: IncomingMessage['headers'];
+  body: Buffer;
+}
+
+let server: Server;
+let url: string;
+let dir: string;
+const seen: Seen[] = [];
+const objects = new Map<string, Buffer>();
+let rpcReply: { status: number; body: unknown } = { status: 200, body: [] };
+
+beforeAll(async () => {
+  dir = await mkdtemp(path.join(os.tmpdir(), 'rrss-worker-http-'));
+  server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const body = Buffer.concat(chunks);
+    seen.push({ method: request.method!, url: request.url!, headers: request.headers, body });
+    const json = (status: number, data: unknown) => {
+      response.writeHead(status, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(data));
+    };
+    if (request.headers.apikey !== KEY || request.headers.authorization !== `Bearer ${KEY}`) {
+      return json(401, { message: 'Invalid API key' });
+    }
+    if (request.url!.startsWith('/rest/v1/rpc/')) return json(rpcReply.status, rpcReply.body);
+    const object = decodeURIComponent(request.url!.replace('/storage/v1/object/', ''));
+    if (request.method === 'POST') {
+      objects.set(object, body);
+      return json(200, { Key: object });
+    }
+    const stored = objects.get(object);
+    if (!stored) return json(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+    response.end(stored);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  await new Promise((resolve) => server.close(resolve));
+  await rm(dir, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+  seen.length = 0;
+  rpcReply = { status: 200, body: [] };
+});
+
+describe('cola por PostgREST', () => {
+  it('llama a las funciones de la cola con sus argumentos por nombre y la clave de servicio', async () => {
+    const queue = createSupabaseQueue({ url: `${url}/`, serviceKey: KEY });
+    const job = {
+      id: 'j1',
+      organization_id: 'o',
+      brand_id: 'b',
+      kind: 'media.image.process',
+      payload: {},
+      attempts: 1,
+      max_attempts: 3,
+    };
+    rpcReply = { status: 200, body: [job] };
+
+    expect(await queue.claim({ worker: 't1', kinds: ['media.image.process'], limit: 2, leaseSeconds: 600 })).toEqual([
+      job,
+    ]);
+    rpcReply = { status: 200, body: job };
+    await queue.complete('j1', 't1', { ok: true });
+    await queue.fail('j1', 't1', 'Se cayó', true);
+
+    expect(seen.map((r) => [r.method, r.url, JSON.parse(r.body.toString())])).toEqual([
+      [
+        'POST',
+        '/rest/v1/rpc/claim_jobs',
+        { p_worker: 't1', p_kinds: ['media.image.process'], p_limit: 2, p_lease_seconds: 600 },
+      ],
+      ['POST', '/rest/v1/rpc/complete_job', { p_job_id: 'j1', p_worker: 't1', p_result: { ok: true } }],
+      ['POST', '/rest/v1/rpc/fail_job', { p_job_id: 'j1', p_worker: 't1', p_error: 'Se cayó', p_retry: true }],
+    ]);
+    expect(seen[0]!.headers['content-type']).toBe('application/json');
+  });
+
+  it('distingue «la reserva ya no es mía» de un fallo de la cola', async () => {
+    const queue = createSupabaseQueue({ url, serviceKey: KEY });
+    rpcReply = { status: 400, body: { code: 'P0001', message: 'El trabajo no está reservado por este trabajador' } };
+    await expect(queue.complete('j1', 't1', {})).rejects.toThrow(LeaseLostError);
+    await expect(queue.fail('j1', 't1', 'x', true)).rejects.toThrow(LeaseLostError);
+
+    rpcReply = { status: 503, body: { message: 'upstream timeout' } };
+    await expect(queue.claim({ worker: 't1', kinds: ['k'], limit: 1, leaseSeconds: 60 })).rejects.toThrow(
+      /La cola respondió 503 a claim_jobs: upstream timeout/,
+    );
+    await expect(createSupabaseQueue({ url, serviceKey: 'otra' }).complete('j1', 't1', {})).rejects.toThrow(/401/);
+  });
+});
+
+describe('almacenamiento por la API de Storage', () => {
+  it('sube y baja archivos en flujo, con su tipo y sobrescribiendo', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media' });
+    const source = path.join(dir, 'subida.bin');
+    const content = Buffer.alloc(300_000, 7);
+    await writeFile(source, content);
+
+    await storage.upload(source, 'org/marca/reels/mi vídeo.mp4', { contentType: 'video/mp4' });
+
+    expect(seen[0]).toMatchObject({
+      method: 'POST',
+      url: '/storage/v1/object/brand-media/org/marca/reels/mi%20v%C3%ADdeo.mp4',
+    });
+    expect(seen[0]!.headers).toMatchObject({
+      'content-type': 'video/mp4',
+      'x-upsert': 'true',
+      'content-length': '300000',
+    });
+    expect(objects.get('brand-media/org/marca/reels/mi vídeo.mp4')?.equals(content)).toBe(true);
+
+    const target = path.join(dir, 'bajada.bin');
+    await storage.download('org/marca/reels/mi vídeo.mp4', target);
+    expect((await readFile(target)).equals(content)).toBe(true);
+  });
+
+  it('un archivo que no existe es un fallo sin remedio', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media' });
+    await expect(storage.download('org/marca/no-existe.jpg', path.join(dir, 'x'))).rejects.toThrow(PermanentError);
+  });
+});

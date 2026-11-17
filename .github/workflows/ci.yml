@@ -24,3 +24,29 @@ jobs:
       - run: npm test
       - run: npm run test:db
       - run: npm run build
+
+  # Trabajador de medios (worker/): paquete aparte, con FFmpeg de verdad.
+  trabajador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Instalar FFmpeg y una tipografía
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # El contenedor que se desplegará: se construye y se monta dentro un reel
+      # de verdad, comprobado con ffprobe.
+      - name: Reel por plantilla dentro del contenedor
+        run: |
+          docker build --target test -t rrss-worker-test .
+          docker run --rm --name rrss-worker-test rrss-worker-test npm run test:reel
