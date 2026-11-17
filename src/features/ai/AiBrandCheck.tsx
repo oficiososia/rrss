@@ -104,7 +104,11 @@ export function AiBrandCheck({ brandId, text }: AiBrandCheckProps) {
           </div>
           <ul className="space-y-3">
             {result.data.criteria.map((item) => (
-              <li key={item.criterion} className="border-t border-border pt-3" data-testid={`ai-criterion-${item.criterion}`}>
+              <li
+                key={item.criterion}
+                className="border-t border-border pt-3"
+                data-testid={`ai-criterion-${item.criterion}`}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold">{CRITERION_LABEL[item.criterion] ?? item.criterion}</h3>
                   <Badge tone={CRITERION[item.verdict].tone}>{CRITERION[item.verdict].label}</Badge>
@@ -114,7 +118,9 @@ export function AiBrandCheck({ brandId, text }: AiBrandCheckProps) {
                   <ul className="mt-2 space-y-1" aria-label="Citas del texto">
                     {item.evidence.map((quote, i) => (
                       <li key={i}>
-                        <blockquote className="border-l-2 border-border pl-3 text-sm italic text-muted">«{quote}»</blockquote>
+                        <blockquote className="border-l-2 border-border pl-3 text-sm italic text-muted">
+                          «{quote}»
+                        </blockquote>
                       </li>
                     ))}
                   </ul>

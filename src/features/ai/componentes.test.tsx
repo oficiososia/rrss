@@ -33,7 +33,13 @@ function lastBody(): Record<string, unknown> {
 
 describe('GenerateCaptionDialog', () => {
   const variants = [
-    { text: 'Llega el otoño a la mesa.', hashtags: ['#otoño', '#cocina'], caption: '', characters: 0, withinLimits: true },
+    {
+      text: 'Llega el otoño a la mesa.',
+      hashtags: ['#otoño', '#cocina'],
+      caption: '',
+      characters: 0,
+      withinLimits: true,
+    },
     { text: 'x'.repeat(2300), hashtags: [], caption: '', characters: 2300, withinLimits: false },
   ];
 
@@ -44,7 +50,13 @@ describe('GenerateCaptionDialog', () => {
         network={network}
         format={format}
         onApply={onApply}
-        currentCopy={{ caption: '', hashtags: [], mentions: ['vecinos'], altText: 'Plato', callToAction: { label: '', url: '' } }}
+        currentCopy={{
+          caption: '',
+          hashtags: [],
+          mentions: ['vecinos'],
+          altText: 'Plato',
+          callToAction: { label: '', url: '' },
+        }}
       />,
     );
     await ui.user.click(screen.getByRole('button', { name: /Redactar con IA/ }));
@@ -73,7 +85,9 @@ describe('GenerateCaptionDialog', () => {
       },
     });
     const first = within(cards[0]!);
-    expect(first.getByText(`${'Llega el otoño a la mesa.\n\n#otoño #cocina'.length} / 2200 caracteres`)).toBeInTheDocument();
+    expect(
+      first.getByText(`${'Llega el otoño a la mesa.\n\n#otoño #cocina'.length} / 2200 caracteres`),
+    ).toBeInTheDocument();
     expect(first.getByText(/2 de 30 hashtags/)).toBeInTheDocument();
     expect(within(cards[1]!).getByText(/No cabe en Instagram/)).toBeInTheDocument();
     expect(within(cards[1]!).getByText('2300 / 2200 caracteres')).toBeInTheDocument();
@@ -92,7 +106,13 @@ describe('GenerateCaptionDialog', () => {
   it('si la red no tiene límite conocido lo avisa y no inventa uno', async () => {
     fake.fn('ai-generate', () => ({
       status: 200,
-      body: { action: 'post.caption', generationId: 'g-2', network: 'facebook', requestedVariants: 2, variants: variants.slice(0, 1) },
+      body: {
+        action: 'post.caption',
+        generationId: 'g-2',
+        network: 'facebook',
+        requestedVariants: 2,
+        variants: variants.slice(0, 1),
+      },
     }));
     await openAndGenerate('facebook', 'page_post');
     expect(screen.getByText(/No se conoce el límite de texto de Facebook/)).toBeInTheDocument();
@@ -122,7 +142,10 @@ describe('GenerateCaptionDialog', () => {
     fake.fn('ai-generate', () =>
       ++calls === 1
         ? fail(502, 'provider_failed', { retryable: true })
-        : { status: 200, body: { action: 'post.caption', generationId: 'g-3', network: 'instagram', requestedVariants: 2, variants } },
+        : {
+            status: 200,
+            body: { action: 'post.caption', generationId: 'g-3', network: 'instagram', requestedVariants: 2, variants },
+          },
     );
     const { user } = await openAndGenerate();
     expect(await screen.findByTestId('ai-error')).toHaveTextContent(/no se ha descontado nada del cupo/);
@@ -155,7 +178,11 @@ describe('AiBrandCheck', () => {
     const { user } = renderUi(<AiBrandCheck brandId={BRAND} text="Ven: el mejor precio de la zona." />);
     await user.click(screen.getByRole('button', { name: 'Comprobar tono con IA' }));
     expect(await screen.findByText('Dudoso: que lo revise una persona')).toBeInTheDocument();
-    expect(lastBody()).toEqual({ action: 'brand.check', brandId: BRAND, input: { text: 'Ven: el mejor precio de la zona.' } });
+    expect(lastBody()).toEqual({
+      action: 'brand.check',
+      brandId: BRAND,
+      input: { text: 'Ven: el mejor precio de la zona.' },
+    });
     const tone = screen.getByTestId('ai-criterion-tone');
     expect(within(tone).getByText('Cumple')).toBeInTheDocument();
     const banned = screen.getByTestId('ai-criterion-banned_topics');
@@ -211,7 +238,14 @@ describe('ProfileProposalDialog', () => {
       business: { description: 'Casa de comidas', products: [], locations: ['Crevillent'], valueProps: [] },
       audience: { segments: [] },
       goals: [],
-      voice: { tone: ['cercano'], personality: '', values: [], keyMessages: [], allowedPhrases: [], forbiddenPhrases: [] },
+      voice: {
+        tone: ['cercano'],
+        personality: '',
+        values: [],
+        keyMessages: [],
+        allowedPhrases: [],
+        forbiddenPhrases: [],
+      },
       visual: { colors: [], fonts: [], styleNotes: '' },
       channels: [],
       languages: { primary: 'es', others: [] },
@@ -261,7 +295,10 @@ describe('ProfileProposalDialog', () => {
     expect(profile.business.description).toBe('Casa de comidas');
     expect(profile.business.locations).toEqual(['Crevillent']);
     expect(profile.voice.tone).toEqual(['cercano']);
-    expect(info).toEqual({ acceptedFields: expect.arrayContaining(['business.description', 'business.locations']), generationId: 'g-p' });
+    expect(info).toEqual({
+      acceptedFields: expect.arrayContaining(['business.description', 'business.locations']),
+      generationId: 'g-p',
+    });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

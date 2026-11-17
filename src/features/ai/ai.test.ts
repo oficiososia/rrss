@@ -50,17 +50,23 @@ describe('importes de IA', () => {
 
 describe('errores de ai-generate', () => {
   const http = (status: number, body: unknown) =>
-    new FunctionsHttpError(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
+    new FunctionsHttpError(
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
+    );
 
   it('traduce cada código a un mensaje propio en español', async () => {
-    const exhausted = await toAiError(http(402, { error: { code: 'quota_exhausted', message: 'x', retryable: false } }));
+    const exhausted = await toAiError(
+      http(402, { error: { code: 'quota_exhausted', message: 'x', retryable: false } }),
+    );
     expect(exhausted.code).toBe('quota_exhausted');
     expect(exhausted.message).toMatch(/cupo de IA de este mes está agotado/);
     expect((await toAiError(http(402, { error: { code: 'quota_missing' } }))).message).toMatch(/no tiene cupo/);
     expect((await toAiError(http(503, { error: { code: 'not_configured' } }))).message).toMatch(/falta configurarla/);
     expect((await toAiError(http(422, { error: { code: 'refused' } }))).message).toMatch(/se ha negado/);
     expect((await toAiError(http(504, { error: { code: 'provider_timeout' } }))).message).toMatch(/tardado demasiado/);
-    const failed = await toAiError(http(502, { error: { code: 'provider_failed', retryable: true, generationId: 'g-1' } }));
+    const failed = await toAiError(
+      http(502, { error: { code: 'provider_failed', retryable: true, generationId: 'g-1' } }),
+    );
     expect(failed.retryable).toBe(true);
     expect(failed.generationId).toBe('g-1');
     expect(failed.message).toMatch(/no se ha descontado nada/);
@@ -75,7 +81,9 @@ describe('errores de ai-generate', () => {
 
   it('códigos desconocidos, cuerpos ilegibles y fallos de red', async () => {
     expect((await toAiError(http(500, { error: { code: 'otro' } }))).code).toBe('internal');
-    expect((await toAiError(new FunctionsHttpError(new Response('<html>', { status: 401 })))).code).toBe('unauthenticated');
+    expect((await toAiError(new FunctionsHttpError(new Response('<html>', { status: 401 })))).code).toBe(
+      'unauthenticated',
+    );
     expect((await toAiError(new FunctionsFetchError(new TypeError('Failed to fetch')))).code).toBe('network');
     const abort = new Error('aborted');
     abort.name = 'AbortError';
@@ -155,10 +163,22 @@ describe('propuesta de perfil', () => {
     visual: { fonts: [{ family: 'Lora', usage: 'títulos', license: 'OFL' }], logoAssetIds: [] },
   });
   const proposal = {
-    business: { description: 'Casa de comidas de cocina de mercado', products: [{ name: '', description: 'x' }], locations: [], valueProps: [] },
+    business: {
+      description: 'Casa de comidas de cocina de mercado',
+      products: [{ name: '', description: 'x' }],
+      locations: [],
+      valueProps: [],
+    },
     audience: { segments: [{ name: 'Familias', description: '' }] },
     goals: [],
-    voice: { tone: ['cercano'], personality: '', values: [], keyMessages: [], allowedPhrases: [], forbiddenPhrases: [] },
+    voice: {
+      tone: ['cercano'],
+      personality: '',
+      values: [],
+      keyMessages: [],
+      allowedPhrases: [],
+      forbiddenPhrases: [],
+    },
     visual: {
       colors: [
         { name: 'Teja', hex: '#B5532D', role: 'principal' },

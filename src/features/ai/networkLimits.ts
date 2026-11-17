@@ -33,9 +33,7 @@ export function captionLimits(network: string, format: string): CaptionLimits {
   const notes: string[] = [];
   const truncation = spec?.text.truncation?.[0]?.value;
   if (truncation) {
-    notes.push(
-      `Antes de «ver más» solo se ven unos ${truncation.characters} caracteres: lo importante, al principio.`,
-    );
+    notes.push(`Antes de «ver más» solo se ven unos ${truncation.characters} caracteres: lo importante, al principio.`);
   }
   const maxChars = caption?.value.maxLength ?? null;
   return {
@@ -58,7 +56,10 @@ export function captionLimits(network: string, format: string): CaptionLimits {
 
 /** Hashtag del documento: sin almohadilla y solo letras, números y guion bajo. */
 function cleanHashtag(raw: string): string {
-  return raw.replace(/^#+/, '').replace(/[^\p{L}\p{N}_]/gu, '').slice(0, 100);
+  return raw
+    .replace(/^#+/, '')
+    .replace(/[^\p{L}\p{N}_]/gu, '')
+    .slice(0, 100);
 }
 
 /** Caracteres de la variante con la unidad de la red (texto y, debajo, etiquetas). */
@@ -67,17 +68,25 @@ export function variantLength(variant: Pick<PostCaptionVariant, 'text' | 'hashta
 }
 
 /** ¿Cabe la variante? `null` si el límite de la red no se conoce. */
-export function variantFits(variant: Pick<PostCaptionVariant, 'text' | 'hashtags'>, limits: CaptionLimits): boolean | null {
+export function variantFits(
+  variant: Pick<PostCaptionVariant, 'text' | 'hashtags'>,
+  limits: CaptionLimits,
+): boolean | null {
   if (limits.maxChars === null) return null;
   const tags = variant.hashtags.map(cleanHashtag).filter(Boolean).length;
-  return variantLength(variant, limits) <= limits.maxChars && (limits.maxHashtags === null || tags <= limits.maxHashtags);
+  return (
+    variantLength(variant, limits) <= limits.maxChars && (limits.maxHashtags === null || tags <= limits.maxHashtags)
+  );
 }
 
 /**
  * Variante elegida → `PostCopy`. Sustituye el pie y los hashtags; lo demás
  * (menciones, texto alternativo, llamada a la acción) se conserva del texto actual.
  */
-export function variantToPostCopy(variant: Pick<PostCaptionVariant, 'text' | 'hashtags'>, current?: PostCopy): PostCopy {
+export function variantToPostCopy(
+  variant: Pick<PostCaptionVariant, 'text' | 'hashtags'>,
+  current?: PostCopy,
+): PostCopy {
   const hashtags = [...new Set(variant.hashtags.map(cleanHashtag).filter(Boolean))].slice(0, 100);
   return postCopySchema.parse({ ...(current ?? {}), caption: variant.text.slice(0, DOCUMENT_CAPTION_MAX), hashtags });
 }

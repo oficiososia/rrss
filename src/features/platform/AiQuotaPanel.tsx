@@ -20,7 +20,8 @@ export function AiQuotaPanel({ organizations, now = new Date() }: { organization
   const [saved, setSaved] = useState<{ name: string; micros: number } | null>(null);
 
   const micros = parseUnitsToMicros(amount);
-  const amountError = amount.trim() && micros === null ? 'Escribe un importe positivo, con coma para los decimales (hasta 6).' : null;
+  const amountError =
+    amount.trim() && micros === null ? 'Escribe un importe positivo, con coma para los decimales (hasta 6).' : null;
   const selectedCost = costs.data?.find((row) => row.organization_id === orgId);
 
   function submit(event: FormEvent) {
@@ -68,7 +69,12 @@ export function AiQuotaPanel({ organizations, now = new Date() }: { organization
               />
             )}
           </Field>
-          <Button type="submit" loading={setQuota.isPending} disabled={!orgId || micros === null} data-testid="ai-quota-save">
+          <Button
+            type="submit"
+            loading={setQuota.isPending}
+            disabled={!orgId || micros === null}
+            data-testid="ai-quota-save"
+          >
             Guardar cupo
           </Button>
         </form>
@@ -85,9 +91,9 @@ export function AiQuotaPanel({ organizations, now = new Date() }: { organization
           </Notice>
         )}
         <p className="text-xs text-muted">
-          Guardar sustituye el cupo vigente, que desde aquí no se puede consultar (solo lo ven los administradores de cada
-          organización). El cambio queda en el registro de actividad. Un cupo de 0 bloquea la IA de esa organización.{' '}
-          {moneyEstimateNote()}
+          Guardar sustituye el cupo vigente, que desde aquí no se puede consultar (solo lo ven los administradores de
+          cada organización). El cambio queda en el registro de actividad. Un cupo de 0 bloquea la IA de esa
+          organización. {moneyEstimateNote()}
         </p>
       </CardBody>
     </Card>

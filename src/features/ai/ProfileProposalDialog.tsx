@@ -78,14 +78,15 @@ function ProposalBody({ brandId, sources, onAccept, onOpenChange, currentProfile
 
   function run() {
     setResult(null);
-    propose
-      .mutateAsync(usable.map((s) => ({ title: s.title.trim(), text: s.text })))
-      .then((data) => {
+    propose.mutateAsync(usable.map((s) => ({ title: s.title.trim(), text: s.text }))).then(
+      (data) => {
         setResult(data);
         setAccepted(defaultSelection(compareProfiles(base, data.proposal)));
-      }, () => {
+      },
+      () => {
         // El error queda en `propose.error`.
-      });
+      },
+    );
   }
 
   function toggle(id: string) {
@@ -100,7 +101,10 @@ function ProposalBody({ brandId, sources, onAccept, onOpenChange, currentProfile
   function accept() {
     if (!result) return;
     const fields = [...accepted].filter((id) => comparisons.some((c) => c.field.id === id && c.status === 'changed'));
-    onAccept(applyProposal(base, comparisons, new Set(fields)), { acceptedFields: fields, generationId: result.generationId });
+    onAccept(applyProposal(base, comparisons, new Set(fields)), {
+      acceptedFields: fields,
+      generationId: result.generationId,
+    });
     onOpenChange(false);
   }
 
@@ -260,7 +264,12 @@ function describeItem(item: unknown): string {
 }
 
 function FieldValue({ value }: { value: unknown }) {
-  if (value === undefined || value === null || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && value.length === 0)) {
+  if (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && !value.trim()) ||
+    (Array.isArray(value) && value.length === 0)
+  ) {
     return <p className="text-sm italic text-muted">Vacío</p>;
   }
   if (Array.isArray(value)) {

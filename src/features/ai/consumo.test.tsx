@@ -111,7 +111,16 @@ describe('Plataforma → cupo mensual de IA', () => {
   it('el superadministrador asigna el cupo de una organización', async () => {
     seedWorkspace({ orgRole: 'owner', platformAdmin: true });
     fake.rpc('admin_list_organizations', () => [
-      { id: ORG_ID, name: 'Grupo Demo', kind: 'business', created_at: '2026-10-01T09:00:00Z', members: 1, brands: 1, assets: 0, storage_bytes: 0 },
+      {
+        id: ORG_ID,
+        name: 'Grupo Demo',
+        kind: 'business',
+        created_at: '2026-10-01T09:00:00Z',
+        members: 1,
+        brands: 1,
+        assets: 0,
+        storage_bytes: 0,
+      },
     ]);
     fake.rpc('ai_cost_by_organization', () => [
       { organization_id: ORG_ID, organization_name: 'Grupo Demo', generations: 3, cost_micros: 750_000 },
@@ -134,7 +143,9 @@ describe('Plataforma → cupo mensual de IA', () => {
     await user.type(amount, '25,5');
     await user.click(screen.getByTestId('ai-quota-save'));
 
-    expect(await screen.findByTestId('ai-quota-saved')).toHaveTextContent('Cupo de Grupo Demo: 25,50 unidades de cuenta al mes.');
+    expect(await screen.findByTestId('ai-quota-saved')).toHaveTextContent(
+      'Cupo de Grupo Demo: 25,50 unidades de cuenta al mes.',
+    );
     expect(fake.callsTo('admin_set_ai_quota', 'rpc')[0]!.payload).toEqual({
       p_organization_id: ORG_ID,
       p_monthly_limit_micros: 25_500_000,
@@ -144,7 +155,16 @@ describe('Plataforma → cupo mensual de IA', () => {
   it('si la base lo rechaza, lo dice', async () => {
     seedWorkspace({ orgRole: 'owner', platformAdmin: true });
     fake.rpc('admin_list_organizations', () => [
-      { id: ORG_ID, name: 'Grupo Demo', kind: 'business', created_at: '2026-10-01T09:00:00Z', members: 1, brands: 1, assets: 0, storage_bytes: 0 },
+      {
+        id: ORG_ID,
+        name: 'Grupo Demo',
+        kind: 'business',
+        created_at: '2026-10-01T09:00:00Z',
+        members: 1,
+        brands: 1,
+        assets: 0,
+        storage_bytes: 0,
+      },
     ]);
     fake.rpc('ai_cost_by_organization', () => []);
     fake.rpc('admin_set_ai_quota', () => {

@@ -48,7 +48,10 @@ export function formatMicros(micros: number, display: MoneyDisplay = MONEY_DISPL
   const options: Intl.NumberFormatOptions = { minimumFractionDigits: 2, maximumFractionDigits: MAX_DECIMALS };
   const prefix = tiny ? (units > 0 ? '< ' : '> ') : '';
   if (display.currency) {
-    return prefix + new Intl.NumberFormat(display.locale, { ...options, style: 'currency', currency: display.currency }).format(shown);
+    return (
+      prefix +
+      new Intl.NumberFormat(display.locale, { ...options, style: 'currency', currency: display.currency }).format(shown)
+    );
   }
   const number = new Intl.NumberFormat(display.locale, options).format(shown);
   return `${prefix}${number} ${Math.abs(units) === 1 ? NEUTRAL_UNIT.one : NEUTRAL_UNIT.other}`;

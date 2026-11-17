@@ -8,7 +8,7 @@ import { formatMicros, moneyEstimateNote } from './money';
 const HISTORY_MONTHS = 6;
 const count = new Intl.NumberFormat('es-ES');
 
-export function monthLabel(periodStart: string): string {
+function monthLabel(periodStart: string): string {
   const [y, m] = periodStart.split('-').map(Number) as [number, number];
   return new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(
     new Date(Date.UTC(y, m - 1, 1)),
@@ -91,7 +91,9 @@ function Figures({ ledger, limit }: { ledger: MonthLedger; limit: number | null 
           hint="Generaciones en curso: se reserva una cota superior y se ajusta al terminar."
           testId="ai-quota-reserved"
         />
-        {available !== null && <Figure label="Disponible" value={formatMicros(available)} testId="ai-quota-available" />}
+        {available !== null && (
+          <Figure label="Disponible" value={formatMicros(available)} testId="ai-quota-available" />
+        )}
       </dl>
       {limit !== null && (
         <div>
@@ -104,7 +106,10 @@ function Figures({ ledger, limit }: { ledger: MonthLedger; limit: number | null 
             className="h-2 overflow-hidden rounded-full bg-subtle"
           >
             <div
-              className={cn('h-full rounded-full', exhausted ? 'bg-danger' : ratio >= 0.8 ? 'bg-warning' : 'bg-primary')}
+              className={cn(
+                'h-full rounded-full',
+                exhausted ? 'bg-danger' : ratio >= 0.8 ? 'bg-warning' : 'bg-primary',
+              )}
               style={{ width: `${ratio * 100}%` }}
             />
           </div>
@@ -116,13 +121,15 @@ function Figures({ ledger, limit }: { ledger: MonthLedger; limit: number | null 
       {exhausted && (
         <Notice tone="warning">
           <span data-testid="ai-quota-exhausted">
-            El cupo de IA de este mes está agotado: nadie de la organización puede generar hasta el mes que viene, salvo que
-            la plataforma lo amplíe.
+            El cupo de IA de este mes está agotado: nadie de la organización puede generar hasta el mes que viene, salvo
+            que la plataforma lo amplíe.
           </span>
         </Notice>
       )}
       {ledger.truncated && (
-        <Notice tone="warning">El mes tiene demasiados apuntes para leerlos todos: estas cifras se quedan cortas.</Notice>
+        <Notice tone="warning">
+          El mes tiene demasiados apuntes para leerlos todos: estas cifras se quedan cortas.
+        </Notice>
       )}
     </div>
   );

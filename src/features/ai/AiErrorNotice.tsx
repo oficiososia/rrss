@@ -10,7 +10,11 @@ export function AiErrorNotice({ error, onRetry }: { error: unknown; onRetry?: ()
   if (isQuotaError(error)) {
     const exhausted = error.code === 'quota_exhausted';
     return (
-      <div role="alert" className="flex gap-3 rounded-lg bg-warning-soft px-3.5 py-3 text-sm text-warning" data-testid="ai-quota-error">
+      <div
+        role="alert"
+        className="flex gap-3 rounded-lg bg-warning-soft px-3.5 py-3 text-sm text-warning"
+        data-testid="ai-quota-error"
+      >
         <Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
         <div>
           <p className="font-medium">
@@ -22,10 +26,15 @@ export function AiErrorNotice({ error, onRetry }: { error: unknown; onRetry?: ()
       </div>
     );
   }
-  const message = error instanceof AiRequestError ? error.message : 'Algo ha fallado al usar la IA. Inténtalo de nuevo.';
+  const message =
+    error instanceof AiRequestError ? error.message : 'Algo ha fallado al usar la IA. Inténtalo de nuevo.';
   const retryable = error instanceof AiRequestError ? error.retryable || error.code === 'provider_timeout' : true;
   return (
-    <div role="alert" className="flex gap-3 rounded-lg bg-danger-soft px-3.5 py-3 text-sm text-danger" data-testid="ai-error">
+    <div
+      role="alert"
+      className="flex gap-3 rounded-lg bg-danger-soft px-3.5 py-3 text-sm text-danger"
+      data-testid="ai-error"
+    >
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">
         <p>{message}</p>

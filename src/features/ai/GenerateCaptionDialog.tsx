@@ -5,7 +5,14 @@ import type { PostCopy } from '@/features/content/document';
 import { cn } from '@/lib/utils';
 import { AiErrorNotice } from './AiErrorNotice';
 import { useGeneratePostCaption, type PostCaptionResult, type PostCaptionVariant } from './api';
-import { captionLimits, variantFits, variantLength, variantToPostCopy, DOCUMENT_CAPTION_MAX, type CaptionLimits } from './networkLimits';
+import {
+  captionLimits,
+  variantFits,
+  variantLength,
+  variantToPostCopy,
+  DOCUMENT_CAPTION_MAX,
+  type CaptionLimits,
+} from './networkLimits';
 
 export const MAX_BRIEF_CHARS = 2000;
 const MAX_VARIANTS = 5;
@@ -144,7 +151,12 @@ function CaptionGenerator({
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Variantes" className="w-36">
             {(p) => (
-              <Select {...p} value={variants} onChange={(e) => setVariants(Number(e.target.value))} data-testid="ai-caption-variants">
+              <Select
+                {...p}
+                value={variants}
+                onChange={(e) => setVariants(Number(e.target.value))}
+                data-testid="ai-caption-variants"
+              >
                 {Array.from({ length: MAX_VARIANTS }, (_, i) => i + 1).map((n) => (
                   <option key={n} value={n}>
                     {n}

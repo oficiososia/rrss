@@ -237,7 +237,8 @@ export class FakeSupabase {
     invoke: async (name: string, options: { body?: unknown } = {}): Promise<{ data: unknown; error: unknown }> => {
       this.calls.push({ kind: 'function', name, payload: options.body });
       const handler = this.functionHandlers.get(name);
-      if (!handler) return { data: null, error: new FunctionsFetchError(new Error(`Función sin simular en la prueba: ${name}`)) };
+      if (!handler)
+        return { data: null, error: new FunctionsFetchError(new Error(`Función sin simular en la prueba: ${name}`)) };
       let reply: FunctionReply;
       try {
         reply = await handler(options.body);

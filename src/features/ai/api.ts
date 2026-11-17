@@ -126,11 +126,13 @@ const MESSAGES: Record<AiErrorCode, string> = {
     'El cupo de IA de este mes está agotado. Se renueva el día 1 del mes que viene; si hace falta antes, quien administra la organización puede pedir a la plataforma que lo amplíe.',
   quota_missing:
     'Esta organización todavía no tiene cupo de IA asignado. Quien administra la organización debe pedírselo a la plataforma.',
-  not_configured: 'La IA no está disponible en este momento: falta configurarla en la plataforma. Avisa a quien la administra.',
+  not_configured:
+    'La IA no está disponible en este momento: falta configurarla en la plataforma. Avisa a quien la administra.',
   refused:
     'El modelo se ha negado a responder a esta petición. Cambia el planteamiento (sin datos personales ni temas delicados) y vuelve a probar.',
   provider_failed: 'El servicio de IA ha fallado y no se ha descontado nada del cupo. Vuelve a probar en un momento.',
-  invalid_output: 'La IA ha devuelto una respuesta que no se puede usar. Vuelve a probar; si se repite, cambia la petición.',
+  invalid_output:
+    'La IA ha devuelto una respuesta que no se puede usar. Vuelve a probar; si se repite, cambia la petición.',
   provider_timeout: 'El servicio de IA ha tardado demasiado en responder. Vuelve a probar en un momento.',
   client_timeout: 'La IA no ha respondido a tiempo. Vuelve a probar en un momento.',
   forbidden: 'No tienes permiso para usar la IA en esta marca: hace falta poder crear contenido en ella.',
@@ -154,7 +156,11 @@ export class AiRequestError extends Error {
   readonly status: number | null;
   readonly generationId: string | undefined;
 
-  constructor(code: AiErrorCode, message: string, extra: { retryable?: boolean; status?: number | null; generationId?: string } = {}) {
+  constructor(
+    code: AiErrorCode,
+    message: string,
+    extra: { retryable?: boolean; status?: number | null; generationId?: string } = {},
+  ) {
     super(message);
     this.name = 'AiRequestError';
     this.code = code;
@@ -187,10 +193,15 @@ export async function toAiError(error: unknown): Promise<AiRequestError> {
     } catch {
       body = null;
     }
-    const payload = (body as { error?: { code?: unknown; message?: unknown; retryable?: unknown; generationId?: unknown } } | null)
-      ?.error;
+    const payload = (
+      body as { error?: { code?: unknown; message?: unknown; retryable?: unknown; generationId?: unknown } } | null
+    )?.error;
     const raw = typeof payload?.code === 'string' ? payload.code : '';
-    const code: AiErrorCode = KNOWN_CODES.has(raw) ? (raw as AiErrorCode) : context.status === 401 ? 'unauthenticated' : 'internal';
+    const code: AiErrorCode = KNOWN_CODES.has(raw)
+      ? (raw as AiErrorCode)
+      : context.status === 401
+        ? 'unauthenticated'
+        : 'internal';
     const serverMessage = typeof payload?.message === 'string' ? payload.message.trim() : '';
     const message = code === 'invalid_request' && serverMessage ? serverMessage : MESSAGES[code];
     return new AiRequestError(code, message, {
@@ -214,7 +225,11 @@ export async function toAiError(error: unknown): Promise<AiRequestError> {
 /** Margen sobre el tiempo máximo del servidor (60 s por defecto). */
 const CLIENT_TIMEOUT_MS = 90_000;
 
-async function invokeAiGenerate<T extends { action: AiAction }>(action: AiAction, brandId: string, input: unknown): Promise<T> {
+async function invokeAiGenerate<T extends { action: AiAction }>(
+  action: AiAction,
+  brandId: string,
+  input: unknown,
+): Promise<T> {
   let result: { data: unknown; error: unknown };
   try {
     result = await supabase.functions.invoke('ai-generate', {
@@ -245,16 +260,13 @@ export function proposeProfile(brandId: string, sources: ProfileSourceText[]): P
 }
 
 /** Mutación sin `mutate`: solo `mutateAsync`. */
-export type AsyncMutation<TData, TVariables> = Omit<
-  UseMutationResult<TData, AiRequestError, TVariables>,
-  'mutate'
->;
+export type AsyncMutation<TData, TVariables> = Omit<UseMutationResult<TData, AiRequestError, TVariables>, 'mutate'>;
 
-function withoutMutate<TData, TVariables>(
-  mutation: UseMutationResult<TData, AiRequestError, TVariables>,
-): AsyncMutation<TData, TVariables> {
-  const { mutate: _mutate, ...rest } = mutation;
-  return rest;
+/** Quita `mutate` del resultado de `useMutation`. */
+function withoutMutate<T extends { mutate: unknown }>(mutation: T): Omit<T, 'mutate'> {
+  const copy: Partial<T> = { ...mutation };
+  delete copy.mutate;
+  return copy as Omit<T, 'mutate'>;
 }
 
 export const aiKeys = {
@@ -346,7 +358,11 @@ export interface MonthLedger {
 }
 
 /** Suma el libro de consumo de un mes. Pura: se prueba sin red. */
-export function summarizeLedger(periodStart: string, rows: Pick<AiUsageRow, 'brand_id' | 'entry' | 'reserved_delta_micros' | 'cost_delta_micros'>[], truncated = false): MonthLedger {
+export function summarizeLedger(
+  periodStart: string,
+  rows: Pick<AiUsageRow, 'brand_id' | 'entry' | 'reserved_delta_micros' | 'cost_delta_micros'>[],
+  truncated = false,
+): MonthLedger {
   let consumed = 0;
   let reserved = 0;
   let generations = 0;
@@ -455,7 +471,7 @@ export interface SetQuotaInput {
 /** Asigna el cupo mensual de una organización (solo superadministradores; queda auditado). */
 export function useSetAiQuota(): Omit<UseMutationResult<UsageQuotaRow, unknown, SetQuotaInput>, 'mutate'> {
   const queryClient = useQueryClient();
-  const { mutate: _mutate, ...rest } = useMutation<UsageQuotaRow, unknown, SetQuotaInput>({
+  const mutation = useMutation<UsageQuotaRow, unknown, SetQuotaInput>({
     mutationFn: async ({ organizationId, monthlyLimitMicros }) =>
       unwrap(
         await supabase.rpc('admin_set_ai_quota', {
@@ -465,5 +481,5 @@ export function useSetAiQuota(): Omit<UseMutationResult<UsageQuotaRow, unknown, 
       ) as UsageQuotaRow,
     onSuccess: (_row, { organizationId }) => queryClient.invalidateQueries({ queryKey: aiKeys.org(organizationId) }),
   });
-  return rest;
+  return withoutMutate(mutation);
 }
