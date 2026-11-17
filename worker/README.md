@@ -1,0 +1,374 @@
+# Trabajador de medios
+
+Proceso que consume la cola de trabajos de Postgres (`public.jobs`) y hace lo
+que no cabe en una Edge Function: procesar imágenes y montar vídeo con FFmpeg.
+Es un paquete propio (`worker/`), con sus dependencias y sus pruebas, y no
+depende de ningún alojamiento: es un contenedor que arranca, vacía la cola y
+termina.
+
+## Estado
+
+| Qué                                                                     | Estado                                                                                                                                                |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bucle (reclamar, ejecutar, cerrar, reintentos, apagado ordenado)        | Implementado y probado contra la cola real (PGlite) y contra una cola en memoria                                                                      |
+| `media.image.process` — imagen a las proporciones de las redes          | Implementado y probado con archivos reales                                                                                                            |
+| `media.reel.template` — reel vertical por plantilla                     | Implementado y probado con archivos reales, también dentro del contenedor                                                                             |
+| `media.video.derivatives` — póster, versión comprimida, otra proporción | Implementado y probado con archivos reales                                                                                                            |
+| `media.document.export` — documento por capas a imagen                  | **Sin implementar.** Solo el punto de enganche (`src/handlers/document-export.ts`), sin registrar: el trabajador no reclama ese tipo y nada lo simula |
+| Adaptadores de Supabase (cola por PostgREST, archivos por Storage)      | Implementados; probados contra un servidor HTTP local, **no contra un Supabase real**                                                                 |
+| Disparo desde la base (`pg_net` + `pg_cron`)                            | **Solo documentado** (más abajo). Depende del alojamiento, que no está decidido                                                                       |
+| Despliegue                                                              | **Bloqueado**: el dueño no ha elegido alojamiento                                                                                                     |
+
+Nadie encola todavía trabajos de estos tipos: falta la pieza del servidor que
+llame a `enqueue_job`.
+
+## Ejecutarlo en local
+
+Hace falta Node ≥ 22.18 (ejecuta el TypeScript tal cual, sin compilar) y
+`ffmpeg`/`ffprobe` en el PATH. La suite completa pasa con FFmpeg 5.1 (Debian),
+8.1 (Alpine, la del contenedor) y 9.0 (Windows); la de CI (Ubuntu) queda entre medias.
+
+```bash
+cd worker
+npm ci
+npm run typecheck
+npm test              # todas las pruebas (lanzan FFmpeg de verdad; 1–2 min)
+npm run test:reel     # solo el reel por plantilla
+```
+
+**Un trabajo a mano, sin cola ni Supabase**, contra una carpeta que hace de
+cubo (misma forma que el cubo: `<org>/<marca>/<carpeta>/<archivo>`):
+
+```bash
+node src/cli.ts media.reel.template carga.json --storage ./medios --org org --brand marca
+```
+
+Imprime el resultado y los tiempos. Vale también para `media.image.process` y
+`media.video.derivatives`.
+
+**El trabajador completo** (necesita un proyecto de Supabase con la migración
+de la cola; ver variables más abajo):
+
+```bash
+SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… npm start                 # vacía la cola y sale
+SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… WORKER_MODE=continuous npm start
+```
+
+**En contenedor:**
+
+```bash
+docker build -t rrss-worker worker/                       # imagen de ejecución
+docker build --target test -t rrss-worker-test worker/    # imagen con las pruebas
+docker run --rm --name rrss-worker-test rrss-worker-test npm run test:reel
+docker run --rm --name rrss-worker-1 -e SUPABASE_URL=… -e SUPABASE_SERVICE_ROLE_KEY=… rrss-worker
+```
+
+La imagen es `node:22-alpine` con `ffmpeg` y `font-dejavu` de Alpine, y corre
+con el usuario `node` (uid 1000, sin privilegios). Ocupa unos 300 MB en disco
+(Docker Desktop la lista como 450 MB): 150 MB son Node y 130 MB las bibliotecas
+de FFmpeg. Se puede reducir con un FFmpeg compilado a medida (solo x264 y AAC);
+no se ha hecho.
+
+## El bucle
+
+`src/worker.ts`. Cola, almacenamiento y manejadores se inyectan (`JobQueue`,
+`MediaStorage`, `Handler`): las pruebas usan una cola en memoria, una carpeta
+local y el SQL real, sin Supabase.
+
+- **Reclama** con `claim_jobs` solo los tipos para los que tiene manejador.
+- **Cierra** con `complete_job` (resultado en `jobs.result`) o `fail_job`.
+  Una carga inválida o un archivo ilegible es un fallo **sin reintento**; lo
+  demás se reintenta con la espera creciente de la cola.
+- **Respeta la reserva.** La cola no tiene función para renovarla, así que el
+  trabajador pide una reserva larga (`WORKER_LEASE_SECONDS`, 15 min por
+  defecto, 1 h como máximo) y aborta el manejador —mata FFmpeg— un margen antes
+  de que caduque, devolviendo el trabajo. Nunca hay dos trabajadores con el
+  mismo trabajo. Un intento no puede durar más que la reserva.
+- **Modo `drain`** (por defecto): sale cuando la cola está vacía, con código 0.
+  Pensado para alojamientos que escalan a cero. **Modo `continuous`**: sigue
+  sondeando cada `WORKER_POLL_MS`.
+- **Apagado ordenado** (`SIGTERM`/`SIGINT`): deja de reclamar, aborta lo que
+  tenga a medias y lo devuelve a la cola con `fail_job(…, retry)`. Con
+  `WORKER_SHUTDOWN_GRACE_MS` espera antes ese tiempo a que termine.
+- **Registro**: una línea JSON por suceso. Cada intento deja un `job.attempt`
+  con trabajo, tipo, número de intento, resultado (`succeeded`, `retry`,
+  `failed`, `released`, `timeout`, `lease_lost`), duración y error.
+- **Aislamiento**: el trabajador usa la clave de servicio, que se salta la RLS.
+  Por eso cada ruta de entrada y de salida se comprueba contra la organización
+  y la marca del trabajo (`assertJobPath`): un trabajo no puede leer ni
+  escribir medios de otra marca.
+
+Limitaciones conocidas, por no tener la cola una función para soltar o renovar
+un trabajo (no se ha añadido migración: no era imprescindible):
+
+- Devolver un trabajo al apagarse **gasta un intento** y vuelve con la espera
+  de reintento (30 s la primera vez). Si era su último intento, queda `failed`
+  con el motivo «Apagado ordenado…». Lo arreglaría una función
+  `release_job(job, worker)` que lo devuelva sin contar el intento.
+- Un trabajo más largo que una hora no cabe. Lo arreglaría una función
+  `extend_job_lease(job, worker, seconds)` y un latido en el bucle.
+
+## Tipos de trabajo
+
+Las cargas se validan con zod (`strictObject`: un campo de más es un error).
+Todas las rutas son del cubo y de la marca del trabajo.
+
+### `media.image.process`
+
+```json
+{
+  "source": { "path": "<org>/<marca>/biblioteca/foto.jpg" },
+  "focalPoint": { "x": 0.5, "y": 0.4 },
+  "outputs": [
+    { "path": "<org>/<marca>/derivados/foto-1x1.jpg", "aspect": "1:1", "width": 1080 },
+    {
+      "path": "<org>/<marca>/derivados/foto-9x16.webp",
+      "aspect": "9:16",
+      "width": 1080,
+      "format": "webp",
+      "quality": 80
+    }
+  ]
+}
+```
+
+Proporciones `1:1`, `4:5`, `9:16`, `16:9`; formatos `jpeg`, `png`, `webp`. Saca
+el mayor recorte posible centrado en el punto focal (0–1 desde arriba a la
+izquierda) y nunca amplía por encima del original. Endereza las fotos de móvil
+según su orientación EXIF.
+
+### `media.video.derivatives`
+
+```json
+{
+  "source": { "path": "<org>/<marca>/biblioteca/clip.mp4" },
+  "poster": { "path": "…/clip.jpg", "atSeconds": 1, "width": 720 },
+  "compressed": { "path": "…/clip-ligero.mp4", "maxHeight": 720, "maxFps": 30, "crf": 26 },
+  "reframe": { "path": "…/clip-9x16.mp4", "aspect": "9:16", "focalPoint": { "x": 0.5, "y": 0.5 } }
+}
+```
+
+Al menos uno de los tres. La adaptación a otra proporción es por recorte fijo
+alrededor del punto focal (no sigue al sujeto).
+
+### `media.reel.template`
+
+```json
+{
+  "template": { "id": "fundido-suave" },
+  "plan": {
+    "media": [
+      { "type": "photo", "path": "…/plato.jpg", "focalPoint": { "x": 0.4, "y": 0.5 }, "seconds": 2.5 },
+      { "type": "video", "path": "…/cocina.mp4", "startAt": 1, "seconds": 4 }
+    ],
+    "texts": [{ "text": "Menú del día", "start": 0.5, "end": 3, "position": "bottom" }],
+    "music": { "path": "…/musica.m4a", "startAt": 0, "volume": 0.3 },
+    "fontPath": "…/tipografia-de-marca.ttf"
+  },
+  "output": { "path": "…/reel.mp4", "posterPath": "…/reel.jpg", "width": 1080 }
+}
+```
+
+- **`template`**: el id de una plantilla incluida (`templates/*.json`) o una
+  plantilla completa.
+- **`plan`**: lo que propone la IA o una persona para una pieza concreta. Solo
+  fotos y clips reales del cubo; aquí no se genera nada con IA ni sale ningún
+  dato a un proveedor externo.
+- **`output.width`**: para borradores más ligeros (540, 360…). Todo en la
+  plantilla va en proporciones, así que se ve igual a menor tamaño.
+
+Resultado: ruta, medidas, duración y códecs medidos con ffprobe sobre el
+archivo final, la línea de tiempo, avisos (texto fuera del vídeo, texto que no
+cabe) y tiempos.
+
+Qué hace el motor (`src/reel/build.ts`): normaliza cada pieza al lienzo y a sus
+fotogramas por segundo (recorte por punto focal), mueve las fotos con un zoom o
+barrido suave, une las piezas por corte o fundido, superpone el texto (partido
+en líneas, con caja o contorno y aparición gradual), mezcla la música atenuada
+con el sonido de los clips si la plantilla lo pide, y exporta H.264 `yuv420p` +
+AAC con `+faststart`. Siempre deja una pista de sonido, aunque sea silencio.
+
+## Plantilla de reel (esquema v1)
+
+Una plantilla es un archivo JSON validado por `reelTemplateSchema`
+(`src/reel/schema.ts`). El JSON Schema publicado, para dárselo a la IA, está en
+`schemas/` y se regenera con `npm run schemas` (una prueba vigila que esté al día).
+
+| Campo                                                              | Qué decide                                                                                                                                          |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion`                                                    | `1`. Otra versión se rechaza: cambiar el formato exige una versión nueva y su migración                                                             |
+| `id`, `name`, `description`                                        | Identificación. El archivo se llama como su `id`                                                                                                    |
+| `canvas` `{width, height, fps}`                                    | Lienzo 9:16 (por defecto 1080×1920 a 30)                                                                                                            |
+| `timing` `{photoSeconds, maxClipSeconds, maxTotalSeconds}`         | Ritmo por defecto y duración máxima; un plan que la supere se rechaza                                                                               |
+| `transition` `{type, seconds}`                                     | `cut`, `fade`, `fadeblack`, `dissolve`, `slideleft`, `slideup`                                                                                      |
+| `photoMotion` `{type, amount}`                                     | `none`, `zoom-in`, `zoom-out`, `pan-right`, `pan-left`, `alternate`                                                                                 |
+| `text`                                                             | `font` (`default` o una instalada), `sizeRatio`, `color`, `position`, `marginRatio`, `maxWidthRatio`, `lineHeight`, `box`, `outline`, `fadeSeconds` |
+| `audio` `{musicVolume, clipVolume, fadeInSeconds, fadeOutSeconds}` | Música atenuada; `clipVolume: 0` silencia los clips                                                                                                 |
+| `export` `{crf, preset, audioBitrateKbps}`                         | Calidad y velocidad de H.264                                                                                                                        |
+
+Plantillas de ejemplo, neutras: `fundido-suave` (fundidos, texto abajo en
+franja), `corte-ritmico` (cortes secos, texto grande centrado, conserva sonido
+de los clips) y `pase-lateral` (deslizamiento, texto arriba).
+
+**Tipografía**: por orden, `plan.fontPath` (archivo .ttf/.otf de la marca en el
+cubo), la de la plantilla (`text.font`, un archivo de `WORKER_FONTS_DIR`) y la
+por defecto del trabajador (`WORKER_FONT_FILE`; en el contenedor, DejaVu Sans).
+Subir la tipografía de una marca exige que su licencia lo permita. El cubo
+`brand-media` hoy no admite archivos de fuente (tipos MIME): habrá que
+permitirlos cuando se use.
+
+## Variables de entorno
+
+| Variable                      | Por defecto                   | Para qué                                                                                                   |
+| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`                | — (obligatoria)               | URL del proyecto                                                                                           |
+| `SUPABASE_SERVICE_ROLE_KEY`   | — (obligatoria)               | Clave de servicio. Solo como secreto del alojamiento; nunca en el repositorio ni en la carga de un trabajo |
+| `WORKER_BUCKET`               | `brand-media`                 | Cubo de Storage                                                                                            |
+| `WORKER_MODE`                 | `drain`                       | `drain` (vacía y sale) o `continuous`                                                                      |
+| `WORKER_ID`                   | `media-<host>-<pid>`          | Nombre con el que reserva (`jobs.locked_by`)                                                               |
+| `WORKER_CONCURRENCY`          | `1`                           | Trabajos a la vez (FFmpeg ya usa todos los núcleos)                                                        |
+| `WORKER_LEASE_SECONDS`        | `900`                         | Reserva y tiempo máximo de un intento (5–3600)                                                             |
+| `WORKER_POLL_MS`              | `5000`                        | Espera entre sondeos con la cola vacía                                                                     |
+| `WORKER_IDLE_EXIT_MS`         | `0`                           | En `drain`, cuánto espera con la cola vacía antes de salir                                                 |
+| `WORKER_SHUTDOWN_GRACE_MS`    | `0`                           | Margen para terminar lo que esté en curso al apagar                                                        |
+| `WORKER_TMP_DIR`              | carpeta temporal del sistema  | Disco de trabajo (hace falta sitio para los vídeos)                                                        |
+| `WORKER_FONT_FILE`            | DejaVu Sans si está instalada | Tipografía por defecto                                                                                     |
+| `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                |
+| `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                   |
+
+Mejora de seguridad pendiente (recomendada en la investigación): un rol de
+Postgres limitado a `claim_jobs`, `complete_job` y `fail_job` en vez de la
+clave de servicio general.
+
+## Cómo se despertaría desde la base
+
+**No está creado.** El destino de la llamada depende del alojamiento. El
+esquema, cuando se decida:
+
+1. **Disparador** `AFTER INSERT` en `public.jobs` (por sentencia) que llama con
+   `pg_net` a la URL que arranca el trabajador. `pg_net` envía tras el commit,
+   con 2 s de espera y sin garantía de entrega.
+2. **`pg_cron` cada minuto de respaldo**, obligatorio porque `pg_net` puede
+   perder llamadas: si hay trabajos de medios pendientes o con la reserva
+   caducada, vuelve a llamar. También cubre los reintentos, que se hacen
+   reclamables más tarde sin que haya ningún `INSERT`.
+3. La URL y el token viven en **Vault**, no en el SQL ni en el repositorio.
+
+Boceto, **sin aplicar**:
+
+```sql
+create function private.wake_media_worker() returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_url text;
+  v_token text;
+begin
+  select decrypted_secret into v_url from vault.decrypted_secrets where name = 'media_worker_wake_url';
+  select decrypted_secret into v_token from vault.decrypted_secrets where name = 'media_worker_wake_token';
+  if v_url is null then return; end if;
+  perform net.http_post(
+    url := v_url,
+    headers := jsonb_build_object('Authorization', 'Bearer ' || v_token, 'Content-Type', 'application/json'),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 2000
+  );
+end $$;
+
+create function private.jobs_wake_media_worker() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform private.wake_media_worker();
+  return null;
+end $$;
+
+create trigger jobs_wake_media_worker after insert on public.jobs
+  for each statement execute function private.jobs_wake_media_worker();
+
+select cron.schedule('media-worker-wake', '* * * * *', $$
+  select private.wake_media_worker()
+  where exists (
+    select 1 from public.jobs
+    where kind like 'media.%'
+      and ((status = 'queued' and run_after <= now()) or (status = 'running' and locked_until < now()))
+  )
+$$);
+```
+
+Despertar dos veces no hace daño: `claim_jobs` reparte cada trabajo a un solo
+trabajador y el segundo proceso encuentra la cola vacía y sale.
+
+Qué sería «la URL» en cada alternativa de la investigación
+(`docs/investigacion-fase2/05-cola-y-trabajador.md`). Los detalles de cada API
+son los de su documentación y están **sin verificar** en esta sesión:
+
+| Alojamiento                                   | Cómo arranca                                                                                              | Modo         |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------ |
+| Fly.io, máquina bajo demanda (la recomendada) | La API de máquinas arranca una máquina parada; al vaciar la cola el proceso sale y la máquina se para     | `drain`      |
+| Google Cloud Run Jobs                         | Ejecutar el job por API. Pide un token de Google: haría falta una Edge Function intermedia que lo obtenga | `drain`      |
+| Vercel Sandbox                                | Una función de Vercel crea el sandbox con la imagen y lanza el proceso                                    | `drain`      |
+| Render o Railway, siempre encendido           | No hace falta despertar nada                                                                              | `continuous` |
+| VPS (Hetzner)                                 | Igual, con el contenedor bajo `restart: unless-stopped`                                                   | `continuous` |
+
+El trabajador no abre ningún puerto: quien lo despierta es la plataforma al
+arrancar el contenedor. Si se elige una plataforma que solo despierta por
+petición HTTP al propio servicio, habrá que añadirle un pequeño servidor de
+escucha (no está hecho).
+
+## CI
+
+`.github/workflows/ci.yml` tiene un trabajo aparte, `trabajador`, que instala
+FFmpeg y una tipografía (`ffmpeg`, `fonts-dejavu-core`), y ejecuta
+`npm run typecheck` y `npm test` en `worker/`. Después construye la imagen de
+pruebas y ejecuta dentro la prueba del reel (los ejecutores de GitHub traen
+Docker; no hace falta configurar nada). El trabajo se ha escrito con los mismos
+comandos probados en local, pero **no se ha ejecutado en GitHub**.
+
+## Licencias
+
+| Componente                        | Licencia                                                           | Uso                                                                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FFmpeg / ffprobe                  | LGPL/GPL según compilación; la de Alpine incluye x264 y es **GPL** | **Binario externo**: se lanza como proceso, no se enlaza ni se modifica. Si algún día se distribuye la imagen a terceros, hay que ofrecer el código fuente correspondiente |
+| zod 4.6                           | MIT                                                                | Única dependencia de ejecución                                                                                                                                             |
+| typescript 5.9                    | Apache-2.0                                                         | Desarrollo                                                                                                                                                                 |
+| vitest 3.2                        | MIT                                                                | Desarrollo                                                                                                                                                                 |
+| @types/node 22                    | MIT                                                                | Desarrollo                                                                                                                                                                 |
+| DejaVu Sans (`font-dejavu`)       | Licencia libre de Bitstream Vera/DejaVu                            | Tipografía por defecto en el contenedor                                                                                                                                    |
+| Node.js (imagen `node:22-alpine`) | MIT                                                                | Entorno                                                                                                                                                                    |
+
+No se usa Remotion (su licencia de empresa es de pago para un SaaS que
+renderiza por cuenta de clientes) ni ninguna otra biblioteca de vídeo.
+H.264 y AAC tienen patentes con licencias propias; no se ha estudiado si
+aplican a este uso.
+
+## Tiempos medidos
+
+Dentro del contenedor (FFmpeg 8.1.3, Alpine), limitado a 2 CPU, en una máquina
+compartida con otros procesos, el 17/11/2026. Una sola medida de cada cosa: son
+una referencia, no una garantía.
+
+| Trabajo                                                                                              | Tiempo                          |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------- |
+| Reel 1080×1920 de 10 s: dos fotos de 12 MP, una de 1080p y un clip 1080p de 4 s, dos textos y música | 7,6 s de FFmpeg; 8,4 s en total |
+| Derivados de un clip 1080p de 5 s: comprimido a 720p                                                 | 2,2 s                           |
+| …adaptación a 9:16 por recorte                                                                       | 1,4 s                           |
+| …los tres derivados, con la lectura y la copia                                                       | 4,3 s                           |
+| Foto de 12 MP a cuatro proporciones (1080 de ancho)                                                  | 0,7 s                           |
+
+Es decir, el reel se monta más rápido que su duración. La investigación suponía
+90 s por vídeo; con plantillas de fotos y clips cortos es mucho menos. Falta
+medir con vídeos reales de móvil (4K, HEVC, varios minutos).
+
+## Lo que queda fuera
+
+- Exportar documentos por capas (su formato lo define otra pieza).
+- Disparador, despliegue y alojamiento.
+- Quien encole los trabajos y enlace los resultados con la biblioteca
+  (`media_assets`): el trabajador solo deja archivos en el cubo y el resultado
+  en `jobs.result`.
+- Fotos HEIC (las de iPhone sin convertir) y orientación EXIF en PNG/WebP: sin
+  probar. Emojis en el texto: DejaVu no los trae.
+- Subidas reanudables (TUS): se usa la subida estándar, sujeta al límite de
+  archivo del cubo (50 MB hoy).
+- Seguimiento del sujeto al cambiar de proporción, subtítulos, voz en off,
+  varias pistas de música, animación de capas.
+- Limpieza de trabajos antiguos y prioridad por plan (pendientes de la cola).
