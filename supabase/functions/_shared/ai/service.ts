@@ -19,6 +19,7 @@ import {
   type Json,
   type RpcClient,
 } from './contract.ts';
+import { parseStructuredOutput } from './schema.ts';
 
 export interface AiServiceConfig {
   /** Funciones SQL con la clave de servicio. */
@@ -27,9 +28,16 @@ export interface AiServiceConfig {
   providers: AiProvider[];
   /**
    * Modelos configurados, por orden de preferencia: para cada tarea se usa el
-   * primero que la sirva.
+   * primero que la sirva (y, si el modelo declara propósitos, que sirva el de
+   * la petición).
    */
   models: AiModelSpec[];
+  /**
+   * Adaptadores elegidos por configuración que no se han podido cargar, con el
+   * motivo (falta la clave, no cumple el criterio de datos…). Si una tarea
+   * apunta a uno de ellos, el error lo dice en vez de un genérico.
+   */
+  unavailable?: Record<string, string>;
   /** Tiempo máximo de la llamada al proveedor. Por defecto, 60 segundos. */
   timeoutMs?: number;
 }
@@ -84,9 +92,18 @@ export function createAiService(config: AiServiceConfig): AiService {
   }
 
   async function generate(params: AiGenerateParams): Promise<AiGenerateResult> {
-    const spec = config.models.find((model) => model.task === params.task);
+    const spec = config.models.find(
+      (model) => model.task === params.task && (!model.purposes || model.purposes.includes(params.purpose)),
+    );
     const provider = spec ? providers.get(spec.provider) : undefined;
     if (!spec || !provider) {
+      const reason = spec ? config.unavailable?.[spec.provider] : undefined;
+      if (spec && reason) {
+        // Nunca se sustituye por otro proveedor (ni por el simulado): se dice qué falta.
+        throw new AiError('not_configured', `La IA no está disponible para esta tarea. ${reason}`, {
+          details: { provider: spec.provider },
+        });
+      }
       throw new AiError('not_configured', 'No hay ningún modelo de IA configurado para esta tarea.');
     }
 
@@ -160,9 +177,14 @@ export function createAiService(config: AiServiceConfig): AiService {
           retryable: true,
         });
       }
-      throw new AiError('provider_failed', 'La IA no ha podido completar la petición. No se ha consumido cupo.', {
+      const message =
+        known?.code === 'rate_limited' || known?.code === 'overloaded'
+          ? 'El proveedor de IA está saturado en este momento. Inténtalo de nuevo en un minuto. No se ha consumido cupo.'
+          : 'La IA no ha podido completar la petición. No se ha consumido cupo.';
+      throw new AiError('provider_failed', message, {
         generationId,
         retryable: known?.retryable ?? false,
+        details: { reason: known?.code ?? 'unexpected' },
       });
     } finally {
       clearTimeout(timer);
@@ -174,11 +196,38 @@ export function createAiService(config: AiServiceConfig): AiService {
     const actual = priceUsage(spec, result.usage);
     const costMicros = actual.unpriced.length > 0 ? Math.max(actual.micros, reserveMicros) : actual.micros;
 
+    // Salida estructurada: se valida aquí, con el esquema completo. Si el modelo
+    // se negó, se cortó o no cumplió, la llamada YA se ha pagado: se registra
+    // con su coste y después se avisa, sin entregar un resultado a medias.
+    let output = result.output;
+    let rejection: AiError | null = null;
+    const finishReason = typeof output.finish_reason === 'string' ? output.finish_reason : 'stop';
+    if (finishReason === 'refusal') {
+      rejection = new AiError('refused', 'La IA se ha negado a responder a esta petición. Reformúlala o revísala.', {
+        generationId,
+      });
+    } else if (params.input.outputSchema) {
+      const parsed = parseStructuredOutput(output.text, params.input.outputSchema.schema);
+      if (parsed.ok) {
+        output = { ...output, json: parsed.value };
+      } else {
+        output = { ...output, invalid_output: parsed.problems };
+        const truncated = finishReason === 'length';
+        rejection = new AiError(
+          'invalid_output',
+          truncated
+            ? 'La respuesta de la IA se ha cortado antes de terminar. Inténtalo de nuevo.'
+            : 'La IA ha respondido con un formato que no se puede usar. Inténtalo de nuevo.',
+          { generationId, retryable: true, details: { finish_reason: finishReason, problems: parsed.problems } },
+        );
+      }
+    }
+
     const completion = await rpc('ai_complete_generation', {
       p_generation_id: generationId,
       p_cost_micros: costMicros,
       p_usage: result.usage,
-      p_output: result.output,
+      p_output: output,
       p_latency_ms: latencyMs,
       p_provider_request_id: result.providerRequestId,
     });
@@ -191,9 +240,11 @@ export function createAiService(config: AiServiceConfig): AiService {
       });
     }
 
+    if (rejection) throw rejection;
+
     return {
       generationId,
-      output: result.output,
+      output,
       usage: result.usage,
       costMicros,
       provider: provider.id,
