@@ -93,9 +93,36 @@ describe('brandRulesFromProfile', () => {
       forbiddenPhrases: ['gratis'],
       brandColors: [{ name: 'Granate', hex: '#8a1c2b' }],
       requiredHashtags: ['a'],
+      recommendedHashtags: [],
+      callsToAction: [],
     });
   });
+  it('lee hashtags, llamadas a la acción y política de emojis del perfil', () => {
+    const rules = brandRulesFromProfile({
+      voice: {
+        hashtags: { required: ['Marca'], recommended: ['Tapas'] },
+        callsToAction: ['Reserva'],
+        emojis: { allowed: true, max: 2 },
+      },
+    });
+    expect(rules).toMatchObject({
+      requiredHashtags: ['Marca'],
+      recommendedHashtags: ['Tapas'],
+      callsToAction: ['Reserva'],
+      emojiPolicy: { allowed: true, max: 2 },
+    });
+  });
+  it('política de emojis sin definir (null): no hay regla', () => {
+    expect(brandRulesFromProfile({ voice: { emojis: { allowed: null, max: null } } }).emojiPolicy).toBeUndefined();
+    expect(brandRulesFromProfile({ voice: { emojis: { allowed: null, max: 3 } } }).emojiPolicy).toEqual({ max: 3 });
+  });
   it('perfil nulo: reglas vacías', () => {
-    expect(brandRulesFromProfile(null)).toEqual({ forbiddenPhrases: [], brandColors: [] });
+    expect(brandRulesFromProfile(null)).toEqual({
+      forbiddenPhrases: [],
+      brandColors: [],
+      requiredHashtags: [],
+      recommendedHashtags: [],
+      callsToAction: [],
+    });
   });
 });

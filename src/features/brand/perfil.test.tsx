@@ -105,6 +105,31 @@ describe('Perfil de marca: edición y versiones', () => {
     expect(screen.getByText(/Perfil de Casa Demo · versión 3/)).toBeInTheDocument();
   });
 
+  it('las reglas de publicación se editan en «Voz» y se guardan en la versión nueva', async () => {
+    const { user } = renderApp(`${PROFILE_URL}?seccion=voz`);
+    // El perfil de partida es anterior a estos campos: se lee sin quejarse y con todo vacío.
+    expect(await screen.findByTestId('profile-emoji-policy')).toHaveValue('undefined');
+    await user.type(screen.getByTestId('profile-hashtags-required'), '#MiMarca{Enter}');
+    await user.type(screen.getByTestId('profile-hashtags-recommended'), 'Tapas{Enter}');
+    await user.type(screen.getByTestId('profile-ctas'), 'Reserva tu mesa{Enter}');
+    await user.selectOptions(screen.getByTestId('profile-emoji-policy'), 'yes');
+    await user.type(screen.getByTestId('profile-emoji-max'), '3');
+    await user.click(await screen.findByRole('button', { name: 'Guardar versión' }));
+    await screen.findByText('Perfil guardado (versión 3)');
+    const call = fake.callsTo('save_brand_profile', 'rpc')[0]?.payload as {
+      p_data: { voice: { hashtags: unknown; callsToAction: string[]; emojis: unknown } };
+    };
+    expect(call.p_data.voice.hashtags).toEqual({ required: ['MiMarca'], recommended: ['Tapas'] });
+    expect(call.p_data.voice.callsToAction).toEqual(['Reserva tu mesa']);
+    expect(call.p_data.voice.emojis).toEqual({ allowed: true, max: 3 });
+  });
+
+  it('con «No se usan» no se pide el máximo de emojis', async () => {
+    const { user } = renderApp(`${PROFILE_URL}?seccion=voz`);
+    await user.selectOptions(await screen.findByTestId('profile-emoji-policy'), 'no');
+    expect(screen.queryByTestId('profile-emoji-max')).not.toBeInTheDocument();
+  });
+
   it('descartar devuelve lo guardado', async () => {
     const { user } = renderApp(PROFILE_URL);
     const description = await screen.findByLabelText('Descripción del negocio');

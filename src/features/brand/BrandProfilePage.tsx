@@ -32,6 +32,7 @@ import {
   BusinessSection,
   ChannelsSection,
   ContextSection,
+  PublishingRulesSection,
   VisualSection,
   VoiceSection,
   type SectionProps,
@@ -311,8 +312,19 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
           ).map(([value, Section]) => (
             <TabsContent key={value} value={value}>
               <Card>
-                <CardBody>
+                <CardBody className={value === 'voz' ? 'space-y-8' : undefined}>
                   <Section {...sectionProps} />
+                  {value === 'voz' && (
+                    <section aria-labelledby="publishing-rules-title" className="space-y-4 border-t border-border pt-6">
+                      <div>
+                        <h2 id="publishing-rules-title" className="text-base">
+                          Reglas de publicación
+                        </h2>
+                        <p className="text-sm text-muted">Las usa el verificador de marca antes de publicar.</p>
+                      </div>
+                      <PublishingRulesSection {...sectionProps} />
+                    </section>
+                  )}
                 </CardBody>
               </Card>
             </TabsContent>
