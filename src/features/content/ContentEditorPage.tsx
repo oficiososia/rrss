@@ -63,6 +63,7 @@ import {
   type LoadedContent,
   type LoadedVersion,
 } from './api';
+import { aiContentReasons, describeAiReasons } from './aiLabel';
 import { createEmptyDocument, DocumentError, MAX_LAYERS, type ContentDocument, type DocumentIssue } from './document';
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
@@ -218,6 +219,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
     return map;
   }, [assets.data, signed.data]);
+
+  // Marca de contenido generado con IA: la calcula la base de datos al guardar
+  // (`item.ai_generated`); aquí se adelanta con lo que hay en pantalla.
+  const aiReasons = useMemo(() => aiContentReasons(state.document, assets.data ?? []), [state.document, assets.data]);
+  const aiLabel = aiReasons.length > 0 || (!dirty && item.ai_generated === true);
 
   // Avisar antes de cerrar la pestaña con cambios sin guardar.
   useEffect(() => {
@@ -502,6 +508,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <span>{targetLabel(item.network, item.format)}</span>
             <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
             {item.archived_at && <Badge tone="warning">Archivada</Badge>}
+            {aiLabel && (
+              <span
+                title={describeAiReasons(aiReasons) || 'Lleva contenido generado con IA.'}
+                data-testid="editor-ai-label"
+              >
+                <Badge tone="primary">Generado con IA</Badge>
+              </span>
+            )}
             <ContentRequestOrigin item={item} />
             <span data-testid="editor-version">
               {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar todavía'}
@@ -794,7 +808,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   currentCopy={state.document.copy}
                   // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
                   onApply={(copy) => {
-                    dispatch({ type: 'setCopy', patch: copy });
+                    // Marca de contenido generado con IA (ver content/aiLabel.ts).
+                    dispatch({ type: 'setCopy', patch: { ...copy, aiGenerated: true } });
                     toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
                   }}
                 />

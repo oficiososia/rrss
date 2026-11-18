@@ -172,6 +172,8 @@ describe('Editor: imagen con IA', () => {
     await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '1'));
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-assets', 'asset-ia-1');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // La pieza pasa a llevar la marca de contenido generado con IA.
+    expect(await screen.findByTestId('editor-ai-label')).toBeInTheDocument();
     const calls = fake.callsTo('ai-media', 'function');
     expect(calls[calls.length - 1]!.payload).toMatchObject({
       action: 'image.generate',
