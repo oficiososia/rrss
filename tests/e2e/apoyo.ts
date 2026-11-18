@@ -290,6 +290,24 @@ export async function sql<T extends Record<string, unknown> = Record<string, unk
   }
 }
 
+/**
+ * Asigna un plan a una organización directamente en la base de datos (Fase 6).
+ * Las organizaciones de la tanda nacen en «Prueba» (una marca, dos personas,
+ * sin reels ni imagen con IA); los escenarios 01 a 12 las pasan a «Heredado»,
+ * que es como funcionaba todo antes de los planes: sin límites y con la IA
+ * solo por el cupo que asigna la plataforma.
+ */
+export async function asignarPlan(organizationId: string, code: string): Promise<void> {
+  const filas = await sql(
+    `update public.subscriptions
+     set plan_id = (select id from public.plans where code = $2), source = 'manual', status = 'active',
+         stripe_subscription_id = null, note = 'Prueba de extremo a extremo'
+     where organization_id = $1 returning organization_id`,
+    [organizationId, code],
+  );
+  if (filas.length !== 1) throw new Error(`No se pudo asignar el plan ${code} a ${organizationId}`);
+}
+
 // ── Archivos de prueba ───────────────────────────────────────────────────
 
 function trozo(tipo: string, datos: Buffer): Buffer {
