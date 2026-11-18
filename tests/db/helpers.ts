@@ -85,12 +85,24 @@ export async function migrationFiles(): Promise<string[]> {
   return (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith('.sql')).sort();
 }
 
-/** Base de datos nueva con el andamiaje de Supabase y todas las migraciones aplicadas. */
-export async function createDb(): Promise<Db> {
+/**
+ * Base de datos nueva con el andamiaje de Supabase y todas las migraciones aplicadas.
+ *
+ * Por defecto, las organizaciones nuevas nacen en el plan «Heredado» (sin
+ * límites de marcas, personas ni almacenamiento, todas las funciones y sin
+ * cupo de IA del plan): es como funcionaba todo antes de los planes, y así las
+ * pruebas de cada función no dependen de los límites comerciales. Las pruebas
+ * de planes piden `{ plans: 'real' }` para tener el plan por defecto de verdad.
+ */
+export async function createDb(options: { plans?: 'legacy' | 'real' } = {}): Promise<Db> {
   const db = process.env.DATABASE_URL ? await openPostgres(process.env.DATABASE_URL) : await openPglite();
   await db.exec(await readFile(SCAFFOLD, 'utf8'));
   for (const file of await migrationFiles()) {
     await db.exec(await readFile(path.join(MIGRATIONS_DIR, file), 'utf8'));
+  }
+  if ((options.plans ?? 'legacy') === 'legacy') {
+    await db.exec(`update public.plans set is_default = false where is_default;
+                   update public.plans set is_default = true where code = 'legacy';`);
   }
   return db;
 }

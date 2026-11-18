@@ -637,6 +637,174 @@ type RequestEnums = {
 
 // ─────────────────────── fin del bloque de encargos ───────────────────────
 
+// ───────────── Fase 6 · Planes, suscripciones y facturación ─────────────
+// Migración 20261119310000_plans_subscriptions. Importes en micros de la moneda
+// de cuenta de la plataforma (la misma que los costes de IA).
+
+export type BillingInterval = 'month' | 'year';
+export type SubscriptionStatus =
+  'active' | 'trialing' | 'past_due' | 'unpaid' | 'canceled' | 'incomplete' | 'incomplete_expired' | 'paused';
+export type SubscriptionSource = 'default' | 'manual' | 'stripe';
+export type PlanFeature = 'ai_text' | 'ai_image' | 'ai_video' | 'reels' | 'publishing';
+
+export type PlanRow = {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  price_micros: number;
+  billing_interval: BillingInterval;
+  max_brands: number | null;
+  max_members: number | null;
+  max_storage_bytes: number | null;
+  ai_monthly_micros: number;
+  features: PlanFeature[];
+  is_public: boolean;
+  is_default: boolean;
+  active: boolean;
+  stripe_price_id: string | null;
+  sort_order: number;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Lo que un superadministrador puede escribir de un plan (`code` solo al crearlo). */
+export type PlanUpdate = Partial<
+  Pick<
+    PlanRow,
+    | 'name'
+    | 'description'
+    | 'price_micros'
+    | 'billing_interval'
+    | 'max_brands'
+    | 'max_members'
+    | 'max_storage_bytes'
+    | 'ai_monthly_micros'
+    | 'features'
+    | 'is_public'
+    | 'active'
+    | 'stripe_price_id'
+    | 'sort_order'
+  >
+>;
+export type PlanInsert = PlanUpdate & { code: string; name: string };
+
+export type SubscriptionRow = {
+  organization_id: string;
+  plan_id: string | null;
+  source: SubscriptionSource;
+  status: SubscriptionStatus;
+  custom_price_micros: number | null;
+  note: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingEventRow = {
+  id: string;
+  type: string;
+  organization_id: string | null;
+  outcome: 'received' | 'applied' | 'ignored';
+  detail: string;
+  received_at: string;
+};
+
+/** `organization_plan_usage()`: plan efectivo, suscripción y uso frente a límites. */
+export type OrganizationPlanUsage = {
+  plan: Pick<
+    PlanRow,
+    | 'code'
+    | 'name'
+    | 'description'
+    | 'price_micros'
+    | 'billing_interval'
+    | 'max_brands'
+    | 'max_members'
+    | 'max_storage_bytes'
+    | 'ai_monthly_micros'
+    | 'features'
+  >;
+  subscription: {
+    source: SubscriptionSource;
+    status: SubscriptionStatus;
+    assigned_plan_code: string | null;
+    custom_price_micros: number | null;
+    current_period_end: string | null;
+    cancel_at_period_end: boolean;
+    has_billing_account: boolean;
+  };
+  usage: {
+    brands: number;
+    members: number;
+    pending_invitations: number;
+    storage_bytes: number;
+    ai_committed_micros: number;
+  };
+  ai_limit_micros: number;
+  ai_limit_overridden: boolean;
+  period_start: string;
+};
+
+export type BillingOverviewRow = {
+  organization_id: string;
+  organization_name: string;
+  kind: OrgKind;
+  plan_code: string;
+  plan_name: string;
+  assigned_plan_code: string | null;
+  source: SubscriptionSource;
+  status: SubscriptionStatus;
+  custom_price_micros: number | null;
+  monthly_revenue_micros: number;
+  ai_cost_micros: number;
+  margin_micros: number;
+  ai_limit_micros: number;
+  ai_limit_overridden: boolean;
+  brands: number;
+  members: number;
+  storage_bytes: number;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+};
+
+type BillingTables = {
+  plans: Table<PlanRow, PlanInsert, PlanUpdate>;
+  subscriptions: Table<SubscriptionRow>;
+  billing_events: Table<BillingEventRow>;
+};
+
+type BillingFunctions = {
+  // Propietarios y administradores de la organización (y superadministradores).
+  organization_plan_usage: { Args: { p_organization_id: string }; Returns: OrganizationPlanUsage };
+  // Superadministradores.
+  admin_billing_overview: { Args: { p_period_start: string }; Returns: BillingOverviewRow[] };
+  admin_set_organization_plan: {
+    Args: {
+      p_organization_id: string;
+      p_plan_id: string | null;
+      p_custom_price_micros?: number | null;
+      p_note?: string;
+    };
+    Returns: SubscriptionRow;
+  };
+  admin_set_default_plan: { Args: { p_plan_id: string }; Returns: PlanRow };
+  admin_clear_ai_quota: { Args: { p_organization_id: string }; Returns: undefined };
+};
+
+type BillingEnums = {
+  billing_interval: BillingInterval;
+  subscription_status: SubscriptionStatus;
+  subscription_source: SubscriptionSource;
+};
+
+// ─────────────────────── fin del bloque de planes ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -718,7 +886,8 @@ export type Database = {
     } & Phase2Tables &
       ContentTables &
       Phase2MediaTables &
-      RequestTables;
+      RequestTables &
+      BillingTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -746,7 +915,8 @@ export type Database = {
     } & Phase2Functions &
       ContentFunctions &
       MediaJobFunctions &
-      RequestFunctions;
+      RequestFunctions &
+      BillingFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -759,7 +929,8 @@ export type Database = {
       asset_origin: AssetOrigin;
     } & Phase2Enums &
       ContentEnums &
-      RequestEnums;
+      RequestEnums &
+      BillingEnums;
     CompositeTypes: Record<never, never>;
   };
 };
