@@ -173,8 +173,8 @@ Configurado por la API de gestión (`PATCH /v1/projects/{ref}/config/auth`):
 | Confirmar correo                        | **Activado** (requisito de seguridad: las invitaciones se aceptan por coincidencia de correo)                                             | `mailer_autoconfirm = false` |
 | Longitud mínima de contraseña           | 8                                                                                                                                         | `password_min_length`        |
 | Protección contra contraseñas filtradas | **No disponible en el plan gratuito** (la API responde 402, `entitlement_required`): es de Pro en adelante                                | `password_hibp_enabled`      |
-| URL del sitio                           | `http://localhost:5173` (aún no hay dominio)                                                                                              | `site_url`                   |
-| Direcciones de retorno                  | `http://localhost:5173/**` y `http://127.0.0.1:5173/**` (cubren `/` tras confirmar el correo y `/restablecer` al recuperar la contraseña) | `uri_allow_list`             |
+| URL del sitio                           | `https://rrss-omega.vercel.app` (desde el 18/11/2026; antes `http://localhost:5173`)                                                                                              | `site_url`                   |
+| Direcciones de retorno                  | `https://rrss-omega.vercel.app/**`, `http://localhost:5173/**` y `http://127.0.0.1:5173/**` (cubren `/` tras confirmar el correo y `/restablecer` al recuperar la contraseña) | `uri_allow_list`             |
 | Registro abierto                        | Sí                                                                                                                                        | `disable_signup = false`     |
 
 Cuando haya dominio o vistas previas de Vercel hay que cambiar la URL del sitio

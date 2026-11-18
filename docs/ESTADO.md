@@ -10,7 +10,8 @@ plantillas y modo agencia con encargos. Falta conectar proveedores reales, que
 dependen de cuentas y decisiones del dueño (ver `docs/06-decisiones-fase-2.md`).
 El proyecto de Supabase de staging (plan gratuito, UE) tiene las 12 migraciones,
 el inicio de sesión configurado y las funciones desplegadas sin proveedor de IA
-(detalle en `docs/05-puesta-en-marcha.md`). La aplicación no está publicada.
+(detalle en `docs/05-puesta-en-marcha.md`). La aplicación está publicada contra
+staging en https://rrss-omega.vercel.app (Vercel, equipo `casa-tomas`, 18/11/2026).
 
 ## Hecho y comprobado
 
@@ -93,7 +94,7 @@ correos por hora; hace falta un SMTP propio.
 | Qué | Qué hace falta |
 |---|---|
 | Repetir las pruebas en staging | SMTP propio (el correo integrado del plan gratuito solo envía al equipo y 2 por hora). El plan gratuito tampoco admite archivos de más de 50 MB ni la protección contra contraseñas filtradas |
-| Publicar la aplicación | Proyecto de Vercel de pago y dominio |
+| Dominio propio | Comprarlo y conectarlo al proyecto `rrss` de Vercel (hoy `rrss-omega.vercel.app`) |
 | Generar con IA de verdad | Cuenta de Google Cloud con Vertex AI en la UE (o la alternativa que se elija) y precios confirmados; o, para imagen en pruebas, el cuaderno de Colab con un túnel con autenticación |
 | Reels en staging | Encender el trabajador contra staging (`npm run start:staging` en `worker/`, sin probar) o desplegarlo (alojamiento sin decidir) |
 | Modo agencia en staging | Dar de alta la cuenta de la agencia y sus credenciales (`agency/README.md`) |
