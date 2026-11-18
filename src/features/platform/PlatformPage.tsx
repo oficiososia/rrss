@@ -6,6 +6,8 @@ import { useAdminOrganizations, useIsPlatformAdmin } from '@/features/orgs/api';
 import { UserMenu } from '@/layout/AppShell';
 import { formatBytes, formatDate } from '@/lib/utils';
 import { AiQuotaPanel } from './AiQuotaPanel';
+import { BillingPanel } from './BillingPanel';
+import { PlansEditor } from './PlansEditor';
 
 export function PlatformPage() {
   const user = useUser();
@@ -91,6 +93,10 @@ export function PlatformPage() {
                 <AiQuotaPanel organizations={orgs.data} />
               </div>
             )}
+            <div className="mt-6 space-y-6">
+              <BillingPanel />
+              <PlansEditor />
+            </div>
           </>
         )}
       </main>

@@ -148,7 +148,7 @@ describe('Configuración de la organización', () => {
       within(nav)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(activity ? ['General', 'Equipo', 'Actividad', 'Consumo de IA'] : ['General', 'Equipo']);
+    ).toEqual(activity ? ['General', 'Equipo', 'Actividad', 'Consumo de IA', 'Plan'] : ['General', 'Equipo']);
     // La ruta sin sección lleva a General.
     await waitFor(() => expect(window.location.pathname).toBe(`${BASE}/ajustes/general`));
   });

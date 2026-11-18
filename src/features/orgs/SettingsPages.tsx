@@ -49,6 +49,7 @@ export function SettingsLayout() {
     { to: `${base}/equipo`, label: 'Equipo' },
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
     ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
+    ...(isAdmin ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
   ];
   return (
     <>

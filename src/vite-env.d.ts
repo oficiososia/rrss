@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_AI_IMAGE_ENABLED?: string;
   /** `true` si hay un trabajador de medios desplegado: enseña la pantalla de reels de la biblioteca. */
   readonly VITE_MEDIA_WORKER_ENABLED?: string;
+  /** `true` si las funciones de pago (Stripe) están desplegadas y configuradas: enseña contratar y cambiar de plan. */
+  readonly VITE_BILLING_ENABLED?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;
