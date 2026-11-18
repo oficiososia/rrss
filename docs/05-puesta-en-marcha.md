@@ -79,8 +79,10 @@ historial; comprobación de marca sin IA y con IA; coste por organización en
 proveedor. Después, `10-fase2-imagen-con-ia.spec.ts` (imagen con IA síncrona y
 asíncrona desde el editor; la asíncrona la cierra `ai-media-poll`, que la
 prueba llama con la clave de servicio local porque en local no hay secretos de
-Vault) y `11-reels.spec.ts` (encargar un reel, montarlo con el trabajador y
-verlo en la biblioteca).
+Vault), `11-reels.spec.ts` (encargar un reel, montarlo con el trabajador y
+verlo en la biblioteca) y `12-modo-agencia-encargos.spec.ts` (una clienta pide
+un encargo, la herramienta `agency/` lo toma y entrega, la clienta pide un
+cambio y acepta; necesita `npm ci` en `agency/`).
 
 El proveedor simulado solo se activa con `AI_E2E_SIMULATED_PROVIDER=true` **y**
 un Supabase local (dentro de Docker la función ve `SUPABASE_URL=http://kong:8000`,
