@@ -180,6 +180,7 @@ const TENANT_TABLES = [
   'content_versions',
   'content_requests',
   'content_request_comments',
+  'request_notifications',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -270,6 +271,7 @@ describe('aislamiento entre organizaciones', () => {
       'content_versions',
       'content_requests',
       'content_request_comments',
+      'request_notifications',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -1033,7 +1035,9 @@ describe('IA y cola de trabajos', () => {
       expect(row!.status, id).toBe('queued');
     }
     // Quien edita la marca, sí.
-    const [hecho] = await as<{ status: string }>(db, editorA, `select status from public.cancel_media_job($1)`, [reelA1]);
+    const [hecho] = await as<{ status: string }>(db, editorA, `select status from public.cancel_media_job($1)`, [
+      reelA1,
+    ]);
     expect(hecho!.status).toBe('cancelled');
     await serviceRpc(db, 'cancel_job', { p_job_id: reelB1 });
     await serviceRpc(db, 'cancel_job', { p_job_id: reelG1 });
@@ -1199,6 +1203,36 @@ describe('encargos (modo agencia)', () => {
     await denied(db, null, `select * from public.pending_content_requests()`, [], noFunction);
     await denied(db, null, `select public.take_content_request($1)`, [requestA1], noFunction);
     await denied(db, null, `select public.accept_content_request($1)`, [requestA1], noFunction);
+    await denied(db, null, `select public.mark_request_notifications_read($1)`, [marcaA1], noFunction);
+  });
+
+  it('los avisos de encargos son de cada persona y de su organización', async () => {
+    const mine = async (user: TestUser) =>
+      (await as<{ id: string }>(db, user, `select request_id::text as id from public.request_notifications`))
+        .map((r) => r.id)
+        .sort();
+    // El encargo de A1 (pedido por el cliente) avisa a quien edita A1: Ana, la administradora y el editor.
+    expect(await mine(editorA)).toEqual([requestA1]);
+    expect(await mine(clienteA)).toEqual([]);
+    expect(await mine(sinMarcaA)).toEqual([]);
+    expect(await mine(berta)).toEqual([]); // Berta pidió el suyo: no se avisa a sí misma.
+    expect(await mine(superadmin)).toEqual([]);
+    expect(await mine(ajeno)).toEqual([]);
+    // Ninguna fila de otra persona, aunque sea de la misma organización.
+    const [ajenos] = await as<{ n: number }>(
+      db,
+      editorA,
+      `select count(*)::int as n from public.request_notifications where user_id <> $1`,
+      [editorA.id],
+    );
+    expect(ajenos!.n).toBe(0);
+    // Marcar como leído solo toca los propios, también con la marca ajena.
+    await as(db, berta, `select public.mark_request_notifications_read($1)`, [marcaA1]);
+    const [sigue] = await db.query<{ read_at: string | null }>(
+      `select read_at from public.request_notifications where user_id = $1 and request_id = $2`,
+      [editorA.id, requestA1],
+    );
+    expect(sigue!.read_at).toBeNull();
   });
 });
 
@@ -1357,9 +1391,9 @@ describe('imágenes generadas con IA en la biblioteca', () => {
   it('la otra organización no ve ni el recurso ni su procedencia', async () => {
     const deA = await generated(orgA, marcaA1, genA1);
     const deB = await generated(orgB, marcaB1, genB1);
-    expect(await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA])).toEqual([
-      { p: 'encargo privado' },
-    ]);
+    expect(
+      await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA]),
+    ).toEqual([{ p: 'encargo privado' }]);
     expect(
       await as(db, ana, `select 1 from public.media_assets where id = $1 or provenance->>'generation_id' = $2`, [
         deB,

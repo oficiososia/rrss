@@ -26,6 +26,7 @@ import { APP_NAME } from '@/config/app';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
 import { ORG_ROLE_LABEL } from '@/features/permissions/roles';
+import { useUnreadRequestNotifications } from '@/features/requests/notifications';
 import type { BrandRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
@@ -37,6 +38,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   end?: boolean;
+  /** Avisos sin leer (insignia). */
+  badge?: number;
 }
 
 interface AppShellProps {
@@ -47,7 +50,7 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-function navItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
+function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 0): NavItem[] {
   const base = `/o/${org.id}`;
   const settings: NavItem = { to: `${base}/ajustes`, label: 'Configuración', icon: Settings };
   if (!brand) return [{ to: base, label: 'Marcas', icon: LayoutGrid, end: true }, settings];
@@ -56,7 +59,9 @@ function navItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
     { to: `${b}/inicio`, label: 'Inicio', icon: Home },
     { to: `${b}/contenidos`, label: 'Contenidos', icon: FileText },
     // Encargos: solo con la marca en modo agencia (quien los atiende es la agencia).
-    ...(brand.ai_mode === 'agency' ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList }] : []),
+    ...(brand.ai_mode === 'agency'
+      ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList, badge: unreadRequests }]
+      : []),
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },
@@ -210,8 +215,27 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** Insignia de avisos sin leer junto a una entrada del menú. */
+function NavBadge({ count, compact = false }: { count: number | undefined; compact?: boolean }) {
+  if (!count) return null;
+  const text = count > 99 ? '99+' : String(count);
+  return (
+    <span
+      className={cn(
+        'inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-[0.6875rem] font-semibold leading-5 text-primary-fg',
+        compact ? 'absolute -right-2 -top-1.5' : 'ml-auto',
+      )}
+      data-testid="nav-badge"
+    >
+      {text}
+      <span className="sr-only"> {count === 1 ? 'aviso sin leer' : 'avisos sin leer'}</span>
+    </span>
+  );
+}
+
 export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) {
-  const items = navItems(org, brand);
+  const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
+  const items = navItems(org, brand, unread.data?.length ?? 0);
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
       <a
@@ -234,7 +258,7 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
           <BrandSwitcher org={org} brands={brands} brand={brand} />
         </div>
         <nav aria-label="Principal" className="flex-1 space-y-1 overflow-y-auto">
-          {items.map(({ to, label, icon: Icon, end }) => (
+          {items.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
               key={to}
               to={to}
@@ -249,6 +273,7 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
             >
               <Icon className="h-4 w-4" aria-hidden />
               {label}
+              <NavBadge count={badge} />
             </NavLink>
           ))}
         </nav>
@@ -276,7 +301,7 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
           aria-label="Principal"
           className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
         >
-          {items.map(({ to, label, icon: Icon, end }) => (
+          {items.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
               key={to}
               to={to}
@@ -288,7 +313,10 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
                 )
               }
             >
-              <Icon className="h-5 w-5" aria-hidden />
+              <span className="relative">
+                <Icon className="h-5 w-5" aria-hidden />
+                <NavBadge count={badge} compact />
+              </span>
               <span className="max-w-full truncate">{label}</span>
             </NavLink>
           ))}

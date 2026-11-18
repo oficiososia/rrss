@@ -640,9 +640,25 @@ type RequestEnums = {
 // ───────────── Pulido de la Fase 2 (migraciones 2026111911…) ─────────────
 // Cancelar un trabajo de medios desde la aplicación (20261119111000).
 
+// Avisos de encargos dentro de la aplicación (20261119113000): los escribe la
+// base de datos; cada persona lee los suyos y los marca como leídos por RPC.
+export type RequestNotificationKind = 'request_created' | 'request_delivered';
+
+export type RequestNotificationRow = {
+  id: string;
+  user_id: string;
+  request_id: string;
+  brand_id: string;
+  organization_id: string;
+  kind: RequestNotificationKind;
+  created_at: string;
+  read_at: string | null;
+};
+
 // Recursos provisionales (20261119112000): logotipos subidos desde el perfil y
 // aún sin guardar. El plazo lo pone la base de datos; el cliente solo lo pide al subir.
 type PolishTables = {
+  request_notifications: Table<RequestNotificationRow>;
   media_assets: Table<
     // Opcional en la fila para no cambiar `MediaAssetRow` (lo usan muchas pantallas).
     { provisional_until?: string | null },
@@ -654,6 +670,8 @@ type PolishTables = {
 type PolishFunctions = {
   /** Cancela un reel o un recorte en cola o en curso de una marca que se edita. */
   cancel_media_job: { Args: { p_job_id: string }; Returns: JobRow };
+  /** Marca como leídos los avisos propios de una marca (o de un encargo). Devuelve cuántos. */
+  mark_request_notifications_read: { Args: { p_brand_id: string; p_request_id?: string | null }; Returns: number };
 };
 
 // ─────────────────────── fin del bloque de pulido ───────────────────────

@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ExternalLink, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -33,6 +33,18 @@ import {
   requestActions,
   requestPaths,
 } from './labels';
+import { unreadByRequest, useMarkRequestNotificationsRead, useUnreadRequestNotifications } from './notifications';
+
+/** Al abrir el encargo, sus avisos sin leer (nuevo o entregado) se dan por leídos. */
+function useReadOnOpen(brandId: string, requestId: string) {
+  const unread = useUnreadRequestNotifications(brandId);
+  const markRead = useMarkRequestNotificationsRead(brandId);
+  const pending = unreadByRequest(unread.data).has(requestId);
+  const { mutate, isPending } = markRead;
+  useEffect(() => {
+    if (pending && !isPending) mutate(requestId);
+  }, [pending, isPending, mutate, requestId]);
+}
 
 export function RequestDetailPage() {
   const { requestId = '' } = useParams();
@@ -79,6 +91,7 @@ function RequestDetail({ request }: { request: ContentRequestRow }) {
   const paths = requestPaths(org.id, brand.id);
   const thread = useRequestThread(brand.id, request.id);
   const mutations = useRequestMutations(brand.id);
+  useReadOnOpen(brand.id, request.id);
   const actions = requestActions(request, {
     comment: can('comment'),
     approve: can('approve'),
