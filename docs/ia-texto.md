@@ -104,6 +104,7 @@ Solo nombres en `.env.example`. Son secretos de la función; nunca `VITE_`.
 | `AI_TEXT_POST_CAPTION_PROVIDER` / `_MODEL` | Solo para redactar publicaciones |
 | `AI_TEXT_PROFILE_PROPOSAL_PROVIDER` / `_MODEL` | Solo para proponer el perfil |
 | `AI_TEXT_BRAND_CHECK_PROVIDER` / `_MODEL` | Solo para la comprobación de marca |
+| `AI_TEXT_CAMPAIGN_PLAN_PROVIDER` / `_MODEL` | Solo para el plan de campaña (`campaign.plan`) |
 | `AI_PRICES` | Tabla de precios en JSON |
 | `AI_TIMEOUT_MS` | Tiempo máximo de la llamada (por defecto, 60 s) |
 | `AI_ALLOW_NON_EU_PROCESSING` | `true` acepta procesar fuera de la UE |
@@ -143,6 +144,7 @@ delimitado y se trata como dato.
 | `post.caption` | Perfil de marca, encargo breve, red con sus límites (dato) y número de variantes (1–5) | Variantes con texto, etiquetas, longitud medida (en unidades UTF-16, ver abajo) y `withinLimits`. No se recortan |
 | `profile.proposal` | Texto ya extraído de las fuentes (hasta 20 fuentes y 400.000 caracteres) y, si existe, el perfil actual | Una **propuesta** con la forma del perfil y notas para quien revisa. No guarda nada |
 | `brand.check` | Perfil de marca y el texto | Veredicto por criterio (`tone`, `banned_topics`): `pass`, `fail` o `uncertain`, con explicación y citas. Global: `pass`, `fail` o `review` |
+| `campaign.plan` | Perfil de marca, instrucción («prepara la semana que viene»), fechas (1–63 días), destinos (red/formato del catálogo), descripción de hasta 60 recursos de la biblioteca y hasta 5 fuentes de texto (60.000 caracteres) | Una **propuesta** de plan: objetivo, resumen, razonamiento (observado / respaldado por datos / hipótesis, con nota sobre los datos) y piezas (red, formato, fecha, idea, pie de borrador, etiquetas, recursos sugeridos, por qué). No guarda nada |
 
 **Unidad de los límites de texto.** Todo el producto cuenta en unidades UTF-16:
 el contador del editor, la ventana «Redactar con IA», el verificador de marca y
@@ -157,6 +159,38 @@ duda. `review` significa «que lo revise una persona». La tarea nunca aprueba u
 pieza. Las reglas literales (longitud, expresiones exactas) no son de esta
 tarea: van en el verificador sin IA.
 
+### Plan de campaña (`campaign.plan`) y defensa ante instrucciones maliciosas
+
+La tarea solo propone; quien actúa es el motor de campañas
+(`src/features/campaigns/engine.ts` + `accept_campaign_plan`, ver
+`docs/02-modelo-de-datos.md` §13), que solo sabe crear borradores.
+
+- **Instrucciones fijas** (mensaje de sistema): texto del producto que dice que
+  la respuesta es una propuesta y que no aprueba, programa ni publica. Lo que
+  escribe el cliente (perfil, instrucción, fuentes, nombres de archivos de la
+  biblioteca) viaja como material delimitado; un cierre `</material>` dentro
+  del material se neutraliza. El prompt solo lleva datos validados (fechas
+  reales, identificadores de red y formato con formato fijo, un número).
+- **Esquema cerrado** y validado entero: sin campos de «acciones» ni de estado.
+  Un modelo que añada `approve` o `publish` produce `invalid_output` y no se
+  guarda nada.
+- **Saneado determinista** (`sanitizePlan`): se descartan las piezas en redes o
+  formatos no pedidos, fuera de fechas o de más sobre el máximo (por defecto,
+  una cada dos días, hasta 30), y los recursos que no estaban en la biblioteca
+  enviada. La respuesta dice qué se descartó y por qué.
+- **Sin datos no hay «respaldado por datos»**: mientras la plataforma no tenga
+  analítica (Fase 5), lo que el modelo ponga ahí pasa a hipótesis y el plan lo
+  dice (`NO_DATA_NOTE`).
+- El simulado de pruebas locales construye el plan a partir de la instrucción
+  y del perfil, y además **imita a un modelo comprometido**: si algún material
+  contiene «ignora lo anterior», añade una pieza que obedece (otra red, fuera de
+  fechas, «APROBADO»). La prueba de extremo a extremo comprueba que el producto
+  la descarta y que todo lo creado son borradores.
+
+Probado con el proveedor simulado y la base de datos real
+(`tests/db/campanas.test.ts`); **sin probar contra un proveedor real** ni medida
+la calidad de los planes.
+
 ## 5. Función `ai-generate`
 
 `POST /functions/v1/ai-generate` con la sesión del usuario en `Authorization`.
@@ -166,6 +200,11 @@ tarea: van en el verificador sin IA.
   "input": { "brief": "…", "network": { "id": "instagram", "name": "Instagram", "maxChars": 2200, "maxHashtags": 30, "notes": ["…"] }, "variants": 3 } }
 { "action": "brand.check", "brandId": "<uuid>", "input": { "text": "…" } }
 { "action": "profile.proposal", "brandId": "<uuid>", "input": { "sources": [{ "title": "Manual.pdf", "text": "…" }] } }
+{ "action": "campaign.plan", "brandId": "<uuid>",
+  "input": { "instruction": "Prepara la semana que viene", "startDate": "2026-11-23", "endDate": "2026-11-29",
+             "targets": [{ "network": "instagram", "format": "post" }],
+             "assets": [{ "id": "<uuid>", "name": "guiso.jpg", "kind": "image", "tags": ["otoño"] }],
+             "sources": [{ "title": "Horario.txt", "text": "…" }] } }
 ```
 
 El perfil de marca lo lee la función con la identidad del usuario (RLS); el

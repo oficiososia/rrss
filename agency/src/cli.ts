@@ -6,9 +6,11 @@ import {
   CommandError,
   checkFile,
   checkId,
+  checkPlan,
   comment,
   context,
   deliver,
+  deliverCampaignPlan,
   pending,
   release,
   take,
@@ -29,6 +31,9 @@ const HELP = `Herramienta de la agencia (rrss)
                                       Valida la entrega y pasa el verificador de marca (sin red)
   entregar <id> <entrega.json> [--aun-con-bloqueos]
                                       Crea la pieza en borrador y marca el encargo entregado
+  comprobar-plan <plan.json> [--contexto <carpeta>]
+                                      Valida un plan de campaña (encargo de tipo «plan»), sin red
+  entregar-plan <id> <plan.json>      Entrega el plan; el cliente lo revisa y lo acepta en Campañas
   comentar <id> <texto>               Añade un comentario al encargo
   soltar <id>                         Devuelve un encargo tomado a la cola
 
@@ -151,6 +156,24 @@ export async function run(
         out.log(formatCheck(result.check, 'Verificador'));
         out.log(
           `Entregado: pieza ${result.request.content_id}, versión ${result.request.delivered_version}, en borrador. El cliente ya puede revisarla.`,
+        );
+        return 0;
+      }
+      case 'comprobar-plan': {
+        const file = positional[0];
+        if (!file) throw new CommandError('Indica el archivo del plan.');
+        const contextDir = typeof flags.get('contexto') === 'string' ? (flags.get('contexto') as string) : undefined;
+        const checked = await checkPlan(path.resolve(file), contextDir ? path.resolve(contextDir) : undefined);
+        out.log(`Plan válido: ${checked.plan.pieces.length} piezas.`);
+        return 0;
+      }
+      case 'entregar-plan': {
+        const id = checkId(positional[0]);
+        const file = positional[1];
+        if (!file) throw new CommandError('Indica el archivo del plan.');
+        const result = await deliverCampaignPlan(await signedInClient(env), config.workDir, id, path.resolve(file));
+        out.log(
+          `Plan entregado (versión ${result.request.delivered_plan_version}, ${result.pieces} piezas). El cliente lo revisa en Campañas; al aceptarlo, las piezas se crean como borradores.`,
         );
         return 0;
       }

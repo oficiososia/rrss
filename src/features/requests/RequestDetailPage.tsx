@@ -19,9 +19,10 @@ import {
 } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
 import { contentPaths, targetLabel } from '@/features/content/labels';
+import { campaignPaths } from '@/features/campaigns/labels';
 import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
-import type { ContentRequestRow } from '@/lib/database.types';
+import type { CampaignRequestRow, ContentRequestRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { useRequest, useRequestMutations, useRequestThread } from './api';
@@ -99,6 +100,11 @@ function RequestDetail({ request }: { request: ContentRequestRow }) {
     manage: can('manage'),
     userId: user.id,
   });
+  // Encargo de un plan de campaña (modo agencia): se revisa y se acepta en Campañas.
+  const planCampaignId =
+    (request as Partial<CampaignRequestRow>).kind === 'plan'
+      ? ((request as Partial<CampaignRequestRow>).campaign_id ?? null)
+      : null;
   const [comment, setComment] = useState('');
   const [changesOpen, setChangesOpen] = useState(false);
   const [changes, setChanges] = useState('');
@@ -187,7 +193,7 @@ function RequestDetail({ request }: { request: ContentRequestRow }) {
               Pedir cambios
             </Button>
           )}
-          {actions.accept && (
+          {actions.accept && !planCampaignId && (
             <Button onClick={() => setConfirmAccept(true)} data-testid="request-accept">
               <Check className="h-4 w-4" aria-hidden />
               Aceptar
@@ -202,7 +208,28 @@ function RequestDetail({ request }: { request: ContentRequestRow }) {
         </div>
       </div>
 
-      {can('edit') && <RequestPreparePanel request={request} />}
+      {/* Un plan de campaña no se entrega como pieza: lo entrega la agencia en Campañas. */}
+      {can('edit') && !planCampaignId && <RequestPreparePanel request={request} />}
+      {planCampaignId && (
+        <Card data-testid="request-plan">
+          <CardHeader
+            title="Plan de campaña"
+            description={
+              request.status === 'delivered'
+                ? 'La agencia ha entregado el plan: revísalo y acéptalo en Campañas, o pide cambios aquí.'
+                : 'Este encargo es un plan de campaña: se revisa y se acepta en Campañas.'
+            }
+            action={
+              <Link to={campaignPaths(org.id, brand.id).item(planCampaignId)} data-testid="request-open-campaign">
+                <Button variant="secondary">
+                  <ExternalLink className="h-4 w-4" aria-hidden />
+                  Abrir la campaña
+                </Button>
+              </Link>
+            }
+          />
+        </Card>
+      )}
 
       {request.content_id && (
         <Card data-testid="request-delivery">
