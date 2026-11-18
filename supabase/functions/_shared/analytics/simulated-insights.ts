@@ -15,6 +15,13 @@ export interface SimulatedInsightsOptions {
   unsupportedAccountMetrics?: string[];
   /** call_count que declara la cabecera X-Business-Use-Case-Usage (en %). Por defecto, 5. */
   usageCallCount?: number;
+  /**
+   * Responder también por publicaciones que esta simulada no ha publicado (con
+   * identificador numérico). Solo para la prueba local de extremo a extremo:
+   * allí publica una función y mide otra, y cada una tiene su simulada en memoria.
+   * El tipo (imagen o reel) se deduce de las métricas pedidas.
+   */
+  answerUnknownMedia?: boolean;
 }
 
 /** Métricas de cuenta que atiende la simulada (las de la documentación consultada el 18/11/2026). */
@@ -203,7 +210,17 @@ export function handleSimulatedInsights(r: SimulatedInsightsRequest): Response |
 
   // GET /{ig-media-id}/insights
   if (edge === 'insights' && r.parts.length === 2) {
-    const media = r.published.find((m) => m.id === id);
+    const metricsAsked = (r.query.get('metric') ?? '').split(',');
+    const media =
+      r.published.find((m) => m.id === id) ??
+      (r.options.answerUnknownMedia && /^[0-9]{6,30}$/.test(id)
+        ? {
+            id,
+            igUserId: [...r.igUserIds][0] ?? '',
+            kind: metricsAsked.some((m) => m.startsWith('ig_reels_')) ? 'REELS' : 'IMAGE',
+            timestamp: new Date(r.now).toISOString(),
+          }
+        : undefined);
     if (!media) return null;
     const failure = r.takeFailure();
     if (failure) return failure;

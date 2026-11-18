@@ -408,6 +408,11 @@ verify_jwt = false
 [functions.social-connect]
 verify_jwt = false
 
+# Analítica de la Fase 5 (capturas e informes): la llama pg_cron con la clave de
+# servicio en `apikey`; la comprueba social-insights/handler.ts.
+[functions.social-insights]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327

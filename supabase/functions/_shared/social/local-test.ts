@@ -40,7 +40,8 @@ export function loadSocialLocalTest(env: Record<string, string | undefined>): So
       `${SOCIAL_LOCAL_TEST_FLAG}=true solo se admite en pruebas locales: SUPABASE_URL debe ser http://127.0.0.1, http://localhost o http://kong (stack local de la CLI). Esta función no arranca; quita la variable.`,
     );
   }
-  shared ??= createSimulatedGraph();
+  // Publica una función y mide otra (cada una con su simulada): se responde por cualquier publicación.
+  shared ??= createSimulatedGraph({ insights: { answerUnknownMedia: true } });
   return {
     fetch: shared.fetch,
     graph: shared,
