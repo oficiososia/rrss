@@ -23,10 +23,14 @@
 -- ─────────────────────────── 1. Procedencia ───────────────────────────
 
 -- Solo el servidor (clave de servicio) puede dar un recurso por generado con IA.
+-- Al actualizar solo se mira si cambia la procedencia: renombrar, mover o
+-- etiquetar una imagen generada (columnas que el cliente sí puede cambiar)
+-- conserva la procedencia que puso el servidor y tiene que poder hacerse.
 create function private.media_assets_ai_provenance_guard() returns trigger
 language plpgsql set search_path = '' as $$
 begin
   if (new.provenance ->> 'type') = 'ai_generation'
+     and (tg_op = 'INSERT' or new.provenance is distinct from old.provenance)
      and current_user not in ('service_role', 'postgres', 'supabase_admin') then
     raise exception 'Solo el servidor puede registrar un recurso generado con IA' using errcode = '42501';
   end if;

@@ -1236,6 +1236,18 @@ describe('imágenes generadas con IA en la biblioteca', () => {
     await denied(db, editorA, `update public.media_assets set provenance = '{}' where id = $1`, [assetA1]);
   });
 
+  it('una imagen generada con IA se renombra, se mueve y se etiqueta como cualquier otra, sin perder su procedencia', async () => {
+    const generada = await generated(orgA, marcaA1, `${genA1}-ficha`);
+    const [editada] = await as<{ file_name: string; folder: string; tipo: string }>(
+      db,
+      editorA,
+      `update public.media_assets set file_name = 'Portada.png', folder = 'Campaña', tags = array['ia']
+       where id = $1 returning file_name, folder, provenance ->> 'type' as tipo`,
+      [generada],
+    );
+    expect(editada).toEqual({ file_name: 'Portada.png', folder: 'Campaña', tipo: 'ai_generation' });
+  });
+
   it('el disparador del seguimiento por pg_cron no lo ejecuta nadie desde la API', async () => {
     for (const user of [ana, superadmin]) {
       await denied(db, user, `select private.ai_media_poll_dispatch()`, [], /permission denied/);
