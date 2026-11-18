@@ -210,7 +210,10 @@ function validTargets(targets: unknown): CampaignTarget[] {
   const seen = new Set<string>();
   const out: CampaignTarget[] = [];
   for (const target of targets as unknown[]) {
-    const { network, format } = (typeof target === 'object' && target !== null ? target : {}) as Record<string, unknown>;
+    const { network, format } = (typeof target === 'object' && target !== null ? target : {}) as Record<
+      string,
+      unknown
+    >;
     if (typeof network !== 'string' || !ID.test(network) || typeof format !== 'string' || !ID.test(format)) {
       throw new AiTaskInputError('Algún destino (red y formato) no es válido.');
     }

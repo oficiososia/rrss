@@ -8,6 +8,7 @@ import {
   Images,
   LayoutGrid,
   LogOut,
+  Megaphone,
   Monitor,
   Moon,
   Palette,
@@ -22,7 +23,8 @@ import type { ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@/components/ui';
-import { APP_NAME } from '@/config/app';
+import { aiTextEnabled, APP_NAME } from '@/config/app';
+import { campaignsAvailable } from '@/features/campaigns/labels';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
 import { ORG_ROLE_LABEL } from '@/features/permissions/roles';
@@ -57,6 +59,10 @@ function navItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
     { to: `${b}/contenidos`, label: 'Contenidos', icon: FileText },
     // Encargos: solo con la marca en modo agencia (quien los atiende es la agencia).
     ...(brand.ai_mode === 'agency' ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList }] : []),
+    // Campañas: con IA de texto conectada o con la marca en modo agencia (docs/03, área «Campañas»).
+    ...(campaignsAvailable(brand, aiTextEnabled())
+      ? [{ to: `${b}/campanas`, label: 'Campañas', icon: Megaphone }]
+      : []),
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },

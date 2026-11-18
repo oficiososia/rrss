@@ -1404,7 +1404,9 @@ describe('campañas (Fase 4)', () => {
   });
 
   const ids = async (user: TestUser, table: string, column = 'id') =>
-    (await as<{ id: string }>(db, user, `select distinct ${column}::text as id from public.${table}`)).map((r) => r.id).sort();
+    (await as<{ id: string }>(db, user, `select distinct ${column}::text as id from public.${table}`))
+      .map((r) => r.id)
+      .sort();
 
   it('una organización no ve las campañas, los planes ni las piezas enlazadas de otra', async () => {
     expect(await ids(berta, 'campaigns')).toEqual([campaignB1]);
@@ -1421,12 +1423,10 @@ describe('campañas (Fase 4)', () => {
       JSON.stringify(plan(assetB1)),
     ]);
     await denied(db, ana, `select public.discard_campaign($1)`, [campaignB1]);
-    await denied(
-      db,
-      ana,
-      `select public.request_campaign_plan($1, 't', 'i', array['instagram'], $2::date, $2::date)`,
-      [marcaB1, START],
-    );
+    await denied(db, ana, `select public.request_campaign_plan($1, 't', 'i', array['instagram'], $2::date, $2::date)`, [
+      marcaB1,
+      START,
+    ]);
     await denied(
       db,
       ana,
@@ -1455,7 +1455,13 @@ describe('campañas (Fase 4)', () => {
   it('sin sesión no se ejecuta ninguna función de campañas', async () => {
     const noFunction = /permission denied for function/;
     await denied(db, null, `select public.discard_campaign($1)`, [campaignA1], noFunction);
-    await denied(db, null, `select public.accept_campaign_plan($1, 1, '{}'::jsonb, '[]'::jsonb)`, [campaignA1], noFunction);
+    await denied(
+      db,
+      null,
+      `select public.accept_campaign_plan($1, 1, '{}'::jsonb, '[]'::jsonb)`,
+      [campaignA1],
+      noFunction,
+    );
     await denied(
       db,
       null,

@@ -76,7 +76,10 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
     'access-control-allow-methods': 'POST, OPTIONS',
   };
   const json = (status: number, body: unknown) =>
-    new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json; charset=utf-8' } });
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, 'content-type': 'application/json; charset=utf-8' },
+    });
   const fail = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
     json(status, { error: { code, message, retryable: false, ...extra } });
 
@@ -105,7 +108,10 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
     } catch {
       return fail(400, 'invalid_request', 'La petición no es JSON válido.');
     }
-    const { action, brandId, input } = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+    const { action, brandId, input } = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
     if (typeof action !== 'string' || !(AI_GENERATE_ACTIONS as readonly string[]).includes(action)) {
       return fail(400, 'invalid_request', `Indica la acción: ${AI_GENERATE_ACTIONS.join(', ')}.`);
     }
@@ -123,7 +129,11 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
       const lookup = await deps.loadBrandProfile(accessToken, brandId);
       if (!lookup.brandVisible) return fail(404, 'brand_not_found', 'No existe esa marca o no tienes acceso a ella.');
       if (action !== 'profile.proposal' && lookup.profile === null) {
-        return fail(409, 'brand_profile_missing', 'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.');
+        return fail(
+          409,
+          'brand_profile_missing',
+          'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.',
+        );
       }
 
       // 4. Tarea.

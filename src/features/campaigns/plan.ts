@@ -119,7 +119,7 @@ export function isoDay(date: Date): string {
 /** «La semana que viene»: del lunes siguiente al domingo, en la hora local. */
 export function nextWeek(today: Date): { start: string; end: string } {
   const day = today.getDay(); // 0 = domingo
-  const toMonday = ((8 - day) % 7) || 7;
+  const toMonday = (8 - day) % 7 || 7;
   const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() + toMonday);
   const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
   return { start: isoDay(monday), end: isoDay(sunday) };

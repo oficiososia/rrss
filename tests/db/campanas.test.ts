@@ -49,7 +49,13 @@ import {
 
 const PRICE = { input_tokens: 3, output_tokens: 15 };
 const MODELS: AiModelSpec[] = [
-  { provider: SIMULATED_PROVIDER_ID, model: 'sim-estratega', task: 'text', microsPerUnit: PRICE, purposes: ['campaign.plan'] },
+  {
+    provider: SIMULATED_PROVIDER_ID,
+    model: 'sim-estratega',
+    task: 'text',
+    microsPerUnit: PRICE,
+    purposes: ['campaign.plan'],
+  },
 ];
 const LOCAL = { [LOCAL_TEST_FLAG]: 'true', SUPABASE_URL: 'http://127.0.0.1:55321' };
 
@@ -246,8 +252,9 @@ function goodAnswer(photos: string[]) {
 
 describe('tarea campaign.plan', () => {
   it('devuelve un plan explicado, saneado y ordenado, con la generación registrada y su coste', async () => {
-    let t!: Setup;
-    t = await setup({ respond: () => goodAnswer(t.photos) });
+    const photos: string[] = [];
+    const t = await setup({ respond: () => goodAnswer(photos) });
+    photos.push(...t.photos);
     const result = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t));
 
     expect(result.status).toBe('proposal');
@@ -279,10 +286,10 @@ describe('tarea campaign.plan', () => {
   });
 
   it('descarta lo que no se pidió: otra red, fuera de fechas y lo que pasa del máximo', async () => {
-    let t!: Setup;
-    t = await setup({
+    const photos: string[] = [];
+    const t = await setup({
       respond: () => {
-        const answer = JSON.parse(goodAnswer(t.photos));
+        const answer = JSON.parse(goodAnswer(photos));
         answer.pieces.push(
           { ...answer.pieces[1], network: 'tiktok', format: 'video' },
           { ...answer.pieces[1], date: '2027-01-01' },
@@ -291,7 +298,12 @@ describe('tarea campaign.plan', () => {
         return JSON.stringify(answer);
       },
     });
-    const result = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t, { maxPieces: 2 }));
+    photos.push(...t.photos);
+    const result = await planCampaign(
+      t.service,
+      { userId: t.editor.id, brandId: t.brand },
+      request(t, { maxPieces: 2 }),
+    );
     expect(result.plan.pieces.map((p) => p.date)).toEqual(['2026-11-23', '2026-11-24']);
     expect(result.discarded.map((d) => d.reason)).toEqual([
       'Red o formato que no se ha pedido.',
@@ -362,7 +374,10 @@ describe('el motor: plan aceptado → borradores', () => {
        where l.campaign_id = $1 and l.piece_index = 0`,
       [campaign.id],
     );
-    expect(version!.data.copy).toMatchObject({ caption: result.plan.pieces[0]!.caption, hashtags: ['CocinaDeMercado'] });
+    expect(version!.data.copy).toMatchObject({
+      caption: result.plan.pieces[0]!.caption,
+      hashtags: ['CocinaDeMercado'],
+    });
     // La foto sugerida entra como capa de imagen.
     expect(version!.data.layers).toHaveLength(1);
 
@@ -402,9 +417,10 @@ describe('el motor: plan aceptado → borradores', () => {
     };
     const accepted = await accept(t.owner, t, campaign, edited);
     expect(accepted).toMatchObject({ status: 'accepted', current_plan_version: 2, accepted_plan_version: 2 });
-    const plans = await db.query(`select version, source from public.campaign_plans where campaign_id = $1 order by version`, [
-      campaign.id,
-    ]);
+    const plans = await db.query(
+      `select version, source from public.campaign_plans where campaign_id = $1 order by version`,
+      [campaign.id],
+    );
     expect(plans).toEqual([
       { version: 1, source: 'ai' },
       { version: 2, source: 'edit' },
@@ -482,8 +498,9 @@ describe('el motor: plan aceptado → borradores', () => {
 
 describe('un documento con instrucciones maliciosas no cambia el comportamiento', () => {
   it('lo malicioso viaja solo como material delimitado; las instrucciones son siempre las fijas del producto', async () => {
-    let t!: Setup;
-    t = await setup({ respond: () => goodAnswer(t.photos) });
+    const photos: string[] = [];
+    const t = await setup({ respond: () => goodAnswer(photos) });
+    photos.push(...t.photos);
     await planCampaign(
       t.service,
       { userId: t.editor.id, brandId: t.brand },
@@ -506,15 +523,16 @@ describe('un documento con instrucciones maliciosas no cambia el comportamiento'
   });
 
   it('un modelo que «obedece» con campos de aprobar o publicar: la salida no cumple el esquema y no se crea nada', async () => {
-    let t!: Setup;
-    t = await setup({
+    const photos: string[] = [];
+    const t = await setup({
       respond: () => {
-        const answer = JSON.parse(goodAnswer(t.photos));
+        const answer = JSON.parse(goodAnswer(photos));
         answer.pieces[0].approve = true;
         answer.actions = [{ type: 'publish', all: true }];
         return JSON.stringify(answer);
       },
     });
+    photos.push(...t.photos);
     const error = await planCampaign(
       t.service,
       { userId: t.editor.id, brandId: t.brand },
@@ -583,14 +601,24 @@ describe('un documento con instrucciones maliciosas no cambia el comportamiento'
       /fuera de las fechas/,
     );
     await attempt(
-      { ...built.plan, pieces: [{ ...pieces[0], assetIds: ['00000000-0000-0000-0000-000000000000'] }, ...pieces.slice(1)] },
+      {
+        ...built.plan,
+        pieces: [{ ...pieces[0], assetIds: ['00000000-0000-0000-0000-000000000000'] }, ...pieces.slice(1)],
+      },
       built.drafts,
       /recurso que no es de esta marca/,
     );
-    await attempt(built.plan, [{ ...built.drafts[0], status: 'approved' }, ...built.drafts.slice(1)], /formato esperado/);
     await attempt(
       built.plan,
-      [{ ...built.drafts[0], data: { ...built.drafts[0]!.data, copy: { caption: 'Otro texto' } } }, ...built.drafts.slice(1)],
+      [{ ...built.drafts[0], status: 'approved' }, ...built.drafts.slice(1)],
+      /formato esperado/,
+    );
+    await attempt(
+      built.plan,
+      [
+        { ...built.drafts[0], data: { ...built.drafts[0]!.data, copy: { caption: 'Otro texto' } } },
+        ...built.drafts.slice(1),
+      ],
       /no es el de su pieza/,
     );
     await attempt(built.plan, built.drafts.slice(1), /un borrador por cada pieza/);
@@ -629,7 +657,12 @@ describe('modo agencia: el plan lo prepara la agencia', () => {
     return {
       objective: 'Dar a conocer la carta de otoño.',
       summary: 'Dos piezas.',
-      reasoning: { observed: ['Perfil cercano.'], dataBacked: [], hypotheses: ['El fin de semana funciona.'], dataNote: NO_DATA_NOTE },
+      reasoning: {
+        observed: ['Perfil cercano.'],
+        dataBacked: [],
+        hypotheses: ['El fin de semana funciona.'],
+        dataNote: NO_DATA_NOTE,
+      },
       pieces: [
         {
           network: 'instagram',
@@ -662,7 +695,11 @@ describe('modo agencia: el plan lo prepara la agencia', () => {
     expect(req.brief).toMatch(/Plan del 23\/11\/2026 al 29\/11\/2026 para: facebook, instagram/);
 
     // La agencia (editor) lo ve en su cola, lo toma y lo entrega.
-    const cola = await as<{ id: string; kind: string }>(db, t.editor, `select id, kind from public.pending_content_requests()`);
+    const cola = await as<{ id: string; kind: string }>(
+      db,
+      t.editor,
+      `select id, kind from public.pending_content_requests()`,
+    );
     expect(cola).toEqual([{ id: req.id, kind: 'plan' }]);
     await rpcAs(t.editor, 'take_content_request', { p_request_id: req.id, p_claim_token: 'sesion-plan-1' });
     // Con el camino de las piezas no se puede entregar un plan.
@@ -681,11 +718,15 @@ describe('modo agencia: el plan lo prepara la agencia', () => {
       [req.id, JSON.stringify({ ...agencyPlan(t), approveAll: true })],
       /campo no previsto/,
     );
-    const delivered = await rpcAs<{ status: string; delivered_plan_version: number }>(t.editor, 'deliver_campaign_plan', {
-      p_request_id: req.id,
-      p_plan: agencyPlan(t),
-      p_claim_token: 'sesion-plan-1',
-    });
+    const delivered = await rpcAs<{ status: string; delivered_plan_version: number }>(
+      t.editor,
+      'deliver_campaign_plan',
+      {
+        p_request_id: req.id,
+        p_plan: agencyPlan(t),
+        p_claim_token: 'sesion-plan-1',
+      },
+    );
     expect(delivered).toMatchObject({ status: 'delivered', delivered_plan_version: 1 });
 
     // El cliente pide cambios con el flujo de siempre; mientras, no se puede aceptar.
@@ -702,7 +743,11 @@ describe('modo agencia: el plan lo prepara la agencia', () => {
     await rpcAs(t.editor, 'take_content_request', { p_request_id: req.id, p_claim_token: 'sesion-plan-2' });
     const second = agencyPlan(t);
     second.pieces.push({ ...second.pieces[0]!, date: '2026-11-29', idea: 'Domingo', caption: 'Domingo de cuchara.' });
-    await rpcAs(t.editor, 'deliver_campaign_plan', { p_request_id: req.id, p_plan: second, p_claim_token: 'sesion-plan-2' });
+    await rpcAs(t.editor, 'deliver_campaign_plan', {
+      p_request_id: req.id,
+      p_plan: second,
+      p_claim_token: 'sesion-plan-2',
+    });
 
     // El cliente (puede aprobar) acepta igual que un plan de la IA.
     const built = planToDrafts(second, frameOf(['facebook', 'instagram']), assetMap(t));

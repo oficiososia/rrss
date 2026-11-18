@@ -637,6 +637,114 @@ type RequestEnums = {
 
 // ─────────────────────── fin del bloque de encargos ───────────────────────
 
+// ───────────── Fase 4 · Campañas ─────────────
+// Migración 20261119510000_campaigns. El cliente solo lee estas tablas; todo
+// cambio pasa por las funciones (crear con IA, pedir a la agencia, entregar,
+// aceptar, descartar). El plan tiene la forma de src/features/campaigns/plan.ts.
+
+export type CampaignStatus = 'requested' | 'proposed' | 'accepted' | 'discarded';
+export type CampaignOrigin = 'ai' | 'agency';
+export type CampaignPlanSource = 'ai' | 'agency' | 'edit';
+
+export type CampaignRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  title: string;
+  /** Lo escribe una persona: dato, nunca instrucciones. */
+  instruction: string;
+  networks: string[];
+  starts_on: string;
+  ends_on: string;
+  origin: CampaignOrigin;
+  status: CampaignStatus;
+  current_plan_version: number;
+  accepted_plan_version: number | null;
+  created_by: string | null;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CampaignPlanRow = {
+  id: string;
+  campaign_id: string;
+  brand_id: string;
+  organization_id: string;
+  version: number;
+  data: Json;
+  source: CampaignPlanSource;
+  generation_id: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type CampaignContentRow = {
+  campaign_id: string;
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  plan_version: number;
+  piece_index: number;
+  created_at: string;
+};
+
+/** Encargo con lo que añade la migración de campañas (tipo «plan»). */
+export type CampaignRequestRow = ContentRequestRow & {
+  kind: 'piece' | 'plan';
+  campaign_id: string | null;
+  delivered_plan_version: number | null;
+};
+
+type CampaignTables = {
+  campaigns: Table<CampaignRow>;
+  campaign_plans: Table<CampaignPlanRow>;
+  campaign_contents: Table<CampaignContentRow>;
+};
+
+type CampaignFunctions = {
+  create_campaign: {
+    Args: {
+      p_brand_id: string;
+      p_title: string;
+      p_instruction: string;
+      p_networks: string[];
+      p_starts_on: string;
+      p_ends_on: string;
+      p_plan: Json;
+      p_generation_id: string;
+    };
+    Returns: CampaignRow;
+  };
+  request_campaign_plan: {
+    Args: {
+      p_brand_id: string;
+      p_title: string;
+      p_instruction: string;
+      p_networks: string[];
+      p_starts_on: string;
+      p_ends_on: string;
+    };
+    Returns: CampaignRow;
+  };
+  deliver_campaign_plan: {
+    Args: { p_request_id: string; p_plan: Json; p_claim_token?: string | null; p_note?: string | null };
+    Returns: CampaignRequestRow;
+  };
+  accept_campaign_plan: {
+    Args: { p_campaign_id: string; p_expected_version: number; p_plan: Json; p_drafts: Json };
+    Returns: CampaignRow;
+  };
+  discard_campaign: { Args: { p_campaign_id: string; p_reason?: string }; Returns: CampaignRow };
+};
+
+type CampaignEnums = {
+  campaign_status: CampaignStatus;
+};
+
+// ─────────────────────── fin del bloque de campañas ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -718,7 +826,8 @@ export type Database = {
     } & Phase2Tables &
       ContentTables &
       Phase2MediaTables &
-      RequestTables;
+      RequestTables &
+      CampaignTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -746,7 +855,8 @@ export type Database = {
     } & Phase2Functions &
       ContentFunctions &
       MediaJobFunctions &
-      RequestFunctions;
+      RequestFunctions &
+      CampaignFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -759,7 +869,8 @@ export type Database = {
       asset_origin: AssetOrigin;
     } & Phase2Enums &
       ContentEnums &
-      RequestEnums;
+      RequestEnums &
+      CampaignEnums;
     CompositeTypes: Record<never, never>;
   };
 };

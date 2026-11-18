@@ -268,7 +268,9 @@ function campaignPlan(request: AiProviderRequest): string {
     summary: `[simulado] ${count} piezas entre ${range?.[1] ?? '?'} y ${range?.[2] ?? '?'}.`,
     observed: [
       `[simulado] La instrucción pide: «${shortInstruction}».`,
-      tone.length ? `[simulado] El tono de la marca es ${tone.join(', ')}.` : '[simulado] El perfil no describe el tono.',
+      tone.length
+        ? `[simulado] El tono de la marca es ${tone.join(', ')}.`
+        : '[simulado] El perfil no describe el tono.',
       `[simulado] La biblioteca enviada tiene ${library.length} recursos (${images.length} imágenes).`,
     ],
     dataBacked: [],
