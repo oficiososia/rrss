@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { createEmptyDocument } from '@/features/content/document';
+import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION } from '@/features/content/document';
 import type { BrandRole, ContentRequestRow, OrgRole } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
@@ -62,7 +62,7 @@ const piece = (id: string, title: string, caption: string, format = 'post') => (
     brand_id: BRAND_ID,
     organization_id: ORG_ID,
     version: 1,
-    schema_version: 1,
+    schema_version: DOCUMENT_SCHEMA_VERSION,
     data: { ...createEmptyDocument(), copy: { ...createEmptyDocument().copy, caption } },
     change_note: '',
     restored_from: null,
@@ -178,7 +178,7 @@ describe('Preparar el encargo desde la aplicación', () => {
     const [call] = fake.callsTo('deliver_content_request', 'rpc');
     expect(call!.payload).toMatchObject({
       p_request_id: 'req-1',
-      p_schema_version: 1,
+      p_schema_version: DOCUMENT_SCHEMA_VERSION,
       p_claim_token: null,
       p_title: 'Menú de otoño',
       p_change_note: 'Entregado desde la aplicación',
