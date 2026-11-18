@@ -27,6 +27,7 @@ import { downloadText } from '@/lib/utils';
 import { useActiveProfile, useSaveProfile, useUpdateBrand } from './api';
 import { BasicsFields } from './BasicsFields';
 import { AiModeCard } from '@/features/requests/AiModeCard';
+import { ConnectedAccountsCard } from '@/features/social/ConnectedAccountsCard';
 import { profileCompleteness } from './completeness';
 import { brandBasicsSchema, configFileName, exportBrandConfig, type BrandBasics } from './config';
 import {
@@ -151,6 +152,7 @@ function BrandDataTab() {
         </CardBody>
       </Card>
       <AiModeCard />
+      <ConnectedAccountsCard />
       {canManage && (
         <Card>
           <CardHeader

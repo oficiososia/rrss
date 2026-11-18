@@ -1,4 +1,5 @@
 import {
+  CalendarDays,
   Building2,
   ClipboardList,
   FileText,
@@ -62,6 +63,7 @@ function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 
     ...(brand.ai_mode === 'agency'
       ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList, badge: unreadRequests }]
       : []),
+    { to: `${b}/calendario`, label: 'Calendario', icon: CalendarDays },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },

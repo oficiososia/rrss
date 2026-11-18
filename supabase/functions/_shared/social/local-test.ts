@@ -1,0 +1,52 @@
+// Graph API SIMULADA para la prueba de extremo a extremo en LOCAL, y la guarda
+// que impide usarla en cualquier otro sitio. Es la misma guarda que la de la IA
+// (`../ai/text/local-test.ts`), con su propia variable:
+//   1. SOCIAL_E2E_SIMULATED_GRAPH=true, explícita;
+//   2. SUPABASE_URL de un Supabase local: http y host 127.0.0.1, localhost o
+//      `kong` (el nombre del stack de la CLI dentro de Docker).
+// Si la variable está y el Supabase no es local, la función no arranca. Si no
+// está, este módulo no hace nada.
+//
+// La Graph API simulada vive en memoria de la función: sirve para una prueba,
+// no guarda nada entre arranques. La clave de cifrado de los tokens es fija y
+// pública: solo vale aquí.
+import { parseKeyRing, type TokenKeyRing } from './crypto.ts';
+import type { FetchLike } from './meta-graph.ts';
+import { createSimulatedGraph, type SimulatedGraph } from './simulated-graph.ts';
+import { isLocalSupabaseUrl, LocalTestConfigError } from '../ai/text/local-test.ts';
+
+export const SOCIAL_LOCAL_TEST_FLAG = 'SOCIAL_E2E_SIMULATED_GRAPH';
+const LOCAL_KEY_ID = 'local';
+/** 32 bytes fijos y públicos: NO es un secreto y solo se acepta en local. */
+const LOCAL_KEY = 'local-solo-para-pruebas-rrss-!!!';
+
+let shared: SimulatedGraph | null = null;
+
+export interface SocialLocalTest {
+  fetch: FetchLike;
+  graph: SimulatedGraph;
+  keyRing: TokenKeyRing;
+  problems: string[];
+}
+
+export function loadSocialLocalTest(env: Record<string, string | undefined>): SocialLocalTest | null {
+  const flag = env[SOCIAL_LOCAL_TEST_FLAG]?.trim();
+  if (!flag) return null;
+  if (flag !== 'true') {
+    throw new LocalTestConfigError(`${SOCIAL_LOCAL_TEST_FLAG} solo admite el valor «true»; para no usarla, quítala.`);
+  }
+  if (!isLocalSupabaseUrl(env.SUPABASE_URL)) {
+    throw new LocalTestConfigError(
+      `${SOCIAL_LOCAL_TEST_FLAG}=true solo se admite en pruebas locales: SUPABASE_URL debe ser http://127.0.0.1, http://localhost o http://kong (stack local de la CLI). Esta función no arranca; quita la variable.`,
+    );
+  }
+  shared ??= createSimulatedGraph();
+  return {
+    fetch: shared.fetch,
+    graph: shared,
+    keyRing: parseKeyRing(`${LOCAL_KEY_ID}:${btoa(LOCAL_KEY)}`, LOCAL_KEY_ID),
+    problems: [
+      `${SOCIAL_LOCAL_TEST_FLAG}=true: Graph API de Meta SIMULADA para pruebas locales. Nunca en un entorno con clientes.`,
+    ],
+  };
+}

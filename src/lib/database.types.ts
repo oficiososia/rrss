@@ -746,6 +746,159 @@ type SourceFontFunctions = {
 };
 
 // ───────── fin del bloque de texto de las fuentes y tipografías ─────────
+// ───────────── Publicación (Fase 3) ─────────────
+// Migraciones 20261119010000 a 20261119040000. El cliente solo lee estas
+// tablas; todo cambio pasa por funciones. Los tokens de las cuentas no están
+// aquí (viven cifrados en el esquema `private`, sin acceso desde el cliente).
+
+export type SocialNetwork = 'instagram' | 'facebook';
+export type SocialAccountStatus = 'active' | 'needs_reauth' | 'disconnected';
+
+export type SocialAccountRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  network: SocialNetwork;
+  provider: string;
+  external_id: string;
+  username: string;
+  display_name: string;
+  page_id: string | null;
+  status: SocialAccountStatus;
+  scopes: string[];
+  token_expires_at: string | null;
+  token_checked_at: string | null;
+  quota_usage: number | null;
+  quota_total: number | null;
+  quota_checked_at: string | null;
+  last_error: string | null;
+  connected_by: string | null;
+  connected_at: string;
+  disconnected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublicationStatus = 'planned' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
+
+export type PublicationHoldReason =
+  | 'not_approved'
+  | 'content_changed'
+  | 'content_archived'
+  | 'no_account'
+  | 'account_disconnected'
+  | 'account_needs_reauth'
+  | 'no_media'
+  | 'invalid_media'
+  | 'unsupported_format';
+
+export type ScheduledPublicationRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  content_id: string;
+  content_version: number | null;
+  social_account_id: string | null;
+  network: string;
+  format: string;
+  scheduled_at: string;
+  media_asset_ids: string[];
+  status: PublicationStatus;
+  hold_reason: PublicationHoldReason | null;
+  generation: number;
+  attempt_count: number;
+  last_error_code: string | null;
+  last_error: string | null;
+  container_id: string | null;
+  container_created_at: string | null;
+  /** Identificador que dio la red: solo existe si está publicada. */
+  external_id: string | null;
+  external_url: string | null;
+  published_at: string | null;
+  locked_by: string | null;
+  locked_until: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublicationAttemptOutcome =
+  'started' | 'waiting' | 'deferred' | 'published' | 'recovered' | 'retrying' | 'failed' | 'not_ready';
+
+export type PublicationAttemptRow = {
+  id: string;
+  publication_id: string;
+  brand_id: string;
+  organization_id: string;
+  attempt_no: number;
+  job_id: string | null;
+  worker: string | null;
+  outcome: PublicationAttemptOutcome;
+  container_id: string | null;
+  external_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
+
+export type ContentCommentKind = 'comment' | 'approved' | 'unapproved' | 'changes_requested';
+
+export type ContentCommentRow = {
+  id: string;
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  version: number | null;
+  kind: ContentCommentKind;
+  body: string;
+  author_id: string | null;
+  created_at: string;
+};
+
+type PublicationTables = {
+  social_accounts: Table<SocialAccountRow>;
+  scheduled_publications: Table<ScheduledPublicationRow>;
+  publication_attempts: Table<PublicationAttemptRow>;
+  content_comments: Table<ContentCommentRow>;
+};
+
+type PublicationFunctions = {
+  social_oauth_begin: { Args: { p_brand_id: string; p_network: SocialNetwork }; Returns: string };
+  disconnect_social_account: { Args: { p_account_id: string }; Returns: SocialAccountRow };
+  save_publication: {
+    Args: {
+      p_publication_id: string | null;
+      p_content_id: string;
+      p_scheduled_at: string;
+      p_social_account_id?: string | null;
+      p_media_asset_ids?: string[];
+      p_content_version?: number | null;
+    };
+    Returns: ScheduledPublicationRow;
+  };
+  reschedule_publication: {
+    Args: { p_publication_id: string; p_scheduled_at: string };
+    Returns: ScheduledPublicationRow;
+  };
+  cancel_publication: { Args: { p_publication_id: string }; Returns: ScheduledPublicationRow };
+  retry_publication: { Args: { p_publication_id: string }; Returns: ScheduledPublicationRow };
+  comment_content_item: {
+    Args: { p_content_id: string; p_body: string; p_version?: number | null };
+    Returns: ContentCommentRow;
+  };
+  request_content_changes: { Args: { p_content_id: string; p_message: string }; Returns: ContentItemRow };
+  approve_content_items: {
+    Args: { p_items: Json };
+    Returns: { content_id: string; ok: boolean; message: string | null }[];
+  };
+};
+
+type PublicationEnums = {
+  publication_status: PublicationStatus;
+};
+
+// ─────────────────────── fin del bloque de publicación ───────────────────────
 
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
@@ -830,7 +983,8 @@ export type Database = {
       Phase2MediaTables &
       RequestTables &
       PolishTables &
-      SourceFontTables;
+      SourceFontTables &
+      PublicationTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -860,7 +1014,8 @@ export type Database = {
       MediaJobFunctions &
       RequestFunctions &
       PolishFunctions &
-      SourceFontFunctions;
+      SourceFontFunctions &
+      PublicationFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -873,7 +1028,8 @@ export type Database = {
       asset_origin: AssetOrigin;
     } & Phase2Enums &
       ContentEnums &
-      RequestEnums;
+      RequestEnums &
+      PublicationEnums;
     CompositeTypes: Record<never, never>;
   };
 };
