@@ -307,8 +307,8 @@ recursos generados o exportados asociados a una versión (llegan con el render).
 ## 12. Modo agencia: encargos
 
 Implementado y probado en base de datos, en la interfaz (componentes) y en la
-herramienta de la agencia (`agency/`, contra un Supabase simulado). El escenario
-de extremo a extremo (`tests/e2e/12-…`) está escrito y pendiente de ejecutar.
+herramienta de la agencia (`agency/`, contra un Supabase simulado), y de extremo
+a extremo contra el Supabase local (`tests/e2e/12-…`, 18/11/2026).
 
 ```
 brands ──< content_requests ──< content_request_comments
