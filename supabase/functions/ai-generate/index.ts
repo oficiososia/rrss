@@ -1,9 +1,10 @@
 // Edge Function `ai-generate`: la puerta de la interfaz a las tareas de IA de texto.
 //
-// SIN DESPLEGAR. La lógica (handler.ts) está probada en Node con la base de
-// datos real y el proveedor simulado; este arranque en Deno solo se ha
-// ejecutado en local (`supabase functions serve`, prueba de extremo a extremo
-// de la Fase 2), con el proveedor simulado de pruebas locales.
+// Desplegada en staging (18/11/2026) SIN ningún proveedor de IA: arranca y
+// responde, pero toda generación devuelve «no configurada». La lógica
+// (handler.ts) está probada en Node con la base de datos real y el proveedor
+// simulado; con proveedor solo se ha ejecutado en local (`supabase functions
+// serve`, prueba de extremo a extremo de la Fase 2, proveedor simulado).
 //
 // Secretos: la clave de servicio y las de los proveedores solo existen aquí,
 // en las variables de entorno de la función (ver `.env.example`). Nada de esto
