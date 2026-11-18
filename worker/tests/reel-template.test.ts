@@ -1,8 +1,8 @@
 // Reel por plantilla, de extremo a extremo: fotos, un clip y música reales
 // (generados aquí, pequeños) → MP4 vertical, comprobado con ffprobe.
 // Esta es la prueba que se ejecuta también dentro del contenedor.
-import { readdirSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PermanentError } from '../src/errors.ts';
@@ -42,6 +42,7 @@ beforeAll(async () => {
   await makePatternPhoto(bucket.file(inBrand('detalle.png')), 360, 640, 'smptebars');
   await makeClip(bucket.file(inBrand('cocina.mp4')), { width: 320, height: 240, seconds: 3 });
   await makeMusic(bucket.file(inBrand('musica.m4a')), 2); // más corta que el reel: se repite
+  await mkdir(path.dirname(bucket.file(inBrand('fonts/x'))), { recursive: true });
 });
 
 afterAll(async () => {
@@ -208,6 +209,61 @@ describe('media.reel.template', () => {
     const bottom = await averageColor(file, { x: 60, y: 400, width: 150, height: 60 }, 4.6);
     expect(top[0]).toBeGreaterThan(top[2] + 80);
     expect(bottom[2]).toBeGreaterThan(bottom[0] + 80);
+  });
+
+  it('usa la tipografía de la marca (.ttf del cubo de la marca) y, si no vale, la de reserva avisando', async () => {
+    // Otra tipografía del sistema, distinta de la de reserva, hace de «fuente de la marca».
+    const candidates = [
+      '/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf',
+      '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf',
+      '/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf',
+      'C:/Windows/Fonts/georgiab.ttf',
+      'C:/Windows/Fonts/timesbd.ttf',
+      '/System/Library/Fonts/Supplemental/Georgia Bold.ttf',
+    ];
+    const brandFont = candidates.find((file) => existsSync(file)) ?? deps.defaultFontFile!;
+    await copyFile(brandFont, bucket.file(inBrand('fonts/propia.ttf')));
+    const texts = [{ text: 'TIPOGRAFÍA DE LA MARCA', start: 0, end: 3 }];
+    const media = [{ type: 'photo' as const, path: inBrand('plato.jpg'), seconds: 3 }];
+
+    const branded = await runHandler(handler, bucket, {
+      template: { id: 'corte-ritmico' },
+      plan: { media, texts, fontPath: inBrand('fonts/propia.ttf') },
+      output: { path: inBrand('reels/marca.mp4'), width: 270 },
+    });
+    expect(branded).toMatchObject({ font: { source: 'brand' }, warnings: [] });
+    const fallback = await runHandler(handler, bucket, {
+      template: { id: 'corte-ritmico' },
+      plan: { media, texts },
+      output: { path: inBrand('reels/reserva.mp4'), width: 270 },
+    });
+    expect(fallback).toMatchObject({ font: { source: 'default' } });
+    if (brandFont !== deps.defaultFontFile) {
+      // Con otra tipografía, el texto dibujado es distinto.
+      const band = { x: 10, y: 200, width: 250, height: 80 };
+      const a = await averageColor(bucket.file(inBrand('reels/marca.mp4')), band, 1);
+      const b = await averageColor(bucket.file(inBrand('reels/reserva.mp4')), band, 1);
+      expect(a.reduce((sum, value, i) => sum + Math.abs(value - b[i]!), 0)).toBeGreaterThan(0);
+    }
+
+    // Un archivo que no es una fuente: se monta con la de reserva y se dice.
+    await writeFile(bucket.file(inBrand('fonts/rota.ttf')), 'no soy una fuente');
+    const broken = await runHandler(handler, bucket, {
+      template: { id: 'corte-ritmico' },
+      plan: { media, texts, fontPath: inBrand('fonts/rota.ttf') },
+      output: { path: inBrand('reels/rota.mp4'), width: 270 },
+    });
+    expect(broken.font).toEqual({ source: 'default' });
+    expect((broken.warnings as string[])[0]).toMatch(/no es TrueType ni OpenType/);
+
+    // La tipografía de otra marca no se descarga.
+    await expect(
+      runHandler(handler, bucket, {
+        template: { id: 'corte-ritmico' },
+        plan: { media, texts, fontPath: `${ORG}/${OTHER_BRAND}/fonts/ajena.ttf` },
+        output: { path: inBrand('reels/ajena.mp4'), width: 270 },
+      }),
+    ).rejects.toThrow(/no pertenece a la marca/);
   });
 
   it('con cortes secos conserva el sonido de los clips y no necesita música', async () => {

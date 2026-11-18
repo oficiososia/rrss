@@ -2,32 +2,18 @@ import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Card, CardBody, CardHeader } from '@/components/ui';
-import { STORAGE_BUCKET } from '@/config/app';
 import type { ProfileSourceText } from '@/features/ai/api';
 import { ProfileProposalDialog } from '@/features/ai/ProfileProposalDialog';
-import { PROPOSAL_MAX_SOURCES } from '@/features/ai/profileProposal';
-import type { KnowledgeSourceRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
-import { supabase } from '@/lib/supabase';
 import { useSources } from './api';
 import type { BrandProfileData } from './profile';
+import { fetchSourceTexts, pickProposalSources } from './sourceText';
 
-// Proponer el perfil con IA a partir de las fuentes. Hoy el producto no extrae
-// el texto de PDF, documentos ni webs: solo las fuentes de texto plano (.txt)
-// guardan ya su contenido tal cual, así que son las únicas que se envían. Si la
-// marca no tiene ninguna, este bloque no aparece (lo que no funciona no sale en
-// la interfaz).
-
-/** Fuentes cuyo contenido ya es texto legible: archivos de texto plano subidos a la biblioteca de fuentes. */
-function textSources(sources: readonly KnowledgeSourceRow[]): KnowledgeSourceRow[] {
-  return sources.filter((s) => s.kind === 'text' && s.storage_path !== null);
-}
-
-async function readSourceText(source: KnowledgeSourceRow): Promise<ProfileSourceText> {
-  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(source.storage_path!);
-  if (error || !data) throw error ?? new Error(`No se ha podido leer «${source.title}».`);
-  return { title: source.title, text: await data.text() };
-}
+// Proponer el perfil con IA a partir de las fuentes. El texto de cada fuente
+// (PDF, Word, texto, web) lo extrae antes el trabajador, sin IA; aquí se envía
+// el de todas las fuentes con texto listo, las más recientes primero, hasta los
+// topes de la propuesta. Si ninguna tiene texto todavía, este bloque no aparece
+// (lo que no funciona no sale en la interfaz).
 
 export function ProfileProposalFromSources({
   brandId,
@@ -42,16 +28,18 @@ export function ProfileProposalFromSources({
   onAccept: (profile: BrandProfileData, acceptedFields: string[]) => void;
 }) {
   const sources = useSources(brandId);
-  const usable = textSources(sources.data ?? []);
+  const { chosen, left } = pickProposalSources(sources.data ?? []);
+  const analyzing = (sources.data ?? []).filter((s) => s.status === 'pending' || s.status === 'processing').length;
   const [loaded, setLoaded] = useState<ProfileSourceText[] | null>(null);
   const [reading, setReading] = useState(false);
 
-  if (usable.length === 0) return null;
+  if (chosen.length === 0) return null;
 
   async function open() {
     setReading(true);
     try {
-      setLoaded(await Promise.all(usable.slice(0, PROPOSAL_MAX_SOURCES).map(readSourceText)));
+      const rows = await fetchSourceTexts(chosen.map((s) => s.id));
+      setLoaded(rows.map((row) => ({ title: row.title, text: row.extracted_text ?? '' })));
     } catch (error) {
       toast.error(translateError(error));
     } finally {
@@ -59,11 +47,20 @@ export function ProfileProposalFromSources({
     }
   }
 
+  const notes = [
+    blockedReason,
+    left.length > 0 &&
+      `No caben todas: se envían las ${chosen.length} más recientes y quedan fuera ${left.length} (${left
+        .map((s) => `«${s.title}»`)
+        .join(', ')}).`,
+    analyzing > 0 && `${analyzing === 1 ? 'Hay 1 fuente' : `Hay ${analyzing} fuentes`} extrayendo su texto todavía.`,
+  ].filter(Boolean);
+
   return (
     <Card>
       <CardHeader
         title="Proponer el perfil con IA"
-        description={`La IA lee las fuentes de texto (${usable.length}) y propone un perfil; tú eliges qué aceptar y se guarda como versión nueva. Los PDF, documentos y webs todavía no se leen.`}
+        description={`La IA lee el texto extraído de las fuentes (${chosen.length}) y propone un perfil; tú eliges qué aceptar y se guarda como versión nueva.`}
         action={
           <Button
             variant="secondary"
@@ -78,11 +75,13 @@ export function ProfileProposalFromSources({
           </Button>
         }
       />
-      {(blockedReason || usable.length > PROPOSAL_MAX_SOURCES) && (
-        <CardBody>
-          <p className="text-sm text-muted">
-            {blockedReason ?? `Se envían las ${PROPOSAL_MAX_SOURCES} más recientes.`}
-          </p>
+      {notes.length > 0 && (
+        <CardBody className="space-y-1">
+          {notes.map((note) => (
+            <p key={String(note)} className="text-sm text-muted">
+              {note}
+            </p>
+          ))}
         </CardBody>
       )}
       <ProfileProposalDialog

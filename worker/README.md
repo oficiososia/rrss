@@ -259,6 +259,62 @@ en líneas, con caja o contorno y aparición gradual), mezcla la música atenuad
 con el sonido de los clips si la plantilla lo pide, y exporta H.264 `yuv420p` +
 AAC con `+faststart`. Siempre deja una pista de sonido, aunque sea silencio.
 
+
+**Tipografía de la marca** (`plan.fontPath`): la pone la base de datos al
+encolar un reel con textos (migración `20261119211000_brand_fonts`): el
+archivo .ttf/.otf de la marca, empezando por la familia que el perfil pone en
+primer lugar, redonda y con el peso más cercano a 400. El cliente no la elige.
+El trabajador comprueba que la ruta es de la marca del trabajo y que el archivo
+es TrueType u OpenType; si no lo es, monta con la de reserva y lo dice en
+`warnings`. El resultado lleva `font.source`: `brand`, `template`, `default`
+(la de reserva) o `none`. Los .woff y .woff2 no se usan en vídeo: FFmpeg no
+los lee de forma fiable.
+
+### `source.extract`
+
+Texto de una fuente de conocimiento de la marca (`brand_knowledge_sources`),
+sin IA. Lo encola la base de datos al dar de alta la fuente (migración
+`20261119210000_source_text_extraction`) y la RPC `request_source_extraction`
+al volver a pedirlo; nadie lo encola a mano.
+
+```json
+{ "source_id": "…", "format": "pdf" | "docx" | "text" | "website", "path": "…/sources/manual.pdf" }
+{ "source_id": "…", "format": "website", "url": "https://marca.example/" }
+```
+
+- **PDF**: pdf.js (por medio de `unpdf`), hasta 300 páginas. Un PDF escaneado
+  no tiene texto: falla diciendo que no se hace reconocimiento de caracteres.
+  Uno con contraseña falla sin reintento.
+- **Word (.docx)**: `mammoth` (texto sin formato). Antes se mira el directorio
+  central del ZIP: más de 100 MB descomprimidos se rechazan (zip bomba).
+- **Texto (.txt, .json)**: UTF-8; los bytes inválidos se sustituyen.
+- **Web**: la página dada y, como mucho, 4 enlaces internos de primer nivel
+  (mismo origen, sin archivos), 5 páginas en total. Sin ejecutar JavaScript
+  (el HTML se analiza con `htmlparser2`, sin scripts, estilos ni lo oculto).
+  - `robots.txt` de cada origen, con el agente `rrss-fuentes` (RFC 9309: si no
+    existe se puede leer; si da 5xx o no responde no se lee y se reintenta).
+    Respeta `<meta name="robots" content="nofollow">` y `rel="nofollow"`.
+  - Contra SSRF (`src/extract/net.ts`): solo http/https, sin usuario ni
+    contraseña, puertos 80 y 443, nada de `localhost` ni nombres sin dominio.
+    Cada IP a la que se conecta tiene que ser pública (`ipaddr.js`, rango
+    `unicast`): fuera privadas, locales, enlace-local (metadatos de la nube),
+    CGNAT, multidifusión, reservadas, NAT64, 6to4, Teredo y las IPv4 dentro de
+    IPv6. Se comprueba **al conectar** (opción `lookup` de Node, sin agente
+    compartido), así que un DNS que cambia de respuesta no sirve; una IP
+    escrita en la URL se comprueba antes. Las redirecciones (3 como mucho) se
+    siguen a mano y cada salto pasa las mismas comprobaciones.
+  - Topes: 2 MB por página (también tras descomprimir gzip, deflate o brotli),
+    15 s por petición y 60 s en total.
+- El texto se normaliza (espacios, líneas en blanco) y se recorta a 100 000
+  caracteres. El resultado lleva `text` y `meta` (páginas, páginas web leídas u
+  omitidas y por qué, si se recortó); al cerrar el trabajo, la base de datos
+  mueve el texto a la fuente (no se queda en `jobs.result`) y pone su estado:
+  pendiente → extrayendo → lista, o falló con el motivo.
+
+Por qué aquí y no en una Edge Function: leer un PDF de decenas de páginas pasa
+de los 2 s de CPU por petición del plan gratuito de Supabase, y la protección
+contra SSRF necesita controlar la resolución de nombres al conectar.
+
 ## Plantilla de reel (esquema v1)
 
 Una plantilla es un archivo JSON validado por `reelTemplateSchema`
@@ -411,7 +467,12 @@ comandos probados en local, pero **no se ha ejecutado en GitHub**.
 | Componente                        | Licencia                                                           | Uso                                                                                                                                                                        |
 | --------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FFmpeg / ffprobe                  | LGPL/GPL según compilación; la de Alpine incluye x264 y es **GPL** | **Binario externo**: se lanza como proceso, no se enlaza ni se modifica. Si algún día se distribuye la imagen a terceros, hay que ofrecer el código fuente correspondiente |
-| zod 4.6                           | MIT                                                                | Única dependencia de ejecución                                                                                                                                             |
+| zod 4.6                           | MIT                                                                | Validación de cargas                                                                                                                                                       |
+| unpdf 2.1.0 (incluye pdf.js)      | MIT (pdf.js: Apache-2.0)                                           | Texto de los PDF (`source.extract`)                                                                                                                                        |
+| mammoth 1.13.0                    | BSD-2-Clause (jszip: MIT o GPL-3.0, se usa como MIT; pako: MIT y Zlib) | Texto de los Word .docx                                                                                                                                                |
+| htmlparser2 12.0.0                | MIT                                                                | HTML a texto, sin ejecutar nada                                                                                                                                            |
+| robots-parser 3.0.1               | MIT                                                                | robots.txt                                                                                                                                                                 |
+| ipaddr.js 2.5.0                   | MIT                                                                | Clasificar IP (protección contra SSRF)                                                                                                                                     |
 | typescript 5.9                    | Apache-2.0                                                         | Desarrollo                                                                                                                                                                 |
 | vitest 3.2                        | MIT                                                                | Desarrollo                                                                                                                                                                 |
 | @types/node 22                    | MIT                                                                | Desarrollo                                                                                                                                                                 |

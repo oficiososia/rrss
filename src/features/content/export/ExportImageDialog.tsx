@@ -29,6 +29,8 @@ interface ExportImageDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Lo que se ve en el lienzo, con los cambios sin guardar. */
   document: ContentDocument;
+  /** Carga las tipografías de la marca antes de dibujar (si no, se exportaría con la de reserva). */
+  prepareFonts?: () => Promise<void>;
   images: ImageLookup;
   title: string;
   contentId: string;
@@ -116,6 +118,7 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
       }
 
       setStep('rendering');
+      await props.prepareFonts?.();
       const { renderDocument } = await import('../editor/canvas/exporter');
       const rendered = await renderDocument(document, props.images, {
         format,

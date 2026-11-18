@@ -51,6 +51,8 @@ import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
+import { orderFontOptions } from '@/features/brand/fonts';
+import { loadBrandFonts, useBrandFontFaces } from '@/features/brand/fontsApi';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
@@ -219,12 +221,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   // ── Marca: paleta, tipografías y logotipos del perfil ──
   const profileRow = useActiveProfile(brand.id);
   const profile = useMemo(() => (profileRow.data ? parseProfile(profileRow.data.data) : null), [profileRow.data]);
+  // Tipografías subidas por la marca: se cargan con FontFace antes de dibujar y se ofrecen las primeras.
+  const brandFonts = useBrandFontFaces(brand.id);
+  const brandFontFamilies = JSON.stringify(brandFonts.families);
   const brandStyle: BrandStyle = useMemo(
     () => ({
       palette: (profile?.visual.colors ?? []).map((c) => ({ hex: c.hex.toUpperCase(), name: c.name })),
-      fonts: (profile?.visual.fonts ?? []).map((f) => f.family),
+      fonts: orderFontOptions(
+        JSON.parse(brandFontFamilies) as string[],
+        (profile?.visual.fonts ?? []).map((f) => f.family),
+        [],
+      ),
     }),
-    [profile],
+    [profile, brandFontFamilies],
   );
   const logoIds = profile?.visual.logoAssetIds ?? [];
 
@@ -843,23 +852,27 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             </div>
           )}
           <div className="min-h-0 flex-1">
-            <Suspense fallback={<Spinner label="Preparando el lienzo…" />}>
-              <CanvasView
-                document={state.document}
-                selectedIds={state.selectedIds}
-                readOnly={readOnly}
-                images={images}
-                onSelect={onSelect}
-                onSelectMany={onSelectMany}
-                onChange={onChange}
-                onEditText={onEditText}
-                editingTextId={editingTextId}
-                onTextCommit={onTextCommit}
-                onTextCancel={onTextCancel}
-                safeZone={safeZoneOverlay}
-                label={`Diseño de ${item.title}, ${state.document.layers.length} capas`}
-              />
-            </Suspense>
+            {brandFonts.status === 'loading' ? (
+              <Spinner label="Cargando las tipografías de la marca…" />
+            ) : (
+              <Suspense fallback={<Spinner label="Preparando el lienzo…" />}>
+                <CanvasView
+                  document={state.document}
+                  selectedIds={state.selectedIds}
+                  readOnly={readOnly}
+                  images={images}
+                  onSelect={onSelect}
+                  onSelectMany={onSelectMany}
+                  onChange={onChange}
+                  onEditText={onEditText}
+                  editingTextId={editingTextId}
+                  onTextCommit={onTextCommit}
+                  onTextCancel={onTextCancel}
+                  safeZone={safeZoneOverlay}
+                  label={`Diseño de ${item.title}, ${state.document.layers.length} capas`}
+                />
+              </Suspense>
+            )}
           </div>
         </section>
 
@@ -1013,6 +1026,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         canSaveToLibrary={canEdit}
         canSaveVersion={!readOnly}
         onSaveVersion={(note) => save(note)}
+        prepareFonts={() => loadBrandFonts(brandFonts.fonts).then(() => undefined)}
         libraryPath={`${brandBase}/biblioteca`}
       />
       <VersionsDialog

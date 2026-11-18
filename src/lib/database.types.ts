@@ -676,6 +676,77 @@ type PolishFunctions = {
 
 // ─────────────────────── fin del bloque de pulido ───────────────────────
 
+// ───────── Texto de las fuentes y tipografías de la marca (20261119210000 y 20261119211000) ─────────
+
+/** Columnas de la extracción de texto de una fuente (sin el texto, que pesa). */
+export type SourceExtractionColumns = {
+  extracted_chars: number | null;
+  /** Detalle: páginas del PDF, páginas web leídas u omitidas y por qué, si se recortó… */
+  extraction: Json | null;
+  extracted_at: string | null;
+  extraction_job_id: string | null;
+};
+
+/** Fuente tal como se lista: sin el texto extraído. */
+export type KnowledgeSourceListRow = KnowledgeSourceRow & SourceExtractionColumns;
+
+/** El texto extraído de una fuente: solo se pide al revisarlo o al proponer el perfil. */
+export type KnowledgeSourceTextRow = Pick<KnowledgeSourceRow, 'id' | 'title' | 'kind'> & {
+  extracted_text: string | null;
+  extracted_chars: number | null;
+};
+
+export type FontFormat = 'woff2' | 'woff' | 'ttf' | 'otf';
+export type FontStyle = 'normal' | 'italic';
+
+export type BrandFontRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  family: string;
+  weight: number;
+  style: FontStyle;
+  format: FontFormat;
+  storage_path: string;
+  file_name: string;
+  mime_type: string;
+  bytes: number;
+  license_confirmed: boolean;
+  license_note: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** Tipografía que usarán los reels de la marca (vacío: la de reserva del trabajador). */
+export type ReelFontInfo = Pick<BrandFontRow, 'family' | 'weight' | 'style' | 'format'> & { font_id: string };
+
+type SourceFontTables = {
+  brand_fonts: Table<
+    BrandFontRow,
+    {
+      brand_id: string;
+      organization_id: string;
+      family: string;
+      weight?: number;
+      style?: FontStyle;
+      format: FontFormat;
+      storage_path: string;
+      file_name: string;
+      mime_type: string;
+      bytes: number;
+      license_confirmed: boolean;
+      license_note?: string | null;
+    }
+  >;
+};
+
+type SourceFontFunctions = {
+  request_source_extraction: { Args: { p_source_id: string }; Returns: KnowledgeSourceRow & SourceExtractionColumns };
+  brand_reel_font_info: { Args: { p_brand_id: string }; Returns: ReelFontInfo[] };
+};
+
+// ───────── fin del bloque de texto de las fuentes y tipografías ─────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -718,7 +789,7 @@ export type Database = {
       >;
       brand_profiles: Table<BrandProfileRow>;
       brand_knowledge_sources: Table<
-        KnowledgeSourceRow,
+        KnowledgeSourceRow & SourceExtractionColumns & { extracted_text: string | null },
         {
           brand_id: string;
           organization_id: string;
@@ -758,7 +829,8 @@ export type Database = {
       ContentTables &
       Phase2MediaTables &
       RequestTables &
-      PolishTables;
+      PolishTables &
+      SourceFontTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -787,7 +859,8 @@ export type Database = {
       ContentFunctions &
       MediaJobFunctions &
       RequestFunctions &
-      PolishFunctions;
+      PolishFunctions &
+      SourceFontFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

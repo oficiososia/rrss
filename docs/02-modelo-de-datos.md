@@ -355,3 +355,41 @@ Decisiones que conviene conocer:
   entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
 - **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
   de cada comentario.
+
+## 13. Texto de las fuentes y tipografías de la marca
+
+Migraciones `20261119210000_source_text_extraction` y `20261119211000_brand_fonts`.
+
+**Texto de las fuentes.** `brand_knowledge_sources` guarda ahora el texto
+extraído (`extracted_text`, hasta 200 000 caracteres; el trabajador recorta a
+100 000), su longitud, el detalle (`extraction`: páginas, páginas web leídas u
+omitidas, recorte), la fecha y el último trabajo (`extraction_job_id`). Lo
+extrae el trabajador de medios (`source.extract`, sin IA; detalle en
+`worker/README.md`):
+
+- Al dar de alta una fuente, un disparador encola su extracción. De imágenes y
+  presentaciones no se extrae: la fuente queda fallida con el motivo.
+- Un disparador sobre `jobs` lleva el estado a la fuente (`pending` →
+  `processing` → `ready` o `failed` con el motivo en `error`; un reintento la
+  deja `pending` con «Se reintentará: …») y **mueve** el texto del resultado a
+  la fuente antes de guardar el trabajo. Solo cuenta el último trabajo de cada
+  fuente.
+- `request_source_extraction(fuente)`: volver a pedirla (quien gestiona la
+  marca; si ya hay una en marcha devuelve esa; 20 a la vez por marca).
+- El cliente no puede escribir el texto ni el estado (sin permiso de UPDATE).
+  La lista de fuentes no pide el texto; se lee al revisarlo o al proponer el
+  perfil, que usa todas las fuentes listas, las más recientes primero hasta
+  los topes (20 fuentes, 400 000 caracteres).
+
+**Tipografías.** `brand_fonts`: una fila por archivo (.woff2, .woff, .ttf,
+.otf) con familia, peso (100–900), estilo, 5 MB como mucho, ruta en
+`<organización>/<marca>/fonts/` y `license_confirmed` obligatorio (quien la
+sube declara que la marca puede usarla; la aplicación no lo comprueba). La ven
+quienes ven la marca; la suben y borran quienes la gestionan; no se edita. El
+cubo admite `font/woff2`, `font/woff`, `font/ttf` y `font/otf`.
+
+Reels: al encolar un `media.reel.template` con textos, un disparador pone
+`plan.fontPath` con el .ttf/.otf de la marca (familia primera del perfil,
+redonda, peso cercano a 400); `brand_reel_font_info(marca)` dice cuál será.
+Sin archivo .ttf/.otf, el trabajador usa su tipografía de reserva y la
+aplicación lo dice.

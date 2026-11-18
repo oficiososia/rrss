@@ -53,6 +53,7 @@ import {
   type ProvenanceSource,
 } from './profile';
 import { ProfileProposalFromSources } from './ProfileProposalFromSources';
+import { BrandFontsCard } from './BrandFontsCard';
 import { SourcesCard } from './SourcesCard';
 
 const TABS = [
@@ -334,7 +335,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
               </Card>
             </TabsContent>
           ))}
-          <TabsContent value="visual">
+          <TabsContent value="visual" className="space-y-6">
             <Card>
               <CardBody className="space-y-6">
                 <LogoManager
@@ -348,6 +349,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
                 <VisualSection {...sectionProps} />
               </CardBody>
             </Card>
+            <BrandFontsCard organizationId={org.id} brandId={brand.id} canManage={canManage} />
           </TabsContent>
           <TabsContent value="fuentes" className="space-y-6">
             {/* En modo agencia el servidor rechaza la IA de texto (`agency_mode`): no se ofrece. */}
