@@ -138,6 +138,11 @@ la reserva, pero gastando ese intento.
 
 ## De la aplicación a la biblioteca
 
+`type` = `media_job` en `provenance` solo lo puede poner la base de datos (un
+disparador rechaza que un usuario lo inserte): nadie puede hacer pasar un
+archivo subido a mano por el resultado de un trabajo. El enlace fiable
+trabajo → recurso sigue siendo `jobs.result.assets`.
+
 1. **Encargo** (`supabase/migrations/20261118220000_media_jobs_library.sql`):
    `request_media_job(marca, tipo, entrada, clave)` es `SECURITY DEFINER`; lo
    puede llamar cualquier usuario con sesión, pero solo encola si puede
@@ -156,8 +161,10 @@ la reserva, pero gastando ese intento.
    vuelve a mirar cada 4 s mientras hay algo en cola o montándose.
 3. **Resultado**: al pasar el trabajo a `succeeded`, un disparador `BEFORE
 UPDATE` crea el recurso en `media_assets` (origen `generated`, carpeta
-   «Reels» o «Recortes», `source_job_id` y `provenance` con trabajo, plantilla,
-   fuentes con su recurso, música, textos y avisos) y lo anota en
+   «Reels» o «Recortes», y la procedencia en la columna común `provenance`
+   —la de `20261118120000_media_assets_provenance`— con `type` = `media_job`:
+   trabajo, plantilla, música y fuentes con su recurso y su ruta, recortada
+   para no pasar de 2048 bytes) y lo anota en
    `jobs.result.assets`, de donde sale «Abrir en la biblioteca». La ruta sale de
    la **carga**; el resultado solo aporta medidas y tiene que corresponder a
    esa ruta (si no, `complete_job` falla y el trabajo no se cierra).

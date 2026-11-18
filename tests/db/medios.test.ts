@@ -51,7 +51,6 @@ interface AssetRow extends Row {
   duration_ms: number | null;
   folder: string;
   created_by: string | null;
-  source_job_id: string | null;
   provenance: Row;
 }
 
@@ -107,7 +106,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.exec(`delete from public.media_assets where source_job_id is not null; delete from public.jobs;`);
+  await db.exec(`delete from public.media_assets where provenance ->> 'type' = 'media_job'; delete from public.jobs;`);
 });
 
 const reelInput = (overrides: Row = {}): Row => ({
@@ -153,7 +152,9 @@ const complete = (id: string, result: Row, worker = 'medios-1') =>
   serviceRpc<JobRow>(db, 'complete_job', { p_job_id: id, p_worker: worker, p_result: result });
 const jobById = async (id: string) => (await db.query<JobRow>(`select * from public.jobs where id = $1`, [id]))[0]!;
 const assetsOf = (jobId: string) =>
-  db.query<AssetRow>(`select * from public.media_assets where source_job_id = $1 order by storage_path`, [jobId]);
+  db.query<AssetRow>(`select * from public.media_assets where provenance ->> 'job_id' = $1 order by storage_path`, [
+    jobId,
+  ]);
 
 /** Resultado con la forma del manejador real del reel (worker/src/handlers/reel-template.ts). */
 const reelResult = (outputPath: string, extra: Row = {}): Row => ({
@@ -378,7 +379,13 @@ describe('encargar desde la aplicación', () => {
   it('como mucho cinco trabajos de medios en marcha por marca', async () => {
     const input = { template: { id: 'corte-ritmico' }, plan: { media: [{ type: 'photo', path: fotoA }] } };
     for (let i = 0; i < 5; i++) await request(editor, marcaA, 'media.reel.template', input);
-    await rejected(editor, marcaA, 'media.reel.template', input, /Hay 5 trabajos de medios en marcha en esta marca, el máximo a la vez/);
+    await rejected(
+      editor,
+      marcaA,
+      'media.reel.template',
+      input,
+      /Hay 5 trabajos de medios en marcha en esta marca, el máximo a la vez/,
+    );
     // Otra marca tiene su propio tope.
     await request(ana, marcaA2, 'media.reel.template', {
       template: { id: 'corte-ritmico' },
@@ -422,23 +429,23 @@ describe('el resultado llega a la biblioteca al completarse', () => {
       duration_ms: 6500,
       folder: 'Reels',
       created_by: editor.id,
-      source_job_id: job.id,
     });
     expect(reel!.file_name).toMatch(/^reel-fundido-suave-\d{8}-\d{6}\.mp4$/);
     const fuente = async (p: string) =>
       (await db.query<{ id: string }>(`select id from public.media_assets where storage_path = $1`, [p]))[0]!.id;
+    // En la columna común de procedencia (20261118120000), con su propio `type`.
     expect(reel!.provenance).toEqual({
-      jobId: job.id,
+      type: 'media_job',
       kind: 'media.reel.template',
-      template: { id: 'fundido-suave', schemaVersion: 1 },
+      job_id: job.id,
+      template_id: 'fundido-suave',
+      template_schema_version: 1,
+      music_asset_id: await fuente(musicaA),
       sources: [
-        { type: 'photo', path: fotoA, assetId: await fuente(fotoA) },
-        { type: 'video', path: clipA, assetId: await fuente(clipA) },
-        { type: 'photo', path: foto2A, assetId: await fuente(foto2A) },
+        { type: 'photo', asset_id: await fuente(fotoA), path: fotoA },
+        { type: 'video', asset_id: await fuente(clipA), path: clipA },
+        { type: 'photo', asset_id: await fuente(foto2A), path: foto2A },
       ],
-      music: { path: musicaA, assetId: await fuente(musicaA) },
-      texts: [{ text: 'Menú del día', start: 0.5, end: 3, position: 'bottom' }],
-      warnings: ['Un texto no cabe en una línea'],
     });
     // El trabajo apunta al recurso creado: la aplicación lo abre desde ahí.
     expect(done.result!.assets).toEqual([{ id: reel!.id, path: outputPath, kind: 'video' }]);
@@ -467,14 +474,19 @@ describe('el resultado llega a la biblioteca al completarse', () => {
       ],
     });
     const rows = await db.query<AssetRow>(
-      `select * from public.media_assets where source_job_id = $1 order by bytes desc`,
+      `select * from public.media_assets where provenance ->> 'job_id' = $1 order by bytes desc`,
       [job.id],
     );
     expect(rows.map((r) => [r.file_name, r.mime_type, r.width, r.height, r.bytes, r.folder, r.kind])).toEqual([
       ['plato-9x16.jpg', 'image/jpeg', 1080, 1920, 300_000, 'Recortes', 'image'],
       ['plato-1x1.webp', 'image/webp', 1080, 1080, 120_000, 'Recortes', 'image'],
     ]);
-    expect(rows[0]!.provenance).toMatchObject({ jobId: job.id, aspect: '9:16', sources: [{ path: fotoA }] });
+    expect(rows[0]!.provenance).toMatchObject({
+      type: 'media_job',
+      job_id: job.id,
+      aspect: '9:16',
+      sources: [{ type: 'photo', path: fotoA }],
+    });
     expect((await jobById(job.id)).result!.assets).toHaveLength(2);
   });
 
@@ -500,21 +512,53 @@ describe('el resultado llega a la biblioteca al completarse', () => {
       p_retry: false,
     });
     await serviceRpc(db, 'cancel_job', { p_job_id: cancelled.id });
-    expect(await db.query(`select 1 from public.media_assets where source_job_id is not null`)).toEqual([]);
+    expect(await db.query(`select 1 from public.media_assets where provenance ->> 'type' = 'media_job'`)).toEqual([]);
   });
 
-  it('el cliente no puede inventarse la procedencia de un recurso', async () => {
+  it('el cliente no puede hacer pasar un archivo suyo por el resultado de un trabajo', async () => {
     const job = await request(editor, marcaA, 'media.reel.template', reelInput());
     await denied(
       db,
       editor,
-      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, source_job_id)
-       values ($1, $2, 'video', $3, 'falso.mp4', 'video/mp4', 1, $4)`,
-      [marcaA, orgA, `${orgA}/${marcaA}/media/falso.mp4`, job.id],
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, provenance)
+       values ($1, $2, 'video', $3, 'falso.mp4', 'video/mp4', 1, $4::jsonb)`,
+      [marcaA, orgA, `${orgA}/${marcaA}/media/falso.mp4`, JSON.stringify({ type: 'media_job', job_id: job.id })],
+      /solo la pone la base de datos/,
     );
-    await denied(db, editor, `update public.media_assets set provenance = '{"jobId": "x"}' where storage_path = $1`, [
-      fotoA,
-    ]);
+    await denied(
+      db,
+      editor,
+      `update public.media_assets set provenance = '{"type": "media_job"}' where storage_path = $1`,
+      [fotoA],
+    );
+    // Otros tipos de procedencia (p. ej. la exportación del editor) siguen abiertos al insertar.
+    await as(
+      db,
+      editor,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, provenance)
+       values ($1, $2, 'image', $3, 'export.png', 'image/png', 1, '{"type": "export"}'::jsonb)`,
+      [marcaA, orgA, `${orgA}/${marcaA}/media/export-${job.id}.png`],
+    );
+  });
+
+  it('la procedencia no pasa de los 2048 bytes de la columna aunque el reel tenga 20 piezas', async () => {
+    // Rutas largas: con 20 piezas, las fuentes completas no caben.
+    const largas: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      largas.push(
+        await asset(ana, orgA, marcaA, 'image', `${'foto-con-un-nombre-muy-largo-'.repeat(3)}${i}.jpg`, 'image/jpeg'),
+      );
+    }
+    const job = await request(editor, marcaA, 'media.reel.template', {
+      template: { id: 'pase-lateral' },
+      plan: { media: largas.map((path) => ({ type: 'photo', path })) },
+    });
+    await claim();
+    await complete(job.id, reelResult(job.payload.output!.path));
+    const [reel] = await assetsOf(job.id);
+    expect(Buffer.byteLength(JSON.stringify(reel!.provenance))).toBeLessThanOrEqual(2048);
+    expect(reel!.provenance).toMatchObject({ type: 'media_job', job_id: job.id, sources_truncated: true });
+    expect(reel!.provenance.source_asset_ids).toHaveLength(20);
   });
 });
 

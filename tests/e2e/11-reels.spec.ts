@@ -126,8 +126,8 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
     duration_ms: number;
     bytes: string;
     storage_path: string;
-    provenance: { jobId: string; template: { id: string }; sources: unknown[]; texts: Array<{ text: string }> };
-  }>(`select * from public.media_assets where source_job_id = $1`, [trabajo!.id]);
+    provenance: { type: string; job_id: string; template_id: string; sources: unknown[] };
+  }>(`select * from public.media_assets where provenance ->> 'job_id' = $1`, [trabajo!.id]);
   expect(recurso).toMatchObject({
     kind: 'video',
     origin: 'generated',
@@ -140,9 +140,9 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   expect(recurso!.duration_ms).toBeGreaterThan(4000);
   expect(Number(recurso!.bytes)).toBeLessThan(50 * 1024 * 1024);
   expect(recurso!.provenance).toMatchObject({
-    jobId: trabajo!.id,
-    template: { id: 'fundido-suave' },
-    texts: [{ text: 'Pan recién hecho' }],
+    type: 'media_job',
+    job_id: trabajo!.id,
+    template_id: 'fundido-suave',
   });
   expect(recurso!.provenance.sources).toHaveLength(2);
 

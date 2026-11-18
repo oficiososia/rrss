@@ -16,7 +16,9 @@
 --      trabajador, que rechaza sin reintento una carga inválida.
 --   2. Al completarse el trabajo (`complete_job`), un disparador da de alta el
 --      resultado en `media_assets` con su procedencia (trabajo, plantilla y
---      fuentes) y deja los recursos creados en `jobs.result.assets` (también
+--      fuentes) en la columna común `provenance` (migración
+--      20261118120000_media_assets_provenance, `type` = 'media_job') y deja los
+--      recursos creados en `jobs.result.assets` (también
 --      para los que encole el servidor con `enqueue_job`, si su carga dice
 --      dónde dejar el archivo). Va en la
 --      misma transacción que el cierre: o el trabajo queda terminado y su
@@ -24,16 +26,56 @@
 --   3. La lectura de los trabajos ya la da la RLS de `jobs` (los de una marca
 --      los ve quien ve la marca): no hace falta otra función.
 
+
 -- ───────────────────── Procedencia en la biblioteca ─────────────────────
 
--- Lo que crea un trabajo lleva su procedencia. El cliente no puede escribir
--- estas columnas (los privilegios de INSERT y UPDATE van por columnas y no las
--- incluyen): solo las rellena el disparador.
-alter table public.media_assets
-  add column source_job_id uuid references public.jobs (id) on delete set null,
-  add column provenance jsonb not null default '{}'::jsonb
-    check (jsonb_typeof(provenance) = 'object' and pg_column_size(provenance) <= 32768);
-create index media_assets_source_job_idx on public.media_assets (source_job_id) where source_job_id is not null;
+-- La columna `media_assets.provenance` es la común de la biblioteca (migración
+-- 20261118120000_media_assets_provenance: objeto con `type`, máximo 2048 bytes,
+-- solo al insertar). Lo que crea un trabajo de medios lleva `type` =
+-- 'media_job'. Ese tipo solo lo puede poner la base de datos: quien sube un
+-- archivo desde la aplicación no puede hacerlo pasar por el resultado de un
+-- trabajo (el enlace fiable trabajo → recurso es `jobs.result.assets`, que el
+-- cliente no puede escribir).
+create function private.media_assets_guard_job_provenance() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  -- Desde el disparador de jobs (SECURITY DEFINER) el usuario actual es el
+  -- dueño de la función, no `authenticated`.
+  if new.provenance ->> 'type' = 'media_job' and current_user in ('authenticated', 'anon') then
+    raise exception 'La procedencia de un trabajo de medios solo la pone la base de datos' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+
+create trigger media_assets_guard_job_provenance before insert on public.media_assets
+  for each row execute function private.media_assets_guard_job_provenance();
+
+-- Recursos creados por un trabajo (para buscarlos desde el trabajo).
+create index media_assets_provenance_job_idx on public.media_assets ((provenance ->> 'job_id'))
+  where provenance ->> 'type' = 'media_job';
+
+-- Procedencia que cabe en los 2048 bytes de la columna: con las fuentes
+-- completas (recurso y ruta) si caben; si no, solo los recursos; y si ni así,
+-- sin fuentes (las rutas siguen en `jobs.payload`).
+create function private.media_job_provenance(p_base jsonb, p_sources jsonb) returns jsonb
+language plpgsql immutable set search_path = '' as $$
+declare
+  v jsonb;
+begin
+  v := p_base || jsonb_build_object('sources', coalesce(p_sources, '[]'::jsonb));
+  if octet_length(v::text) <= 2048 then
+    return v;
+  end if;
+  v := p_base || jsonb_build_object(
+    'source_asset_ids',
+    (select coalesce(jsonb_agg(x.s -> 'asset_id' order by x.o), '[]'::jsonb)
+     from jsonb_array_elements(p_sources) with ordinality x(s, o)),
+    'sources_truncated', true);
+  if octet_length(v::text) <= 2048 then
+    return v;
+  end if;
+  return p_base || jsonb_build_object('sources_truncated', true);
+end $$;
 
 -- ───────────────────────────── Ayudantes ─────────────────────────────
 
@@ -273,6 +315,12 @@ end $$;
 -- y anota los recursos creados en `jobs.result.assets`. La ruta sale de la
 -- CARGA (la puso `request_media_job`), no del resultado: el resultado solo
 -- aporta las medidas, y tiene que corresponder a esa ruta.
+--
+-- Procedencia de un reel:
+--   {"type": "media_job", "kind": "media.reel.template", "job_id": "…",
+--    "template_id": "fundido-suave", "template_schema_version": 1,
+--    "music_asset_id": "…", "sources": [{"type": "photo", "asset_id": "…", "path": "…"}, …]}
+-- De un recorte: "aspect" y "focal_point" en lugar de plantilla y música.
 create function private.jobs_publish_media_assets() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare
@@ -282,7 +330,7 @@ declare
   v_out jsonb;
   v_item record;
   v_sources jsonb;
-  v_music jsonb;
+  v_provenance jsonb;
   v_source_name text;
   v_format text;
 begin
@@ -300,20 +348,27 @@ begin
       raise exception 'El resultado del reel no corresponde a su encargo' using errcode = '22023';
     end if;
 
-    select coalesce(jsonb_agg(jsonb_build_object('type', m.value ->> 'type', 'path', m.value ->> 'path', 'assetId', a.id)
+    select coalesce(jsonb_agg(jsonb_build_object('type', m.value ->> 'type', 'asset_id', a.id,
+                                                 'path', m.value ->> 'path')
                               order by m.ordinality), '[]'::jsonb)
       into v_sources
     from jsonb_array_elements(new.payload #> '{plan,media}') with ordinality m
     left join public.media_assets a on a.brand_id = new.brand_id and a.storage_path = m.value ->> 'path';
 
-    if new.payload #> '{plan,music,path}' is not null then
-      select jsonb_build_object('path', new.payload #>> '{plan,music,path}', 'assetId', a.id) into v_music
-      from (select 1) x
-      left join public.media_assets a on a.brand_id = new.brand_id and a.storage_path = new.payload #>> '{plan,music,path}';
-    end if;
+    v_provenance := private.media_job_provenance(
+      jsonb_strip_nulls(jsonb_build_object(
+        'type', 'media_job',
+        'kind', new.kind,
+        'job_id', new.id,
+        'template_id', new.payload #>> '{template,id}',
+        'template_schema_version', new.result #> '{template,schemaVersion}',
+        'music_asset_id', (select a.id from public.media_assets a
+                           where a.brand_id = new.brand_id and a.storage_path = new.payload #>> '{plan,music,path}')
+      )),
+      v_sources);
 
     insert into public.media_assets (brand_id, organization_id, kind, origin, storage_path, file_name, mime_type,
-                                     bytes, width, height, duration_ms, folder, created_by, source_job_id, provenance)
+                                     bytes, width, height, duration_ms, folder, created_by, provenance)
     values (
       new.brand_id, new.organization_id, 'video', 'generated', v_path,
       format('reel-%s-%s.mp4', new.payload #>> '{template,id}', to_char(now() at time zone 'utc', 'YYYYMMDD-HH24MISS')),
@@ -324,17 +379,7 @@ begin
       round((v_out ->> 'durationSeconds')::numeric * 1000)::integer,
       'Reels',
       new.created_by,
-      new.id,
-      jsonb_strip_nulls(jsonb_build_object(
-        'jobId', new.id,
-        'kind', new.kind,
-        'template', jsonb_build_object('id', new.payload #>> '{template,id}',
-                                       'schemaVersion', new.result #> '{template,schemaVersion}'),
-        'sources', v_sources,
-        'music', v_music,
-        'texts', new.payload #> '{plan,texts}',
-        'warnings', new.result -> 'warnings'
-      ))
+      v_provenance
     )
     on conflict (storage_path) do nothing
     returning id into v_asset;
@@ -346,9 +391,9 @@ begin
   elsif new.kind = 'media.image.process' then
     v_sources := jsonb_build_array(jsonb_build_object(
       'type', 'photo',
-      'path', new.payload #>> '{source,path}',
-      'assetId', (select a.id from public.media_assets a
-                  where a.brand_id = new.brand_id and a.storage_path = new.payload #>> '{source,path}')
+      'asset_id', (select a.id from public.media_assets a
+                   where a.brand_id = new.brand_id and a.storage_path = new.payload #>> '{source,path}'),
+      'path', new.payload #>> '{source,path}'
     ));
     -- Nombre legible: el de la foto de origen sin extensión.
     v_source_name := regexp_replace(
@@ -364,7 +409,7 @@ begin
       end if;
       v_format := coalesce(v_item.output ->> 'format', 'jpeg');
       insert into public.media_assets (brand_id, organization_id, kind, origin, storage_path, file_name, mime_type,
-                                       bytes, width, height, folder, created_by, source_job_id, provenance)
+                                       bytes, width, height, folder, created_by, provenance)
       values (
         new.brand_id, new.organization_id, 'image', 'generated', v_path,
         left(format('%s-%s.%s', v_source_name, replace(v_item.output ->> 'aspect', ':', 'x'),
@@ -375,14 +420,15 @@ begin
         (v_out ->> 'height')::integer,
         'Recortes',
         new.created_by,
-        new.id,
-        jsonb_strip_nulls(jsonb_build_object(
-          'jobId', new.id,
-          'kind', new.kind,
-          'aspect', v_item.output ->> 'aspect',
-          'focalPoint', new.payload -> 'focalPoint',
-          'sources', v_sources
-        ))
+        private.media_job_provenance(
+          jsonb_strip_nulls(jsonb_build_object(
+            'type', 'media_job',
+            'kind', new.kind,
+            'job_id', new.id,
+            'aspect', v_item.output ->> 'aspect',
+            'focal_point', new.payload -> 'focalPoint'
+          )),
+          v_sources)
       )
       on conflict (storage_path) do nothing
       returning id into v_asset;
@@ -412,6 +458,8 @@ revoke all on function private.media_reel_payload(uuid, uuid, jsonb, text) from 
 revoke all on function private.media_image_payload(uuid, uuid, jsonb, text) from public, anon, authenticated;
 revoke all on function private.media_jobs_max_active() from public, anon, authenticated;
 revoke all on function private.jobs_publish_media_assets() from public, anon, authenticated;
+revoke all on function private.media_job_provenance(jsonb, jsonb) from public, anon, authenticated;
+revoke all on function private.media_assets_guard_job_provenance() from public, anon, authenticated;
 
 revoke all on function public.request_media_job(uuid, text, jsonb, text) from public, anon;
 grant execute on function public.request_media_job(uuid, text, jsonb, text) to authenticated;

@@ -495,16 +495,10 @@ type Phase2MediaTables = {
 // Migración 20261118220000_media_jobs_library. Quien edita una marca encarga un
 // reel o un recorte con `request_media_job` (sin clave de servicio); el estado
 // se lee de `jobs` (RLS: quien ve la marca). Al completarse, el resultado se da
-// de alta en `media_assets` con su procedencia, y `jobs.result.assets` lo apunta.
+// de alta en `media_assets` con su procedencia (columna común `provenance`,
+// `type` = 'media_job'), y `jobs.result.assets` lo apunta.
 
 export type MediaJobKind = 'media.reel.template' | 'media.image.process';
-
-/** Columnas de procedencia que la migración añade a `media_assets` (solo las escribe la base). */
-export type MediaAssetProvenanceColumns = {
-  source_job_id: string | null;
-  provenance: Json;
-};
-export type MediaAssetWithProvenance = MediaAssetRow & MediaAssetProvenanceColumns;
 
 type MediaJobFunctions = {
   request_media_job: {
