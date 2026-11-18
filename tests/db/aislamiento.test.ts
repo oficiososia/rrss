@@ -907,6 +907,50 @@ describe('IA y cola de trabajos', () => {
     await expect(reservar(superadmin, marcaA1)).rejects.toThrow(/No tienes permiso para generar/);
   });
 
+  it('desde la aplicación nadie encola medios en una marca ajena ni con rutas ajenas', async () => {
+    const pathOf = async (id: string) =>
+      (await db.query<{ p: string }>(`select storage_path as p from public.media_assets where id = $1`, [id]))[0]!.p;
+    const fotoA1 = await pathOf(assetA1);
+    const fotoB1 = await pathOf(assetB1);
+    const reel = (photoPath: string) =>
+      JSON.stringify({ template: { id: 'fundido-suave' }, plan: { media: [{ type: 'photo', path: photoPath }] } });
+    const encargar = (user: TestUser, brand: string, photoPath: string, pattern: RegExp) =>
+      denied(
+        db,
+        user,
+        `select public.request_media_job($1, 'media.reel.template', $2::jsonb, $3)`,
+        [brand, reel(photoPath), `aislamiento-${brand}-${user.email}`],
+        pattern,
+      );
+    const sinPermiso = /No tienes permiso/;
+    const rutaAjena = /no es un recurso de esta marca/;
+    // Marca de otra organización, con fotos propias o ajenas.
+    await encargar(ana, marcaB1, fotoA1, sinPermiso);
+    await encargar(ana, marcaB1, fotoB1, sinPermiso);
+    await encargar(berta, marcaA1, fotoA1, sinPermiso);
+    // En la marca propia, con la foto de otra organización o de otra marca.
+    await encargar(ana, marcaA1, fotoB1, rutaAjena);
+    await encargar(editorA, marcaA1, fotoB1, rutaAjena);
+    await encargar(gema, marcaG1, fotoA1, rutaAjena);
+    // Dentro de la organización: sin permiso de edición en esa marca.
+    await encargar(editorA, marcaA2, fotoA1, sinPermiso);
+    await encargar(clienteA, marcaA1, fotoA1, sinPermiso);
+    await encargar(sinMarcaA, marcaA1, fotoA1, sinPermiso);
+    await encargar(ana, marcaG1, fotoA1, sinPermiso); // lectora en la agencia
+    await encargar(superadmin, marcaA1, fotoA1, sinPermiso);
+    await encargar(ajeno, marcaA1, fotoA1, sinPermiso);
+    await denied(
+      db,
+      null,
+      `select public.request_media_job($1, 'media.reel.template', $2::jsonb, 'anonimo-1')`,
+      [marcaA1, reel(fotoA1)],
+      /permission denied for function/,
+    );
+    expect(
+      await db.query(`select 1 from public.jobs where kind in ('media.reel.template', 'media.image.process')`),
+    ).toEqual([]);
+  });
+
   it('ser superadministrador no abre las generaciones ni el consumo de los clientes', async () => {
     for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
       expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);

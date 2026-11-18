@@ -69,7 +69,22 @@ export function createSupabaseQueue(options: SupabaseOptions): JobQueue {
   };
 }
 
-export function createSupabaseStorage(options: SupabaseOptions & { bucket: string }): MediaStorage {
+/** Tope de subida estándar de Supabase y del cubo `brand-media` (50 MB en el plan gratuito). */
+export const DEFAULT_MAX_OBJECT_BYTES = 50 * 1024 * 1024;
+
+const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
+
+export function createSupabaseStorage(
+  options: SupabaseOptions & {
+    bucket: string;
+    /**
+     * Tamaño máximo de un archivo subido. Por encima, Storage lo rechazaría:
+     * se avisa antes de subir y sin reintento (otro intento pesaría lo mismo).
+     */
+    maxObjectBytes?: number;
+  },
+): MediaStorage {
+  const maxObjectBytes = options.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES;
   const doFetch = options.fetch ?? fetch;
   const base = options.url.replace(/\/+$/, '');
   const objectUrl = (objectPath: string) =>
@@ -92,6 +107,12 @@ export function createSupabaseStorage(options: SupabaseOptions & { bucket: strin
     },
     async upload(sourceFile, objectPath, { contentType, signal }) {
       const { size } = await stat(sourceFile);
+      if (size > maxObjectBytes) {
+        throw new PermanentError(
+          `El archivo resultante pesa ${megabytes(size)} y el almacenamiento admite ${megabytes(maxObjectBytes)} como máximo. ` +
+            'Prueba con menos piezas, piezas más cortas o una plantilla más ligera.',
+        );
+      }
       const response = await doFetch(objectUrl(objectPath), {
         method: 'POST',
         headers: {
@@ -106,7 +127,10 @@ export function createSupabaseStorage(options: SupabaseOptions & { bucket: strin
         signal,
       } as RequestInit);
       if (!response.ok) {
-        throw new Error(`No se pudo subir «${objectPath}»: ${response.status} ${await errorText(response)}`);
+        const message = `No se pudo subir «${objectPath}»: ${response.status} ${await errorText(response)}`;
+        // 413: el cubo tiene un tope menor que el configurado aquí. Reintentar no lo arregla.
+        if (response.status === 413) throw new PermanentError(message);
+        throw new Error(message);
       }
       await response.arrayBuffer().catch(() => undefined);
     },

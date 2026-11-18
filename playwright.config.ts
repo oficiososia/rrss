@@ -73,6 +73,8 @@ export default defineConfig({
         VITE_AI_TEXT_ENABLED: 'true',
         // Y la de imagen (ai-media con la imagen simulada de pruebas locales).
         VITE_AI_IMAGE_ENABLED: 'true',
+        // El trabajador de medios existe en este entorno: lo arranca tests/e2e/11-reels.spec.ts contra el stack local.
+        VITE_MEDIA_WORKER_ENABLED: 'true',
       },
     },
   ],

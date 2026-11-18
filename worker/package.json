@@ -9,6 +9,8 @@
   },
   "scripts": {
     "start": "node src/main.ts",
+    "start:local": "node scripts/run-supabase.ts local",
+    "start:staging": "node scripts/run-supabase.ts staging",
     "job": "node src/cli.ts",
     "schemas": "node scripts/write-schemas.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",

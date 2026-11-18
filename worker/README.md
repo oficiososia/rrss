@@ -8,19 +8,23 @@ termina.
 
 ## Estado
 
-| Qué                                                                     | Estado                                                                                                                                                |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bucle (reclamar, ejecutar, cerrar, reintentos, apagado ordenado)        | Implementado y probado contra la cola real (PGlite) y contra una cola en memoria                                                                      |
-| `media.image.process` — imagen a las proporciones de las redes          | Implementado y probado con archivos reales                                                                                                            |
-| `media.reel.template` — reel vertical por plantilla                     | Implementado y probado con archivos reales, también dentro del contenedor                                                                             |
-| `media.video.derivatives` — póster, versión comprimida, otra proporción | Implementado y probado con archivos reales                                                                                                            |
-| `media.document.export` — documento por capas a imagen                  | **Sin implementar.** Solo el punto de enganche (`src/handlers/document-export.ts`), sin registrar: el trabajador no reclama ese tipo y nada lo simula |
-| Adaptadores de Supabase (cola por PostgREST, archivos por Storage)      | Implementados; probados contra un servidor HTTP local, **no contra un Supabase real**                                                                 |
-| Disparo desde la base (`pg_net` + `pg_cron`)                            | **Solo documentado** (más abajo). Depende del alojamiento, que no está decidido                                                                       |
-| Despliegue                                                              | **Bloqueado**: el dueño no ha elegido alojamiento                                                                                                     |
+| Qué                                                                     | Estado                                                                                                                                                                     |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bucle (reclamar, ejecutar, cerrar, reintentos, apagado ordenado)        | Implementado y probado contra la cola real (PGlite) y contra una cola en memoria                                                                                           |
+| `media.image.process` — imagen a las proporciones de las redes          | Implementado y probado con archivos reales                                                                                                                                 |
+| `media.reel.template` — reel vertical por plantilla                     | Implementado y probado con archivos reales, también dentro del contenedor                                                                                                  |
+| `media.video.derivatives` — póster, versión comprimida, otra proporción | Implementado y probado con archivos reales                                                                                                                                 |
+| `media.document.export` — documento por capas a imagen                  | **Sin implementar.** Solo el punto de enganche (`src/handlers/document-export.ts`), sin registrar: el trabajador no reclama ese tipo y nada lo simula                      |
+| Adaptadores de Supabase (cola por PostgREST, archivos por Storage)      | Implementados; probados contra un servidor HTTP local. Contra el stack local: prueba de extremo a extremo escrita (`tests/e2e/11-reels.spec.ts`), **sin ejecutar todavía** |
+| Encargo desde la aplicación (`request_media_job`)                       | Implementado y probado contra las migraciones reales (PGlite): permisos, carga restringida, rutas de la marca, tope de trabajos activos                                    |
+| Resultado a la biblioteca (`media_assets` con procedencia)              | Implementado (disparador al completar) y probado, también con el bucle real de este trabajador contra la cola SQL                                                          |
+| Tope de 50 MB por archivo subido                                        | Implementado: un resultado mayor falla sin reintento y con el motivo, antes de subir                                                                                       |
+| Disparo desde la base (`pg_net` + `pg_cron`)                            | **Solo documentado** (más abajo). Depende del alojamiento, que no está decidido                                                                                            |
+| Despliegue                                                              | **Bloqueado**: el dueño no ha elegido alojamiento                                                                                                                          |
 
-Nadie encola todavía trabajos de estos tipos: falta la pieza del servidor que
-llame a `enqueue_job`.
+Los reels los encarga la aplicación (pantalla «Reels» de la biblioteca) con
+`request_media_job`, y el resultado aparece en la biblioteca de la marca. Ver
+«De la aplicación a la biblioteca», más abajo.
 
 ## Ejecutarlo en local
 
@@ -53,6 +57,30 @@ de la cola; ver variables más abajo):
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… npm start                 # vacía la cola y sale
 SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… WORKER_MODE=continuous npm start
 ```
+
+**Contra Supabase, con la clave de servicio obtenida en el momento** (nunca
+escrita en un archivo del repositorio; el script la pasa solo al proceso del
+trabajador, sin imprimirla):
+
+```bash
+npm run start:local     # stack local: URL y clave de `supabase status -o env` (raíz del repo)
+npm run start:staging   # staging: clave pedida a la API de gestión con el token de rrss
+WORKER_MODE=continuous npm run start:local   # las variables WORKER_* pasan tal cual
+```
+
+- **Local**: antes, `supabase start` en la raíz (y `supabase migration up
+--local` si el volumen ya existía, para tener `20261118220000_media_jobs_library`).
+  El script se niega si `API_URL` no es de `127.0.0.1`/`localhost`.
+- **Staging** (`zzkdrfhqmjfvrdsoguio`, fijado en el script): lee el token de
+  `~/.supabase-rrss/token` (o `RRSS_SUPABASE_TOKEN_FILE`), el mismo que usan
+  `scripts/supabase-rrss.sh` y `npm run dev:staging`, y pide la clave
+  `service_role` a `GET /v1/projects/{ref}/api-keys`. Esa llamada es la misma
+  que ya funciona para la clave `anon` en `dev:staging`; para la `service_role`
+  **no se ha probado** (la pieza se escribió sin tocar staging). Hace falta que
+  staging tenga aplicada la migración `20261118220000_media_jobs_library`.
+  Para que la aplicación enseñe «Montar un reel» contra staging:
+  `VITE_MEDIA_WORKER_ENABLED=true npm run dev:staging` (en PowerShell,
+  `$env:VITE_MEDIA_WORKER_ENABLED='true'; npm run dev:staging`).
 
 **En contenedor:**
 
@@ -107,6 +135,49 @@ Las dos funciones de la cola que usa para esto (`release_job` y
 `extend_job_lease`) llegaron con la migración `20261117150000_jobs_release_extend.sql`.
 Si `release_job` falla (sin red), el trabajo vuelve igualmente cuando caduca
 la reserva, pero gastando ese intento.
+
+## De la aplicación a la biblioteca
+
+`type` = `media_job` en `provenance` solo lo puede poner la base de datos (un
+disparador rechaza que un usuario lo inserte): nadie puede hacer pasar un
+archivo subido a mano por el resultado de un trabajo. El enlace fiable
+trabajo → recurso sigue siendo `jobs.result.assets`.
+
+1. **Encargo** (`supabase/migrations/20261118220000_media_jobs_library.sql`):
+   `request_media_job(marca, tipo, entrada, clave)` es `SECURITY DEFINER`; lo
+   puede llamar cualquier usuario con sesión, pero solo encola si puede
+   **editar** la marca. Solo `media.reel.template` y `media.image.process`. La
+   entrada se restringe campo a campo (sin plantillas completas ni `fontPath`),
+   cada ruta de entrada tiene que ser un **recurso de la biblioteca de esa
+   marca** del tipo que toca (foto, clip o audio), y la **ruta de salida la pone
+   la base de datos** (`<org>/<marca>/reels/<uuid>.mp4`,
+   `…/recortes/<uuid>-<n>-<proporción>.<ext>`): el cliente no puede sobrescribir
+   nada. Repetir la clave devuelve el mismo trabajo. Como mucho cinco trabajos
+   de medios en marcha por marca. Los números (segundos, volumen…) los valida
+   este trabajador con su esquema: una carga inválida falla sin reintento y con
+   el motivo.
+2. **Estado**: la aplicación lee `jobs` directamente; la RLS ya deja ver los
+   trabajos de una marca a quien ve la marca, y a nadie de fuera. La pantalla
+   vuelve a mirar cada 4 s mientras hay algo en cola o montándose.
+3. **Resultado**: al pasar el trabajo a `succeeded`, un disparador `BEFORE
+UPDATE` crea el recurso en `media_assets` (origen `generated`, carpeta
+   «Reels» o «Recortes», y la procedencia en la columna común `provenance`
+   —la de `20261118120000_media_assets_provenance`— con `type` = `media_job`:
+   trabajo, plantilla, música y fuentes con su recurso y su ruta, recortada
+   para no pasar de 2048 bytes) y lo anota en
+   `jobs.result.assets`, de donde sale «Abrir en la biblioteca». La ruta sale de
+   la **carga**; el resultado solo aporta medidas y tiene que corresponder a
+   esa ruta (si no, `complete_job` falla y el trabajo no se cierra).
+
+**Por qué en la base y no en el trabajador.** Va en la misma transacción que
+`complete_job`: o el trabajo queda terminado y su recurso existe, o ninguna de
+las dos cosas (si el trabajador diera de alta el recurso en otra llamada, un
+corte entre las dos dejaría un trabajo «listo» sin recurso, o un recurso de un
+trabajo que se va a reintentar). El trabajador sigue sin saber nada de la
+biblioteca ni de su esquema y no necesita más permisos que los de la cola (lo
+que facilita el rol limitado pendiente, más abajo). Vale también para los
+trabajos que encole el servidor con `enqueue_job` si su carga dice dónde dejar
+el archivo.
 
 ## Tipos de trabajo
 
@@ -206,6 +277,16 @@ Una plantilla es un archivo JSON validado por `reelTemplateSchema`
 | `audio` `{musicVolume, clipVolume, fadeInSeconds, fadeOutSeconds}` | Música atenuada; `clipVolume: 0` silencia los clips                                                                                                 |
 | `export` `{crf, preset, audioBitrateKbps}`                         | Calidad y velocidad de H.264                                                                                                                        |
 
+**Una sola fuente de verdad**: estos archivos. La aplicación los incluye al
+compilar (`src/features/reels/templates.ts`, con `import.meta.glob`) para
+enseñar nombre, descripción y máximos, y una prueba comprueba que ofrece
+exactamente las de esta carpeta. No hay copia en la base de datos: motor y
+plantilla van juntos (un cambio de esquema exige una versión nueva del
+trabajador) y una tabla obligaría a sincronizar dos copias. El encargo solo
+admite plantillas por su `id`; si no existe, el trabajador falla sin reintento
+y la pantalla lo enseña. Añadir una plantilla es añadir un archivo: la ven la
+aplicación y el trabajador en su siguiente despliegue.
+
 Plantillas de ejemplo, neutras: `fundido-suave` (fundidos, texto abajo en
 franja), `corte-ritmico` (cortes secos, texto grande centrado, conserva sonido
 de los clips) y `pase-lateral` (deslizamiento, texto arriba).
@@ -219,23 +300,24 @@ permitirlos cuando se use.
 
 ## Variables de entorno
 
-| Variable                      | Por defecto                   | Para qué                                                                                                   |
-| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_URL`                | — (obligatoria)               | URL del proyecto                                                                                           |
-| `SUPABASE_SERVICE_ROLE_KEY`   | — (obligatoria)               | Clave de servicio. Solo como secreto del alojamiento; nunca en el repositorio ni en la carga de un trabajo |
-| `WORKER_BUCKET`               | `brand-media`                 | Cubo de Storage                                                                                            |
-| `WORKER_MODE`                 | `drain`                       | `drain` (vacía y sale) o `continuous`                                                                      |
-| `WORKER_ID`                   | `media-<host>-<pid>`          | Nombre con el que reserva (`jobs.locked_by`)                                                               |
-| `WORKER_CONCURRENCY`          | `1`                           | Trabajos a la vez (FFmpeg ya usa todos los núcleos)                                                        |
-| `WORKER_LEASE_SECONDS`        | `300`                         | Duración de la reserva, que se renueva cada tercio (5–3600)                                                |
-| `WORKER_MAX_ATTEMPT_SECONDS`  | `3600`                        | Tiempo máximo de un intento aunque renueve (5–21600)                                                       |
-| `WORKER_POLL_MS`              | `5000`                        | Espera entre sondeos con la cola vacía                                                                     |
-| `WORKER_IDLE_EXIT_MS`         | `0`                           | En `drain`, cuánto espera con la cola vacía antes de salir                                                 |
-| `WORKER_SHUTDOWN_GRACE_MS`    | `0`                           | Margen para terminar lo que esté en curso al apagar                                                        |
-| `WORKER_TMP_DIR`              | carpeta temporal del sistema  | Disco de trabajo (hace falta sitio para los vídeos)                                                        |
-| `WORKER_FONT_FILE`            | DejaVu Sans si está instalada | Tipografía por defecto                                                                                     |
-| `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                |
-| `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                   |
+| Variable                      | Por defecto                   | Para qué                                                                                                     |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `SUPABASE_URL`                | — (obligatoria)               | URL del proyecto                                                                                             |
+| `SUPABASE_SERVICE_ROLE_KEY`   | — (obligatoria)               | Clave de servicio. Solo como secreto del alojamiento; nunca en el repositorio ni en la carga de un trabajo   |
+| `WORKER_BUCKET`               | `brand-media`                 | Cubo de Storage                                                                                              |
+| `WORKER_MODE`                 | `drain`                       | `drain` (vacía y sale) o `continuous`                                                                        |
+| `WORKER_ID`                   | `media-<host>-<pid>`          | Nombre con el que reserva (`jobs.locked_by`)                                                                 |
+| `WORKER_CONCURRENCY`          | `1`                           | Trabajos a la vez (FFmpeg ya usa todos los núcleos)                                                          |
+| `WORKER_LEASE_SECONDS`        | `300`                         | Duración de la reserva, que se renueva cada tercio (5–3600)                                                  |
+| `WORKER_MAX_ATTEMPT_SECONDS`  | `3600`                        | Tiempo máximo de un intento aunque renueve (5–21600)                                                         |
+| `WORKER_POLL_MS`              | `5000`                        | Espera entre sondeos con la cola vacía                                                                       |
+| `WORKER_IDLE_EXIT_MS`         | `0`                           | En `drain`, cuánto espera con la cola vacía antes de salir                                                   |
+| `WORKER_SHUTDOWN_GRACE_MS`    | `0`                           | Margen para terminar lo que esté en curso al apagar                                                          |
+| `WORKER_TMP_DIR`              | carpeta temporal del sistema  | Disco de trabajo (hace falta sitio para los vídeos)                                                          |
+| `WORKER_FONT_FILE`            | DejaVu Sans si está instalada | Tipografía por defecto                                                                                       |
+| `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                  |
+| `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                     |
+| `WORKER_MAX_UPLOAD_BYTES`     | `52428800` (50 MB)            | Tope de cada archivo subido (el del cubo en el plan gratuito). Por encima, fallo sin reintento con el motivo |
 
 Mejora de seguridad pendiente (recomendada en la investigación): un rol de
 Postgres limitado a `claim_jobs`, `complete_job` y `fail_job` en vez de la
@@ -363,9 +445,11 @@ medir con vídeos reales de móvil (4K, HEVC, varios minutos).
 
 - Exportar documentos por capas (su formato lo define otra pieza).
 - Disparador, despliegue y alojamiento.
-- Quien encole los trabajos y enlace los resultados con la biblioteca
-  (`media_assets`): el trabajador solo deja archivos en el cubo y el resultado
-  en `jobs.result`.
+- Pantalla de recortes (`media.image.process`): la base de datos ya acepta el
+  encargo y da de alta los recortes en la biblioteca, pero la aplicación
+  todavía no tiene dónde pedirlos.
+- Cancelar un encargo desde la aplicación (`cancel_job` sigue siendo solo del
+  servidor) y avisos al terminar (hoy se ve en la pantalla de Reels).
 - Fotos HEIC (las de iPhone sin convertir) y orientación EXIF en PNG/WebP: sin
   probar. Emojis en el texto: DejaVu no los trae.
 - Subidas reanudables (TUS): se usa la subida estándar, sujeta al límite de

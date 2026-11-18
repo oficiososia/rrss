@@ -1,6 +1,8 @@
-import { FileText, Film, Images, Music, Search, Upload } from 'lucide-react';
+import { Clapperboard, FileText, Film, Images, Music, Search, Upload } from 'lucide-react';
 import { useDeferredValue, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from '@/components/ui';
+import { mediaWorkerEnabled } from '@/config/app';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
@@ -36,7 +38,13 @@ export function LibraryPage() {
   const [folder, setFolder] = useState('');
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // `?recurso=<id>` abre ese recurso (lo usa «Abrir en la biblioteca» desde Reels).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('recurso'));
+  const closeSelected = () => {
+    setSelectedId(null);
+    if (searchParams.has('recurso')) setSearchParams({}, { replace: true });
+  };
 
   const filters: AssetFilters = useMemo(
     () => ({ kind, tag, folder, search: deferredSearch }),
@@ -60,14 +68,26 @@ export function LibraryPage() {
         description={`Fotos, vídeos, logotipos y documentos de ${brand.name}.`}
         action={
           canEdit && (
-            <Button
-              onClick={() => setUploading((v) => !v)}
-              aria-expanded={uploading}
-              data-testid="library-upload-toggle"
-            >
-              <Upload className="h-4 w-4" aria-hidden />
-              {uploading ? 'Ocultar subida' : 'Subir archivos'}
-            </Button>
+            <>
+              {mediaWorkerEnabled() && (
+                <Link
+                  to="reels"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+                  data-testid="library-reels"
+                >
+                  <Clapperboard className="h-4 w-4" aria-hidden />
+                  Montar un reel
+                </Link>
+              )}
+              <Button
+                onClick={() => setUploading((v) => !v)}
+                aria-expanded={uploading}
+                data-testid="library-upload-toggle"
+              >
+                <Upload className="h-4 w-4" aria-hidden />
+                {uploading ? 'Ocultar subida' : 'Subir archivos'}
+              </Button>
+            </>
           )
         }
       />
@@ -217,7 +237,7 @@ export function LibraryPage() {
           asset={selected}
           url={urls.data?.get(selected.storage_path)}
           canEdit={canEdit}
-          onClose={() => setSelectedId(null)}
+          onClose={closeSelected}
         />
       )}
     </>

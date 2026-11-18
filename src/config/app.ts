@@ -22,6 +22,16 @@ export function aiImageEnabled(): boolean {
   return import.meta.env.VITE_AI_IMAGE_ENABLED === 'true';
 }
 
+/**
+ * ¿Hay un trabajador de medios (worker/) desplegado que vacíe la cola? Sin él,
+ * un reel encargado se quedaría «en cola» para siempre: la pantalla de reels no
+ * se enseña (lo que no funciona no sale en la interfaz). Se activa con
+ * `VITE_MEDIA_WORKER_ENABLED=true` en el despliegue que tenga trabajador.
+ */
+export function mediaWorkerEnabled(): boolean {
+  return import.meta.env.VITE_MEDIA_WORKER_ENABLED === 'true';
+}
+
 export const STORAGE_BUCKET = 'brand-media';
 /** Tope del cubo (ver supabase/migrations/…_storage_brand_media.sql). */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;

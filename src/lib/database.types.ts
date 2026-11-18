@@ -516,6 +516,24 @@ export type AiMediaGenerationOutput = {
 
 // ──────────────── fin del bloque de imágenes generadas con IA (Fase 2) ────────────────
 
+// ───────────── Fase 3 · Trabajos de medios encargados desde la aplicación ─────────────
+// Migración 20261118220000_media_jobs_library. Quien edita una marca encarga un
+// reel o un recorte con `request_media_job` (sin clave de servicio); el estado
+// se lee de `jobs` (RLS: quien ve la marca). Al completarse, el resultado se da
+// de alta en `media_assets` con su procedencia (columna común `provenance`,
+// `type` = 'media_job'), y `jobs.result.assets` lo apunta.
+
+export type MediaJobKind = 'media.reel.template' | 'media.image.process';
+
+type MediaJobFunctions = {
+  request_media_job: {
+    Args: { p_brand_id: string; p_kind: MediaJobKind; p_input: Json; p_idempotency_key: string };
+    Returns: JobRow;
+  };
+};
+
+// ─────────────────── fin del bloque de trabajos de medios (Fase 3) ───────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -621,7 +639,8 @@ export type Database = {
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     } & Phase2Functions &
-      ContentFunctions;
+      ContentFunctions &
+      MediaJobFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

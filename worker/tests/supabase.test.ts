@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { LeaseLostError, PermanentError } from '../src/errors.ts';
-import { createSupabaseQueue, createSupabaseStorage } from '../src/supabase.ts';
+import { createSupabaseQueue, createSupabaseStorage, DEFAULT_MAX_OBJECT_BYTES } from '../src/supabase.ts';
 
 const KEY = 'clave-de-servicio-de-prueba';
 
@@ -141,6 +141,20 @@ describe('almacenamiento por la API de Storage', () => {
     const target = path.join(dir, 'bajada.bin');
     await storage.download('org/marca/reels/mi vídeo.mp4', target);
     expect((await readFile(target)).equals(content)).toBe(true);
+  });
+
+  it('un resultado que supera el tope del cubo falla sin reintento y sin subir nada', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', maxObjectBytes: 1024 * 1024 });
+    const source = path.join(dir, 'grande.bin');
+    await writeFile(source, Buffer.alloc(1.6 * 1024 * 1024, 1));
+    const upload = storage.upload(source, 'org/marca/reels/grande.mp4', { contentType: 'video/mp4' });
+    await expect(upload).rejects.toThrow(PermanentError);
+    await expect(upload).rejects.toThrow(/pesa 1,6 MB y el almacenamiento admite 1,0 MB como máximo/);
+    expect(seen).toEqual([]);
+  });
+
+  it('por defecto el tope es el del plan gratuito: 50 MB', () => {
+    expect(DEFAULT_MAX_OBJECT_BYTES).toBe(52_428_800);
   });
 
   it('un archivo que no existe es un fallo sin remedio', async () => {

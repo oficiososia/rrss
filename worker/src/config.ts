@@ -19,6 +19,8 @@ export const configSchema = z.object({
   WORKER_SHUTDOWN_GRACE_MS: int(0, 0, 600_000),
   WORKER_TMP_DIR: z.string().min(1).default(path.join(os.tmpdir(), 'rrss-worker')),
   WORKER_FONTS_DIR: z.string().min(1).optional(),
+  /** Tope de cada archivo subido: el del cubo (50 MB en el plan gratuito de Supabase). */
+  WORKER_MAX_UPLOAD_BYTES: int(50 * 1024 * 1024, 1024 * 1024, 5 * 1024 * 1024 * 1024),
 });
 export type WorkerConfig = z.infer<typeof configSchema>;
 
