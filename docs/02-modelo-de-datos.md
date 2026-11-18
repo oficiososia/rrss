@@ -303,3 +303,55 @@ Pendiente en este bloque: enlazar las variantes de una misma idea para varias
 redes (hoy cada red es una pieza distinta, que se obtiene adaptando el
 documento), comentarios y registro de aprobaciones por pieza (Fase 3), y
 recursos generados o exportados asociados a una versión (llegan con el render).
+
+## 12. Modo agencia: encargos
+
+Implementado y probado en base de datos, en la interfaz (componentes) y en la
+herramienta de la agencia (`agency/`, contra un Supabase simulado). El escenario
+de extremo a extremo (`tests/e2e/12-…`) está escrito y pendiente de ejecutar.
+
+```
+brands ──< content_requests ──< content_request_comments
+              │  encargo            conversación e historial de estados
+              └── content_items (pieza entregada, en borrador)
+```
+
+| Tabla | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `content_requests` | Encargo: título, texto del cliente, red y formato del catálogo, tipo de medio, recursos de la biblioteca de referencia, fecha deseada, estado, pieza y versión entregadas, cerrojo | Quien ve la marca | Solo funciones |
+| `content_request_comments` | Cada comentario y cada cambio de estado, con autor y fecha | Quien ve la marca | Solo funciones |
+
+`brands.ai_mode` (`api` por defecto, o `agency`) dice cómo se redacta con IA en
+la marca; lo cambia quien la gestiona.
+
+**Estados**: `requested` → `in_progress` → `delivered` → (`changes_requested` →
+`in_progress` → `delivered`)… → `accepted`, o `cancelled`.
+
+| Función | Capacidad | Qué hace |
+|---|---|---|
+| `create_content_request` | `comment` | Pide un encargo (también el cliente). Los recursos tienen que ser de la marca; con `p_content_id`, el encargo es sobre una pieza existente (como mucho un encargo abierto por pieza) |
+| `comment_content_request` | `comment` | Comenta |
+| `pending_content_requests` | `edit` | Cola de quien prepara: pedidos, con cambios pedidos y en curso con el cerrojo caducado o propio |
+| `take_content_request(id, clave, minutos)` | `edit` | Toma el encargo. Cerrojo con clave de sesión y caducidad (5 min a 24 h, 4 h por defecto): mientras no caduque, nadie más —ni otra sesión de la misma cuenta— lo toma ni lo entrega (`RQ001`) |
+| `release_content_request` | `edit` | Lo devuelve a la cola |
+| `deliver_content_request(id, documento, versión del esquema, clave, título, nota)` | `edit` | En una transacción: crea la pieza (o añade una versión a la enlazada) **en borrador**, la enlaza, apunta la versión entregada y marca el encargo como entregado |
+| `request_content_request_changes(id, mensaje)` | `approve` | Pide cambios sobre lo entregado (mensaje obligatorio) |
+| `accept_content_request` | `approve` | Acepta y **aprueba la pieza en la versión entregada**; si la pieza tiene una versión posterior, falla (`RQ002`) |
+| `cancel_content_request` | quien lo pidió, o `manage` | Cancela un encargo abierto |
+
+Decisiones que conviene conocer:
+
+- **Aceptar aprueba la pieza** aunque esté en borrador y quien acepta no pueda
+  editar: la entrega hace de envío a revisión. Es la misma regla de siempre
+  («una aprobación vale para la versión que se aprobó»), aplicada a la versión
+  entregada.
+- **El lector (`viewer`) ve los encargos pero no pide ni comenta**: «pedir»
+  usa la capacidad `comment`, que el lector no tiene.
+- **La agencia es un usuario normal**: una cuenta miembro de la organización del
+  cliente con rol `editor` en las marcas que gestiona. No puede aprobar ni
+  aceptar, y la herramienta entra con su correo y contraseña y la clave pública,
+  nunca con la clave de servicio.
+- **El texto del encargo y de los comentarios es dato**: la herramienta lo
+  entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
+- **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
+  de cada comentario.

@@ -117,9 +117,10 @@ Ejemplo completo: [`ejemplos/entrega.json`](./ejemplos/entrega.json).
    **Miembro** con rol **Editor** en cada marca que gestionará la agencia
    (Ajustes → Equipo, o Equipo de la marca). La cuenta de la agencia acepta la
    invitación.
-3. El gestor de la marca pone **Redacción con IA: agencia** en la página de la
-   marca (opcional: sin esto los encargos funcionan igual, pero el editor sigue
-   ofreciendo «Redactar con IA» si la plataforma tiene proveedor).
+3. El gestor de la marca elige, en **Marca → Datos de la marca → Redacción con
+   IA**, «La agencia, por encargo». Con eso aparece la sección Encargos en el
+   menú de la marca y «Pedir a la agencia» en el editor (en lugar de «Redactar
+   con IA»).
 4. En la máquina de la agencia, el archivo de credenciales con la URL y la clave
    pública de staging y el correo y la contraseña de esa cuenta.
 
