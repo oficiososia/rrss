@@ -230,6 +230,12 @@ gratuito lo admite).
 
 ### 2. Vercel
 
+Hecho el 18/11/2026: proyecto `rrss` en el equipo `casa-tomas` (plan Pro), conectado a
+este repositorio, con `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` de **staging** en
+_Production_ y _Preview_, desplegado desde la CLI: https://rrss-omega.vercel.app (las
+vistas previas piden iniciar sesión en Vercel; la dirección de producción es pública).
+No hay ninguna `VITE_AI_*` ni `VITE_MEDIA_WORKER_ENABLED`.
+
 1. Proyecto nuevo importando este repositorio (framework: Vite).
 2. Variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`: las de producción
    en _Production_, las de staging en _Preview_.
