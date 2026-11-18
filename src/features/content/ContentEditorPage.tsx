@@ -6,12 +6,15 @@ import {
   Download,
   History,
   Image as ImageIcon,
+  PencilLine,
   Redo2,
+  ScanEye,
   Save,
   SearchX,
   Sparkles,
   Square,
   Stamp,
+  ShieldAlert,
   Type,
   Undo2,
 } from 'lucide-react';
@@ -67,18 +70,22 @@ import { createEmptyDocument, DocumentError, MAX_LAYERS, type ContentDocument, t
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { assetIdsOf } from './editor/canvas/nodes';
-import type { CanvasViewProps } from './editor/canvas/types';
+import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { editorReducer, initEditor } from './editor/history';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
+import { ArrangeControls, MultiSelectionPanel } from './editor/panels/ArrangeControls';
 import { CopyPanel } from './editor/panels/CopyPanel';
 import { LayersPanel } from './editor/panels/LayersPanel';
 import { PropertiesPanel, type BrandStyle } from './editor/panels/PropertiesPanel';
+import { PieceSettingsDialog } from './editor/PieceSettingsDialog';
+import { NetworkPreviewDialog } from './editor/preview/NetworkPreviewDialog';
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
 import { ExportImageDialog } from './export/ExportImageDialog';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
+import { safeZoneFor } from './safeZones';
 import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage } from './status';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
@@ -180,7 +187,13 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [busyStatus, setBusyStatus] = useState<ContentStatus | null>(null);
+  /** Texto que se está escribiendo directamente sobre el lienzo. */
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [showSafeZone, setShowSafeZone] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [focusText, setFocusText] = useState(0);
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
@@ -191,6 +204,17 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const aiImage = aiImageEnabled();
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
+  const selectedLayers = useMemo(() => {
+    const ids = new Set(state.selectedIds);
+    return state.document.layers.filter((layer) => ids.has(layer.id));
+  }, [state.document.layers, state.selectedIds]);
+
+  // ── Zona segura de la red (orientativa) ──
+  const safeZone = useMemo(() => safeZoneFor(spec, state.document.canvas), [spec, state.document.canvas]);
+  const safeZoneOverlay: SafeZoneOverlay | null = useMemo(
+    () => (showSafeZone && safeZone ? { unsafe: safeZone.unsafe, safe: safeZone.safe } : null),
+    [showSafeZone, safeZone],
+  );
 
   // ── Marca: paleta, tipografías y logotipos del perfil ──
   const profileRow = useActiveProfile(brand.id);
@@ -255,7 +279,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Al pulsar un hallazgo del verificador: elegir la capa o llevar al campo señalado. */
   function selectTarget(target: FindingTarget) {
     if (target.part === 'textLayer' && target.layerId) {
-      dispatch({ type: 'select', id: target.layerId });
+      dispatch({ type: 'select', id: target.layerId, exact: true });
       setPanel('layer');
       setFocusText((n) => n + 1);
       return;
@@ -273,12 +297,28 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }
 
   // ── Lienzo (el envoltorio guarda estas funciones en una referencia: no hace falta memorizarlas) ──
-  const onSelect = (id: string | null) => dispatch({ type: 'select', id });
-  const onChange: CanvasViewProps['onChange'] = (id, patch) => dispatch({ type: 'update', id, patch });
+  const onSelect: CanvasViewProps['onSelect'] = (id, options) =>
+    dispatch({ type: 'select', id, toggle: options?.toggle });
+  const onSelectMany: CanvasViewProps['onSelectMany'] = (ids, additive) =>
+    dispatch({ type: 'selectMany', ids, additive });
+  const onChange: CanvasViewProps['onChange'] = (changes) => dispatch({ type: 'updateMany', changes });
+  /** Doble clic o Intro en un texto: se escribe encima del lienzo. Sin permiso de edición, se enseña su campo. */
   const onEditText = (id: string) => {
-    dispatch({ type: 'select', id });
+    dispatch({ type: 'select', id, exact: true });
     setPanel('layer');
-    setFocusText((n) => n + 1);
+    if (readOnly) setFocusText((n) => n + 1);
+    else setEditingTextId(id);
+  };
+  const onTextCommit: CanvasViewProps['onTextCommit'] = (id, text) => {
+    setEditingTextId(null);
+    const layer = state.document.layers.find((l) => l.id === id);
+    if (layer?.type === 'text' && layer.text !== text) dispatch({ type: 'update', id, patch: { text } });
+    // El foco vuelve al lienzo, para seguir con el teclado.
+    canvasRef.current?.focus();
+  };
+  const onTextCancel = () => {
+    setEditingTextId(null);
+    canvasRef.current?.focus();
   };
 
   // ── Teclado: deshacer, rehacer, guardar y, con una capa elegida, mover, borrar y soltar ──
@@ -298,15 +338,27 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       if (!readOnly) setSaveOpen(true);
       return;
     }
-    if (isTypingTarget(event.target) || !selected) return;
+    if (isTypingTarget(event.target)) return;
+    if (mod && key === 'g') {
+      event.preventDefault();
+      if (!readOnly) dispatch({ type: event.shiftKey ? 'ungroup' : 'group' });
+      return;
+    }
+    if (state.selectedIds.length === 0) return;
     if (event.key === 'Escape') {
       dispatch({ type: 'select', id: null });
       return;
     }
     if (readOnly) return;
-    if ((event.key === 'Delete' || event.key === 'Backspace') && !selected.locked) {
+    // Intro con un texto elegido, desde el lienzo: escribir encima (lo mismo que el doble clic).
+    if (event.key === 'Enter' && event.target === canvasRef.current && selected?.type === 'text' && !selected.locked) {
       event.preventDefault();
-      dispatch({ type: 'remove', id: selected.id });
+      onEditText(selected.id);
+      return;
+    }
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      dispatch({ type: 'removeSelection' });
       return;
     }
     const step = event.shiftKey ? 10 : 1;
@@ -319,7 +371,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     const move = moves[event.key];
     if (move) {
       event.preventDefault();
-      dispatch({ type: 'nudge', id: selected.id, dx: move[0], dy: move[1] });
+      dispatch({ type: 'nudgeSelection', dx: move[0], dy: move[1] });
     }
   }
 
@@ -434,6 +486,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     );
   }
 
+  /** Renombrar la pieza o cambiar su red y formato. Devuelve el mensaje de error, o null si ha ido bien. */
+  async function saveSettings(changes: { title?: string; target?: { network: string; format: string } }) {
+    try {
+      const row = await mutations.update.mutateAsync({ contentId, ...changes });
+      setSettingsOpen(false);
+      const backToDraft = changes.target && item.status === 'approved' && row.status === 'draft';
+      toast.success(backToDraft ? 'Guardado. Ha vuelto a borrador: hay que aprobarla otra vez.' : 'Guardado');
+      return null;
+    } catch (error) {
+      return translateError(error);
+    }
+  }
+
   function leave(event: MouseEvent<HTMLAnchorElement>) {
     if (!dirty) return;
     event.preventDefault();
@@ -514,6 +579,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {canEdit && !item.archived_at && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              data-testid="editor-settings"
+              title="Cambiar el nombre, la red o el formato"
+            >
+              <PencilLine className="h-4 w-4" aria-hidden />
+              Nombre y red
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} data-testid="editor-preview">
+            <ScanEye className="h-4 w-4" aria-hidden />
+            Vista previa
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} data-testid="editor-history">
             <History className="h-4 w-4" aria-hidden />
             Historial
@@ -736,22 +817,50 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <section
+          ref={canvasRef}
           tabIndex={0}
-          aria-label="Lienzo. Con una capa elegida, usa las flechas para moverla y Supr para borrarla."
-          className="h-[55dvh] min-h-[16rem] rounded-xl bg-subtle p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary lg:h-auto"
+          aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él."
+          className="flex h-[55dvh] min-h-[16rem] flex-col rounded-xl bg-subtle p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary lg:h-auto"
         >
-          <Suspense fallback={<Spinner label="Preparando el lienzo…" />}>
-            <CanvasView
-              document={state.document}
-              selectedId={state.selectedId}
-              readOnly={readOnly}
-              images={images}
-              onSelect={onSelect}
-              onChange={onChange}
-              onEditText={onEditText}
-              label={`Diseño de ${item.title}, ${state.document.layers.length} capas`}
-            />
-          </Suspense>
+          {safeZone && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted" data-testid="safe-zone-bar">
+              <Button
+                variant={showSafeZone ? 'primary' : 'secondary'}
+                size="sm"
+                aria-pressed={showSafeZone}
+                onClick={() => setShowSafeZone((on) => !on)}
+                data-testid="safe-zone-toggle"
+              >
+                <ShieldAlert className="h-4 w-4" aria-hidden />
+                Zonas seguras
+              </Button>
+              {showSafeZone && (
+                <span data-testid="safe-zone-note">
+                  En rojo, lo que puede tapar la interfaz de {networkLabel(item.network)}.
+                  {safeZone.provenance === 'unverified' ? ' Orientativo: la red no publica la cifra.' : ''}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="min-h-0 flex-1">
+            <Suspense fallback={<Spinner label="Preparando el lienzo…" />}>
+              <CanvasView
+                document={state.document}
+                selectedIds={state.selectedIds}
+                readOnly={readOnly}
+                images={images}
+                onSelect={onSelect}
+                onSelectMany={onSelectMany}
+                onChange={onChange}
+                onEditText={onEditText}
+                editingTextId={editingTextId}
+                onTextCommit={onTextCommit}
+                onTextCancel={onTextCancel}
+                safeZone={safeZoneOverlay}
+                label={`Diseño de ${item.title}, ${state.document.layers.length} capas`}
+              />
+            </Suspense>
+          </div>
         </section>
 
         <aside
@@ -765,21 +874,34 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               <TabsTrigger value="copy">Publicación</TabsTrigger>
               {BrandCheck && <TabsTrigger value="brand">Marca</TabsTrigger>}
             </TabsList>
-            <TabsContent value="layer" className="pt-4">
-              <PropertiesPanel
-                layer={selected}
-                canvas={canvas}
-                readOnly={readOnly}
-                dispatch={dispatch}
-                brandStyle={brandStyle}
-                allowedRatios={allowed?.ratios ?? null}
-                textRef={textRef}
-              />
+            <TabsContent value="layer" className="space-y-5 pt-4">
+              {selectedLayers.length > 1 ? (
+                readOnly ? (
+                  <p className="text-sm text-muted">{selectedLayers.length} capas elegidas.</p>
+                ) : (
+                  <MultiSelectionPanel layers={selectedLayers} dispatch={dispatch} />
+                )
+              ) : (
+                <>
+                  <PropertiesPanel
+                    layer={selected}
+                    canvas={canvas}
+                    readOnly={readOnly}
+                    dispatch={dispatch}
+                    brandStyle={brandStyle}
+                    allowedRatios={allowed?.ratios ?? null}
+                    textRef={textRef}
+                  />
+                  {selected && !readOnly && !selected.locked && (
+                    <ArrangeControls layers={[selected]} dispatch={dispatch} />
+                  )}
+                </>
+              )}
             </TabsContent>
             <TabsContent value="layers" className="pt-4">
               <LayersPanel
                 layers={state.document.layers}
-                selectedId={state.selectedId}
+                selectedIds={state.selectedIds}
                 readOnly={readOnly}
                 dispatch={dispatch}
               />
@@ -845,6 +967,28 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         </aside>
       </div>
 
+      {previewOpen && (
+        <NetworkPreviewDialog
+          open
+          onOpenChange={setPreviewOpen}
+          document={state.document}
+          images={images}
+          spec={spec}
+          targetName={targetLabel(item.network, item.format)}
+          accountName={brand.name}
+        />
+      )}
+      {settingsOpen && (
+        <PieceSettingsDialog
+          open
+          onOpenChange={setSettingsOpen}
+          current={{ title: item.title, network: item.network, format: item.format }}
+          status={item.status}
+          canvasRatio={canvas.aspectRatio}
+          saving={mutations.update.isPending}
+          onSave={saveSettings}
+        />
+      )}
       <SaveVersionDialog
         open={saveOpen}
         onOpenChange={(open) => {

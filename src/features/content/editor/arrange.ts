@@ -138,7 +138,10 @@ export function normalizeRect(a: { x: number; y: number }, b: { x: number; y: nu
  * lo contienen entero: así una foto de fondo que ocupa todo el lienzo no entra
  * en cada selección por rectángulo. Ocultas y bloqueadas no se eligen así.
  */
-export function layersInRect(layers: readonly Layer[], rect: Bounds): string[] {
+export function layersInRect(
+  layers: readonly Pick<Layer, 'id' | 'x' | 'y' | 'width' | 'height' | 'rotation' | 'visible' | 'locked'>[],
+  rect: Bounds,
+): string[] {
   if (rect.right - rect.left < 1 && rect.bottom - rect.top < 1) return [];
   return layers
     .filter((layer) => {

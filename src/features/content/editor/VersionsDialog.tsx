@@ -20,6 +20,7 @@ interface VersionsDialogProps {
 }
 
 const noop = () => {};
+const NONE: string[] = [];
 
 function VersionPreview({
   brandId,
@@ -69,12 +70,17 @@ function VersionPreview({
             <Suspense fallback={<Spinner />}>
               <CanvasView
                 document={loaded.document}
-                selectedId={null}
+                selectedIds={NONE}
                 readOnly
                 images={images}
                 onSelect={noop}
+                onSelectMany={noop}
                 onChange={noop}
                 onEditText={noop}
+                editingTextId={null}
+                onTextCommit={noop}
+                onTextCancel={noop}
+                safeZone={null}
                 label={`Vista previa de la versión ${summary.version}`}
               />
             </Suspense>
