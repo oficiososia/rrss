@@ -53,9 +53,10 @@ npm run test:e2e
 No hace falta `.env.local` para la prueba: `playwright.config.ts` lee la URL y
 la clave `anon` del stack local con `supabase status -o env` (la clave anónima
 local es pública y la misma en todas las máquinas) y se las pasa a Vite por
-entorno, junto con `VITE_AI_TEXT_ENABLED=true` y `VITE_MEDIA_WORKER_ENABLED=true`.
-Para `npm run dev` contra el stack local sí hace falta `.env.local` con esas dos
-variables.
+entorno, junto con `VITE_AI_TEXT_ENABLED=true`, `VITE_AI_IMAGE_ENABLED=true` y
+`VITE_MEDIA_WORKER_ENABLED=true`. Para `npm run dev` contra el stack local sí
+hace falta `.env.local` con la URL y la clave (y los interruptores que se
+quieran ver).
 
 `11-reels.spec.ts` arranca además el **trabajador de medios** de verdad contra
 el stack local (`node worker/scripts/run-supabase.ts local`, que lee la URL y la
@@ -66,8 +67,8 @@ Para ejecutar solo ese archivo tras una tanda completa:
 
 Playwright (Chromium; la primera vez, `npx playwright install chromium`) arranca
 dos procesos: `supabase functions serve --env-file supabase/functions/e2e.env`
-(la función `ai-generate` con el proveedor simulado de pruebas locales) y la
-aplicación en el puerto 5273. Recorre en un navegador de verdad la Fase 1
+(las funciones `ai-generate`, `ai-media` y `ai-media-poll` con los simulados
+de pruebas locales) y la aplicación en el puerto 5273. Recorre en un navegador de verdad la Fase 1
 (registro con confirmación de correo, dos organizaciones, alta de marcas, perfil
 con versiones, biblioteca, invitaciones y roles, aislamiento, recuperación de
 contraseña, ajustes, actividad y panel de plataforma) y la aceptación de la
@@ -75,7 +76,11 @@ Fase 2 (`09-fase2-ia-editor-y-cupo.spec.ts`): texto generado con IA para dos
 marcas, cada uno conforme a su perfil; edición de texto y capa con versiones e
 historial; comprobación de marca sin IA y con IA; coste por organización en
 «Consumo de IA», y cupo agotado que detiene la generación sin llamar al
-proveedor.
+proveedor. Después, `10-fase2-imagen-con-ia.spec.ts` (imagen con IA síncrona y
+asíncrona desde el editor; la asíncrona la cierra `ai-media-poll`, que la
+prueba llama con la clave de servicio local porque en local no hay secretos de
+Vault) y `11-reels.spec.ts` (encargar un reel, montarlo con el trabajador y
+verlo en la biblioteca).
 
 El proveedor simulado solo se activa con `AI_E2E_SIMULATED_PROVIDER=true` **y**
 un Supabase local (dentro de Docker la función ve `SUPABASE_URL=http://kong:8000`,
