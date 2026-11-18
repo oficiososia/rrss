@@ -225,4 +225,21 @@ describe('Reels en la biblioteca', () => {
     expect(await screen.findByTestId('reel-job-status')).toHaveTextContent('En cola');
     expect(screen.queryByTestId('reel-job-cancel')).not.toBeInTheDocument();
   });
+
+  it('avisa antes de montar si el reel puede pasar de 50 MB', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner' });
+    seedLibrary();
+    fake.rows('media_assets').push(asset('clip-largo', 'video', 'sala.mp4', 'video/mp4', 20_000));
+    const { user } = renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    await user.click(await screen.findByText('Pase lateral'));
+    const add = await screen.findByRole('button', { name: 'Añadir «sala.mp4»' });
+    await user.click(add);
+    expect(screen.getByTestId('reel-size')).toHaveTextContent(/MB/);
+    expect(screen.queryByTestId('reel-size-warning')).not.toBeInTheDocument();
+    for (let i = 0; i < 8; i++) await user.click(add);
+    expect(screen.getByTestId('reel-size-warning')).toHaveTextContent(/Puede pasar de 50 MB/);
+    // Es un aviso: se puede encargar igual.
+    expect(screen.getByTestId('reel-submit')).toBeEnabled();
+  });
 });

@@ -29,7 +29,7 @@ import { mediaWorkerEnabled } from '@/config/app';
 import { useSignedUrls } from '@/features/library/api';
 import { useBrand } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
-import { cn, formatDateTime } from '@/lib/utils';
+import { cn, formatBytes, formatDateTime } from '@/lib/utils';
 import { useCancelMediaJob, useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
 import {
   buildReelInput,
@@ -47,6 +47,7 @@ import {
   type ReelText,
   type TextPosition,
 } from './plan';
+import { estimateReelSize } from './size';
 import { REEL_TEMPLATES } from './templates';
 
 const POSITION_LABEL: Record<TextPosition, string> = { top: 'Arriba', center: 'Centro', bottom: 'Abajo' };
@@ -123,7 +124,16 @@ function ReelBuilder({ brandId }: { brandId: string }) {
   );
   const urls = useSignedUrls(thumbPaths);
   const estimate = template ? estimateDuration(template, pieces) : { total: 0 };
-  const problems = reelProblems(template, pieces, texts);
+  const size = template ? estimateReelSize(template, pieces) : null;
+  const problems = [
+    ...reelProblems(template, pieces, texts),
+    // Si ni en el caso favorable cabe, el trabajador lo rechazará seguro: no se encarga.
+    ...(size?.verdict === 'exceeds'
+      ? [
+          `El reel pesaría al menos ${formatBytes(size.low)} y el almacenamiento admite ${formatBytes(size.limit)} por archivo. Acórtalo o usa menos clips.`,
+        ]
+      : []),
+  ];
   const maxSeconds = template?.timing.maxTotalSeconds ?? 0;
 
   const touch = () => {
@@ -466,6 +476,22 @@ function ReelBuilder({ brandId }: { brandId: string }) {
               style={{ width: `${maxSeconds ? Math.min(100, (estimate.total / maxSeconds) * 100) : 0}%` }}
             />
           </div>
+          {size && pieces.length > 0 && (
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span className="font-medium">Peso estimado</span>
+              <span data-testid="reel-size">
+                {formatBytes(size.low)} – {formatBytes(size.high)}
+              </span>
+            </div>
+          )}
+          {size?.verdict === 'maybe' && (
+            <div data-testid="reel-size-warning">
+              <Notice tone="warning">
+                Puede pasar de {formatBytes(size.limit)}, el máximo que admite el almacenamiento por archivo; si pasa,
+                el montaje fallará al final. Para asegurarlo, acorta el reel o usa menos segundos de clip.
+              </Notice>
+            </div>
+          )}
           {problems.length > 0 && pieces.length > 0 && (
             <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
               {problems.map((p) => (
