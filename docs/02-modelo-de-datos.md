@@ -355,3 +355,32 @@ Decisiones que conviene conocer:
   entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
 - **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
   de cada comentario.
+
+## 13. Fase 6: planes, suscripciones y límites
+
+Implementado y probado en base de datos (migración `20261119310000_plans_subscriptions`).
+Detalle de uso, Stripe y variables en `docs/facturacion.md`.
+
+```
+plans ──< subscriptions >── organizations    una suscripción por organización (se crea sola)
+          ·····  billing_events               avisos de Stripe recibidos (sin FK)
+```
+
+| Tabla | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `plans` | Precio, periodo, cuotas (marcas, personas, almacenamiento, cupo de IA) y funciones | Cualquiera con sesión (los activos); el superadministrador, todos | Superadministrador, directamente (RLS + columnas); `is_default` con `admin_set_default_plan` |
+| `subscriptions` | Plan asignado, origen (`default`, `manual`, `stripe`), estado, precio pactado, ids de Stripe | Administradores de la organización y superadministradores | `admin_set_organization_plan` o `billing_apply_stripe_event` (clave de servicio); auditada |
+| `billing_events` | Idempotencia y rastro de los avisos de Stripe | Superadministradores | `billing_apply_stripe_event` |
+
+- **Plan efectivo** (`private.org_plan`): el de la suscripción si está vigente
+  (`active`, `trialing`, `past_due`), si no el plan por defecto.
+- **Límites** con disparadores (marcas, miembros, invitaciones, archivos, encargos
+  de medios) y en `ai_reserve_generation`. Errores `PL001` (límite) y `PL002`
+  (función no incluida). Los disparadores son `SECURITY INVOKER` para saber qué
+  rol escribe; las comprobaciones (`private.check_*`) son `SECURITY DEFINER`.
+- **Cupo de IA** = el sobrescrito en `usage_quotas` o, si no hay, el del plan.
+  `ai_reserve_generation` bloquea ahora la fila de `subscriptions` (sustituye al
+  bloqueo de `usage_quotas` de la sección 9).
+- **Margen**: `admin_billing_overview(primer día del mes)` → ingresos del plan
+  llevados a un mes, coste de IA del mes y margen por organización.
+- **Organizaciones anteriores** a esta migración: plan «Heredado» (sin límites).
