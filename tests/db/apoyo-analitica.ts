@@ -127,9 +127,10 @@ export function socialKit(db: Db) {
       params,
     );
     const id = row!.data.id;
-    await db.query(`update public.scheduled_publications set scheduled_at = now() - interval '1 second' where id = $1`, [
-      id,
-    ]);
+    await db.query(
+      `update public.scheduled_publications set scheduled_at = now() - interval '1 second' where id = $1`,
+      [id],
+    );
     return id;
   }
 

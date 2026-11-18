@@ -33,13 +33,38 @@ const PNG_1x1 = Buffer.from(
 const SERVICE_KEY = 'clave-de-servicio-de-pruebas';
 const monthStart = () => `${new Date().toISOString().slice(0, 7)}-01`;
 
-type Job = { id: string; kind: string; payload: Record<string, unknown>; attempts: number; max_attempts: number; organization_id: string; brand_id: string | null };
-type Report = { id: string; status: string; revision: number; media_asset_id: string | null; summary: Record<string, unknown>; error: string | null };
+type Job = {
+  id: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  attempts: number;
+  max_attempts: number;
+  organization_id: string;
+  brand_id: string | null;
+};
+type Report = {
+  id: string;
+  status: string;
+  revision: number;
+  media_asset_id: string | null;
+  summary: Record<string, unknown>;
+  error: string | null;
+};
 
 const claim = async (kinds: string[]) =>
-  (await kit.serviceCall('claim_jobs', { p_worker: WORKER, p_kinds: kinds, p_limit: 20, p_lease_seconds: 300 })) as Job[];
+  (await kit.serviceCall('claim_jobs', {
+    p_worker: WORKER,
+    p_kinds: kinds,
+    p_limit: 20,
+    p_lease_seconds: 300,
+  })) as Job[];
 const reportOf = async (brand = marca) =>
-  (await db.query<Report>(`select * from public.analytics_reports where brand_id = $1 and period_start = $2`, [brand, monthStart()]))[0]!;
+  (
+    await db.query<Report>(`select * from public.analytics_reports where brand_id = $1 and period_start = $2`, [
+      brand,
+      monthStart(),
+    ])
+  )[0]!;
 
 /** El trabajador de medios: reclama el PDF, lo dibuja en la carpeta-cubo y cierra el trabajo. */
 async function renderPdfJobs() {
@@ -94,7 +119,13 @@ beforeAll(async () => {
     marca,
     JSON.stringify({
       business: { description: 'Panadería' },
-      visual: { colors: [{ name: 'Verde', hex: '#0f766e', role: 'principal' }, { name: 'Ocre', hex: '#B45309', role: '' }], logoAssetIds: [logoId] },
+      visual: {
+        colors: [
+          { name: 'Verde', hex: '#0f766e', role: 'principal' },
+          { name: 'Ocre', hex: '#B45309', role: '' },
+        ],
+        logoAssetIds: [logoId],
+      },
     }),
   ]);
 
@@ -106,7 +137,12 @@ beforeAll(async () => {
   await kit.publishDue(graph);
   await kit.serviceCall('analytics_enqueue_captures', {});
   for (const job of await claim([ANALYTICS_CAPTURE_JOB_KIND])) {
-    await processCaptureJob(job, { rpc: kit.rpc, api: createInsightsGraph({ fetch: graph.fetch }), keyRing: KEYS, workerName: WORKER });
+    await processCaptureJob(job, {
+      rpc: kit.rpc,
+      api: createInsightsGraph({ fetch: graph.fetch }),
+      keyRing: KEYS,
+      workerName: WORKER,
+    });
   }
 });
 
@@ -129,7 +165,9 @@ describe('informe mensual sin intervención', () => {
       workerName: WORKER,
       capture: () => null,
     });
-    const response = await handler(new Request('http://local/social-insights', { method: 'POST', headers: { apikey: SERVICE_KEY } }));
+    const response = await handler(
+      new Request('http://local/social-insights', { method: 'POST', headers: { apikey: SERVICE_KEY } }),
+    );
     expect(response.status).toBe(200);
     expect(((await response.json()) as { results: Array<{ kind: string; outcome: string }> }).results).toEqual([
       expect.objectContaining({ kind: ANALYTICS_REPORT_JOB_KIND, outcome: 'rendering' }),
@@ -157,13 +195,29 @@ describe('informe mensual sin intervención', () => {
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     const ready = await reportOf();
     expect(ready.status).toBe('ready');
-    const [asset] = await db.query<{ kind: string; mime_type: string; folder: string; bytes: string; provenance: Record<string, unknown>; storage_path: string }>(
-      `select kind, mime_type, folder, bytes::text, provenance, storage_path from public.media_assets where id = $1`,
-      [ready.media_asset_id],
-    );
-    expect(asset).toMatchObject({ kind: 'document', mime_type: 'application/pdf', folder: 'Informes', storage_path: result!.output.path });
+    const [asset] = await db.query<{
+      kind: string;
+      mime_type: string;
+      folder: string;
+      bytes: string;
+      provenance: Record<string, unknown>;
+      storage_path: string;
+    }>(`select kind, mime_type, folder, bytes::text, provenance, storage_path from public.media_assets where id = $1`, [
+      ready.media_asset_id,
+    ]);
+    expect(asset).toMatchObject({
+      kind: 'document',
+      mime_type: 'application/pdf',
+      folder: 'Informes',
+      storage_path: result!.output.path,
+    });
     expect(Number(asset!.bytes)).toBe(pdf.length);
-    expect(asset!.provenance).toMatchObject({ type: 'analytics_report', report_id: ready.id, source: 'schedule', revision: 1 });
+    expect(asset!.provenance).toMatchObject({
+      type: 'analytics_report',
+      report_id: ready.id,
+      source: 'schedule',
+      revision: 1,
+    });
   });
 
   it('quien edita lo vuelve a pedir (nueva revisión); quien solo ve, no; meses sin terminar, no', async () => {
@@ -171,23 +225,45 @@ describe('informe mensual sin intervención', () => {
     lastMonth.setUTCDate(1);
     lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
     const pasado = lastMonth.toISOString().slice(0, 10);
-    const [pedido] = await as<{ status: string; source: string }>(db, editor, `select * from public.request_analytics_report($1, $2)`, [marca, pasado]);
+    const [pedido] = await as<{ status: string; source: string }>(
+      db,
+      editor,
+      `select * from public.request_analytics_report($1, $2)`,
+      [marca, pasado],
+    );
     expect(pedido).toMatchObject({ status: 'queued', source: 'manual' });
     // Pedirlo otra vez mientras se prepara no duplica.
-    const [otra] = await as<{ id: string }>(db, editor, `select * from public.request_analytics_report($1, $2)`, [marca, pasado]);
-    expect((await db.query(`select 1 from public.jobs where kind = 'analytics.report' and payload ->> 'report_id' = $1`, [otra!.id])).length).toBe(1);
+    const [otra] = await as<{ id: string }>(db, editor, `select * from public.request_analytics_report($1, $2)`, [
+      marca,
+      pasado,
+    ]);
+    expect(
+      (
+        await db.query(`select 1 from public.jobs where kind = 'analytics.report' and payload ->> 'report_id' = $1`, [
+          otra!.id,
+        ])
+      ).length,
+    ).toBe(1);
     await denied(db, lector, `select public.request_analytics_report($1, $2)`, [marca, pasado], /edita/);
     await denied(db, ajena, `select public.request_analytics_report($1, $2)`, [marca, pasado], /edita/);
-    await expect(as(db, editor, `select public.request_analytics_report($1, $2)`, [marca, monthStart()])).rejects.toThrow(/terminado/);
+    await expect(
+      as(db, editor, `select public.request_analytics_report($1, $2)`, [marca, monthStart()]),
+    ).rejects.toThrow(/terminado/);
   });
 
   it('si el PDF falla del todo, el informe queda fallido con el motivo', async () => {
     // Regenerar el del mes actual (el reloj no lo haría; aquí se fuerza por la función interna).
     await db.query(`select private.analytics_report_enqueue($1, $2, 'manual', null)`, [marca, monthStart()]);
-    for (const job of await claim([ANALYTICS_REPORT_JOB_KIND])) await processReportJob(job, { rpc: kit.rpc, workerName: WORKER });
+    for (const job of await claim([ANALYTICS_REPORT_JOB_KIND]))
+      await processReportJob(job, { rpc: kit.rpc, workerName: WORKER });
     const actual = await reportOf();
     const pdfJob = (await claim([REPORT_PDF_KIND])).find((j) => j.payload.report_id === actual.id);
-    await kit.serviceCall('fail_job', { p_job_id: pdfJob!.id, p_worker: WORKER, p_error: 'Sin espacio en el cubo', p_retry: false });
+    await kit.serviceCall('fail_job', {
+      p_job_id: pdfJob!.id,
+      p_worker: WORKER,
+      p_error: 'Sin espacio en el cubo',
+      p_retry: false,
+    });
     expect(await reportOf()).toMatchObject({ status: 'failed', error: 'Sin espacio en el cubo', revision: 2 });
   });
 
@@ -211,13 +287,22 @@ describe('informe mensual sin intervención', () => {
       await denied(db, ana, sql, sql.includes('$1') ? [marca] : [], /permission denied/);
     }
     expect(await as(db, ajena, `select 1 from public.analytics_reports`)).toEqual([]);
-    expect((await as(db, lector, `select 1 from public.analytics_reports where brand_id = $1`, [marca])).length).toBeGreaterThan(0);
+    expect(
+      (await as(db, lector, `select 1 from public.analytics_reports where brand_id = $1`, [marca])).length,
+    ).toBeGreaterThan(0);
     expect(marcaAjena).toBeTruthy();
   });
 
   it('sin la clave de servicio la función no toca la cola', async () => {
-    const handler = createSocialInsightsHandler({ serviceKeys: [SERVICE_KEY], rpc: kit.rpc, workerName: WORKER, capture: () => null });
+    const handler = createSocialInsightsHandler({
+      serviceKeys: [SERVICE_KEY],
+      rpc: kit.rpc,
+      workerName: WORKER,
+      capture: () => null,
+    });
     expect((await handler(new Request('http://local/x', { method: 'POST' }))).status).toBe(401);
-    expect((await handler(new Request('http://local/x', { method: 'GET', headers: { apikey: SERVICE_KEY } }))).status).toBe(405);
+    expect(
+      (await handler(new Request('http://local/x', { method: 'GET', headers: { apikey: SERVICE_KEY } }))).status,
+    ).toBe(405);
   });
 });

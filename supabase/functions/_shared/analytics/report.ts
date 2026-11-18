@@ -27,10 +27,19 @@ export interface ReportSource {
   report: { id: string; revision: number; status: string; source: string };
   brand: { id: string; name: string; timezone: string };
   period: { start: string; end: string; previous_start: string };
-  visual: { colors: Array<{ name?: string; hex?: string; role?: string }>; logo: { path: string; mime_type: string } | null };
+  visual: {
+    colors: Array<{ name?: string; hex?: string; role?: string }>;
+    logo: { path: string; mime_type: string } | null;
+  };
   accounts: Array<{ id: string; network: string; username: string; status: string }>;
   definitions: MetricDefinition[];
-  account_metrics: Array<{ account_id: string; metric_id: string; date: string; value: number | string; provisional: boolean }>;
+  account_metrics: Array<{
+    account_id: string;
+    metric_id: string;
+    date: string;
+    value: number | string;
+    provisional: boolean;
+  }>;
   media: Array<Omit<MediaSummary, 'metrics'> & { metrics: Record<string, number | string> }>;
   unavailable: Array<UnavailableEntry & { times: number }>;
   capture_errors: Array<{ error_code: string; message: string; times: number }>;
@@ -60,11 +69,16 @@ export function reportColors(colors: ReportSource['visual']['colors']): { primar
   if (!valid.length) return NEUTRAL;
   const main = valid.find((c) => /princip|primar|primary|main/i.test(c.role ?? '')) ?? valid[0]!;
   const second = valid.find((c) => c !== main);
-  return { primary: main.hex!.trim().toUpperCase(), secondary: (second?.hex ?? NEUTRAL.secondary).trim().toUpperCase() };
+  return {
+    primary: main.hex!.trim().toUpperCase(),
+    secondary: (second?.hex ?? NEUTRAL.secondary).trim().toUpperCase(),
+  };
 }
 
 const monthName = (day: string) =>
-  new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`));
+  new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(
+    new Date(`${day}T00:00:00Z`),
+  );
 
 const shortDay = (day: string) => `${Number(day.slice(8, 10))}`;
 
@@ -114,10 +128,19 @@ export function buildReportDocument(source: ReportSource, analysis: Analysis, no
     .map((t) => ({
       label: t.label,
       value: formatNumber(t.value!),
-      change: t.changePct !== null ? `${formatPct(t.changePct)} frente al mes anterior` : t.previous === null ? 'sin mes anterior' : null,
-      note: [t.estimated ? 'estimación de Meta' : null, t.daysWithData < t.days && t.aggregation === 'daily' ? `${t.daysWithData} de ${t.days} días` : null]
-        .filter(Boolean)
-        .join(' · ') || null,
+      change:
+        t.changePct !== null
+          ? `${formatPct(t.changePct)} frente al mes anterior`
+          : t.previous === null
+            ? 'sin mes anterior'
+            : null,
+      note:
+        [
+          t.estimated ? 'estimación de Meta' : null,
+          t.daysWithData < t.days && t.aggregation === 'daily' ? `${t.daysWithData} de ${t.days} días` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ') || null,
     }));
   const postRows = (list: Analysis['posts']['best']) =>
     list.map((p) => [
@@ -137,7 +160,10 @@ export function buildReportDocument(source: ReportSource, analysis: Analysis, no
     previousLabel: monthName(analysis.previous.from),
     generatedAt: new Date(now).toISOString(),
     kpis,
-    charts: [chart('instagram.account.reach', 'Alcance diario (Instagram)'), chart('instagram.account.total_interactions', 'Interacciones diarias (Instagram)')],
+    charts: [
+      chart('instagram.account.reach', 'Alcance diario (Instagram)'),
+      chart('instagram.account.total_interactions', 'Interacciones diarias (Instagram)'),
+    ],
     posts: [
       { title: 'Mejores publicaciones del mes', columns, rows: postRows(analysis.posts.best) },
       { title: 'Publicaciones con menos respuesta', columns, rows: postRows(analysis.posts.worst) },
@@ -179,7 +205,10 @@ export interface ReportDeps {
 
 export type ReportOutcome = 'rendering' | 'stale' | 'error';
 
-export async function processReportJob(job: ReportJob, deps: ReportDeps): Promise<{ outcome: ReportOutcome; reportId: string | null }> {
+export async function processReportJob(
+  job: ReportJob,
+  deps: ReportDeps,
+): Promise<{ outcome: ReportOutcome; reportId: string | null }> {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? (() => undefined);
   const reportId = typeof job.payload.report_id === 'string' ? job.payload.report_id : '';

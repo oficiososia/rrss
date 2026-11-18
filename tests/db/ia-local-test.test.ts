@@ -41,7 +41,12 @@ describe('guarda del proveedor simulado de pruebas locales', () => {
     for (const url of ['http://127.0.0.1:55321', 'http://localhost:54321', 'http://kong:8000']) {
       const config = loadLocalTestTextConfig({ [LOCAL_TEST_FLAG]: 'true', SUPABASE_URL: url })!;
       expect(config.providers.map((p) => p.id)).toEqual(['simulated']);
-      expect(config.models.map((m) => m.purposes)).toEqual([['post.caption'], ['profile.proposal'], ['brand.check']]);
+      expect(config.models.map((m) => m.purposes)).toEqual([
+        ['post.caption'],
+        ['profile.proposal'],
+        ['brand.check'],
+        ['analytics.summary'],
+      ]);
       expect(config.problems.join(' ')).toMatch(/SIMULADO para pruebas locales/);
     }
     expect(isLocalSupabaseUrl('http://127.0.0.1')).toBe(true);

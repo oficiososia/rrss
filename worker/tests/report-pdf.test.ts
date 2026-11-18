@@ -5,7 +5,16 @@ import { PDFDocument } from 'pdf-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PermanentError } from '../src/errors.ts';
 import { createReportPdfHandler, renderReportPdf, type ReportDocument } from '../src/handlers/report-pdf.ts';
-import { BRAND, createBucket, inBrand, makePatternPhoto, ORG, OTHER_BRAND, runHandler, type Bucket } from './helpers/media.ts';
+import {
+  BRAND,
+  createBucket,
+  inBrand,
+  makePatternPhoto,
+  ORG,
+  OTHER_BRAND,
+  runHandler,
+  type Bucket,
+} from './helpers/media.ts';
 
 const DOCUMENT: ReportDocument = {
   version: 1,
@@ -23,7 +32,10 @@ const DOCUMENT: ReportDocument = {
   charts: [
     {
       title: 'Alcance diario (Instagram)',
-      points: Array.from({ length: 31 }, (_, i) => ({ label: String(i + 1), value: i % 7 === 3 ? null : 200 + ((i * 37) % 500) })),
+      points: Array.from({ length: 31 }, (_, i) => ({
+        label: String(i + 1),
+        value: i % 7 === 3 ? null : 200 + ((i * 37) % 500),
+      })),
     },
   ],
   posts: [
@@ -34,7 +46,15 @@ const DOCUMENT: ReportDocument = {
     },
   ],
   sections: [
-    { title: 'Datos (cifras medidas)', kind: 'facts', items: Array.from({ length: 30 }, (_, i) => `Dato número ${i + 1}: una cifra medida con su comparación, larga para que haya que partir la línea en dos o más trozos.`) },
+    {
+      title: 'Datos (cifras medidas)',
+      kind: 'facts',
+      items: Array.from(
+        { length: 30 },
+        (_, i) =>
+          `Dato número ${i + 1}: una cifra medida con su comparación, larga para que haya que partir la línea en dos o más trozos.`,
+      ),
+    },
     { title: 'Hipótesis', kind: 'hypotheses', items: ['El alcance bajó: podría deberse a publicar menos.'] },
     { title: 'Lo que no se puede medir', kind: 'unmeasurable', items: ['Impresiones: Meta la retiró el 21/04/2025.'] },
   ],
@@ -84,22 +104,32 @@ describe('informe en PDF', () => {
     const result = (await runHandler(
       createReportPdfHandler(),
       bucket,
-      payload({ logo: { path: inBrand('no-existe.png'), mime_type: 'image/png' }, output: { path: `${ORG}/${BRAND}/informes/otro.pdf` } }),
+      payload({
+        logo: { path: inBrand('no-existe.png'), mime_type: 'image/png' },
+        output: { path: `${ORG}/${BRAND}/informes/otro.pdf` },
+      }),
     )) as { output: { pages: number } };
     expect(result.output.pages).toBe(sin.pages);
   });
 
   it('un mes sin cifras también se dibuja', async () => {
-    const vacio = await renderReportPdf({ ...DOCUMENT, kpis: [], charts: [{ title: 'Alcance', points: [] }], posts: [] }, null);
+    const vacio = await renderReportPdf(
+      { ...DOCUMENT, kpis: [], charts: [{ title: 'Alcance', points: [] }], posts: [] },
+      null,
+    );
     expect(vacio.pages).toBeGreaterThanOrEqual(1);
   });
 
   it('rechaza sin reintento una carga inválida o una salida fuera de la marca', async () => {
-    await expect(runHandler(createReportPdfHandler(), bucket, payload({ document: { ...DOCUMENT, version: 2 } }))).rejects.toThrow(
-      PermanentError,
-    );
     await expect(
-      runHandler(createReportPdfHandler(), bucket, payload({ output: { path: `${ORG}/${OTHER_BRAND}/informes/x.pdf` } })),
+      runHandler(createReportPdfHandler(), bucket, payload({ document: { ...DOCUMENT, version: 2 } })),
+    ).rejects.toThrow(PermanentError);
+    await expect(
+      runHandler(
+        createReportPdfHandler(),
+        bucket,
+        payload({ output: { path: `${ORG}/${OTHER_BRAND}/informes/x.pdf` } }),
+      ),
     ).rejects.toThrow(/no pertenece a la marca/);
   });
 });

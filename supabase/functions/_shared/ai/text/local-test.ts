@@ -188,7 +188,24 @@ function profileProposal(request: AiProviderRequest): string {
   });
 }
 
+/** Analítica: una hipótesis por cada uno de los dos primeros datos, citándolo; nada inventado. */
+function analyticsSummary(request: AiProviderRequest): string {
+  let datos: Array<{ id: string; dato: string }> = [];
+  try {
+    datos = (JSON.parse(material(request, 'datos medidos') ?? '{}') as { datos?: typeof datos }).datos ?? [];
+  } catch {
+    datos = [];
+  }
+  return JSON.stringify({
+    hypotheses: datos.slice(0, 2).map((d) => ({
+      text: `[simulado] Podría merecer la pena fijarse en esto: ${d.dato}`,
+      based_on: [d.id],
+    })),
+  });
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
+  analytics_summary: analyticsSummary,
   post_copy: postCopy,
   brand_check: brandCheck,
   brand_profile_proposal: profileProposal,

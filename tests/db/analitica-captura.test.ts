@@ -22,7 +22,18 @@ import {
   type SimulatedGraph,
 } from '../../supabase/functions/_shared/social/simulated-graph.ts';
 import { KEYS, socialKit } from './apoyo-analitica';
-import { as, asService, createBrand, createDb, createOrg, createUser, denied, join, type Db, type TestUser } from './helpers';
+import {
+  as,
+  asService,
+  createBrand,
+  createDb,
+  createOrg,
+  createUser,
+  denied,
+  join,
+  type Db,
+  type TestUser,
+} from './helpers';
 
 let db: Db;
 let kit: ReturnType<typeof socialKit>;
@@ -39,7 +50,13 @@ const today = () => new Date().toISOString().slice(0, 10);
 type Job = { id: string; payload: Record<string, unknown>; attempts: number; max_attempts: number };
 
 function deps(extra: Partial<CaptureDeps> = {}): CaptureDeps {
-  return { rpc: kit.rpc, api: createInsightsGraph({ fetch: graph.fetch }), keyRing: KEYS, workerName: WORKER, ...extra };
+  return {
+    rpc: kit.rpc,
+    api: createInsightsGraph({ fetch: graph.fetch }),
+    keyRing: KEYS,
+    workerName: WORKER,
+    ...extra,
+  };
 }
 
 /** Encola (idempotente por día) y atiende las capturas pendientes. */
@@ -114,7 +131,11 @@ describe('ventana de captura', () => {
   it('lee el uso del límite de llamadas que declara Meta', () => {
     expect(
       parseUsageHeader(
-        JSON.stringify({ '1': [{ type: 'instagram', call_count: 12, total_cputime: 30, total_time: 4, estimated_time_to_regain_access: 0 }] }),
+        JSON.stringify({
+          '1': [
+            { type: 'instagram', call_count: 12, total_cputime: 30, total_time: 4, estimated_time_to_regain_access: 0 },
+          ],
+        }),
       ),
     ).toEqual({ callCount: 12, totalCputime: 30, totalTime: 4, regainMinutes: 0 });
     expect(parseUsageHeader('no es json')).toBeNull();
@@ -129,7 +150,10 @@ describe('captura con la Graph API simulada', () => {
     // Seguidores: el valor del momento, fechado hoy.
     const followers = await accountRows('instagram.account.followers');
     expect(followers).toEqual([
-      expect.objectContaining({ metric_date: today(), value: String(simulatedFollowers(SIMULATED_IG_USER_ID, today())) }),
+      expect.objectContaining({
+        metric_date: today(),
+        value: String(simulatedFollowers(SIMULATED_IG_USER_ID, today())),
+      }),
     ]);
 
     // Diarias: 28 días por cada métrica que se captura, con la cifra exacta de la red.
@@ -154,7 +178,12 @@ describe('captura con la Graph API simulada', () => {
     expect(huérfanas).toEqual([]);
 
     // Publicaciones: reel con sus métricas propias; la imagen sin ellas.
-    const media = await db.query<{ external_media_id: string; metric_id: string; value: string; media_product_type: string }>(
+    const media = await db.query<{
+      external_media_id: string;
+      metric_id: string;
+      value: string;
+      media_product_type: string;
+    }>(
       `select external_media_id, metric_id, value::text, media_product_type from public.media_metrics_daily
        where social_account_id = $1 order by 1, 2`,
       [cuenta],
@@ -250,7 +279,9 @@ describe('captura con la Graph API simulada', () => {
     graph.expireToken(TOKEN);
     const [r] = await capture('2099-01-04');
     expect(r).toMatchObject({ outcome: 'failed', errorCode: 'token_expired' });
-    const [acc] = await db.query<{ status: string }>(`select status from public.social_accounts where id = $1`, [cuenta]);
+    const [acc] = await db.query<{ status: string }>(`select status from public.social_accounts where id = $1`, [
+      cuenta,
+    ]);
     expect(acc!.status).toBe('needs_reauth');
     const [job] = await db.query<{ status: string }>(`select status from public.jobs where idempotency_key = $1`, [
       `analytics.capture:${cuenta}:2099-01-04`,
@@ -278,21 +309,25 @@ describe('el servidor valida lo que guarda', () => {
     });
 
   it('rechaza métricas que no se capturan, fechas futuras, cifras negativas y publicaciones ajenas', async () => {
-    await expect(record({ p_account_rows: [{ metric_id: 'instagram.account.impressions', date: today(), value: 1 }] })).rejects.toThrow(
-      /no admitida/,
-    );
-    await expect(record({ p_account_rows: [{ metric_id: 'instagram.account.reach', date: '2999-01-01', value: 1 }] })).rejects.toThrow(
-      /Fecha/,
-    );
-    await expect(record({ p_account_rows: [{ metric_id: 'instagram.account.reach', date: today(), value: -1 }] })).rejects.toThrow(
-      /Cifra/,
-    );
+    await expect(
+      record({ p_account_rows: [{ metric_id: 'instagram.account.impressions', date: today(), value: 1 }] }),
+    ).rejects.toThrow(/no admitida/);
+    await expect(
+      record({ p_account_rows: [{ metric_id: 'instagram.account.reach', date: '2999-01-01', value: 1 }] }),
+    ).rejects.toThrow(/Fecha/);
+    await expect(
+      record({ p_account_rows: [{ metric_id: 'instagram.account.reach', date: today(), value: -1 }] }),
+    ).rejects.toThrow(/Cifra/);
     await expect(
       record({ p_media_rows: [{ external_id: '999', metric_id: 'instagram.media.reach', date: today(), value: 1 }] }),
     ).rejects.toThrow(/no es de esta cuenta/);
     // Una métrica de reel no se aplica a una imagen.
     await expect(
-      record({ p_media_rows: [{ external_id: post, metric_id: 'instagram.media.ig_reels_avg_watch_time', date: today(), value: 1 }] }),
+      record({
+        p_media_rows: [
+          { external_id: post, metric_id: 'instagram.media.ig_reels_avg_watch_time', date: today(), value: 1 },
+        ],
+      }),
     ).rejects.toThrow(/no se aplica/);
   });
 
@@ -308,7 +343,9 @@ describe('el servidor valida lo que guarda', () => {
     await denied(db, ana, `update public.account_metrics_daily set value = 0`, [], /permission denied/);
     await denied(db, ana, `select public.analytics_capture_begin($1)`, [cuenta], /permission denied/);
     await denied(db, ana, `select public.analytics_enqueue_captures()`, [], /permission denied/);
-    await expect(asService(db, `update public.account_metrics_daily set value = 0`)).rejects.toThrow(/permission denied/);
+    await expect(asService(db, `update public.account_metrics_daily set value = 0`)).rejects.toThrow(
+      /permission denied/,
+    );
   });
 });
 
@@ -326,9 +363,15 @@ describe('lectura para el panel', () => {
     const delReel = resumen.find((r) => r.media_product_type === 'REELS')!;
     expect(delReel.metrics['instagram.media.views']).toBe(simulatedMediaValue(reel, 'REELS', 'views', 0));
 
-    expect(await as(db, ajena, `select * from public.analytics_media_summary($1, $2, $3)`, [marca, desde, hasta])).toEqual([]);
+    expect(
+      await as(db, ajena, `select * from public.analytics_media_summary($1, $2, $3)`, [marca, desde, hasta]),
+    ).toEqual([]);
     expect(await as(db, ajena, `select 1 from public.account_metrics_daily`)).toEqual([]);
-    const defs = await as<{ n: string }>(db, ajena, `select count(*)::text as n from public.analytics_metric_definitions`);
+    const defs = await as<{ n: string }>(
+      db,
+      ajena,
+      `select count(*)::text as n from public.analytics_metric_definitions`,
+    );
     expect(Number(defs[0]!.n)).toBeGreaterThan(20);
   });
 });

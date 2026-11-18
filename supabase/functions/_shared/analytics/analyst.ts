@@ -191,8 +191,14 @@ export function lastDays(days: number, now = Date.now()): Period {
 
 const inPeriod = (day: string, p: Period) => day >= p.from && day < p.to;
 
-function total(def: MetricDefinition, points: MetricPoint[], p: Period): { value: number | null; days: number; provisional: boolean } {
-  const rows = points.filter((x) => x.metric_id === def.id && inPeriod(x.date, p)).sort((a, b) => a.date.localeCompare(b.date));
+function total(
+  def: MetricDefinition,
+  points: MetricPoint[],
+  p: Period,
+): { value: number | null; days: number; provisional: boolean } {
+  const rows = points
+    .filter((x) => x.metric_id === def.id && inPeriod(x.date, p))
+    .sort((a, b) => a.date.localeCompare(b.date));
   if (!rows.length) return { value: null, days: 0, provisional: false };
   const provisional = rows.some((r) => r.provisional);
   if (def.aggregation === 'snapshot') return { value: rows[rows.length - 1]!.value, days: rows.length, provisional };
@@ -200,7 +206,9 @@ function total(def: MetricDefinition, points: MetricPoint[], p: Period): { value
 }
 
 /** Totales del periodo frente al anterior, para las métricas de cuenta que se capturan. */
-export function metricTotals(input: Pick<AnalysisInput, 'definitions' | 'points' | 'period' | 'previous'>): MetricTotal[] {
+export function metricTotals(
+  input: Pick<AnalysisInput, 'definitions' | 'points' | 'period' | 'previous'>,
+): MetricTotal[] {
   return input.definitions
     .filter((d) => d.scope === 'account' && d.status === 'captured')
     .sort((a, b) => a.sort - b.sort)
@@ -235,8 +243,10 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 
 /** Puntuación de una publicación: interacciones si las hay; si no, alcance. */
 function score(m: MediaSummary): { score: number; metric: string } | null {
-  if (typeof m.metrics[INTERACTIONS_METRIC] === 'number') return { score: m.metrics[INTERACTIONS_METRIC]!, metric: INTERACTIONS_METRIC };
-  if (typeof m.metrics[MEDIA_REACH_METRIC] === 'number') return { score: m.metrics[MEDIA_REACH_METRIC]!, metric: MEDIA_REACH_METRIC };
+  if (typeof m.metrics[INTERACTIONS_METRIC] === 'number')
+    return { score: m.metrics[INTERACTIONS_METRIC]!, metric: INTERACTIONS_METRIC };
+  if (typeof m.metrics[MEDIA_REACH_METRIC] === 'number')
+    return { score: m.metrics[MEDIA_REACH_METRIC]!, metric: MEDIA_REACH_METRIC };
   return null;
 }
 
@@ -258,8 +268,16 @@ export function formatStats(media: MediaSummary[]): FormatStats[] {
       format,
       label: format === 'REELS' ? 'Reels' : 'Imágenes y carruseles',
       posts: rows.length,
-      avgInteractions: avg(rows.flatMap((r) => (typeof r.metrics[INTERACTIONS_METRIC] === 'number' ? [r.metrics[INTERACTIONS_METRIC]!] : []))),
-      avgReach: avg(rows.flatMap((r) => (typeof r.metrics[MEDIA_REACH_METRIC] === 'number' ? [r.metrics[MEDIA_REACH_METRIC]!] : []))),
+      avgInteractions: avg(
+        rows.flatMap((r) =>
+          typeof r.metrics[INTERACTIONS_METRIC] === 'number' ? [r.metrics[INTERACTIONS_METRIC]!] : [],
+        ),
+      ),
+      avgReach: avg(
+        rows.flatMap((r) =>
+          typeof r.metrics[MEDIA_REACH_METRIC] === 'number' ? [r.metrics[MEDIA_REACH_METRIC]!] : [],
+        ),
+      ),
     };
   });
 }
@@ -381,14 +399,19 @@ export function analyze(input: AnalysisInput): Analysis {
   }
 
   // ── Avisos sobre lo sólido que es esto ──
-  if (posts < 3) caveats.push(`Con ${posts} publicación${posts === 1 ? '' : 'es'} en el periodo no hay base para sacar conclusiones sobre qué funciona mejor.`);
+  if (posts < 3)
+    caveats.push(
+      `Con ${posts} publicación${posts === 1 ? '' : 'es'} en el periodo no hay base para sacar conclusiones sobre qué funciona mejor.`,
+    );
   if (totals.some((t) => t.estimated && t.value !== null)) {
     caveats.push('El alcance y las cuentas que interactuaron son estimaciones de Meta, no recuentos exactos.');
   }
   if (totals.some((t) => t.aggregation === 'daily' && t.value !== null && t.daysWithData < t.days)) {
     caveats.push('Hay días sin cifras en el periodo: los totales solo suman los días medidos.');
   }
-  caveats.push('Los días se cuentan en hora UTC; Instagram puede cortar el día a otra hora, así que una cifra diaria puede no coincidir exactamente con la de la aplicación.');
+  caveats.push(
+    'Los días se cuentan en hora UTC; Instagram puede cortar el día a otra hora, así que una cifra diaria puede no coincidir exactamente con la de la aplicación.',
+  );
 
   // ── Lo que no se puede medir ──
   const unmeasurable: Unmeasurable[] = [];
@@ -399,17 +422,30 @@ export function analyze(input: AnalysisInput): Analysis {
     seen.add(u.id);
     unmeasurable.push(u);
   };
-  if (!input.accounts.length) add({ id: 'no_accounts', label: 'Cuentas', reason: 'No hay ninguna cuenta social conectada: no hay nada que medir.' });
+  if (!input.accounts.length)
+    add({
+      id: 'no_accounts',
+      label: 'Cuentas',
+      reason: 'No hay ninguna cuenta social conectada: no hay nada que medir.',
+    });
   for (const a of input.accounts) {
     if (a.status === 'needs_reauth') {
-      add({ id: `account:${a.username}`, label: `@${a.username}`, reason: 'Hay que volver a conectar la cuenta: desde que caducó su acceso no se mide.' });
+      add({
+        id: `account:${a.username}`,
+        label: `@${a.username}`,
+        reason: 'Hay que volver a conectar la cuenta: desde que caducó su acceso no se mide.',
+      });
     } else if (a.status === 'disconnected') {
       add({ id: `account:${a.username}`, label: `@${a.username}`, reason: 'La cuenta está desconectada: no se mide.' });
     }
   }
   const provisional = totals.some((t) => t.provisional) || input.media.some((m) => m.provisional);
   if (provisional) {
-    add({ id: 'provisional', label: 'Últimos días', reason: 'Las cifras más recientes son provisionales: Meta puede corregirlas hasta 48 horas después.' });
+    add({
+      id: 'provisional',
+      label: 'Últimos días',
+      reason: 'Las cifras más recientes son provisionales: Meta puede corregirlas hasta 48 horas después.',
+    });
   }
   for (const t of totals) {
     if (t.value === null) add({ id: `empty:${t.metricId}`, label: t.label, reason: 'No hay cifras de este periodo.' });
@@ -459,7 +495,11 @@ export function analyze(input: AnalysisInput): Analysis {
 }
 
 /** Serie diaria de una métrica de cuenta en el periodo (null en los días sin cifra). */
-export function dailySeries(points: MetricPoint[], metricId: string, p: Period): Array<{ date: string; value: number | null }> {
+export function dailySeries(
+  points: MetricPoint[],
+  metricId: string,
+  p: Period,
+): Array<{ date: string; value: number | null }> {
   const byDay = new Map(points.filter((x) => x.metric_id === metricId).map((x) => [x.date, x.value]));
   const out: Array<{ date: string; value: number | null }> = [];
   for (let t = dayMs(p.from); t < dayMs(p.to); t += DAY) {

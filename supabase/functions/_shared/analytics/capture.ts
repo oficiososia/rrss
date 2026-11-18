@@ -244,7 +244,11 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
       apiCalls += 1;
       const r = await deps.api.accountFields(ig, token);
       if (r.followersCount === null) {
-        unavailable.push({ metric_id: followers.id, reason: 'no_data', message: 'Meta no dio el número de seguidores.' });
+        unavailable.push({
+          metric_id: followers.id,
+          reason: 'no_data',
+          message: 'Meta no dio el número de seguidores.',
+        });
       } else {
         accountRows.push({ metric_id: followers.id, date: today, value: r.followersCount });
       }
@@ -305,7 +309,12 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
     for (const kind of ['FEED', 'REELS'] as const) {
       for (const [name, message] of rejectedMedia[kind]) {
         const spec = mediaMetrics.find((m) => m.api_name === name);
-        if (spec) unavailable.push({ metric_id: spec.id, reason: 'unsupported', message: `Meta rechazó la métrica: ${message}` });
+        if (spec)
+          unavailable.push({
+            metric_id: spec.id,
+            reason: 'unsupported',
+            message: `Meta rechazó la métrica: ${message}`,
+          });
       }
     }
 
@@ -328,7 +337,8 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
     try {
       if (e instanceof StopCapture || (e instanceof SocialApiError && e.kind === 'rate_limited')) {
         const seconds = e instanceof StopCapture ? e.seconds : RATE_LIMIT_WAIT_SECONDS;
-        const message = e instanceof StopCapture ? e.message : 'Meta pide esperar (límite de llamadas). Se sigue más tarde.';
+        const message =
+          e instanceof StopCapture ? e.message : 'Meta pide esperar (límite de llamadas). Se sigue más tarde.';
         const saved = await record(wrote ? 'partial' : 'failed', 'rate_limited', message);
         await rpcOk('analytics_defer_job', {
           p_job_id: job.id,
@@ -336,7 +346,13 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
           p_seconds: Math.min(86_400, seconds),
           p_message: message,
         });
-        return { ...base, outcome: 'deferred', accountRows: saved.account_rows, mediaRows: saved.media_rows, errorCode: 'rate_limited' };
+        return {
+          ...base,
+          outcome: 'deferred',
+          accountRows: saved.account_rows,
+          mediaRows: saved.media_rows,
+          errorCode: 'rate_limited',
+        };
       }
       if (e instanceof SocialApiError && e.kind === 'token') {
         await rpcOk('social_account_report', {
@@ -348,12 +364,28 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
           'El acceso a la cuenta ha caducado o se ha retirado: vuelve a conectarla en Marca → Cuentas conectadas.';
         const saved = await record(wrote ? 'partial' : 'failed', 'token_expired', message);
         await failJob(message, false);
-        return { ...base, outcome: wrote ? 'partial' : 'failed', accountRows: saved.account_rows, mediaRows: saved.media_rows, errorCode: 'token_expired' };
+        return {
+          ...base,
+          outcome: wrote ? 'partial' : 'failed',
+          accountRows: saved.account_rows,
+          mediaRows: saved.media_rows,
+          errorCode: 'token_expired',
+        };
       }
       if (e instanceof TokenKeyError) {
-        const saved = await record('failed', 'token_unreadable', `No se puede leer el token de la cuenta: ${e.message}`);
+        const saved = await record(
+          'failed',
+          'token_unreadable',
+          `No se puede leer el token de la cuenta: ${e.message}`,
+        );
         await failJob('No se puede leer el token de la cuenta', false);
-        return { ...base, outcome: 'failed', accountRows: saved.account_rows, mediaRows: saved.media_rows, errorCode: 'token_unreadable' };
+        return {
+          ...base,
+          outcome: 'failed',
+          accountRows: saved.account_rows,
+          mediaRows: saved.media_rows,
+          errorCode: 'token_unreadable',
+        };
       }
       const code = e instanceof SocialApiError ? e.kind : 'unexpected';
       const message = e instanceof SocialApiError ? `No se pudo medir: ${e.message}` : 'Error inesperado al medir.';
@@ -361,7 +393,13 @@ export async function processCaptureJob(job: CaptureJob, deps: CaptureDeps): Pro
       const saved = await record(wrote ? 'partial' : 'failed', code, message);
       // Lo transitorio se reintenta con la espera creciente de la cola.
       await failJob(message, code === 'transient' || code === 'unexpected');
-      return { ...base, outcome: wrote ? 'partial' : 'failed', accountRows: saved.account_rows, mediaRows: saved.media_rows, errorCode: code };
+      return {
+        ...base,
+        outcome: wrote ? 'partial' : 'failed',
+        accountRows: saved.account_rows,
+        mediaRows: saved.media_rows,
+        errorCode: code,
+      };
     } catch (inner) {
       log('failure_handling_failed', { accountId: account.id, message: (inner as Error)?.message });
       await failJob('No se pudo registrar la captura', true);

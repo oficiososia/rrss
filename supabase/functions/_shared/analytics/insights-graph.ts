@@ -19,7 +19,12 @@
 //   · Permiso: instagram_manage_insights (además de instagram_basic y
 //     pages_read_engagement con Facebook Login).
 import { SocialApiError } from '../social/contract.ts';
-import { classifyGraphError, DEFAULT_GRAPH_API_VERSION, META_GRAPH_HOST, type FetchLike } from '../social/meta-graph.ts';
+import {
+  classifyGraphError,
+  DEFAULT_GRAPH_API_VERSION,
+  META_GRAPH_HOST,
+  type FetchLike,
+} from '../social/meta-graph.ts';
 
 /** Uso del límite de llamadas que declara Meta en la última respuesta (en %, de 0 a 100). */
 export interface ApiUsage {

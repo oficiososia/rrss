@@ -31,11 +31,26 @@ export const reportDocumentSchema = z.object({
   periodLabel: text(100),
   previousLabel: text(100),
   generatedAt: text(40),
-  kpis: z.array(z.object({ label: text(80), value: text(40), change: text(120).nullable(), note: text(200).nullable() })).max(12),
+  kpis: z
+    .array(z.object({ label: text(80), value: text(40), change: text(120).nullable(), note: text(200).nullable() }))
+    .max(12),
   charts: z
-    .array(z.object({ title: text(120), points: z.array(z.object({ label: text(10), value: z.number().nonnegative().nullable() })).max(62) }))
+    .array(
+      z.object({
+        title: text(120),
+        points: z.array(z.object({ label: text(10), value: z.number().nonnegative().nullable() })).max(62),
+      }),
+    )
     .max(4),
-  posts: z.array(z.object({ title: text(120), columns: z.array(text(40)).max(6), rows: z.array(z.array(text(120)).max(6)).max(10) })).max(4),
+  posts: z
+    .array(
+      z.object({
+        title: text(120),
+        columns: z.array(text(40)).max(6),
+        rows: z.array(z.array(text(120)).max(6)).max(10),
+      }),
+    )
+    .max(4),
   sections: z
     .array(
       z.object({
@@ -53,7 +68,10 @@ export const reportPdfPayloadSchema = z.object({
   report_id: z.string().uuid(),
   revision: z.number().int().positive(),
   document: reportDocumentSchema,
-  logo: z.object({ path: storagePathSchema, mime_type: z.enum(['image/png', 'image/jpeg']) }).nullable().optional(),
+  logo: z
+    .object({ path: storagePathSchema, mime_type: z.enum(['image/png', 'image/jpeg']) })
+    .nullable()
+    .optional(),
   output: z.strictObject({ path: storagePathSchema }),
 });
 
@@ -131,7 +149,10 @@ export async function renderReportPdf(
     if (line) lines.push(line);
     return lines.length ? lines : [''];
   };
-  const write = (s: string, opts: { x?: number; size?: number; font?: PDFFont; color?: RGB; max?: number; gap?: number } = {}) => {
+  const write = (
+    s: string,
+    opts: { x?: number; size?: number; font?: PDFFont; color?: RGB; max?: number; gap?: number } = {},
+  ) => {
     const size = opts.size ?? 10;
     const font = opts.font ?? regular;
     const x = opts.x ?? MARGIN;
@@ -153,7 +174,13 @@ export async function renderReportPdf(
     const scale = Math.min(box / image.width, box / image.height);
     const w = image.width * scale;
     const h = image.height * scale;
-    page.drawRectangle({ x: MARGIN - 6, y: A4.height - 60 - box - 6, width: box + 12, height: box + 12, color: rgb(1, 1, 1) });
+    page.drawRectangle({
+      x: MARGIN - 6,
+      y: A4.height - 60 - box - 6,
+      width: box + 12,
+      height: box + 12,
+      color: rgb(1, 1, 1),
+    });
     page.drawImage(image, { x: MARGIN + (box - w) / 2, y: A4.height - 60 - box + (box - h) / 2, width: w, height: h });
     titleX = MARGIN + box + 28;
   }
@@ -216,7 +243,13 @@ export async function renderReportPdf(
     const innerW = A4.width - left - MARGIN;
     const base = y - chartH;
     page.drawLine({ start: { x: left, y: base }, end: { x: left + innerW, y: base }, thickness: 0.8, color: LINE });
-    page.drawText(clean(String(Math.round(max))), { x: MARGIN, y: base + chartH - 8, size: 7, font: regular, color: MUTED });
+    page.drawText(clean(String(Math.round(max))), {
+      x: MARGIN,
+      y: base + chartH - 8,
+      size: 7,
+      font: regular,
+      color: MUTED,
+    });
     page.drawText('0', { x: MARGIN, y: base, size: 7, font: regular, color: MUTED });
     const step = innerW / Math.max(1, chart.points.length);
     chart.points.forEach((p, i) => {
@@ -251,7 +284,12 @@ export async function renderReportPdf(
         x += w;
       });
       y -= 16;
-      page.drawLine({ start: { x: MARGIN, y: y + 3 }, end: { x: A4.width - MARGIN, y: y + 3 }, thickness: 0.4, color: LINE });
+      page.drawLine({
+        start: { x: MARGIN, y: y + 3 },
+        end: { x: A4.width - MARGIN, y: y + 3 },
+        thickness: 0.4,
+        color: LINE,
+      });
     };
     row(table.columns, bold, MUTED);
     for (const r of table.rows) row(r, regular, INK);
@@ -270,7 +308,13 @@ export async function renderReportPdf(
       ensure(14);
       const mark = section.kind === 'facts' ? 'Dato' : section.kind === 'hypotheses' ? 'Hipótesis' : '·';
       const markWidth = width(mark, bold, 8.5) + 6;
-      page.drawText(clean(mark), { x: MARGIN, y: y - 9.5, size: 8.5, font: bold, color: section.kind === 'hypotheses' ? secondary : MUTED });
+      page.drawText(clean(mark), {
+        x: MARGIN,
+        y: y - 9.5,
+        size: 8.5,
+        font: bold,
+        color: section.kind === 'hypotheses' ? secondary : MUTED,
+      });
       write(item, { x: MARGIN + Math.max(markWidth, 14), size: 9.5, gap: 3 });
       y -= 3;
     }
@@ -280,7 +324,9 @@ export async function renderReportPdf(
   pages.forEach((p, i) => {
     const footer = `${clean(document.footer)}  ·  Página ${i + 1} de ${pages.length}`;
     const lines = wrap(footer, regular, 7, A4.width - 2 * MARGIN);
-    lines.slice(0, 2).forEach((line, j) => p.drawText(line, { x: MARGIN, y: 24 - j * 9, size: 7, font: regular, color: MUTED }));
+    lines
+      .slice(0, 2)
+      .forEach((line, j) => p.drawText(line, { x: MARGIN, y: 24 - j * 9, size: 7, font: regular, color: MUTED }));
   });
 
   return { bytes: await pdf.save(), pages: pages.length };

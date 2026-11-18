@@ -82,7 +82,10 @@ const ACCOUNT_RANGES: Record<string, [number, number]> = {
 /** Cifra simulada de una métrica de cuenta en un día (AAAA-MM-DD). */
 export function simulatedAccountValue(igUserId: string, metric: string, day: string): number {
   if (metric === 'total_interactions') {
-    return ['likes', 'comments', 'saves', 'shares'].reduce((sum, m) => sum + simulatedAccountValue(igUserId, m, day), 0);
+    return ['likes', 'comments', 'saves', 'shares'].reduce(
+      (sum, m) => sum + simulatedAccountValue(igUserId, m, day),
+      0,
+    );
   }
   const [min, max] = ACCOUNT_RANGES[metric] ?? [0, 10];
   return simulatedNumber(`${igUserId}|${metric}|${day}`, min, max);

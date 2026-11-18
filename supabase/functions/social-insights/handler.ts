@@ -62,7 +62,12 @@ export function createSocialInsightsHandler(deps: SocialInsightsDeps): (request:
           const r = await processCaptureJob(job, { ...capture, rpc: deps.rpc, workerName: deps.workerName });
           results.push({ jobId: job.id, kind: job.kind, outcome: r.outcome });
         } else if (job.kind === ANALYTICS_REPORT_JOB_KIND) {
-          const r = await processReportJob(job, { rpc: deps.rpc, workerName: deps.workerName, now: deps.now, log: deps.log });
+          const r = await processReportJob(job, {
+            rpc: deps.rpc,
+            workerName: deps.workerName,
+            now: deps.now,
+            log: deps.log,
+          });
           results.push({ jobId: job.id, kind: job.kind, outcome: r.outcome });
         }
       } catch {
