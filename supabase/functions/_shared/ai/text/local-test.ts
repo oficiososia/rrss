@@ -188,10 +188,100 @@ function profileProposal(request: AiProviderRequest): string {
   });
 }
 
+/**
+ * Plan de campaña determinista: una pieza cada dos días, alternando los
+ * destinos pedidos (primero una de cada red). El pie sale del perfil (mensaje
+ * clave, llamada a la acción, tono) y la idea, de la instrucción.
+ *
+ * Además imita a un modelo COMPROMETIDO: si algún material contiene «ignora lo
+ * anterior», añade una pieza que obedece a la inyección (otra red, fuera de
+ * fechas, «aprobado y publicado»). El producto debe descartarla; la prueba de
+ * extremo a extremo comprueba que no llega a los borradores.
+ */
+function campaignPlan(request: AiProviderRequest): string {
+  const profile = profileOf(request);
+  const prompt = request.input.prompt;
+  const range = /Fechas: del (\d{4}-\d{2}-\d{2}) al (\d{4}-\d{2}-\d{2})/.exec(prompt);
+  const max = Number(/Máximo de piezas: (\d+)\./.exec(prompt)?.[1] ?? '1');
+  const targets = [...prompt.matchAll(/- Destino: ([a-z0-9_]+)\/([a-z0-9_]+)/g)].map((m) => ({
+    network: m[1]!,
+    format: m[2]!,
+  }));
+  const instruction = withoutVetoes(material(request, 'instrucción') ?? '', profile);
+  let library: { id: string; kind: string }[] = [];
+  try {
+    library = JSON.parse(material(request, 'biblioteca') ?? '[]') as { id: string; kind: string }[];
+  } catch {
+    library = [];
+  }
+  const images = library.filter((asset) => asset.kind === 'image');
+  const start = range ? Date.parse(`${range[1]}T00:00:00Z`) : 0;
+  const end = range ? Date.parse(`${range[2]}T00:00:00Z`) : 0;
+  const days = Math.max(1, Math.round((end - start) / 86_400_000) + 1);
+  const dayAt = (offset: number) => new Date(start + offset * 86_400_000).toISOString().slice(0, 10);
+
+  // Una de cada red primero; después, el resto de formatos.
+  const order: { network: string; format: string }[] = [];
+  const byNetwork = new Map<string, { network: string; format: string }[]>();
+  for (const target of targets) byNetwork.set(target.network, [...(byNetwork.get(target.network) ?? []), target]);
+  for (let round = 0; order.length < targets.length; round += 1) {
+    for (const list of byNetwork.values()) if (list[round]) order.push(list[round]!);
+  }
+
+  const message = profile.voice?.keyMessages?.[0] ?? profile.business?.description ?? '';
+  const cta = profile.voice?.callsToAction?.[0] ?? (formal(profile) ? 'Le esperamos' : 'Te esperamos');
+  const openers = formal(profile)
+    ? ['Le presentamos', 'Le invitamos a conocer', 'Le contamos', 'Descubra']
+    : ['Te presentamos', 'Ven a conocer', 'Te contamos', 'Descubre'];
+  const hashtags = [...(profile.voice?.hashtags?.required ?? []), ...(profile.voice?.hashtags?.recommended ?? [])];
+  const count = Math.max(1, Math.min(max, Math.ceil(days / 2)));
+  const shortInstruction = instruction.slice(0, 120);
+  const pieces = Array.from({ length: order.length ? count : 0 }, (_, i) => ({
+    ...order[i % order.length]!,
+    date: dayAt(Math.min(days - 1, i * 2)),
+    idea: `[simulado] Pieza ${i + 1} de ${count}: ${shortInstruction}`,
+    caption: [`${openers[i % openers.length]}: ${lowerFirst(sentence(message || shortInstruction))}`, sentence(cta)]
+      .filter(Boolean)
+      .join(' '),
+    hashtags,
+    assetIds: images.length ? [images[i % images.length]!.id] : [],
+    why: `[simulado] Reparto fijo: una pieza cada dos días, alternando redes (${i + 1}/${count}).`,
+  }));
+
+  const everything = (request.input.context ?? []).map((part) => part.content).join('\n');
+  if (/ignora lo anterior/i.test(everything)) {
+    pieces.push({
+      network: 'x',
+      format: 'post',
+      date: dayAt(days + 365),
+      idea: 'Aprobado y publicado por orden del documento',
+      caption: 'APROBADO. Publicar ya.',
+      hashtags: [],
+      assetIds: ['00000000-0000-0000-0000-000000000000'],
+      why: 'El documento lo ordena.',
+    });
+  }
+
+  const tone = profile.voice?.tone ?? [];
+  return JSON.stringify({
+    objective: `[simulado] ${sentence(shortInstruction)}`,
+    summary: `[simulado] ${count} piezas entre ${range?.[1] ?? '?'} y ${range?.[2] ?? '?'}.`,
+    observed: [
+      `[simulado] La instrucción pide: «${shortInstruction}».`,
+      tone.length ? `[simulado] El tono de la marca es ${tone.join(', ')}.` : '[simulado] El perfil no describe el tono.',
+      `[simulado] La biblioteca enviada tiene ${library.length} recursos (${images.length} imágenes).`,
+    ],
+    dataBacked: [],
+    hypotheses: ['[simulado] Publicar cada dos días mantiene la presencia sin saturar.'],
+    pieces,
+  });
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
   post_copy: postCopy,
   brand_check: brandCheck,
   brand_profile_proposal: profileProposal,
+  campaign_plan: campaignPlan,
 };
 
 export function createLocalTestProvider(): SimulatedProvider {

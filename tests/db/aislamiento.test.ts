@@ -180,6 +180,9 @@ const TENANT_TABLES = [
   'content_versions',
   'content_requests',
   'content_request_comments',
+  'campaigns',
+  'campaign_plans',
+  'campaign_contents',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -270,6 +273,9 @@ describe('aislamiento entre organizaciones', () => {
       'content_versions',
       'content_requests',
       'content_request_comments',
+      'campaigns',
+      'campaign_plans',
+      'campaign_contents',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -1342,5 +1348,120 @@ describe('imágenes generadas con IA en la biblioteca', () => {
       await denied(db, user, `select private.ai_media_poll_dispatch()`, [], /permission denied/);
     }
     await denied(db, null, `select private.ai_media_poll_dispatch()`, [], /permission denied/);
+  });
+});
+
+describe('campañas (Fase 4)', () => {
+  // Una campaña aceptada en B (con su pieza) y otra propuesta en A.
+  let campaignA1: string, campaignB1: string;
+  const START = '2026-11-23';
+  const plan = (asset: string) => ({
+    objective: 'Objetivo',
+    summary: '',
+    reasoning: { observed: [], dataBacked: [], hypotheses: [], dataNote: '' },
+    pieces: [
+      {
+        network: 'instagram',
+        format: 'post',
+        date: START,
+        idea: 'Idea',
+        caption: 'Texto',
+        hashtags: [],
+        assetIds: [asset],
+        why: '',
+      },
+    ],
+  });
+  const create = async (user: TestUser, brand: string, asset: string) => {
+    const gen = await serviceRpc<{ id: string }>(db, 'ai_reserve_generation', {
+      p_user_id: user.id,
+      p_brand_id: brand,
+      p_task: 'text',
+      p_purpose: 'campaign.plan',
+      p_provider: 'simulated',
+      p_model: 'sim-text-1',
+      p_reserve_micros: 5000,
+    });
+    await serviceRpc(db, 'ai_complete_generation', { p_generation_id: gen.id, p_cost_micros: 100 });
+    const [row] = await as<{ id: string }>(
+      db,
+      user,
+      `select id from public.create_campaign($1, 'Campaña', 'Prepara la semana', array['instagram'], $2::date, $2::date, $3::jsonb, $4)`,
+      [brand, START, JSON.stringify(plan(asset)), gen.id],
+    );
+    return row!.id;
+  };
+  const DOC = { schemaVersion: 1, canvas: {}, layers: [], copy: { caption: 'Texto' } };
+
+  beforeAll(async () => {
+    campaignA1 = await create(editorA, marcaA1, assetA1);
+    campaignB1 = await create(berta, marcaB1, assetB1);
+    await as(db, berta, `select public.accept_campaign_plan($1, 1, $2::jsonb, $3::jsonb)`, [
+      campaignB1,
+      JSON.stringify(plan(assetB1)),
+      JSON.stringify([{ title: 'Pieza', schemaVersion: 1, data: DOC }]),
+    ]);
+  });
+
+  const ids = async (user: TestUser, table: string, column = 'id') =>
+    (await as<{ id: string }>(db, user, `select distinct ${column}::text as id from public.${table}`)).map((r) => r.id).sort();
+
+  it('una organización no ve las campañas, los planes ni las piezas enlazadas de otra', async () => {
+    expect(await ids(berta, 'campaigns')).toEqual([campaignB1]);
+    expect(await ids(berta, 'campaign_plans', 'campaign_id')).toEqual([campaignB1]);
+    expect(await ids(berta, 'campaign_contents', 'campaign_id')).toEqual([campaignB1]);
+    expect(await ids(ana, 'campaigns')).toEqual([campaignA1]);
+    expect(await ids(ana, 'campaign_contents', 'campaign_id')).toEqual([]);
+    expect(await ids(superadmin, 'campaigns')).toEqual([]);
+  });
+
+  it('no se crea, acepta, descarta ni entrega en la organización ajena, ni con recursos ajenos', async () => {
+    await denied(db, ana, `select public.accept_campaign_plan($1, 1, $2::jsonb, '[]'::jsonb)`, [
+      campaignB1,
+      JSON.stringify(plan(assetB1)),
+    ]);
+    await denied(db, ana, `select public.discard_campaign($1)`, [campaignB1]);
+    await denied(
+      db,
+      ana,
+      `select public.request_campaign_plan($1, 't', 'i', array['instagram'], $2::date, $2::date)`,
+      [marcaB1, START],
+    );
+    await denied(
+      db,
+      ana,
+      `select public.create_campaign($1, 't', 'i', array['instagram'], $2::date, $2::date, $3::jsonb, $4)`,
+      [marcaB1, START, JSON.stringify(plan(assetB1)), genB1],
+    );
+    await denied(db, ana, `select public.deliver_campaign_plan($1, '{}'::jsonb)`, [requestB1]);
+    // Un recurso de otra organización no se cuela en un plan propio.
+    await denied(
+      db,
+      editorA,
+      `select public.accept_campaign_plan($1, 1, $2::jsonb, $3::jsonb)`,
+      [campaignA1, JSON.stringify(plan(assetB1)), JSON.stringify([{ title: 'P', schemaVersion: 1, data: DOC }])],
+      /no es de esta marca/,
+    );
+    const [row] = await db.query(`select status from public.campaigns where id = $1`, [campaignA1]);
+    expect(row!.status).toBe('proposed');
+  });
+
+  it('dentro de la organización: ve quien ve la marca; el cliente no acepta un plan de la IA', async () => {
+    expect(await ids(clienteA, 'campaigns')).toEqual([campaignA1]);
+    expect(await ids(sinMarcaA, 'campaigns')).toEqual([]);
+    await denied(db, clienteA, `select public.discard_campaign($1)`, [campaignA1]);
+  });
+
+  it('sin sesión no se ejecuta ninguna función de campañas', async () => {
+    const noFunction = /permission denied for function/;
+    await denied(db, null, `select public.discard_campaign($1)`, [campaignA1], noFunction);
+    await denied(db, null, `select public.accept_campaign_plan($1, 1, '{}'::jsonb, '[]'::jsonb)`, [campaignA1], noFunction);
+    await denied(
+      db,
+      null,
+      `select public.request_campaign_plan($1, 't', 'i', array['instagram'], $2::date, $2::date)`,
+      [marcaA1, START],
+      noFunction,
+    );
   });
 });

@@ -43,6 +43,7 @@ describe('qué adaptador y qué modelo sirve cada tarea', () => {
       [['post.caption'], 'mistral', 'modelo-m'],
       [['profile.proposal'], 'mistral', 'modelo-m'],
       [['brand.check'], 'mistral', 'modelo-m'],
+      [['campaign.plan'], 'mistral', 'modelo-m'],
     ]);
     expect(config.models[0]).toMatchObject({
       task: 'text',

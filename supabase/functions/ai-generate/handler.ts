@@ -15,11 +15,17 @@
 // Una petición = una llamada al proveedor. Aquí no hay bucles ni reintentos.
 import { AiError, type AiErrorCode, type AiService, type Json } from '../_shared/ai/contract.ts';
 import { checkBrandCompliance } from '../_shared/ai/text/tasks/brand-check.ts';
+import {
+  planCampaign,
+  type CampaignAssetRef,
+  type CampaignSource,
+  type CampaignTarget,
+} from '../_shared/ai/text/tasks/campaign-plan.ts';
 import { generatePostCopy, type NetworkLimits } from '../_shared/ai/text/tasks/post-copy.ts';
 import { proposeBrandProfile, type ProfileSource } from '../_shared/ai/text/tasks/profile-proposal.ts';
 import { AiTaskInputError, type TaskMeta } from '../_shared/ai/text/tasks/shared.ts';
 
-export const AI_GENERATE_ACTIONS = ['post.caption', 'profile.proposal', 'brand.check'] as const;
+export const AI_GENERATE_ACTIONS = ['post.caption', 'profile.proposal', 'brand.check', 'campaign.plan'] as const;
 export type AiGenerateAction = (typeof AI_GENERATE_ACTIONS)[number];
 
 export interface BrandProfileLookup {
@@ -134,6 +140,20 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
       } else if (action === 'brand.check') {
         result = strip(
           await checkBrandCompliance(deps.service, actor, { brandProfile: lookup.profile, text: data.text as string }),
+        );
+      } else if (action === 'campaign.plan') {
+        // Solo propone: el plan no se guarda aquí ni crea nada (ver campaign-plan.ts).
+        result = strip(
+          await planCampaign(deps.service, actor, {
+            brandProfile: lookup.profile,
+            instruction: data.instruction as string,
+            startDate: data.startDate as string,
+            endDate: data.endDate as string,
+            targets: data.targets as CampaignTarget[],
+            assets: data.assets as CampaignAssetRef[] | undefined,
+            sources: data.sources as CampaignSource[] | undefined,
+            maxPieces: data.maxPieces as number | undefined,
+          }),
         );
       } else {
         result = strip(
