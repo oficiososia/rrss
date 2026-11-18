@@ -547,3 +547,151 @@ describe('contenido generado con IA', () => {
     ]);
   });
 });
+
+// Fases 3–6 juntas (20261119720000): exportar y borrar alcanzan a lo que
+// trajeron las otras ramas (publicación, campañas, tipografías, avisos, planes).
+describe('protección de datos con publicación, campañas, tipografías y avisos', () => {
+  /** Organización compartida con un poco de todo lo nuevo; la editora es autora de casi todo. */
+  async function fullOrg(owner: TestUser, editora: TestUser, name: string) {
+    const base = await sharedOrg(owner, editora, name);
+    const { org, brand } = base;
+    // Campaña pedida a la agencia: crea la campaña, el encargo de plan y los avisos.
+    await as(db, owner, `update public.brands set ai_mode = 'agency' where id = $1`, [brand]);
+    const [campaign] = await as<{ id: string }>(
+      db,
+      owner,
+      `select (public.request_campaign_plan($1, 'Navidad', 'Menú de Navidad', array['instagram'],
+               current_date + 3, current_date + 9)).id`,
+      [brand],
+    );
+    // Cuenta conectada (con su token cifrado) y un estado de conexión a medias.
+    await as(db, owner, `select public.social_oauth_begin($1, 'instagram')`, [brand]);
+    const account = await serviceRpc<{ id: string }>(db, 'social_account_connect', {
+      p_user_id: owner.id,
+      p_brand_id: brand,
+      p_network: 'instagram',
+      p_external_id: `ig-${brand}`,
+      p_username: 'cuenta',
+      p_display_name: 'Cuenta',
+      p_page_id: '1',
+      p_scopes: ['instagram_basic'],
+      p_token_expires_at: null,
+      p_key_id: 'k1',
+      p_access_token_ciphertext: 'c'.repeat(40),
+      p_refresh_token_ciphertext: null,
+    });
+    const [item] = await as<{ id: string }>(
+      db,
+      editora,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Pieza', 'instagram', 'post') returning id`,
+      [brand, org],
+    );
+    const [pub] = await as<{ id: string }>(
+      db,
+      editora,
+      `select id from public.save_publication(null, $1, now() + interval '1 day', $2)`,
+      [item!.id, account.id],
+    );
+    await db.query(
+      `insert into public.publication_attempts (publication_id, brand_id, organization_id, attempt_no, outcome)
+       values ($1, $2, $3, 1, 'not_ready')`,
+      [pub!.id, brand, org],
+    );
+    await as(db, editora, `select public.comment_content_item($1, 'Me gusta')`, [item!.id]);
+    const fontPath = `${org}/${brand}/fonts/marca.woff2`;
+    // Las tipografías las sube quien gestiona la marca.
+    await as(
+      db,
+      owner,
+      `insert into public.brand_fonts (brand_id, organization_id, family, format, storage_path, file_name, mime_type,
+                                       bytes, license_confirmed)
+       values ($1, $2, 'Marca Sans', 'woff2', $3, 'marca.woff2', 'font/woff2', 2048, true)`,
+      [brand, org, fontPath],
+    );
+    await storeFile(fontPath);
+    return { ...base, campaign: campaign!.id, account: account.id, item: item!.id, publication: pub!.id, fontPath };
+  }
+
+  const count = async (sql: string, params: unknown[]) => (await db.query(sql, params)).length;
+
+  it('las exportaciones traen campañas, calendario, cuentas sin tokens, comentarios, tipografías y avisos', async () => {
+    const owner = await user('exporta-todo');
+    const editora = await user('autora');
+    const t = await fullOrg(owner, editora, 'Con todo');
+
+    const [fila] = await as<{ data: Json }>(db, owner, `select public.export_organization_data($1) as data`, [t.org]);
+    const data = fila!.data;
+    expect(data.subscription).toEqual(expect.objectContaining({ plan: 'legacy' }));
+    const [marca] = data.brands as Json[];
+    expect((marca!.fonts as Json[]).map((f) => f.storage_path)).toEqual([t.fontPath]);
+    const [cuenta] = marca!.social_accounts as Json[];
+    expect(cuenta).toEqual(expect.objectContaining({ id: t.account, username: 'cuenta' }));
+    expect(JSON.stringify(data)).not.toContain('c'.repeat(40));
+    const [pub] = marca!.publications as Json[];
+    expect(pub).toEqual(expect.objectContaining({ id: t.publication, content_id: t.item }));
+    expect(pub!.attempts as Json[]).toHaveLength(1);
+    expect((marca!.content_comments as Json[]).map((c) => c.body)).toEqual(['Me gusta']);
+    expect((marca!.campaigns as Json[]).map((c) => c.id)).toEqual([t.campaign]);
+
+    const [mia] = await as<{ data: Json }>(db, editora, `select public.export_my_data() as data`);
+    expect((mia!.data.content_comments as Json[]).map((c) => c.body)).toEqual(['Me gusta']);
+    expect((mia!.data.publications_scheduled as Json[]).map((p) => p.id)).toEqual([t.publication]);
+    expect((mia!.data.request_notifications as Json[]).length).toBeGreaterThan(0);
+    const [suya] = await as<{ data: Json }>(db, owner, `select public.export_my_data() as data`);
+    expect((suya!.data.campaigns_created as Json[]).map((c) => c.id)).toEqual([t.campaign]);
+    expect((suya!.data.brand_fonts_uploaded as Json[]).map((f) => f.family)).toEqual(['Marca Sans']);
+    expect((suya!.data.social_accounts_connected as Json[]).map((a) => a.username)).toEqual(['cuenta']);
+    expect(JSON.stringify(suya!.data)).not.toContain('c'.repeat(40));
+  });
+
+  it('borrar la organización se lleva también todo lo nuevo, tokens y tipografías incluidos', async () => {
+    const owner = await user('borra-todo');
+    const t = await fullOrg(owner, await user('ayudante'), 'Todo fuera');
+    const res = await createDeleteOrganizationHandler(deps())(
+      post(login(owner), { organizationId: t.org, confirmation: 'Todo fuera' }),
+    );
+    expect(res.status).toBe(200);
+    for (const table of [
+      'public.subscriptions',
+      'public.social_accounts',
+      'public.scheduled_publications',
+      'public.publication_attempts',
+      'public.content_comments',
+      'public.campaigns',
+      'public.campaign_plans',
+      'public.campaign_contents',
+      'public.content_requests',
+      'public.request_notifications',
+      'public.brand_fonts',
+      'private.social_oauth_states',
+    ]) {
+      expect(await count(`select 1 from ${table} where organization_id = $1`, [t.org]), table).toBe(0);
+    }
+    expect(await count(`select 1 from private.social_account_secrets where account_id = $1`, [t.account])).toBe(0);
+    expect(await files(`${t.org}/`)).toEqual([]);
+  });
+
+  it('borrar la cuenta de una autora deja el trabajo de la organización sin su nombre y quita sus avisos', async () => {
+    const owner = await user('se-queda');
+    const editora = await user('se-marcha');
+    const t = await fullOrg(owner, editora, 'Sigue');
+    const avisos = () => count(`select 1 from public.request_notifications where user_id = $1`, [editora.id]);
+    expect(await avisos()).toBeGreaterThan(0);
+    const res = await createDeleteAccountHandler(deps())(
+      post(login(editora), { confirmation: editora.email, password: passwords.get(editora.email) }),
+    );
+    expect(res.status).toBe(200);
+    expect(await avisos()).toBe(0);
+    expect(await db.query(`select author_id from public.content_comments where content_id = $1`, [t.item])).toEqual([
+      { author_id: null },
+    ]);
+    expect(
+      await db.query(`select created_by from public.scheduled_publications where id = $1`, [t.publication]),
+    ).toEqual([{ created_by: null }]);
+    // La cuenta conectada, la tipografía y la campaña (de la propietaria) siguen.
+    expect(await count(`select 1 from public.brand_fonts where organization_id = $1`, [t.org])).toBe(1);
+    expect(await count(`select 1 from public.social_accounts where id = $1`, [t.account])).toBe(1);
+    expect(await count(`select 1 from public.campaigns where id = $1`, [t.campaign])).toBe(1);
+  });
+});
