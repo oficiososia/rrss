@@ -20,6 +20,7 @@ export function brandRow(overrides: Partial<BrandRow> = {}): BrandRow {
     timezone: 'Europe/Madrid',
     default_locale: 'es',
     status: 'active',
+    ai_mode: 'api',
     created_by: null,
     created_at: '2026-10-01T09:00:00Z',
     updated_at: '2026-10-01T09:00:00Z',

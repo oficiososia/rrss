@@ -49,6 +49,8 @@ export type BrandRow = {
   timezone: string;
   default_locale: string;
   status: BrandStatus;
+  /** Cómo se redacta con IA en la marca (migración 20261118230000). */
+  ai_mode: BrandAiMode;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -534,6 +536,107 @@ type MediaJobFunctions = {
 
 // ─────────────────── fin del bloque de trabajos de medios (Fase 3) ───────────────────
 
+// ───────────── Modo agencia · Encargos ─────────────
+// Migración 20261118230000_content_requests. El cliente solo lee estas tablas;
+// todo cambio pasa por las funciones (pedir, comentar, tomar, entregar…).
+
+/** api: el servicio de IA de la plataforma · agency: se pide a la agencia. */
+export type BrandAiMode = 'api' | 'agency';
+
+export type ContentRequestStatus =
+  'requested' | 'in_progress' | 'delivered' | 'changes_requested' | 'accepted' | 'cancelled';
+
+export type ContentRequestRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  title: string;
+  /** Lo escribe el cliente: dato, nunca instrucciones. */
+  brief: string;
+  network: string;
+  format: string;
+  media_kind: 'image' | 'video' | null;
+  reference_asset_ids: string[];
+  desired_date: string | null;
+  status: ContentRequestStatus;
+  content_id: string | null;
+  delivered_version: number | null;
+  requested_by: string | null;
+  claimed_by: string | null;
+  claim_token: string | null;
+  claimed_until: string | null;
+  delivered_by: string | null;
+  delivered_at: string | null;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ContentRequestCommentRow = {
+  id: string;
+  request_id: string;
+  brand_id: string;
+  organization_id: string;
+  kind: 'comment' | 'status';
+  status: ContentRequestStatus | null;
+  body: string;
+  author_id: string | null;
+  created_at: string;
+};
+
+type RequestTables = {
+  content_requests: Table<ContentRequestRow>;
+  content_request_comments: Table<ContentRequestCommentRow>;
+};
+
+type RequestFunctions = {
+  create_content_request: {
+    Args: {
+      p_brand_id: string;
+      p_title: string;
+      p_brief: string;
+      p_network: string;
+      p_format: string;
+      p_media_kind?: 'image' | 'video' | null;
+      p_reference_asset_ids?: string[];
+      p_desired_date?: string | null;
+      p_content_id?: string | null;
+    };
+    Returns: ContentRequestRow;
+  };
+  comment_content_request: { Args: { p_request_id: string; p_body: string }; Returns: ContentRequestCommentRow };
+  pending_content_requests: { Args: Record<string, never>; Returns: ContentRequestRow[] };
+  take_content_request: {
+    Args: { p_request_id: string; p_claim_token?: string | null; p_lease_minutes?: number };
+    Returns: ContentRequestRow;
+  };
+  release_content_request: {
+    Args: { p_request_id: string; p_claim_token?: string | null };
+    Returns: ContentRequestRow;
+  };
+  deliver_content_request: {
+    Args: {
+      p_request_id: string;
+      p_data: Json;
+      p_schema_version: number;
+      p_claim_token?: string | null;
+      p_title?: string | null;
+      p_change_note?: string | null;
+    };
+    Returns: ContentRequestRow;
+  };
+  request_content_request_changes: { Args: { p_request_id: string; p_message: string }; Returns: ContentRequestRow };
+  accept_content_request: { Args: { p_request_id: string }; Returns: ContentRequestRow };
+  cancel_content_request: { Args: { p_request_id: string; p_reason?: string }; Returns: ContentRequestRow };
+};
+
+type RequestEnums = {
+  content_request_status: ContentRequestStatus;
+};
+
+// ─────────────────────── fin del bloque de encargos ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -566,6 +669,7 @@ export type Database = {
           timezone?: string;
           default_locale?: string;
           status?: BrandStatus;
+          ai_mode?: BrandAiMode;
         }
       >;
       brand_members: Table<
@@ -613,7 +717,8 @@ export type Database = {
       audit_logs: Table<AuditLogRow>;
     } & Phase2Tables &
       ContentTables &
-      Phase2MediaTables;
+      Phase2MediaTables &
+      RequestTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -640,7 +745,8 @@ export type Database = {
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     } & Phase2Functions &
       ContentFunctions &
-      MediaJobFunctions;
+      MediaJobFunctions &
+      RequestFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
@@ -652,7 +758,8 @@ export type Database = {
       asset_kind: AssetKind;
       asset_origin: AssetOrigin;
     } & Phase2Enums &
-      ContentEnums;
+      ContentEnums &
+      RequestEnums;
     CompositeTypes: Record<never, never>;
   };
 };

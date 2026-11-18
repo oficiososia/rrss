@@ -46,6 +46,7 @@ import { aiImageEnabled, aiTextEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
+import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
@@ -184,7 +185,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [focusText, setFocusText] = useState(0);
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
   const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
-  const aiEnabled = aiTextEnabled();
+  // Con la marca en modo agencia no se redacta con el servicio de IA: se pide a la agencia.
+  const aiEnabled = aiTextEnabled() && brand.ai_mode !== 'agency';
+  // La imagen con IA es otro servicio, independiente del texto: depende solo de su interruptor.
   const aiImage = aiImageEnabled();
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
@@ -499,6 +502,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <span>{targetLabel(item.network, item.format)}</span>
             <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
             {item.archived_at && <Badge tone="warning">Archivada</Badge>}
+            <ContentRequestOrigin item={item} />
             <span data-testid="editor-version">
               {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar todavía'}
             </span>
@@ -781,6 +785,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               />
             </TabsContent>
             <TabsContent value="copy" className="space-y-4 pt-4">
+              <AskAgencyButton item={item} />
               {aiEnabled && !readOnly && (
                 <GenerateCaptionDialog
                   brandId={brand.id}
