@@ -3,6 +3,7 @@ import {
   ArchiveRestore,
   ChevronLeft,
   Circle,
+  Download,
   History,
   Image as ImageIcon,
   Redo2,
@@ -74,6 +75,7 @@ import { PropertiesPanel, type BrandStyle } from './editor/panels/PropertiesPane
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
+import { ExportImageDialog } from './export/ExportImageDialog';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
 import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage } from './status';
@@ -168,6 +170,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveIssues, setSaveIssues] = useState<DocumentIssue[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState(false);
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
@@ -327,7 +330,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
   }
 
-  function save(note: string, expected = expectedVersion) {
+  /** Guarda una versión nueva. Devuelve su número, o null si no se ha podido guardar (ya se ha avisado). */
+  function save(note: string, expected = expectedVersion): Promise<number | null> {
     const document = state.document;
     setSaveIssues([]);
     return mutations.saveVersion.mutateAsync({ contentId, document, note, expectedVersion: expected }).then(
@@ -337,14 +341,16 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         setConflict(false);
         setSaveOpen(false);
         toast.success(`Versión ${row.version} guardada`);
+        return row.version;
       },
       (error: unknown) => {
         if (error instanceof DocumentError) {
           setSaveIssues(error.issues.length ? error.issues : [{ path: '', message: error.message }]);
-          return;
+          return null;
         }
         setSaveOpen(false);
         handleConflictOr(error);
+        return null;
       },
     );
   }
@@ -507,6 +513,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} data-testid="editor-history">
             <History className="h-4 w-4" aria-hidden />
             Historial
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setExportOpen(true)} data-testid="editor-export">
+            <Download className="h-4 w-4" aria-hidden />
+            Exportar imagen
           </Button>
           {!readOnly && (
             <Button
@@ -839,6 +849,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         saving={mutations.saveVersion.isPending}
         issues={saveIssues}
         onSave={(note) => void save(note)}
+      />
+      <ExportImageDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        document={state.document}
+        images={images}
+        title={item.title}
+        contentId={contentId}
+        orgId={org.id}
+        brandId={brand.id}
+        version={expectedVersion}
+        dirty={dirty}
+        canSaveToLibrary={canEdit}
+        canSaveVersion={!readOnly}
+        onSaveVersion={(note) => save(note)}
+        libraryPath={`${brandBase}/biblioteca`}
       />
       <VersionsDialog
         brandId={brand.id}
