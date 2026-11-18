@@ -85,27 +85,133 @@ supabase db reset
 Al terminar, `supabase stop` libera los contenedores (los datos quedan en un
 volumen de Docker; `supabase stop --no-backup` los borra).
 
-## Entornos nuevos (lo hace el dueño; nada de esto está hecho todavía)
+## Entornos remotos
 
 El producto usa **cuentas nuevas**, sin relación con las de Casa Tomás.
 
 ### 1. Supabase
 
-1. Crear la organización y dos proyectos: `rrss-staging` y `rrss-prod` (se
-   puede empezar solo con staging). Región de la UE.
-2. En *Authentication*:
-   - **Confirmar correo: activado.** Es un requisito de seguridad: las
-     invitaciones se aceptan por coincidencia de correo.
-   - *Site URL* y *Redirect URLs*: el dominio del producto y las vistas previas.
-   - Longitud mínima de contraseña y protección contra contraseñas filtradas.
-3. Aplicar las migraciones de `supabase/migrations/` en orden (con la CLI:
-   `supabase link` y `supabase db push`).
-4. Dar de alta al primer superadministrador, una vez registrado en la aplicación:
+#### Lo que hay (18/11/2026)
+
+| Qué | Valor |
+|---|---|
+| Proyecto de staging | `zzkdrfhqmjfvrdsoguio` (`https://zzkdrfhqmjfvrdsoguio.supabase.co`), en la cuenta de Supabase de Oficiosos |
+| Región | West EU (Irlanda) |
+| Plan | **Gratuito**, por decisión del dueño. Se trabaja dentro de sus límites y se avisa antes de cualquier cosa que obligue a pasar a Pro |
+| Base de datos | Postgres 17. Las 8 migraciones de `supabase/migrations/` aplicadas y registradas; 19 tablas en `public`, todas con RLS; cubo `brand-media` (privado, 50 MB por archivo) |
+| Funciones | `ai-generate` desplegada **sin proveedor de IA ni secretos**: responde que la IA no está disponible. `VITE_AI_TEXT_ENABLED` no debe activarse contra este proyecto |
+| Producción | No existe todavía |
+
+#### El envoltorio `scripts/supabase-rrss.sh`
+
+En esta máquina la CLI global de Supabase tiene abierta la sesión de **otra
+cuenta** (la de Casa Tomás). Para no mezclar cuentas, todo lo de rrss se hace
+con el envoltorio, desde la carpeta del repositorio:
+
+```bash
+bash scripts/supabase-rrss.sh <orden de supabase> [argumentos]
+```
+
+```bash
+bash scripts/supabase-rrss.sh migration list
+```
+
+- Lee un token de acceso personal de la cuenta de Oficiosos de
+  `~/.supabase-rrss/token` (o de la ruta de `RRSS_SUPABASE_TOKEN_FILE`) y lo
+  pasa a la CLI solo en el entorno de ese proceso: no se imprime ni toca la
+  sesión global. El token **nunca** va al repositorio ni a ningún documento.
+- Deja el proyecto fijado: si la carpeta está enlazada a otro proyecto o se pide
+  otro con `--project-ref`, no ejecuta nada.
+
+Para la API de gestión de Supabase con `curl`, el token se carga en una variable
+dentro del mismo comando y se usa en la cabecera `Authorization: Bearer`.
+
+#### Cómo se aplicaron las migraciones
+
+No se usa `supabase db push` (ni `db reset` ni `migration repair`) contra el
+proyecto remoto. Cada migración se aplicó con un archivo temporal, fuera del
+repositorio, que la envuelve en una transacción y registra su fila en el
+historial de la CLI:
+
+```sql
+begin;
+-- contenido de supabase/migrations/<marca>_<nombre>.sql
+insert into supabase_migrations.schema_migrations (version, name)
+values ('<marca>', '<nombre>');
+commit;
+```
+
+```bash
+bash scripts/supabase-rrss.sh db query --linked -f <archivo temporal> --output-format json
+```
+
+Así, si algo falla, no queda nada a medias, y `migration list` muestra lo
+aplicado. Las migraciones nuevas siguen el mismo camino: primero `npm run test:db`,
+después staging.
+
+#### Inicio de sesión (Authentication)
+
+Configurado por la API de gestión (`PATCH /v1/projects/{ref}/config/auth`):
+
+| Ajuste | Valor | Campo de la API |
+|---|---|---|
+| Confirmar correo | **Activado** (requisito de seguridad: las invitaciones se aceptan por coincidencia de correo) | `mailer_autoconfirm = false` |
+| Longitud mínima de contraseña | 8 | `password_min_length` |
+| Protección contra contraseñas filtradas | **No disponible en el plan gratuito** (la API responde 402, `entitlement_required`): es de Pro en adelante | `password_hibp_enabled` |
+| URL del sitio | `http://localhost:5173` (aún no hay dominio) | `site_url` |
+| Direcciones de retorno | `http://localhost:5173/**` y `http://127.0.0.1:5173/**` (cubren `/` tras confirmar el correo y `/restablecer` al recuperar la contraseña) | `uri_allow_list` |
+| Registro abierto | Sí | `disable_signup = false` |
+
+Cuando haya dominio o vistas previas de Vercel hay que cambiar la URL del sitio
+y añadir sus direcciones de retorno.
+
+#### Limitaciones del correo integrado (plan gratuito, sin SMTP propio)
+
+Según la documentación de Supabase (*Auth → Send emails with custom SMTP*,
+consultada el 18/11/2026):
+
+- **Solo envía a direcciones del equipo** de la organización de Supabase
+  (pestaña *Team*). A cualquier otra dirección responde
+  «Email address not authorized».
+- **2 correos por hora** en todo el proyecto (valor que Supabase puede cambiar
+  sin aviso; la API lo muestra en `rate_limit_email_sent`).
+- Sin garantía de entrega: es solo para pruebas.
+
+Consecuencias: el registro, la confirmación y la recuperación de contraseña
+solo se pueden probar en staging con correos de miembros del equipo de
+Supabase, y a ritmo de dos correos por hora. La prueba de extremo a extremo
+(`npm run test:e2e`), que registra muchas cuentas con correos inventados, **no
+se puede repetir en staging** sin un SMTP propio (se configura en
+*Authentication → SMTP* o con los campos `smtp_*` de la misma API; el plan
+gratuito lo admite).
+
+#### Alertas de Supabase (advisors, 18/11/2026)
+
+- **Seguridad (15 avisos).** Todos son «función `SECURITY DEFINER` ejecutable
+  por `authenticated`»: son las funciones RPC de la aplicación (crear
+  organización, invitaciones, versiones de contenido, administración…). Es
+  intencionado: cada una comprueba dentro la sesión y los permisos
+  (`private.is_platform_admin()`, pertenencia a la organización, coincidencia de
+  correo) y tiene `search_path = ''`; `anon` no puede ejecutarlas. Sin tablas
+  sin RLS ni vistas expuestas.
+- **Rendimiento (47 avisos informativos).** 25 índices «sin usar»: falsa
+  alarma, la base aún no tiene tráfico. 22 claves foráneas sin índice que las
+  cubra por completo (columnas `created_by`, `updated_by`, `accepted_by` y las
+  compuestas marca + organización): solo afectan al borrar una cuenta o una
+  marca y con estos volúmenes no importa. Se revisarán con datos reales.
+
+#### Lo que queda por hacer
+
+1. Dar de alta al primer superadministrador, una vez registrado en la
+   aplicación (lo hace el dueño):
 
    ```sql
    insert into public.platform_admins (user_id)
    select id from auth.users where email = 'TU_CORREO';
    ```
+
+2. SMTP propio si se quiere probar con más cuentas o a más ritmo.
+3. Proyecto de producción (y decidir si sigue en el plan gratuito).
 
 ### 2. Vercel
 

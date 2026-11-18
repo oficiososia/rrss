@@ -6,7 +6,10 @@ con PR abierto a `staging`. Las ramas `main` y `staging` existen desde el 16/11/
 Resumen: la Fase 1 está terminada y probada de extremo a extremo en local. La
 Fase 2 está construida y probada con proveedores **simulados**: falta conectar
 proveedores reales, que dependen de cuentas y decisiones del dueño (ver
-`docs/06-decisiones-fase-2.md`). Nada está desplegado.
+`docs/06-decisiones-fase-2.md`). Existe el proyecto de Supabase de staging
+(plan gratuito, UE) con las 8 migraciones, el inicio de sesión configurado y
+`ai-generate` desplegada sin proveedor de IA (detalle en
+`docs/05-puesta-en-marcha.md`). La aplicación no está publicada.
 
 ## Hecho y comprobado
 
@@ -67,14 +70,17 @@ genere con IA. Hoy no hay proveedor en ningún entorno, así que no sale.
 ## Probado solo en local
 
 Todo lo anterior se ha ejecutado contra un Supabase local, no contra un proyecto
-desplegado. Falta repetirlo en staging cuando exista (correo real, dominio,
-políticas de Auth del proyecto) y desplegar `ai-generate`.
+desplegado. En staging (18/11/2026) solo se ha comprobado que `ai-generate`
+arranca y rechaza las llamadas sin sesión (401). La prueba de extremo a extremo
+no se puede repetir allí tal cual: el correo integrado del plan gratuito solo
+envía a miembros del equipo de Supabase y 2 correos por hora; hace falta un SMTP
+propio.
 
 ## Bloqueado por algo externo
 
 | Qué | Qué hace falta |
 |---|---|
-| Desplegar y repetir las pruebas en staging | Cuenta y proyecto nuevos de Supabase en la UE, plan Pro (el gratuito no admite archivos de más de 50 MB) |
+| Repetir las pruebas en staging | SMTP propio (el correo integrado del plan gratuito solo envía al equipo y 2 por hora). El plan gratuito tampoco admite archivos de más de 50 MB ni la protección contra contraseñas filtradas |
 | Publicar la aplicación | Proyecto de Vercel de pago y dominio |
 | Generar con IA de verdad | Cuenta de Google Cloud con Vertex AI en la UE (o la alternativa que se elija) y precios confirmados |
 | Desplegar el trabajador de medios | Elegir alojamiento (recomendado: Fly.io en Fráncfort) |
@@ -114,7 +120,7 @@ Cada una tiene su opción por defecto en `docs/06-decisiones-fase-2.md`.
 
 ## Siguiente paso
 
-1. El dueño toma las decisiones de arriba y crea la cuenta de Supabase y la de Google Cloud.
-2. Aplicar las 8 migraciones en staging, desplegar `ai-generate` y repetir la prueba de extremo a extremo allí.
+1. El dueño toma las decisiones de arriba, se registra en staging (y se da de alta como superadministrador) y crea la cuenta de Google Cloud.
+2. SMTP propio en staging y repetir allí la prueba de extremo a extremo.
 3. Primera llamada real con cada adaptador elegido y prueba ciega de calidad en español.
 4. Mientras tanto, sin depender de nadie: exportar a imagen, interfaz de imagen y reels, y lectura de PDF y webs para la propuesta de perfil.
