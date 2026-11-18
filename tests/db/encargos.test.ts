@@ -521,3 +521,41 @@ describe('avisos dentro de la aplicación', () => {
     expect(await avisos(pasajera, pedido.id)).toEqual([]);
   });
 });
+
+describe('entregar desde la aplicación', () => {
+  it('sin clave de sesión: la aplicación toma y entrega; la herramienta (con clave) es otra sesión', async () => {
+    const pedido = await pedir(cliente);
+    const tomado = await rpc(agencia, 'take_content_request', { p_request_id: pedido.id, p_claim_token: null });
+    expect(tomado).toMatchObject({ status: 'in_progress', claimed_by: agencia.id, claim_token: null });
+    // La misma cuenta desde la herramienta, con su clave, no puede quitárselo ni entregar.
+    await denied(
+      db,
+      agencia,
+      `select public.take_content_request($1, 'sesion-herramienta')`,
+      [pedido.id],
+      /otra persona u otra sesión/,
+    );
+    await denied(
+      db,
+      agencia,
+      `select public.deliver_content_request($1, $2::jsonb, 1, 'sesion-herramienta')`,
+      [pedido.id, JSON.stringify(DOC('x'))],
+      /otra persona u otra sesión/,
+    );
+    // Entregar una pieza existente = su documento como versión de la pieza del encargo.
+    const entregado = await rpc(agencia, 'deliver_content_request', {
+      p_request_id: pedido.id,
+      p_data: DOC('Ya llega el otoño'),
+      p_schema_version: 1,
+      p_claim_token: null,
+      p_title: 'Menú de otoño',
+      p_change_note: 'Entregado desde la aplicación',
+    });
+    expect(entregado).toMatchObject({ status: 'delivered', delivered_version: 1 });
+    const [nota] = await db.query<{ body: string }>(
+      `select body from public.content_request_comments where request_id = $1 and status = 'delivered'`,
+      [pedido.id],
+    );
+    expect(nota!.body).toBe('Entregado desde la aplicación');
+  });
+});

@@ -33,6 +33,7 @@ import {
   requestActions,
   requestPaths,
 } from './labels';
+import { RequestPreparePanel } from './RequestPreparePanel';
 import { unreadByRequest, useMarkRequestNotificationsRead, useUnreadRequestNotifications } from './notifications';
 
 /** Al abrir el encargo, sus avisos sin leer (nuevo o entregado) se dan por leídos. */
@@ -200,6 +201,8 @@ function RequestDetail({ request }: { request: ContentRequestRow }) {
           )}
         </div>
       </div>
+
+      {can('edit') && <RequestPreparePanel request={request} />}
 
       {request.content_id && (
         <Card data-testid="request-delivery">
