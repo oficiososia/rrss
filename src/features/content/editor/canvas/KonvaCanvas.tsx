@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fitScale } from '../geometry';
 import { describeDocument } from './nodes';
 import { Scene } from './scene';
+import { TextEditOverlay } from './TextEditOverlay';
 import type { CanvasViewProps } from './types';
 
 // Envoltorio de React del lienzo de Konva (sin react-konva). Crea la escena una
@@ -10,29 +11,35 @@ import type { CanvasViewProps } from './types';
 
 export default function KonvaCanvas({
   document,
-  selectedId,
+  selectedIds,
   readOnly,
   images,
   onSelect,
+  onSelectMany,
   onChange,
   onEditText,
+  editingTextId,
+  onTextCommit,
+  onTextCancel,
+  safeZone,
   label,
 }: CanvasViewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const callbacks = useRef({ onSelect, onChange, onEditText });
+  const callbacks = useRef({ onSelect, onSelectMany, onChange, onEditText });
   const [available, setAvailable] = useState({ width: 0, height: 0 });
 
   useLayoutEffect(() => {
-    callbacks.current = { onSelect, onChange, onEditText };
+    callbacks.current = { onSelect, onSelectMany, onChange, onEditText };
   });
 
   useEffect(() => {
     if (!stageRef.current) return;
     const scene = new Scene(stageRef.current, {
-      onSelect: (id) => callbacks.current.onSelect(id),
-      onChange: (id, patch) => callbacks.current.onChange(id, patch),
+      onSelect: (id, options) => callbacks.current.onSelect(id, options),
+      onSelectMany: (ids, additive) => callbacks.current.onSelectMany(ids, additive),
+      onChange: (changes) => callbacks.current.onChange(changes),
       onEditText: (id) => callbacks.current.onEditText(id),
     });
     sceneRef.current = scene;
@@ -54,20 +61,34 @@ export default function KonvaCanvas({
 
   const nodes = useMemo(() => describeDocument(document, images, readOnly), [document, images, readOnly]);
   const scale = fitScale(document.canvas, available);
+  const editing = document.layers.find((layer) => layer.id === editingTextId);
 
   useEffect(() => {
-    sceneRef.current?.render({ nodes, canvas: document.canvas, selectedId, readOnly, scale });
-  }, [nodes, document.canvas, selectedId, readOnly, scale]);
+    sceneRef.current?.render({
+      nodes,
+      canvas: document.canvas,
+      selectedIds,
+      editingId: editingTextId,
+      safeZone,
+      readOnly,
+      scale,
+    });
+  }, [nodes, document.canvas, selectedIds, editingTextId, safeZone, readOnly, scale]);
 
   return (
     <div ref={frameRef} className="flex h-full w-full items-center justify-center overflow-hidden">
-      <div
-        ref={stageRef}
-        role="img"
-        aria-label={label}
-        className="shadow-pop ring-1 ring-border"
-        data-testid="editor-stage"
-      />
+      <div className="relative shadow-pop ring-1 ring-border">
+        <div ref={stageRef} role="img" aria-label={label} data-testid="editor-stage" />
+        {editing?.type === 'text' && !readOnly && (
+          <TextEditOverlay
+            key={editing.id}
+            layer={editing}
+            scale={scale}
+            onCommit={(text) => onTextCommit(editing.id, text)}
+            onCancel={onTextCancel}
+          />
+        )}
+      </div>
     </div>
   );
 }

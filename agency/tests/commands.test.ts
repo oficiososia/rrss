@@ -10,6 +10,7 @@ import { checkFile, comment, context, deliver, pending, release, take, type Requ
 import { ConfigError, loadCredentials, resolveConfig } from '../src/config.ts';
 import { ApiError, createClient, type SupabaseClient } from '../src/supabase.ts';
 import { AGENCY_USER, ANON_KEY, PASSWORD, USER_TOKEN, startFakeSupabase, type FakeSupabase } from './fakeServer.ts';
+import { DOCUMENT_SCHEMA_VERSION } from '../../src/features/content/document/index.ts';
 
 const BRAND = '22222222-2222-4222-8222-222222222222';
 const ORG = '33333333-3333-4333-8333-333333333333';
@@ -322,7 +323,7 @@ describe('entregar', () => {
     };
     expect(body).toMatchObject({
       p_request_id: REQUEST,
-      p_schema_version: 1,
+      p_schema_version: DOCUMENT_SCHEMA_VERSION,
       p_claim_token: 'agencia-mia',
       p_title: 'Guiso',
       p_change_note: 'Entregado por la agencia',

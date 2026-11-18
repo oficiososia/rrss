@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BrandRole, ContentItemRow, ContentStatus, ContentVersionRow, OrgRole } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
-import { createEmptyDocument, type ContentDocument } from './document';
+import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
 
 // El lienzo de Konva necesita un <canvas> de verdad, que jsdom no tiene: aquí se
@@ -314,7 +314,7 @@ describe('Editor: versiones', () => {
       p_content_id: 'content-1',
       p_change_note: 'Añado el horario',
       p_expected_version: 1,
-      p_schema_version: 1,
+      p_schema_version: DOCUMENT_SCHEMA_VERSION,
     });
     expect((call.p_data as ContentDocument).layers).toHaveLength(2);
     expect(screen.getByTestId('editor-version')).toHaveTextContent('Versión 2');

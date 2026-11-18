@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { contentDocumentSchema, type ContentDocument, type LayerInput } from '@/features/content/document';
+import { contentDocumentSchema, DOCUMENT_SCHEMA_VERSION, type ContentDocument, type LayerInput } from '@/features/content/document';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
 import { BrandCheckPanel } from './BrandCheckPanel';
@@ -10,7 +10,7 @@ import { describeMeasure } from './measure';
 
 function doc(layers: LayerInput[] = [], copy: object = {}): ContentDocument {
   return contentDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
     layers,
     copy,
