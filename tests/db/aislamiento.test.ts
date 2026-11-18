@@ -1139,14 +1139,14 @@ describe('auditoría y superadministración', () => {
 });
 
 describe('imágenes generadas con IA en la biblioteca', () => {
-  /** Un recurso generado como lo crea el servidor (clave de servicio), ligado a una generación. */
+  /** Un recurso generado como lo crea el servidor (clave de servicio), con la procedencia de su generación. */
   const generated = async (orgId: string, brandId: string, generationId: string) => {
     const [row] = await asService<{ id: string }>(
       db,
       `insert into public.media_assets (brand_id, organization_id, kind, origin, storage_path, file_name, mime_type, bytes,
-         ai_generation_id, provenance)
-       values ($1, $2, 'image', 'generated', $3, 'IA.png', 'image/png', 10, $4,
-               jsonb_build_object('source', 'ai', 'prompt', 'encargo privado'))
+         provenance)
+       values ($1, $2, 'image', 'generated', $3, 'IA.png', 'image/png', 10,
+               jsonb_build_object('type', 'ai_generation', 'generation_id', $4::text, 'prompt', 'encargo privado'))
        returning id`,
       [brandId, orgId, assetPath(orgId, brandId, `${generationId}.png`), generationId],
     );
@@ -1159,29 +1159,37 @@ describe('imágenes generadas con IA en la biblioteca', () => {
     expect(await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA])).toEqual([
       { p: 'encargo privado' },
     ]);
-    expect(await as(db, ana, `select 1 from public.media_assets where id = $1 or ai_generation_id = $2`, [deB, genB1])).toEqual(
-      [],
-    );
-    expect(await as(db, berta, `select 1 from public.media_assets where ai_generation_id = $1`, [genA1])).toEqual([]);
+    expect(
+      await as(db, ana, `select 1 from public.media_assets where id = $1 or provenance->>'generation_id' = $2`, [
+        deB,
+        genB1,
+      ]),
+    ).toEqual([]);
+    expect(
+      await as(db, berta, `select 1 from public.media_assets where provenance->>'generation_id' = $1`, [genA1]),
+    ).toEqual([]);
   });
 
-  it('nadie escribe la procedencia ni la generación desde el cliente: solo el servidor', async () => {
+  it('nadie se hace pasar por el servidor: desde el cliente no se declara un recurso «generado con IA»', async () => {
     await denied(
       db,
       editorA,
       `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, provenance)
-       values ($1, $2, 'image', $3, 'falsa.png', 'image/png', 1, '{"source":"ai"}')`,
+       values ($1, $2, 'image', $3, 'falsa.png', 'image/png', 1, '{"type":"ai_generation","generation_id":"x"}')`,
       [marcaA1, orgA, assetPath(orgA, marcaA1)],
+      /servidor|permission denied/,
     );
-    await denied(
+    // La procedencia de una exportación del editor sí la escribe el cliente al crear (20261118120000)…
+    const [exportado] = await as<{ id: string }>(
       db,
       editorA,
-      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, ai_generation_id)
-       values ($1, $2, 'image', $3, 'falsa.png', 'image/png', 1, $4)`,
-      [marcaA1, orgA, assetPath(orgA, marcaA1), genA1],
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, provenance)
+       values ($1, $2, 'image', $3, 'exportada.png', 'image/png', 1, '{"type":"export"}') returning id`,
+      [marcaA1, orgA, assetPath(orgA, marcaA1)],
     );
+    expect(exportado?.id).toBeTruthy();
+    // …pero nadie la cambia después.
     await denied(db, editorA, `update public.media_assets set provenance = '{}' where id = $1`, [assetA1]);
-    await denied(db, editorA, `update public.media_assets set ai_generation_id = $2 where id = $1`, [assetA1, genA1]);
   });
 
   it('el disparador del seguimiento por pg_cron no lo ejecuta nadie desde la API', async () => {

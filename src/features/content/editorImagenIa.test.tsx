@@ -98,8 +98,7 @@ function generatedAsset(id: string, generationId: string) {
     folder: 'IA',
     tags: ['ia'],
     rights: {},
-    ai_generation_id: generationId,
-    provenance: { source: 'ai', prompt: 'Terraza' },
+    provenance: { type: 'ai_generation', generation_id: generationId, prompt: 'Terraza' },
     created_by: ME.id,
     created_at: '2026-11-18T09:00:00Z',
     updated_at: '2026-11-18T09:00:00Z',
@@ -196,6 +195,9 @@ describe('Editor: imagen con IA', () => {
           status: 'succeeded',
           error_code: null,
           cost_micros: 20_000,
+          output: {
+            assets: [{ kind: 'image', path: 'x', mime_type: 'image/png', bytes: 100, asset_id: 'asset-ia-2' }],
+          },
         },
       ];
       fake.tables.media_assets = [generatedAsset('asset-ia-2', 'g-2')];

@@ -5,7 +5,7 @@
 // Errores: los mismos códigos y mensajes que la IA de texto (`api.ts`).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { assetKeys } from '@/features/library/api';
-import type { AiGenerationRow, GeneratedMediaAssetRow } from '@/lib/database.types';
+import type { AiGenerationRow, AiMediaGenerationOutput, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { AiRequestError, aiErrorMessage, toAiError, type AsyncMutation } from './api';
@@ -131,7 +131,7 @@ export function useGenerateImage(brandId: string): AsyncMutation<GenerateImageRe
 
 export type GenerationProgress =
   | { status: 'running' }
-  | { status: 'completed'; asset: GeneratedMediaAssetRow; costMicros: number | null }
+  | { status: 'completed'; asset: MediaAssetRow; costMicros: number | null }
   | { status: 'failed'; message: string };
 
 /** Mensaje para personas de cómo acabó mal una generación (sin el detalle técnico del proveedor). */
@@ -159,21 +159,19 @@ export function useGenerationProgress(brandId: string, generationId: string | nu
       const generation = unwrap(
         await supabase
           .from('ai_generations')
-          .select('id, status, error_code, cost_micros')
+          .select('id, status, error_code, cost_micros, output')
           .eq('id', generationId!)
           .maybeSingle(),
-      ) as Pick<AiGenerationRow, 'id' | 'status' | 'error_code' | 'cost_micros'> | null;
+      ) as Pick<AiGenerationRow, 'id' | 'status' | 'error_code' | 'cost_micros' | 'output'> | null;
       if (!generation || generation.status === 'reserved') return { status: 'running' };
       if (generation.status !== 'succeeded') return { status: 'failed', message: failureMessage(generation) };
-      const assets = unwrap(
-        await supabase
-          .from('media_assets')
-          .select('*')
-          .eq('brand_id', brandId)
-          .eq('ai_generation_id' as never, generationId!)
-          .limit(1),
-      ) as unknown as GeneratedMediaAssetRow[];
-      const asset = assets[0];
+      // El servicio anota en la generación el recurso que creó en la biblioteca.
+      const assetId = (generation.output as AiMediaGenerationOutput | null)?.assets?.[0]?.asset_id;
+      const asset = assetId
+        ? (unwrap(
+            await supabase.from('media_assets').select('*').eq('brand_id', brandId).eq('id', assetId).maybeSingle(),
+          ) as MediaAssetRow | null)
+        : null;
       if (!asset) {
         return { status: 'failed', message: 'La IA generó la imagen, pero no se ha podido añadir a la biblioteca.' };
       }

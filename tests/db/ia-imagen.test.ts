@@ -23,6 +23,7 @@ import { createSimulatedVideoProvider, simulatedPng } from '../../supabase/funct
 import {
   createSupabaseMediaStorage,
   imageDimensions,
+  provenanceJson,
   sniffMimeType,
   type GeneratedAssetRow,
   type MediaStorageBackend,
@@ -111,8 +112,8 @@ const backend: MediaStorageBackend = {
     const [saved] = await asService<{ id: string }>(
       db,
       `insert into public.media_assets (brand_id, organization_id, kind, origin, storage_path, file_name, mime_type, bytes,
-         width, height, folder, tags, ai_generation_id, provenance, created_by)
-       values ($1, $2, $3::public.asset_kind, 'generated', $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13::jsonb, $14)
+         width, height, folder, tags, provenance, created_by)
+       values ($1, $2, $3::public.asset_kind, 'generated', $4, $5, $6, $7, $8, $9, $10, $11::text[], $12::jsonb, $13)
        on conflict (storage_path) do update set bytes = excluded.bytes, provenance = excluded.provenance
        returning id`,
       [
@@ -127,7 +128,6 @@ const backend: MediaStorageBackend = {
         row.height,
         row.folder,
         row.tags,
-        row.ai_generation_id,
         JSON.stringify(row.provenance),
         row.created_by,
       ],
@@ -262,7 +262,7 @@ describe('almacenamiento de los medios generados', () => {
     const again = await storage.put(object);
     expect(first.path).toBe(`${org}/${brand}/ia/${generation!.id}-0.png`);
     expect(again).toEqual(first);
-    const rows = await asService<Row>(db, `select * from public.media_assets where ai_generation_id = $1`, [
+    const rows = await asService<Row>(db, `select * from public.media_assets where provenance->>'generation_id' = $1`, [
       generation!.id,
     ]);
     expect(rows).toHaveLength(1);
@@ -277,7 +277,7 @@ describe('almacenamiento de los medios generados', () => {
       created_by: owner.id,
       file_name: 'IA · Terraza al atardecer.png',
       provenance: {
-        source: 'ai',
+        type: 'ai_generation',
         provider: 'simulated-image',
         model: 'm',
         prompt: 'Terraza al atardecer',
@@ -288,6 +288,49 @@ describe('almacenamiento de los medios generados', () => {
     });
     // Quien ve la marca ve el recurso (la RLS de siempre).
     expect(await as(db, owner, `select id from public.media_assets where id = $1`, [first.assetId])).toHaveLength(1);
+  });
+
+  it('la procedencia cabe siempre en los 2048 bytes de la columna, aunque el encargo sea largo', async () => {
+    const { org, brand, owner } = await setup();
+    const [generation] = await asService<{ id: string }>(
+      db,
+      `select (public.ai_reserve_generation($1, $2, 'image', 'post.visual', 'simulated-image', 'm', 10, 600)).id`,
+      [owner.id, brand],
+    );
+    const prompt = 'Café con churros ☕ en la terraza, '.repeat(120);
+    const json = provenanceJson(generation!.id, {
+      provider: 'simulated-image',
+      model: 'm',
+      prompt,
+      dataRegion: 'eu',
+      trainsOnInputs: 'no',
+      untestedAdapter: true,
+    });
+    expect(new TextEncoder().encode(JSON.stringify(json)).length).toBeLessThanOrEqual(2048);
+    expect(prompt.startsWith(json.prompt as string)).toBe(true);
+    const { assetId } = await storage.put({
+      organizationId: org,
+      brandId: brand,
+      generationId: generation!.id,
+      kind: 'image',
+      index: 0,
+      mimeType: 'image/png',
+      bytes: simulatedPng('largo'),
+      provenance: {
+        provider: 'simulated-image',
+        model: 'm',
+        prompt,
+        dataRegion: 'eu',
+        trainsOnInputs: 'no',
+        untestedAdapter: true,
+      },
+    });
+    const [row] = await asService<Row>(
+      db,
+      `select octet_length(provenance::text) as n from public.media_assets where id = $1`,
+      [assetId],
+    );
+    expect(Number(row!.n)).toBeLessThanOrEqual(2048);
   });
 
   it('rechaza lo que supera 50 MB o no es del tipo pedido, sin subir nada', async () => {
@@ -377,8 +420,13 @@ describe('función ai-media', () => {
     const [row] = await as<Row>(db, owner, `select * from public.media_assets where id = $1`, [asset.id]);
     expect(row).toMatchObject({
       origin: 'generated',
-      ai_generation_id: result.body.generationId,
-      provenance: { prompt: 'Mesa para dos con vela', provider: 'simulated-image', purpose: 'post.visual' },
+      provenance: {
+        type: 'ai_generation',
+        generation_id: result.body.generationId,
+        prompt: 'Mesa para dos con vela',
+        provider: 'simulated-image',
+        purpose: 'post.visual',
+      },
     });
     const [generation] = await asService<Row>(
       db,
@@ -493,9 +541,12 @@ describe('generación asíncrona y función ai-media-poll', () => {
       [generationId],
     );
     expect(generation!.status).toBe('succeeded');
-    const assets = await as<Row>(db, owner, `select provenance from public.media_assets where ai_generation_id = $1`, [
-      generationId,
-    ]);
+    const assets = await as<Row>(
+      db,
+      owner,
+      `select provenance from public.media_assets where provenance->>'generation_id' = $1`,
+      [generationId],
+    );
     expect(assets).toHaveLength(1);
     expect(assets[0]!.provenance).toMatchObject({ prompt: 'Cócteles en la barra', provider: 'simulated-image-async' });
     const [job] = await asService<Row>(

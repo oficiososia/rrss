@@ -1,10 +1,15 @@
 -- Fase 2 · Imágenes generadas con IA, de punta a punta.
 --
 -- 1. Procedencia en la biblioteca. Una imagen generada es un recurso más de
---    `media_assets` (origin = 'generated'), con la generación que la produjo y
---    su procedencia (proveedor, modelo, encargo, región…). Las escribe SOLO el
---    servidor: las personas no pueden poner ni cambiar estas dos columnas (los
---    privilegios de columna de media_assets no las incluyen).
+--    `media_assets` (origin = 'generated') y su procedencia va en la columna
+--    `provenance` que creó la exportación (20261118120000), con su propio tipo:
+--      {"type": "ai_generation", "generation_id": "<uuid>", "provider": "…",
+--       "model": "…", "purpose": "post.visual", "prompt": "<encargo recortado>",
+--       "data_region": "eu", "trains_on_inputs": "no", "untested_adapter": true}
+--    Esa columna se puede escribir al insertar desde el cliente (la exportación
+--    lo necesita), así que aquí se impide que alguien que no sea el servidor
+--    declare un recurso como generado con IA. La clave de servicio puede
+--    escribirla: tiene todos los privilegios de la tabla (20261115120000).
 -- 2. Modelo `comfyui` · FLUX.2 Klein 4B (servidor ComfyUI propio, modelos
 --    abiertos). Nace INACTIVO y con el precio SIN VERIFICAR: su coste es el de
 --    la GPU donde corra, que se fija al elegirla (0 en pruebas con Colab).
@@ -17,18 +22,25 @@
 
 -- ─────────────────────────── 1. Procedencia ───────────────────────────
 
-alter table public.media_assets
-  add column ai_generation_id uuid references public.ai_generations (id) on delete set null,
-  add column provenance jsonb not null default '{}'::jsonb
-    check (jsonb_typeof(provenance) = 'object' and pg_column_size(provenance) <= 16384);
+-- Solo el servidor (clave de servicio) puede dar un recurso por generado con IA.
+create function private.media_assets_ai_provenance_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if (new.provenance ->> 'type') = 'ai_generation'
+     and current_user not in ('service_role', 'postgres', 'supabase_admin') then
+    raise exception 'Solo el servidor puede registrar un recurso generado con IA' using errcode = '42501';
+  end if;
+  return new;
+end $$;
 
-create index media_assets_ai_generation_idx on public.media_assets (ai_generation_id)
-  where ai_generation_id is not null;
+revoke all on function private.media_assets_ai_provenance_guard() from public, anon, authenticated;
 
-comment on column public.media_assets.ai_generation_id is
-  'Generación de IA que produjo el archivo (solo el servidor la escribe).';
-comment on column public.media_assets.provenance is
-  'Procedencia de un recurso generado: {source, generation_id, provider, model, purpose, prompt, data_region, trains_on_inputs, untested_adapter}. Solo el servidor la escribe.';
+-- Sin lista de columnas ni índice sobre `provenance` a propósito: así esta
+-- migración no ata la columna y la vuelta atrás de 20261118120000 sigue
+-- pudiendo quitarla. El recurso de una generación se encuentra por
+-- `ai_generations.output.assets[].asset_id`, que escribe el servicio.
+create trigger media_assets_ai_provenance_guard before insert or update on public.media_assets
+  for each row execute function private.media_assets_ai_provenance_guard();
 
 -- ─────────────────────── 2. Modelo de ComfyUI propio ───────────────────────
 

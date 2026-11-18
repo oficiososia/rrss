@@ -3,9 +3,11 @@
 // Cada resultado acaba en dos sitios, como cualquier subida de la biblioteca:
 //   1. el archivo, en el cubo privado `brand-media`, con la ruta
 //      `<organización>/<marca>/ia/<generación>-<índice>.<ext>`;
-//   2. su fila en `media_assets`, con `origin = 'generated'`, la generación que
-//      lo produjo (`ai_generation_id`) y su procedencia (`provenance`: proveedor,
-//      modelo, encargo, región, si el adaptador está sin probar…).
+//   2. su fila en `media_assets`, con `origin = 'generated'` y su procedencia en
+//      la columna `provenance` (la misma que usa la exportación del editor), con
+//      `type: 'ai_generation'`: generación, proveedor, modelo, encargo recortado,
+//      región y si el adaptador está sin probar. Máximo 2048 bytes (lo exige la
+//      tabla); solo el servidor puede escribir ese tipo (migración 20261118210000).
 //
 // Idempotente: la misma generación e índice van siempre a la misma ruta; subir
 // otra vez sobrescribe el mismo objeto y la fila se reutiliza (la ruta es
@@ -24,7 +26,9 @@ export const BRAND_MEDIA_BUCKET = 'brand-media';
 export const BRAND_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 /** Carpeta de la biblioteca donde caen las imágenes generadas. */
 export const GENERATED_FOLDER = 'IA';
-const MAX_PROMPT_IN_PROVENANCE = 2000;
+/** Tope de `media_assets.provenance` (migración 20261118120000). */
+export const MAX_PROVENANCE_BYTES = 2048;
+export const AI_PROVENANCE_TYPE = 'ai_generation';
 
 /** Tipos que admite el cubo y su extensión. */
 const EXTENSIONS: Record<string, string> = {
@@ -51,7 +55,6 @@ export interface GeneratedAssetRow {
   height: number | null;
   folder: string;
   tags: string[];
-  ai_generation_id: string;
   provenance: Record<string, unknown>;
   created_by: string | null;
 }
@@ -124,18 +127,32 @@ export function imageDimensions(bytes: Uint8Array): { width: number; height: num
   return null;
 }
 
-function provenanceJson(generationId: string, provenance: MediaProvenance | undefined): Record<string, unknown> {
-  return {
-    source: 'ai',
+/**
+ * Procedencia de un recurso generado, recortando el encargo para que el JSON
+ * no pase de 2048 bytes (se mide en UTF-8, como la restricción de la tabla).
+ */
+export function provenanceJson(generationId: string, provenance: MediaProvenance | undefined): Record<string, unknown> {
+  const build = (prompt: string | null) => ({
+    type: AI_PROVENANCE_TYPE,
     generation_id: generationId,
     provider: provenance?.provider ?? null,
     model: provenance?.model ?? null,
     purpose: provenance?.purpose ?? null,
-    prompt: provenance?.prompt ? provenance.prompt.slice(0, MAX_PROMPT_IN_PROVENANCE) : null,
+    prompt,
     data_region: provenance?.dataRegion ?? 'unknown',
     trains_on_inputs: provenance?.trainsOnInputs ?? 'unknown',
     untested_adapter: provenance?.untestedAdapter ?? true,
-  };
+  });
+  const encoder = new TextEncoder();
+  let prompt = provenance?.prompt ? [...provenance.prompt] : [];
+  // Margen de 200 bytes: al pasar a texto, jsonb añade espacios tras «:» y «,».
+  while (
+    prompt.length > 0 &&
+    encoder.encode(JSON.stringify(build(prompt.join('')))).length > MAX_PROVENANCE_BYTES - 200
+  ) {
+    prompt = prompt.slice(0, Math.max(0, Math.floor(prompt.length * 0.9) - 1));
+  }
+  return build(prompt.length ? prompt.join('') : null);
 }
 
 /** Nombre legible en la biblioteca: «IA · <encargo recortado>.png». */
@@ -194,7 +211,6 @@ export function createSupabaseMediaStorage(
         height: size && size.height > 0 ? size.height : null,
         folder: GENERATED_FOLDER,
         tags: ['ia'],
-        ai_generation_id: object.generationId,
         provenance: provenanceJson(object.generationId, object.provenance),
         created_by: object.provenance?.requestedBy ?? null,
       });
