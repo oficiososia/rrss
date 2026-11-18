@@ -68,14 +68,21 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   const s = await abrir(browser, 'ana');
   const { page } = s;
 
-  // 1. Dos fotos nuevas en la biblioteca de La Espiga.
+  // 1. Dos fotos nuevas en la biblioteca de La Espiga. Nombre y tono cambian en
+  // cada ejecución: al repetir solo este archivo (E2E_CONTINUAR=1) la biblioteca
+  // ya tiene las de la vez anterior (las idénticas se detectan como duplicadas y
+  // los nombres repetidos harían ambiguo elegirlas).
+  const tono = Date.now() % 50;
+  const vez = Date.now().toString(36);
+  const horno = `reel-horno-${vez}.png`;
+  const mostrador = `reel-mostrador-${vez}.png`;
   await page.goto(biblioteca());
   await page.getByTestId('library-upload-toggle').click();
   await page
     .getByTestId('library-file-input')
     .setInputFiles([
-      archivoPng('reel-horno.png', png(640, 480, [190, 90, 40])),
-      archivoPng('reel-mostrador.png', png(480, 640, [40, 110, 190])),
+      archivoPng(horno, png(640, 480, [190, 90 + tono, 40])),
+      archivoPng(mostrador, png(480, 640, [40, 110, 190 - tono])),
     ]);
   await expect(page.getByTestId('upload-item-done')).toHaveCount(2);
 
@@ -87,8 +94,8 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
     await expect(plantillas.getByText(nombre, { exact: true })).toBeVisible();
   }
   await plantillas.getByText('Fundido suave', { exact: true }).click();
-  await page.getByRole('button', { name: 'Añadir «reel-horno.png»' }).click();
-  await page.getByRole('button', { name: 'Añadir «reel-mostrador.png»' }).click();
+  await page.getByRole('button', { name: `Añadir «${horno}»` }).click();
+  await page.getByRole('button', { name: `Añadir «${mostrador}»` }).click();
   await expect(page.getByTestId('reel-piece')).toHaveCount(2);
   // Dos fotos de 2,5 s con un fundido de 0,5 s.
   await expect(page.getByTestId('reel-duration')).toHaveText('4,5 s de 30 s como máximo');
@@ -162,7 +169,7 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   // 6. La otra organización no lo ve.
   const b = await abrir(browser, 'bruno');
   await b.page.goto(biblioteca('B'));
-  await expect(b.page.getByRole('heading', { name: 'Biblioteca' })).toBeVisible();
+  await expect(b.page.getByRole('heading', { name: 'Biblioteca', exact: true })).toBeVisible();
   await expect(b.page.getByText(recurso!.file_name)).toHaveCount(0);
   sinErrores(b);
   await b.context.close();
