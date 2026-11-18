@@ -2,6 +2,7 @@
 import type { Handler } from '../handler.ts';
 import { createImageProcessHandler } from './image-process.ts';
 import { createReelTemplateHandler } from './reel-template.ts';
+import { createReportPdfHandler } from './report-pdf.ts';
 import type { MediaDeps } from './shared.ts';
 import { createVideoDerivativesHandler } from './video-derivatives.ts';
 
@@ -11,5 +12,11 @@ import { createVideoDerivativesHandler } from './video-derivatives.ts';
  * hasta que esté implementado.
  */
 export function createMediaHandlers(deps: MediaDeps): Handler[] {
-  return [createImageProcessHandler(deps), createReelTemplateHandler(deps), createVideoDerivativesHandler(deps)];
+  return [
+    createImageProcessHandler(deps),
+    createReelTemplateHandler(deps),
+    createVideoDerivativesHandler(deps),
+    // Informe mensual de analítica (Fase 5).
+    createReportPdfHandler(),
+  ];
 }

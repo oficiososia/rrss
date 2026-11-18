@@ -410,9 +410,14 @@ describe('bucle del trabajador', () => {
 });
 
 describe('registro de manejadores', () => {
-  it('reclama los tres tipos implementados; el de documentos por capas no está registrado ni simulado', async () => {
+  it('reclama los cuatro tipos implementados; el de documentos por capas no está registrado ni simulado', async () => {
     const kinds = createMediaHandlers(deps).map((h) => h.kind);
-    expect(kinds.sort()).toEqual(['media.image.process', 'media.reel.template', 'media.video.derivatives']);
+    expect(kinds.sort()).toEqual([
+      'media.image.process',
+      'media.reel.template',
+      'media.report.pdf',
+      'media.video.derivatives',
+    ]);
     expect(kinds).not.toContain(DOCUMENT_EXPORT_KIND);
     await expect(createDocumentExportHandler(deps).run({} as HandlerContext)).rejects.toThrow(/no está implementada/);
   });
