@@ -75,6 +75,8 @@ export default defineConfig({
         VITE_AI_IMAGE_ENABLED: 'true',
         // El trabajador de medios existe en este entorno: lo arranca tests/e2e/11-reels.spec.ts contra el stack local.
         VITE_MEDIA_WORKER_ENABLED: 'true',
+        // Publicación (Fase 3): conectar y programar, contra la Graph API simulada de social-publish/social-connect.
+        VITE_SOCIAL_PUBLISHING_ENABLED: 'true',
       },
     },
   ],
