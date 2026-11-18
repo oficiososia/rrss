@@ -35,6 +35,12 @@ const ContentListPage = lazy(() =>
 const ContentEditorPage = lazy(() =>
   import('@/features/content/ContentEditorPage').then((m) => ({ default: m.ContentEditorPage })),
 );
+const RequestListPage = lazy(() =>
+  import('@/features/requests/RequestListPage').then((m) => ({ default: m.RequestListPage })),
+);
+const RequestDetailPage = lazy(() =>
+  import('@/features/requests/RequestDetailPage').then((m) => ({ default: m.RequestDetailPage })),
+);
 const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
 const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
@@ -115,6 +121,8 @@ export function App() {
                       <Route path="inicio" element={<BrandHomePage />} />
                       <Route path="contenidos" element={<ContentListPage />} />
                       <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
+                      <Route path="encargos" element={<RequestListPage />} />
+                      <Route path="encargos/:requestId" element={<RequestDetailPage />} />
                       <Route path="biblioteca" element={<LibraryPage />} />
                       <Route path="marca" element={<BrandProfilePage />} />
                       <Route path="equipo" element={<BrandTeamPage />} />

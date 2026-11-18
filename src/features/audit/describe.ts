@@ -1,6 +1,8 @@
 import type { AuditLogRow, Json } from '@/lib/database.types';
 import { BRAND_ROLE_LABEL, ORG_ROLE_LABEL } from '@/features/permissions/roles';
 import type { BrandRole, OrgRole } from '@/lib/database.types';
+import { REQUEST_STATUS_LABEL } from '@/features/requests/labels';
+import type { ContentRequestStatus } from '@/lib/database.types';
 
 function str(data: Json, key: string): string {
   if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
@@ -83,6 +85,14 @@ export function describeAudit(
       return str(data, 'restored_from')
         ? `restauró la versión ${str(data, 'restored_from')} de un contenido (ahora es la ${str(data, 'version')})`
         : `guardó la versión ${str(data, 'version')} de un contenido`;
+    case 'content_requests:insert':
+      return `pidió el encargo «${str(data, 'title')}»`;
+    case 'content_requests:update':
+      return `actualizó el encargo «${str(data, 'title')}» (${REQUEST_STATUS_LABEL[str(data, 'status') as ContentRequestStatus]?.toLowerCase() ?? str(data, 'status')})`;
+    case 'content_requests:delete':
+      return `eliminó el encargo «${str(data, 'title')}»`;
+    case 'content_request_comments:insert':
+      return str(data, 'kind') === 'comment' ? 'comentó un encargo' : 'cambió el estado de un encargo';
     default:
       return `${action} en ${entity}`;
   }

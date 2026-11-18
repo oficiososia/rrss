@@ -26,6 +26,7 @@ import { translateError } from '@/lib/errors';
 import { downloadText } from '@/lib/utils';
 import { useActiveProfile, useSaveProfile, useUpdateBrand } from './api';
 import { BasicsFields } from './BasicsFields';
+import { AiModeCard } from '@/features/requests/AiModeCard';
 import { profileCompleteness } from './completeness';
 import { brandBasicsSchema, configFileName, exportBrandConfig, type BrandBasics } from './config';
 import {
@@ -148,6 +149,7 @@ function BrandDataTab() {
           </form>
         </CardBody>
       </Card>
+      <AiModeCard />
       {canManage && (
         <Card>
           <CardHeader
