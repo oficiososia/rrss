@@ -167,9 +167,12 @@ describe('Editor: IA de texto', () => {
     expect(screen.getByTestId('copy-hashtags')).toHaveValue('#otoño');
     expect(screen.getByTestId('copy-alt')).toHaveValue('Plato de temporada');
     expect(screen.getByTestId('editor-dirty')).toBeInTheDocument();
+    // El texto aplicado lleva la marca de contenido generado con IA (RGPD / Reglamento de IA).
+    expect(screen.getByTestId('editor-ai-label')).toHaveAttribute('title', expect.stringContaining('texto'));
 
     await user.click(screen.getByRole('button', { name: 'Deshacer' }));
     expect(screen.getByTestId('copy-caption')).toHaveValue('Texto de antes');
+    expect(screen.queryByTestId('editor-ai-label')).not.toBeInTheDocument();
   });
 
   it('con IA, la pestaña Marca ofrece comprobar el tono del texto que se publicaría', async () => {

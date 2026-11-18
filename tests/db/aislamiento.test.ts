@@ -206,6 +206,7 @@ const TENANT_TABLES = [
   'campaigns',
   'campaign_plans',
   'campaign_contents',
+  'legal_acceptances',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -1866,5 +1867,148 @@ describe('campañas (Fase 4)', () => {
       [marcaA1, START],
       noFunction,
     );
+  });
+});
+
+describe('RGPD: aceptaciones, exportar y borrar', () => {
+  /** Llama a una función de supresión como el servidor (clave de servicio). */
+  const service = (fn: string, args: Record<string, unknown>) => serviceRpc<Record<string, unknown>>(db, fn, args);
+
+  it('cada persona ve solo sus aceptaciones, y nadie las escribe ni las cambia desde el cliente', async () => {
+    await as(db, ana, `select * from public.accept_legal_documents('2026-11-19', '2026-11-19')`);
+    await as(db, berta, `select * from public.accept_legal_documents('2026-11-19', '2026-11-19')`);
+    const deAna = await as(db, ana, `select user_id from public.legal_acceptances`);
+    expect(deAna.length).toBe(2);
+    expect(deAna.every((r) => r.user_id === ana.id)).toBe(true);
+    await denied(
+      db,
+      ana,
+      `insert into public.legal_acceptances (user_id, document, version, source) values ($1, 'terms', '2026-11-19', 'app')`,
+      [berta.id],
+    );
+    await denied(db, ana, `update public.legal_acceptances set version = '2020-01-01'`);
+    await denied(db, ana, `delete from public.legal_acceptances`);
+    expect(await db.query(`select 1 from public.legal_acceptances where user_id = $1`, [berta.id])).toHaveLength(2);
+  });
+
+  it('«descargar mis datos» devuelve solo los de la sesión, sin forma de pedir los de otra persona', async () => {
+    const [fila] = await as<{ data: Record<string, unknown> }>(db, ana, `select public.export_my_data() as data`);
+    const data = fila!.data;
+    const texto = JSON.stringify(data);
+    expect((data.account as Record<string, unknown>).id).toBe(ana.id);
+    expect(texto).not.toContain(berta.id);
+    expect(texto).not.toContain(berta.email);
+    expect(texto).not.toContain(orgB);
+    // Sin parámetros: no hay a quién más pedir.
+    await denied(db, ana, `select public.export_my_data($1)`, [berta.id], /function|does not exist/);
+    await denied(db, null, `select public.export_my_data()`, [], /permission denied/);
+  });
+
+  it('exportar una organización es solo para sus propietarios, y nunca incluye otra', async () => {
+    for (const user of [berta, adminA, editorA, gestorA, clienteA, ajeno, superadmin]) {
+      await denied(db, user, `select public.export_organization_data($1)`, [orgA], /propietario|permission denied/);
+    }
+    await denied(db, null, `select public.export_organization_data($1)`, [orgA], /permission denied/);
+    const [fila] = await as<{ data: Record<string, unknown> }>(
+      db,
+      ana,
+      `select public.export_organization_data($1) as data`,
+      [orgA],
+    );
+    const data = fila!.data;
+    const marcas = data.brands as { id: string; organization_id: string }[];
+    expect(marcas.map((b) => b.id)).toEqual(expect.arrayContaining([marcaA1, marcaA2]));
+    expect(marcas.every((b) => b.organization_id === orgA)).toBe(true);
+    const texto = JSON.stringify(data);
+    for (const ajena of [orgB, marcaB1, marcaG1, contentB1, contentG1, requestB1, requestG1, assetB1]) {
+      expect(texto).not.toContain(ajena);
+    }
+    expect(texto).not.toContain('token_hash');
+    expect(texto).not.toContain('claim_token');
+  });
+
+  it('desde la aplicación no se ejecuta ninguna función de borrado: solo el servidor', async () => {
+    for (const user of [ana, berta, superadmin]) {
+      await denied(db, user, `select public.gdpr_delete_account_data($1)`, [user.id], /permission denied/);
+      await denied(
+        db,
+        user,
+        `select public.gdpr_delete_organization($1, $2, 'Empresa A')`,
+        [user.id, orgA],
+        /permission denied/,
+      );
+      await denied(db, user, `select public.gdpr_forget_storage_paths(array['x'])`, [], /permission denied/);
+      await denied(db, user, `select private.delete_organization_data($1, $2)`, [orgB, user.id], /permission denied/);
+    }
+  });
+
+  it('el servidor tampoco borra una organización en nombre de quien no es su propietario', async () => {
+    for (const user of [berta, adminA, gestorA, gema, ajeno]) {
+      await expect(
+        service('gdpr_delete_organization', {
+          p_user_id: user.id,
+          p_organization_id: orgA,
+          p_confirmation: 'Empresa A',
+        }),
+      ).rejects.toThrow(/propietario/);
+    }
+    await expect(
+      service('gdpr_delete_organization', { p_user_id: ana.id, p_organization_id: orgA, p_confirmation: 'Empresa B' }),
+    ).rejects.toThrow(/nombre exacto/);
+    expect(await db.query(`select 1 from public.organizations where id = $1`, [orgA])).toHaveLength(1);
+  });
+
+  it('borrar una cuenta solo toca a esa persona: su autoría queda anónima y el trabajo de los demás sigue', async () => {
+    // Una cuenta de usar y tirar, editora en la marca A1 y propietaria de su propia organización vacía.
+    const borrable = await createUser(db, 'borrable@a.test', 'Borrable');
+    await join(db, ana, borrable, orgA, 'member', marcaA1, 'editor');
+    const propia = await createOrg(db, borrable, 'Solo mía');
+    const [pieza] = await as<{ id: string }>(
+      db,
+      borrable,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Hecha por borrable', 'instagram', 'post') returning id`,
+      [marcaA1, orgA],
+    );
+    await as(db, borrable, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 1)`, [pieza!.id]);
+    await as(db, borrable, `select public.comment_content_request($1, 'Comentario de borrable')`, [requestA1]);
+    const antes = await db.query(`select count(*)::int as n from public.content_items where brand_id = $1`, [marcaA1]);
+
+    const resultado = await service('gdpr_delete_account_data', { p_user_id: borrable.id });
+    expect((resultado.deleted_organizations as { organization_id: string }[]).map((o) => o.organization_id)).toEqual([
+      propia,
+    ]);
+    await db.query(`delete from auth.users where id = $1`, [borrable.id]);
+
+    // Su organización vacía ya no existe; la de Ana, sí, con todo su contenido.
+    expect(await db.query(`select 1 from public.organizations where id = $1`, [propia])).toEqual([]);
+    expect(
+      await db.query(`select count(*)::int as n from public.content_items where brand_id = $1`, [marcaA1]),
+    ).toEqual(antes);
+    expect(await db.query(`select created_by from public.content_items where id = $1`, [pieza!.id])).toEqual([
+      { created_by: null },
+    ]);
+    expect(
+      await db.query(`select author_id from public.content_request_comments where body = 'Comentario de borrable'`),
+    ).toEqual([{ author_id: null }]);
+    // Ni su id ni su correo quedan en el registro de auditoría.
+    expect(
+      await db.query(
+        `select id from public.audit_logs
+         where actor_id = $1 or entity_id = $2 or data::text like $3 or data::text ilike $4`,
+        [borrable.id, borrable.id, `%${borrable.id}%`, `%${borrable.email}%`],
+      ),
+    ).toEqual([]);
+    // Los demás siguen con sus datos y su autoría.
+    expect(await as(db, ana, `select 1 from public.content_items where id = $1`, [contentA1])).toHaveLength(1);
+    expect(await db.query(`select 1 from public.audit_logs where actor_id = $1 limit 1`, [ana.id])).toHaveLength(1);
+    expect(await db.query(`select 1 from public.profiles where user_id = $1`, [berta.id])).toHaveLength(1);
+  });
+
+  it('quien es la única propietaria de una organización con más miembros no puede borrar su cuenta', async () => {
+    await expect(service('gdpr_delete_account_data', { p_user_id: ana.id })).rejects.toThrow(/traspasa la propiedad/);
+    // Ni siquiera borrando la cuenta de Auth a mano: la organización no se queda sin propietario.
+    await expect(db.query(`delete from auth.users where id = $1`, [ana.id])).rejects.toThrow(/propietario/);
+    expect(await db.query(`select 1 from public.organizations where id = $1`, [orgA])).toHaveLength(1);
   });
 });

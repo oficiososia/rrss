@@ -102,6 +102,12 @@ const layerBase = {
    * lugar en el apilado. Sin grupo, el campo no está.
    */
   groupId: layerIdSchema.optional(),
+  /**
+   * La capa la produjo la IA (por ejemplo, un texto redactado con IA). Opcional
+   * y sin valor por defecto: los documentos antiguos no cambian. Lo lee la
+   * marca de contenido generado con IA (ver content/aiLabel.ts).
+   */
+  aiGenerated: z.boolean().optional(),
 };
 
 /** De dónde sale una imagen: un recurso de la biblioteca o una generación de IA. Nunca la imagen incrustada. */
@@ -202,6 +208,11 @@ export const postCopySchema = z.object({
         .default(''),
     })
     .default({}),
+  /**
+   * El texto se redactó con IA (lo pone el editor al aplicar una propuesta de
+   * la IA). Se mantiene aunque después se retoque: el criterio es conservador.
+   */
+  aiGenerated: z.boolean().optional(),
 });
 
 // ── Documento ────────────────────────────────────────────────────────────

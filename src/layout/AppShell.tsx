@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldCheck,
   Sun,
+  UserRound,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } fr
 import { aiTextEnabled, APP_NAME } from '@/config/app';
 import { campaignsAvailable } from '@/features/campaigns/labels';
 import { useUser } from '@/features/auth/AuthProvider';
+import { LegalFooter } from '@/features/legal/LegalFooter';
 import { useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
 import { ORG_ROLE_LABEL } from '@/features/permissions/roles';
 import { useUnreadRequestNotifications } from '@/features/requests/notifications';
@@ -208,6 +210,10 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
           </MenuItem>
         ))}
         <MenuSeparator />
+        <MenuItem onSelect={() => navigate('/cuenta')} data-testid="nav-account">
+          <UserRound className="h-4 w-4" aria-hidden />
+          Mi cuenta y privacidad
+        </MenuItem>
         {isPlatformAdmin && (
           <MenuItem onSelect={() => navigate('/plataforma')} data-testid="nav-platform">
             <ShieldCheck className="h-4 w-4" aria-hidden />
@@ -302,6 +308,7 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
 
         <main id="contenido" className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6 lg:px-10 lg:pb-12 lg:pt-10">
           {children}
+          <LegalFooter className="mt-12" />
         </main>
 
         {/* Móvil y tablet: navegación inferior */}

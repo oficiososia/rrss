@@ -195,6 +195,8 @@ export type ContentItemRow = {
   /** Número de la última versión guardada; 0 = todavía sin documento. */
   current_version: number;
   archived_at: string | null;
+  /** Lleva contenido generado con IA (su versión vigente). Ver el bloque de RGPD. */
+  ai_generated?: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -211,6 +213,8 @@ export type ContentVersionRow = {
   change_note: string;
   /** Si es una restauración, de qué versión se copió. */
   restored_from: number | null;
+  /** El documento lleva contenido generado con IA. Ver el bloque de RGPD. */
+  ai_generated?: boolean;
   created_by: string | null;
   created_at: string;
 };
@@ -1176,6 +1180,50 @@ type CampaignEnums = {
 
 // ─────────────────────── fin del bloque de campañas ───────────────────────
 
+// ───────────── RGPD · Aceptaciones, acceso, portabilidad y supresión ─────────────
+// Migraciones 20261119410000_rgpd_derechos y 20261119411000_contenido_generado_ia.
+// Borrar (cuenta u organización) no tiene RPC para el cliente: lo hacen las
+// Edge Functions `delete-account` y `delete-organization` con la clave de servicio.
+// `content_items.ai_generated` y `content_versions.ai_generated` los calcula la
+// base de datos al guardar cada versión (opcionales en los tipos de arriba para
+// no romper las filas escritas a mano en las pruebas).
+
+export type LegalDocument = 'terms' | 'privacy';
+
+export type LegalAcceptanceRow = {
+  id: number;
+  user_id: string;
+  document: LegalDocument;
+  version: string;
+  accepted_at: string;
+  source: 'signup' | 'app';
+};
+
+export type AccountDeletionCheck = {
+  /** Organizaciones donde es la única propietaria y hay más miembros: bloquean el borrado. */
+  blocking: { organization_id: string; name: string; members: number }[];
+  /** Organizaciones donde es el único miembro: se borran con la cuenta. */
+  deleted_with_account: { organization_id: string; name: string }[];
+};
+
+type RgpdTables = {
+  legal_acceptances: Table<LegalAcceptanceRow>;
+};
+
+type RgpdFunctions = {
+  accept_legal_documents: {
+    Args: { p_terms_version: string; p_privacy_version: string };
+    Returns: LegalAcceptanceRow[];
+  };
+  /** JSON con los datos personales de quien llama (formato `rrss.personal-data`). */
+  export_my_data: { Args: Record<string, never>; Returns: Json };
+  /** Solo propietarios. JSON `rrss.organization-export` con la lista de archivos (rutas). */
+  export_organization_data: { Args: { p_organization_id: string }; Returns: Json };
+  my_account_deletion_check: { Args: Record<string, never>; Returns: AccountDeletionCheck };
+};
+
+// ─────────────────────────── fin del bloque de RGPD ───────────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -1262,7 +1310,8 @@ export type Database = {
       SourceFontTables &
       PublicationTables &
       BillingTables &
-      CampaignTables;
+      CampaignTables &
+      RgpdTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1295,7 +1344,8 @@ export type Database = {
       SourceFontFunctions &
       PublicationFunctions &
       BillingFunctions &
-      CampaignFunctions;
+      CampaignFunctions &
+      RgpdFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
