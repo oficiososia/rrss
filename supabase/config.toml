@@ -398,6 +398,16 @@ verify_jwt = false
 [functions.ai-media-webhook]
 verify_jwt = false
 
+# Publicador de la Fase 3: lo llama pg_cron con la clave de servicio en
+# `apikey`; la comprueba social-publish/handler.ts.
+[functions.social-publish]
+verify_jwt = false
+
+# Conectar cuentas: Meta vuelve al callback sin JWT de Supabase; lo autentica el
+# estado anti-CSRF (social-connect/handler.ts).
+[functions.social-connect]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327
