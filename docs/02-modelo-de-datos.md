@@ -355,3 +355,32 @@ Decisiones que conviene conocer:
   entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
 - **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
   de cada comentario.
+
+## 13. Fase 3: publicación
+
+Implementado y probado en base de datos, con el publicador y la conexión contra
+una Graph API simulada (detalle, garantías y lo que falta de Meta en
+`docs/publicacion.md`).
+
+```
+brands ──< social_accounts ──1:1── private.social_account_secrets   (tokens cifrados)
+   │
+   └──< content_items ──< scheduled_publications ──< publication_attempts
+                │                 (pieza + versión aprobada + recursos + cuenta)
+                └──< content_comments   (comentarios y hechos de aprobación)
+```
+
+| Tabla | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `social_accounts` | Cuenta conectada de una marca y red: identificador, nombre, estado, caducidad del token, cupo | Quien ve la marca | El servidor al conectar; `disconnect_social_account` (`manage`) |
+| `private.social_account_secrets` | Tokens cifrados (AES-256-GCM en la función) | Nadie del cliente; el servidor con `social_account_token` | Solo el servidor |
+| `private.social_oauth_states` | Estado anti-CSRF del OAuth (huella, 10 minutos, un uso) | Nadie del cliente | `social_oauth_begin` (`manage`) y `social_oauth_consume` (servidor) |
+| `scheduled_publications` | El calendario: pieza, versión, cuenta, recursos, fecha, estado (`planned` → `scheduled` → `publishing` → `published`, o `failed`/`cancelled`), contenedor e identificador de la red | Quien ve la marca | `save_publication`, `reschedule_publication`, `cancel_publication`, `retry_publication` (`edit`); el publicador con sus funciones |
+| `publication_attempts` | Cada pasada del publicador con su resultado | Quien ve la marca | Solo el publicador |
+| `content_comments` | Comentarios de la pieza y hechos de aprobación | Quien ve la marca | `comment_content_item` (`comment`), `request_content_changes` (`approve`), un disparador al aprobar |
+
+`approve_content_items` aprueba por lotes con las reglas de `set_content_status`.
+La regla dura (lo no aprobado en la versión programada no se publica) vive en
+`private.publication_hold_reason`, que usan el disparador que reevalúa el
+calendario, la guarda que impide pasar a `publishing` y el publicador.
+
