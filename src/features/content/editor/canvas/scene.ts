@@ -5,8 +5,9 @@ import { Line } from 'konva/lib/shapes/Line';
 import { Rect } from 'konva/lib/shapes/Rect';
 import { Text } from 'konva/lib/shapes/Text';
 import { Transformer } from 'konva/lib/shapes/Transformer';
-import { containBox, coverCrop, layerToNodeBox, nodeToLayerBox, snapToCanvas, type Guides } from '../geometry';
+import { layerToNodeBox, nodeToLayerBox, snapToCanvas, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
+import { applySpecAttrs, drawSpecShape } from './draw';
 import type { NodeSpec } from './nodes';
 
 // Dibujo con Konva, sin React. Recibe la descripción plana de cada capa
@@ -178,88 +179,14 @@ export class Scene {
   }
 
   private apply(node: AnyNode, spec: NodeSpec): void {
-    node.setAttrs({
-      ...spec.box,
-      scaleX: 1,
-      scaleY: 1,
-      opacity: spec.opacity,
-      visible: spec.visible,
-      draggable: spec.editable,
-    });
-    if (spec.kind === 'text') {
-      node.setAttrs({
-        text: spec.text,
-        fontFamily: spec.fontFamily,
-        fontSize: spec.fontSize,
-        fontStyle: spec.fontStyle,
-        fill: spec.fill,
-        align: spec.align,
-        lineHeight: spec.lineHeight,
-        wrap: 'word',
-        verticalAlign: 'top',
-      });
-    } else if (spec.kind === 'rect') {
-      node.setAttrs({
-        fill: spec.fill ?? undefined,
-        stroke: spec.stroke?.color,
-        strokeWidth: spec.stroke?.width ?? 0,
-        strokeEnabled: Boolean(spec.stroke),
-        cornerRadius: spec.cornerRadius,
-      });
-    } else if (spec.kind === 'ellipse') {
-      node.setAttrs({
-        fill: spec.fill ?? undefined,
-        stroke: spec.stroke?.color,
-        strokeWidth: spec.stroke?.width ?? 0,
-        strokeEnabled: Boolean(spec.stroke),
-      });
-    } else if (spec.kind === 'image' && spec.url) {
-      this.loadImage(spec.url);
-    }
+    applySpecAttrs(node, spec);
+    if (spec.kind === 'image' && spec.url) this.loadImage(spec.url);
   }
 
-  /** Dibujo de las elipses y de las imágenes (con su recorte o su encaje). */
   private drawShape(context: Context, shape: Shape): void {
     const spec = this.specs.get(shape.id());
     if (!spec) return;
-    const width = shape.width();
-    const height = shape.height();
-    if (spec.kind === 'ellipse') {
-      context.beginPath();
-      context.ellipse(width / 2, height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
-      context.closePath();
-      context.fillStrokeShape(shape);
-      return;
-    }
-    if (spec.kind !== 'image') return;
-    const image = spec.url ? this.images.get(spec.url) : undefined;
-    if (image instanceof HTMLImageElement && image.naturalWidth > 0) {
-      const natural = { width: image.naturalWidth, height: image.naturalHeight };
-      if (spec.fit === 'cover') {
-        const crop = coverCrop(natural, { width, height }, spec.focus);
-        context.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, width, height);
-      } else {
-        const box = containBox(natural, { width, height });
-        context.drawImage(image, box.x, box.y, box.width, box.height);
-      }
-      return;
-    }
-    // Marcador mientras la imagen no está (cargando, sin acceso o generación sin conectar).
-    const native = context._context;
-    native.save();
-    native.fillStyle = 'rgba(148, 163, 184, 0.35)';
-    native.fillRect(0, 0, width, height);
-    native.strokeStyle = 'rgba(100, 116, 139, 0.8)';
-    native.setLineDash([12, 8]);
-    native.lineWidth = 2;
-    native.strokeRect(1, 1, width - 2, height - 2);
-    native.fillStyle = 'rgba(51, 65, 85, 0.9)';
-    native.font = `${Math.max(14, Math.min(width, height) / 10)}px sans-serif`;
-    native.textAlign = 'center';
-    native.textBaseline = 'middle';
-    const label = image === 'error' ? `${spec.placeholder} no disponible` : spec.placeholder;
-    native.fillText(label, width / 2, height / 2, width * 0.9);
-    native.restore();
+    drawSpecShape(context, shape, spec, spec.kind === 'image' && spec.url ? this.images.get(spec.url) : undefined);
   }
 
   private loadImage(url: string): void {
