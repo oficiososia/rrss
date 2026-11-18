@@ -36,6 +36,7 @@ const ContentEditorPage = lazy(() =>
   import('@/features/content/ContentEditorPage').then((m) => ({ default: m.ContentEditorPage })),
 );
 const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
+const ReelsPage = lazy(() => import('@/features/reels/ReelsPage').then((m) => ({ default: m.ReelsPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
 const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
 
@@ -116,6 +117,8 @@ export function App() {
                       <Route path="contenidos" element={<ContentListPage />} />
                       <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
                       <Route path="biblioteca" element={<LibraryPage />} />
+                      {/* Sin trabajador de medios desplegado, la pantalla vuelve a la biblioteca. */}
+                      <Route path="biblioteca/reels" element={<ReelsPage />} />
                       <Route path="marca" element={<BrandProfilePage />} />
                       <Route path="equipo" element={<BrandTeamPage />} />
                     </Route>

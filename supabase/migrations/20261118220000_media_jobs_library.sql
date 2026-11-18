@@ -251,7 +251,7 @@ begin
     and j.kind in ('media.reel.template', 'media.image.process')
     and j.status in ('queued', 'running');
   if v_active >= private.media_jobs_max_active() then
-    raise exception 'Ya hay % trabajos de medios en marcha en esta marca. Espera a que termine alguno.', v_active
+    raise exception 'Hay % trabajos de medios en marcha en esta marca, el máximo a la vez. Espera a que termine alguno.', v_active
       using errcode = 'P0001';
   end if;
 

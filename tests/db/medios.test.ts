@@ -378,7 +378,7 @@ describe('encargar desde la aplicación', () => {
   it('como mucho cinco trabajos de medios en marcha por marca', async () => {
     const input = { template: { id: 'corte-ritmico' }, plan: { media: [{ type: 'photo', path: fotoA }] } };
     for (let i = 0; i < 5; i++) await request(editor, marcaA, 'media.reel.template', input);
-    await rejected(editor, marcaA, 'media.reel.template', input, /Ya hay 5 trabajos de medios en marcha/);
+    await rejected(editor, marcaA, 'media.reel.template', input, /Hay 5 trabajos de medios en marcha en esta marca, el máximo a la vez/);
     // Otra marca tiene su propio tope.
     await request(ana, marcaA2, 'media.reel.template', {
       template: { id: 'corte-ritmico' },
