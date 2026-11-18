@@ -180,6 +180,11 @@ const TENANT_TABLES = [
   'content_versions',
   'content_requests',
   'content_request_comments',
+  // Publicación (Fase 3).
+  'social_accounts',
+  'content_comments',
+  'scheduled_publications',
+  'publication_attempts',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -1342,5 +1347,163 @@ describe('imágenes generadas con IA en la biblioteca', () => {
       await denied(db, user, `select private.ai_media_poll_dispatch()`, [], /permission denied/);
     }
     await denied(db, null, `select private.ai_media_poll_dispatch()`, [], /permission denied/);
+  });
+});
+
+describe('publicación: cuentas, calendario, intentos y comentarios (Fase 3)', () => {
+  let cuentaA1: string, cuentaB1: string, pubA1: string, pubB1: string;
+
+  const connect = async (user: TestUser, brand: string, externalId: string) =>
+    (
+      await serviceRpc<{ id: string }>(db, 'social_account_connect', {
+        p_user_id: user.id,
+        p_brand_id: brand,
+        p_network: 'instagram',
+        p_external_id: externalId,
+        p_username: 'cuenta',
+        p_display_name: 'Cuenta',
+        p_page_id: '1',
+        p_scopes: ['instagram_basic'],
+        p_token_expires_at: null,
+        p_key_id: 'k1',
+        p_access_token_ciphertext: 'c'.repeat(40),
+        p_refresh_token_ciphertext: null,
+      })
+    ).id;
+
+  const schedule = async (user: TestUser, contentId: string, account: string | null) => {
+    const [row] = await as<{ id: string }>(
+      db,
+      user,
+      `select id from public.save_publication(null, $1, now() + interval '1 day', $2, '{}'::uuid[])`,
+      [contentId, account],
+    );
+    return row!.id;
+  };
+
+  beforeAll(async () => {
+    cuentaA1 = await connect(ana, marcaA1, '1001');
+    cuentaB1 = await connect(berta, marcaB1, '2001');
+    pubA1 = await schedule(editorA, contentA1, cuentaA1);
+    pubB1 = await schedule(berta, contentB1, cuentaB1);
+    await as(db, editorA, `select public.comment_content_item($1, 'Comentario de A')`, [contentA1]);
+    await as(db, berta, `select public.comment_content_item($1, 'Comentario de B')`, [contentB1]);
+    // Un intento registrado en cada organización (lo escribe el publicador).
+    for (const pub of [pubA1, pubB1]) {
+      await db.query(
+        `insert into public.publication_attempts (publication_id, brand_id, organization_id, attempt_no, outcome)
+         select id, brand_id, organization_id, 1, 'not_ready' from public.scheduled_publications where id = $1`,
+        [pub],
+      );
+    }
+  });
+
+  it('una organización no ve las cuentas, el calendario, los intentos ni los comentarios de otra', async () => {
+    for (const table of ['social_accounts', 'scheduled_publications', 'publication_attempts', 'content_comments']) {
+      const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deB.map((r) => r.org),
+        table,
+      ).toEqual([orgB]);
+      const deA = await as(db, ana, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deA.map((r) => r.org),
+        table,
+      ).not.toContain(orgB);
+    }
+    expect(await as(db, ana, `select 1 from public.scheduled_publications where id = $1`, [pubB1])).toEqual([]);
+    expect(await as(db, superadmin, `select 1 from public.social_accounts`)).toEqual([]);
+    expect(await as(db, superadmin, `select 1 from public.scheduled_publications`)).toEqual([]);
+  });
+
+  it('nadie programa, mueve, cancela, reintenta ni comenta en la organización ajena', async () => {
+    await denied(db, ana, `select public.save_publication(null, $1, now() + interval '1 day')`, [contentB1]);
+    await denied(db, ana, `select public.reschedule_publication($1, now() + interval '2 days')`, [pubB1]);
+    await denied(db, ana, `select public.cancel_publication($1)`, [pubB1]);
+    await denied(db, ana, `select public.retry_publication($1)`, [pubB1]);
+    await denied(db, ana, `select public.comment_content_item($1, 'intrusa')`, [contentB1]);
+    await denied(db, ana, `select public.request_content_changes($1, 'intrusa')`, [contentB1]);
+    const [lote] = await as<{ ok: boolean }>(db, ana, `select * from public.approve_content_items($1::jsonb)`, [
+      JSON.stringify([{ content_id: contentB1, version: 1 }]),
+    ]);
+    expect(lote?.ok).toBe(false);
+  });
+
+  it('una pieza no se programa en la cuenta de otra marca u organización', async () => {
+    await expect(
+      as(db, ana, `select public.save_publication($1, $2, now() + interval '1 day', $3)`, [pubA1, contentA1, cuentaB1]),
+    ).rejects.toThrow(/cuenta/);
+    await expect(
+      as(db, ana, `select public.save_publication(null, $1, now() + interval '1 day', $2)`, [contentA2, cuentaA1]),
+    ).rejects.toThrow(/cuenta/);
+    // Ni con recursos de otra organización.
+    await expect(
+      as(db, ana, `select public.save_publication($1, $2, now() + interval '1 day', $3, $4::uuid[])`, [
+        pubA1,
+        contentA1,
+        cuentaA1,
+        [assetB1],
+      ]),
+    ).rejects.toThrow(/biblioteca/);
+  });
+
+  it('conectar y desconectar es de quien gestiona la marca, y nunca en la ajena', async () => {
+    await denied(db, ana, `select public.social_oauth_begin($1, 'instagram')`, [marcaB1], /gestiona/);
+    await denied(db, editorA, `select public.social_oauth_begin($1, 'instagram')`, [marcaA1], /gestiona/);
+    await denied(db, clienteA, `select public.social_oauth_begin($1, 'instagram')`, [marcaA1], /gestiona/);
+    expect(await as(db, gestorA, `select public.social_oauth_begin($1, 'instagram') is not null as ok`, [marcaA1])).toEqual([
+      { ok: true },
+    ]);
+    await denied(db, ana, `select public.disconnect_social_account($1)`, [cuentaB1], /gestiona/);
+    await denied(db, editorA, `select public.disconnect_social_account($1)`, [cuentaA1], /gestiona/);
+    // El servidor tampoco conecta una cuenta en nombre de quien no gestiona la marca.
+    await expect(connect(editorA, marcaA1, '1002')).rejects.toThrow(/gestiona/);
+    await expect(connect(ana, marcaB1, '1003')).rejects.toThrow(/gestiona/);
+  });
+
+  it('los tokens y el estado del OAuth no se leen ni se escriben desde el cliente', async () => {
+    for (const table of ['private.social_account_secrets', 'private.social_oauth_states']) {
+      await denied(db, ana, `select * from ${table}`, [], /permission denied/);
+      await denied(db, null, `select * from ${table}`, [], /permission denied/);
+      await denied(db, ana, `delete from ${table}`, [], /permission denied/);
+    }
+    await denied(db, ana, `update public.social_accounts set status = 'active' where id = $1`, [cuentaA1], /permission denied/);
+    await denied(db, ana, `delete from public.social_accounts where id = $1`, [cuentaA1], /permission denied/);
+    await denied(
+      db,
+      editorA,
+      `insert into public.publication_attempts (publication_id, brand_id, organization_id, attempt_no) values ($1, $2, $3, 9)`,
+      [pubA1, marcaA1, orgA],
+      /permission denied/,
+    );
+    await denied(
+      db,
+      editorA,
+      `insert into public.content_comments (content_id, brand_id, organization_id, kind, body) values ($1, $2, $3, 'approved', '')`,
+      [contentA1, marcaA1, orgA],
+      /permission denied/,
+    );
+  });
+
+  it('las funciones del servidor (token, publicar, reloj) no las ejecuta nadie desde la API', async () => {
+    const calls: Array<[string, unknown[]]> = [
+      [`select public.social_account_token($1)`, [cuentaA1]],
+      [`select public.social_oauth_consume('x')`, []],
+      [`select public.social_account_report($1, 'active')`, [cuentaA1]],
+      [`select public.social_enqueue_due_publications()`, []],
+      [`select public.social_publication_begin($1, gen_random_uuid())`, [pubA1]],
+      [`select public.social_publication_container($1, gen_random_uuid(), 'x')`, [pubA1]],
+      [`select public.social_publication_succeed($1, gen_random_uuid(), 'x')`, [pubA1]],
+      [`select public.social_publication_fail($1, gen_random_uuid(), 'x', 'x')`, [pubA1]],
+      [`select public.social_publication_defer($1, gen_random_uuid(), 'w', 60, false)`, [pubA1]],
+      [`select private.social_publish_dispatch()`, []],
+      [`select private.publication_refresh()`, []],
+    ];
+    for (const [sql, params] of calls) {
+      await denied(db, ana, sql, params, /permission denied/);
+      await denied(db, null, sql, params, /permission denied/);
+    }
+    // El reloj tampoco lo ejecuta la clave de servicio: solo pg_cron.
+    await expect(asService(db, `select private.social_publish_dispatch()`)).rejects.toThrow(/permission denied/);
   });
 });
