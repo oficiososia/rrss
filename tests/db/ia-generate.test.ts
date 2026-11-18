@@ -105,15 +105,21 @@ async function setup(options: { quota?: number | null; profile?: Json | null; re
     // Igual que la función real: con la identidad del usuario, bajo RLS.
     loadBrandProfile: async (token, brandId) => {
       const user = sessions.get(token)!;
-      const brands = await as(db, user, `select id from public.brands where id = $1`, [brandId]);
-      if (brands.length === 0) return { brandVisible: false, profile: null };
+      const brands = await as<{ ai_mode: string }>(db, user, `select id, ai_mode from public.brands where id = $1`, [
+        brandId,
+      ]);
+      if (brands.length === 0) return { brandVisible: false, profile: null, aiMode: 'api' };
       const profiles = await as<{ data: Json }>(
         db,
         user,
         `select data from public.brand_profiles where brand_id = $1 and status = 'active'`,
         [brandId],
       );
-      return { brandVisible: true, profile: profiles[0]?.data ?? null };
+      return {
+        brandVisible: true,
+        profile: profiles[0]?.data ?? null,
+        aiMode: brands[0]!.ai_mode === 'agency' ? 'agency' : 'api',
+      };
     },
     log: (event, data) => logs.push({ event, data }),
   });
@@ -285,6 +291,40 @@ describe('permisos y cupo', () => {
   });
 });
 
+describe('modo agencia', () => {
+  it('en una marca que redacta por encargo, ninguna acción de texto llega al proveedor ni gasta cupo', async () => {
+    const t = await setup();
+    await as(db, t.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [t.brand]);
+    for (const body of [
+      t.caption(),
+      { action: 'brand.check', brandId: t.brand, input: { text: 'Ven a vernos.' } },
+      { action: 'profile.proposal', brandId: t.brand, input: { sources: [{ title: 'a.txt', text: 'Somos.' }] } },
+    ]) {
+      const response = await t.call(t.token, body);
+      expect(response).toMatchObject({ status: 409, body: { error: { code: 'agency_mode', retryable: false } } });
+      expect((response.body.error as Row).message).toMatch(/Encargos/);
+    }
+    expect(t.provider.calls).toEqual([]);
+    // Ni reserva de cupo ni generación registrada.
+    expect(await generations(t.org)).toEqual([]);
+  });
+
+  it('al volver al servicio de IA, se puede redactar otra vez', async () => {
+    const t = await setup();
+    await as(db, t.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [t.brand]);
+    await as(db, t.owner, `update public.brands set ai_mode = 'api' where id = $1`, [t.brand]);
+    expect((await t.call(t.token, t.caption())).status).toBe(200);
+  });
+
+  it('una marca ajena en modo agencia sigue sin existir para quien no pertenece a ella', async () => {
+    const t = await setup();
+    const ajena = await setup();
+    await as(db, ajena.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [ajena.brand]);
+    const response = await t.call(t.token, { ...t.caption(), brandId: ajena.brand });
+    expect(response).toMatchObject({ status: 404, body: { error: { code: 'brand_not_found' } } });
+  });
+});
+
 describe('fallos de la IA', () => {
   it('si la respuesta del modelo no sirve, se dice, con la generación registrada', async () => {
     const t = await setup({ respond: () => 'esto no es JSON' });
@@ -301,7 +341,7 @@ describe('fallos de la IA', () => {
     const handler = createAiGenerateHandler({
       service: createAiService({ rpc, providers: config.providers, models: config.models, unavailable: config.unavailable }),
       authenticate: async () => ({ userId: t.owner.id }),
-      loadBrandProfile: async () => ({ brandVisible: true, profile: PROFILE }),
+      loadBrandProfile: async () => ({ brandVisible: true, profile: PROFILE, aiMode: 'api' }),
       log: (_event, data) => logs.push(data),
     });
     const response = await handler(

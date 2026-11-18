@@ -94,6 +94,7 @@ export type AiErrorCode =
   | 'forbidden'
   | 'brand_not_found'
   | 'brand_profile_missing'
+  | 'agency_mode'
   | 'refused'
   | 'provider_failed'
   | 'invalid_output'
@@ -112,6 +113,7 @@ const KNOWN_CODES = new Set<string>([
   'forbidden',
   'brand_not_found',
   'brand_profile_missing',
+  'agency_mode',
   'refused',
   'provider_failed',
   'invalid_output',
@@ -138,6 +140,8 @@ const MESSAGES: Record<AiErrorCode, string> = {
   forbidden: 'No tienes permiso para usar la IA en esta marca: hace falta poder crear contenido en ella.',
   brand_not_found: 'No existe esa marca o no tienes acceso a ella.',
   brand_profile_missing: 'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.',
+  agency_mode:
+    'Esta marca redacta por encargo a la agencia, no con el servicio de IA. Pide la pieza desde «Encargos» o, si gestionas la marca, cambia el modo en su página.',
   unauthenticated: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
   invalid_request: 'La petición a la IA no es válida. Revisa lo que has escrito.',
   too_large: 'El texto es demasiado largo para enviarlo a la IA.',

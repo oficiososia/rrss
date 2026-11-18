@@ -350,7 +350,8 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
             </Card>
           </TabsContent>
           <TabsContent value="fuentes" className="space-y-6">
-            {canManage && aiTextEnabled() && (
+            {/* En modo agencia el servidor rechaza la IA de texto (`agency_mode`): no se ofrece. */}
+            {canManage && aiTextEnabled() && brand.ai_mode !== 'agency' && (
               <ProfileProposalFromSources
                 brandId={brand.id}
                 currentProfile={active ? saved : null}
