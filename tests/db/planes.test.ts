@@ -585,6 +585,10 @@ describe('organizaciones que ya existían', () => {
     const sql = (dir: string) => readFile(path.join(dir, file), 'utf8');
     const local = await createDb({ plans: 'real' });
     try {
+      // Antes, la vuelta atrás de lo que se apoya en los planes (20261119710000).
+      await local.exec(
+        await readFile(path.join(MIGRATIONS_DIR, '../rollbacks/20261119710000_plan_publishing_storage.sql'), 'utf8'),
+      );
       await local.exec(await sql(path.join(MIGRATIONS_DIR, '../rollbacks')));
       const owner = await createUser(local, 'antigua@a.test');
       const admin = await createUser(local, 'root@a.test');
@@ -605,5 +609,114 @@ describe('organizaciones que ya existían', () => {
     } finally {
       await local.close();
     }
+  });
+});
+
+// Fases 3–6 juntas: lo que trajeron las otras ramas respeta el plan
+// (20261119710000_plan_publishing_storage).
+describe('publicación, tipografías y extracción frente al plan', () => {
+  const connectAccount = (owner: TestUser, brand: string, externalId: string) =>
+    serviceRpc<{ id: string }>(db, 'social_account_connect', {
+      p_user_id: owner.id,
+      p_brand_id: brand,
+      p_network: 'instagram',
+      p_external_id: externalId,
+      p_username: 'cuenta',
+      p_display_name: 'Cuenta',
+      p_page_id: '1',
+      p_scopes: ['instagram_basic'],
+      p_token_expires_at: null,
+      p_key_id: 'k1',
+      p_access_token_ciphertext: 'c'.repeat(40),
+      p_refresh_token_ciphertext: null,
+    });
+
+  const piece = async (owner: TestUser, org: string, brand: string) => {
+    const [item] = await as<{ id: string }>(
+      db,
+      owner,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Pieza', 'instagram', 'post') returning id`,
+      [brand, org],
+    );
+    return item!.id;
+  };
+
+  const schedule = (owner: TestUser, content: string, account: string | null) =>
+    as<{ id: string; social_account_id: string | null }>(
+      db,
+      owner,
+      `select id, social_account_id from public.save_publication(null, $1, now() + interval '1 day', $2)`,
+      [content, account],
+    );
+
+  it('sin publicación en el plan no se conecta una cuenta ni se programa en ella; planificar sí', async () => {
+    const t = await tenant('basic');
+    const brand = await createBrand(db, t.owner, t.org, 'Marca');
+    const begin = await failure(as(db, t.owner, `select public.social_oauth_begin($1, 'instagram')`, [brand]));
+    expect(begin.code).toBe('PL002');
+    expect(begin.message).toBe('Tu plan «Básico» no incluye la publicación en redes. Cambia de plan para usarlo.');
+    // Ni el servidor da de alta la cuenta al volver de Meta.
+    expect((await failure(connectAccount(t.owner, brand, `b-${n}`))).code).toBe('PL002');
+    expect(await db.query(`select 1 from public.social_accounts where organization_id = $1`, [t.org])).toEqual([]);
+
+    // Con un plan que la incluye, sí.
+    await assign(t.org, 'professional');
+    await as(db, t.owner, `select public.social_oauth_begin($1, 'instagram')`, [brand]);
+    const account = (await connectAccount(t.owner, brand, `p-${n}`)).id;
+    const content = await piece(t.owner, t.org, brand);
+    const [armada] = await schedule(t.owner, content, account);
+    expect(armada!.social_account_id).toBe(account);
+
+    // Al bajar de plan: planificar sin cuenta sigue, programar en una cuenta no.
+    await assign(t.org, 'basic');
+    const otra = await piece(t.owner, t.org, brand);
+    const [plan] = await schedule(t.owner, otra, null);
+    expect(plan!.social_account_id).toBeNull();
+    expect((await failure(schedule(t.owner, await piece(t.owner, t.org, brand), account))).code).toBe('PL002');
+    const cambio = await failure(
+      as(db, t.owner, `select public.save_publication($1, null, now() + interval '2 days', $2)`, [plan!.id, account]),
+    );
+    expect(cambio.code).toBe('PL002');
+    // Mover la fecha de lo planificado no pide la función.
+    await as(db, t.owner, `select public.reschedule_publication($1, now() + interval '3 days')`, [plan!.id]);
+  });
+
+  it('las tipografías de la marca cuentan en el espacio y no se suben si no caben', async () => {
+    const t = await tenant('trial');
+    const brand = await createBrand(db, t.owner, t.org, 'Marca');
+    const font = (bytes: number, name: string) =>
+      as(
+        db,
+        t.owner,
+        `insert into public.brand_fonts (brand_id, organization_id, family, format, storage_path, file_name, mime_type,
+                                         bytes, license_confirmed)
+         values ($1, $2, 'Marca Sans', 'woff2', $2::uuid::text || '/' || $1::uuid::text || '/fonts/' || $3 || '.woff2',
+                 $3 || '.woff2', 'font/woff2', $4, true)`,
+        [brand, t.org, name, bytes],
+      );
+    await font(4096, 'regular');
+    expect((await usage(t.owner, t.org)).usage.storage_bytes).toBe(4096);
+    // Casi lleno (500 MB del plan «Prueba»): la siguiente tipografía ya no cabe.
+    await asset(t.owner, t.org, brand, 524288000 - 4096 - 1000);
+    const error = await failure(font(2048, 'negrita'));
+    expect(error.code).toBe('PL001');
+    expect(error.message).toMatch(/No queda espacio en tu plan «Prueba»/);
+  });
+
+  it('sin espacio no se encarga la extracción de texto de una fuente', async () => {
+    const t = await tenant('trial');
+    const brand = await createBrand(db, t.owner, t.org, 'Marca');
+    const extract = (key: string) =>
+      serviceRpc(db, 'enqueue_job', {
+        p_organization_id: t.org,
+        p_brand_id: brand,
+        p_kind: 'source.extract',
+        p_payload: {},
+        p_idempotency_key: key,
+      });
+    await extract(`extraer-${n}`);
+    await asset(t.owner, t.org, brand, 524288000);
+    expect((await failure(extract(`extraer-${n}-lleno`))).code).toBe('PL001');
   });
 });
