@@ -355,3 +355,30 @@ Decisiones que conviene conocer:
   entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
 - **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
   de cada comentario.
+
+## 13. RGPD: aceptaciones, exportar y borrar
+
+Implementado y probado en base de datos (`tests/db/aislamiento.test.ts`,
+`tests/db/rgpd.test.ts`) y en la interfaz; el escenario de extremo a extremo
+(`tests/e2e/14-…`) está escrito y sin ejecutar. Detalle y decisiones en
+`docs/rgpd.md`. Esto no es asesoría legal.
+
+| Tabla / columna | Para qué | Quién la lee | Cómo se escribe |
+|---|---|---|---|
+| `legal_acceptances` | Versión y fecha en que cada persona aceptó las condiciones y la política de privacidad | Cada persona, las suyas | Un disparador al registrarse (versiones en los metadatos del alta) y `accept_legal_documents` |
+| `content_versions.ai_generated`, `content_items.ai_generated` | La versión (y la pieza, por su versión vigente) lleva contenido generado con IA | Quien ve la marca | Solo la base de datos, al insertar cada versión |
+
+| Función | Quién | Qué hace |
+|---|---|---|
+| `export_my_data()` | Cualquiera con sesión | Sus datos personales en JSON; sin parámetros |
+| `export_organization_data(org)` | Propietarios | Datos de la organización en JSON (`SECURITY INVOKER`: la RLS sigue mandando) |
+| `my_account_deletion_check()` | Cualquiera con sesión | Qué organizaciones impiden borrar la cuenta y cuáles se borrarían con ella |
+| `gdpr_delete_account_data(usuario)` | Solo clave de servicio (`delete-account`) | Comprueba que no deja organizaciones con miembros sin propietario (RG001) y borra las suyas sin más miembros |
+| `gdpr_delete_organization(usuario, org, confirmación)` | Solo clave de servicio (`delete-organization`) | Propietario (42501) y nombre exacto (RG002); borra la organización y devuelve sus rutas de Storage |
+| `gdpr_forget_storage_paths(rutas)` | Solo clave de servicio | Quita de `storage_cleanup_queue` lo que ya se borró de Storage |
+
+Al borrar un usuario de `auth.users` (por la función o a mano), los
+disparadores `on_auth_user_deleting` y `zz_on_auth_user_deleted` lo sacan de
+sus organizaciones (si es el único propietario de una, `keep_one_owner` lo
+impide), anonimizan las invitaciones que aceptó y quitan su id y su correo del
+registro de auditoría. Las demás autorías pasan a null por sus claves foráneas.
