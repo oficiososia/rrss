@@ -25,6 +25,7 @@ import {
   Skeleton,
 } from '@/components/ui';
 import { mediaWorkerEnabled } from '@/config/app';
+import { ReelFontLine } from '@/features/brand/BrandFontsCard';
 import { useSignedUrls } from '@/features/library/api';
 import { useBrand } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
@@ -350,7 +351,9 @@ function ReelBuilder({ brandId }: { brandId: string }) {
           }
         />
         {texts.length > 0 && (
-          <CardBody>
+          <CardBody className="space-y-3">
+            {/* Tipografía de los textos: la de la marca (.ttf/.otf) o la de reserva, dicho antes de encargar. */}
+            <ReelFontLine brandId={brandId} />
             <ul className="space-y-3" data-testid="reel-texts">
               {texts.map((text, index) => (
                 <li key={text.key} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_5rem_5rem_7rem_auto]">

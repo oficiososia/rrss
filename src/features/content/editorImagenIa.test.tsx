@@ -109,6 +109,8 @@ async function openEditor(document = createEmptyDocument({ aspectRatio: '4:5' })
   seed(document);
   const app = renderApp(EDITOR);
   await screen.findByTestId('editor-title');
+  // El lienzo sale cuando se han leído (y cargado) las tipografías de la marca.
+  await screen.findByTestId('canvas-stub');
   return app;
 }
 

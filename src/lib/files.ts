@@ -20,7 +20,7 @@ export function sanitizeFileName(name: string): string {
   return hasExtension ? `${base}.${candidate.toLowerCase()}` : base;
 }
 
-export type StorageFolder = 'media' | 'sources';
+export type StorageFolder = 'media' | 'sources' | 'fonts';
 
 export function buildStoragePath(
   organizationId: string,
