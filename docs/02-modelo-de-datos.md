@@ -355,3 +355,40 @@ Decisiones que conviene conocer:
   entrega a la sesión de Claude con ese aviso (`agency/INSTRUCCIONES.md`).
 - **Auditoría**: alta, cambios de estado o de pieza y borrado del encargo; alta
   de cada comentario.
+
+## 13. Fase 4: campañas (plan por instrucción → borradores)
+
+Migración `20261119510000_campaigns` (vuelta atrás en `supabase/rollbacks/`).
+Patrón «la IA propone un plan y un motor determinista lo ejecuta»: el plan es
+solo datos y el único actor es el motor, que solo sabe **crear borradores**.
+
+| Tabla | Qué guarda |
+|---|---|
+| `campaigns` | Marca, nombre, instrucción (dato), redes, fechas (1–63 días), origen (`ai` o `agency`), estado (`requested` → `proposed` → `accepted` o `discarded`), versión vigente y aceptada del plan |
+| `campaign_plans` | Cada versión del plan, inmutable y numerada, en `data` (la auditoría no la copia): `ai` (la IA, con su `generation_id`), `agency` (la agencia) o `edit` (retocado por una persona al aceptar) |
+| `campaign_contents` | Qué piezas creó el motor, de qué versión y posición del plan |
+
+`content_requests` gana `kind` (`piece` | `plan`), `campaign_id` y
+`delivered_plan_version`. La regla «entregado ⇒ pieza y versión» vale solo
+para `piece`; un encargo de plan nunca tiene pieza (un disparador lo impide) y
+cancelarlo descarta su campaña.
+
+Funciones (todas `security definer`, `search_path = ''`):
+
+| Función | Quién | Qué hace |
+|---|---|---|
+| `create_campaign` | `edit` | Guarda la campaña con el plan de una generación `campaign.plan` de esa marca y de esa persona, terminada bien. Queda «por revisar» |
+| `request_campaign_plan` | `comment`, marca en modo agencia | Campaña sin plan y encargo de tipo `plan` para la agencia |
+| `deliver_campaign_plan` | `edit`, con el encargo tomado (cerrojo) | Versión nueva del plan (`agency`); encargo entregado |
+| `accept_campaign_plan` | `edit` (o `approve` si el plan es de la agencia) | **El motor.** Comprueba la versión revisada (`CP001` si cambió), valida el plan y un documento por pieza (forma cerrada, redes de la campaña, fechas dentro, recursos de la marca, texto del documento = texto de la pieza) y crea cada pieza en **borrador** con su versión 1. Todo o nada. Nunca aprueba, programa ni publica |
+| `discard_campaign` | igual que aceptar | Descarta sin crear nada; cancela el encargo abierto |
+
+La forma del plan (`private.campaign_plan_problem`) es la misma que
+`src/features/campaigns/plan.ts` y que la salida de la tarea `campaign.plan`:
+`objective`, `summary`, `reasoning {observed, dataBacked, hypotheses, dataNote}`
+y `pieces[] {network, format, date, idea, caption, hashtags, assetIds, why}`.
+Un campo de más invalida el plan entero.
+
+RLS: las tres tablas las ve quien ve la marca; no hay políticas ni privilegios
+de escritura (solo las funciones). Casos en `tests/db/aislamiento.test.ts` y
+`tests/db/campanas.test.ts`.

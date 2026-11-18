@@ -68,6 +68,7 @@ describe('qué adaptador y qué modelo sirve cada tarea', () => {
       'post.caption': 'anthropic-vertex/modelo-v',
       'profile.proposal': 'anthropic-vertex/modelo-v',
       'brand.check': 'mistral/modelo-m',
+      'campaign.plan': 'anthropic-vertex/modelo-v',
     });
     expect(config.problems).toEqual([]);
   });

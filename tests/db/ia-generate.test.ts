@@ -319,3 +319,59 @@ describe('fallos de la IA', () => {
     expect(await generations(t.org)).toEqual([]);
   });
 });
+
+describe('campaign.plan (Campañas)', () => {
+  const PLAN = {
+    objective: 'Dar a conocer la carta de otoño.',
+    summary: 'Una pieza.',
+    observed: ['Tono cercano.'],
+    dataBacked: [],
+    hypotheses: [],
+    pieces: [
+      {
+        network: 'instagram',
+        format: 'post',
+        date: '2026-11-24',
+        idea: 'Guiso',
+        caption: 'Guiso de setas.',
+        hashtags: ['#otoño'],
+        assetIds: [],
+        why: 'Martes.',
+      },
+    ],
+  };
+  const body = (brand: string, extra: Record<string, unknown> = {}) => ({
+    action: 'campaign.plan',
+    brandId: brand,
+    input: {
+      instruction: 'Prepara la semana que viene',
+      startDate: '2026-11-23',
+      endDate: '2026-11-29',
+      targets: [{ network: 'instagram', format: 'post' }],
+      ...extra,
+    },
+  });
+
+  it('devuelve el plan propuesto, sin guardar nada ni enseñar proveedor o coste', async () => {
+    const t = await setup({ respond: () => JSON.stringify(PLAN) });
+    const response = await t.call(t.token, body(t.brand));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      action: 'campaign.plan',
+      status: 'proposal',
+      plan: { objective: 'Dar a conocer la carta de otoño.', pieces: [{ date: '2026-11-24', hashtags: ['otoño'] }] },
+      discarded: [],
+    });
+    for (const key of ['provider', 'model', 'usage', 'costMicros']) expect(response.body).not.toHaveProperty(key);
+    expect(await db.query(`select 1 from public.campaigns where brand_id = $1`, [t.brand])).toEqual([]);
+    const [row] = await generations(t.org);
+    expect(row).toMatchObject({ purpose: 'campaign.plan', status: 'succeeded' });
+  });
+
+  it('una petición incompleta es un 400 claro, sin llamar al proveedor', async () => {
+    const t = await setup({ respond: () => JSON.stringify(PLAN) });
+    const response = await t.call(t.token, body(t.brand, { endDate: '2026-11-01' }));
+    expect(response).toMatchObject({ status: 400, body: { error: { code: 'invalid_request' } } });
+    expect(t.provider.calls).toEqual([]);
+  });
+});
