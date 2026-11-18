@@ -88,6 +88,20 @@ beforeAll(async () => {
     `insert into public.brand_knowledge_sources (brand_id, organization_id, kind, title, url) values ($1, $2, 'website', 'Web', 'https://b.test')`,
     [marcaB1, orgB],
   );
+  // Tipografías de la marca (20261119211000): una en cada organización.
+  for (const [user, org, brand] of [
+    [ana, orgA, marcaA1],
+    [berta, orgB, marcaB1],
+  ] as const) {
+    await as(
+      db,
+      user,
+      `insert into public.brand_fonts (brand_id, organization_id, family, format, storage_path, file_name, mime_type,
+                                       bytes, license_confirmed)
+       values ($1, $2, 'Propia', 'ttf', $3, 'propia.ttf', 'font/ttf', 1000, true)`,
+      [brand, org, `${org}/${brand}/fonts/propia.ttf`],
+    );
+  }
 
   // Fase 2: cupo, generaciones (con su coste) y trabajos en cada organización.
   // Los escribe el servidor (clave de servicio); aquí se prueba quién los ve.
@@ -168,6 +182,7 @@ const TENANT_TABLES = [
   'brand_members',
   'brand_profiles',
   'brand_knowledge_sources',
+  'brand_fonts',
   'media_assets',
   'storage_cleanup_queue',
   'invitations',
@@ -259,6 +274,7 @@ describe('aislamiento entre organizaciones', () => {
       'brand_members',
       'brand_profiles',
       'brand_knowledge_sources',
+      'brand_fonts',
       'media_assets',
       'invitations',
       'audit_logs',
@@ -304,6 +320,22 @@ describe('aislamiento entre organizaciones', () => {
     );
     await denied(db, ana, `select public.save_brand_profile($1, '{}'::jsonb)`, [marcaB1]);
     await denied(db, ana, `select * from public.create_invitation($1, 'x@x.test')`, [orgB]);
+    await denied(
+      db,
+      ana,
+      `insert into public.brand_fonts (brand_id, organization_id, family, format, storage_path, file_name, mime_type,
+                                       bytes, license_confirmed)
+       values ($1, $2, 'Intrusa', 'ttf', $3, 'x.ttf', 'font/ttf', 1, true)`,
+      [marcaB1, orgB, `${orgB}/${marcaB1}/fonts/intrusa.ttf`],
+    );
+    expect(await as(db, ana, `select 1 from public.brand_fonts where brand_id = $1`, [marcaB1])).toEqual([]);
+    expect(await as(db, ana, `delete from public.brand_fonts where brand_id = $1 returning id`, [marcaB1])).toEqual([]);
+    await denied(db, ana, `select * from public.brand_reel_font_info($1)`, [marcaB1], /No tienes acceso/);
+    const [fuenteB] = await db.query<{ id: string }>(
+      `select id from public.brand_knowledge_sources where brand_id = $1`,
+      [marcaB1],
+    );
+    await denied(db, ana, `select public.request_source_extraction($1)`, [fuenteB!.id], /No tienes permiso/);
 
     // UPDATE y DELETE sobre filas ajenas no fallan: sencillamente no encuentran nada.
     expect(await as(db, ana, `update public.brands set name = 'Robada' where id = $1 returning id`, [marcaB1])).toEqual(
@@ -811,8 +843,16 @@ describe('filtros de la biblioteca', () => {
 });
 
 describe('IA y cola de trabajos', () => {
+  // Las fuentes de conocimiento encolan su propia extracción (`source.extract`):
+  // aquí cuentan solo los trabajos que crea la prueba.
   const ids = async (user: TestUser, table: string) =>
-    (await as<{ id: string }>(db, user, `select id::text as id from public.${table}`)).map((r) => r.id);
+    (
+      await as<{ id: string }>(
+        db,
+        user,
+        `select id::text as id from public.${table}${table === 'jobs' ? ` where kind <> 'source.extract'` : ''}`,
+      )
+    ).map((r) => r.id);
   const orgsOf = async (user: TestUser, table: string) =>
     (await as<{ org: string }>(db, user, `select distinct organization_id::text as org from public.${table}`)).map(
       (r) => r.org,
@@ -1289,9 +1329,9 @@ describe('imágenes generadas con IA en la biblioteca', () => {
   it('la otra organización no ve ni el recurso ni su procedencia', async () => {
     const deA = await generated(orgA, marcaA1, genA1);
     const deB = await generated(orgB, marcaB1, genB1);
-    expect(await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA])).toEqual([
-      { p: 'encargo privado' },
-    ]);
+    expect(
+      await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA]),
+    ).toEqual([{ p: 'encargo privado' }]);
     expect(
       await as(db, ana, `select 1 from public.media_assets where id = $1 or provenance->>'generation_id' = $2`, [
         deB,
