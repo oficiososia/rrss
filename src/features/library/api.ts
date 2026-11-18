@@ -6,6 +6,7 @@ import { unwrap } from '@/lib/errors';
 import {
   assetKindFromMime,
   buildStoragePath,
+  type MediaDimensions,
   readMediaDimensions,
   sha256Hex,
   validateFile,
@@ -130,6 +131,10 @@ export interface UploadInput {
   kind?: AssetKind;
   folder?: string;
   tags?: string[];
+  /** De dónde sale el recurso (p. ej. una exportación del editor). Se guarda al crearlo y no se puede cambiar. */
+  provenance?: Json;
+  /** Medidas ya conocidas (p. ej. una imagen exportada): evita descodificar el archivo otra vez. */
+  dimensions?: MediaDimensions;
   /** Huella ya calculada (para no leer el archivo dos veces). */
   sha256?: string;
   /** Porcentaje real (0-100) de bytes subidos del archivo. */
@@ -175,7 +180,10 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   const invalid = validateFile(file);
   if (invalid) throw new Error(invalid);
 
-  const [sha256, dimensions] = await Promise.all([input.sha256 ?? sha256Hex(file), readMediaDimensions(file)]);
+  const [sha256, dimensions] = await Promise.all([
+    input.sha256 ?? sha256Hex(file),
+    input.dimensions ?? readMediaDimensions(file),
+  ]);
   const path = buildStoragePath(organizationId, brandId, 'media', file.name);
 
   await uploadObject(path, file, input.onProgress);
@@ -196,6 +204,7 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
       sha256,
       folder: input.folder ?? '',
       tags: input.tags ?? [],
+      ...(input.provenance ? { provenance: input.provenance } : {}),
     })
     .select('*')
     .single();
