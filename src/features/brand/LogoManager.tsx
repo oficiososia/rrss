@@ -32,7 +32,8 @@ export function LogoManager({ organizationId, brandId, ids, onChange, pending, d
       try {
         if (!(LOGO_MIME_TYPES as readonly string[]).includes(file.type))
           throw new Error(`«${file.name}» no es una imagen PNG, JPG o WebP.`);
-        const asset = await uploadAsset({ organizationId, brandId, file, kind: 'logo' });
+        // Provisional hasta que se guarde el perfil: si se cierra la pestaña sin guardar, lo limpia el servidor.
+        const asset = await uploadAsset({ organizationId, brandId, file, kind: 'logo', provisional: true });
         added.push(asset.id);
         pending.current.add(asset.id);
       } catch (e) {

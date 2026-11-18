@@ -640,7 +640,16 @@ type RequestEnums = {
 // ───────────── Pulido de la Fase 2 (migraciones 2026111911…) ─────────────
 // Cancelar un trabajo de medios desde la aplicación (20261119111000).
 
-type PolishTables = Record<never, never>;
+// Recursos provisionales (20261119112000): logotipos subidos desde el perfil y
+// aún sin guardar. El plazo lo pone la base de datos; el cliente solo lo pide al subir.
+type PolishTables = {
+  media_assets: Table<
+    // Opcional en la fila para no cambiar `MediaAssetRow` (lo usan muchas pantallas).
+    { provisional_until?: string | null },
+    { provisional_until?: string | null },
+    Record<never, never>
+  >;
+};
 
 type PolishFunctions = {
   /** Cancela un reel o un recorte en cola o en curso de una marca que se edita. */
