@@ -71,6 +71,8 @@ export default defineConfig({
         VITE_SUPABASE_ANON_KEY: supabase.anonKey,
         // La IA de texto existe en este entorno: la sirve la función local con el proveedor simulado.
         VITE_AI_TEXT_ENABLED: 'true',
+        // Y la de imagen (ai-media con la imagen simulada de pruebas locales).
+        VITE_AI_IMAGE_ENABLED: 'true',
       },
     },
   ],
