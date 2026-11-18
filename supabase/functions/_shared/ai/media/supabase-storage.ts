@@ -92,7 +92,8 @@ export function imageDimensions(bytes: Uint8Array): { width: number; height: num
     }
     if (type === 'image/webp' && bytes.length >= 30) {
       const chunk = String.fromCharCode(...bytes.subarray(12, 16));
-      if (chunk === 'VP8 ') return { width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff };
+      if (chunk === 'VP8 ')
+        return { width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff };
       if (chunk === 'VP8L') {
         const b = view.getUint32(21, true);
         return { width: (b & 0x3fff) + 1, height: ((b >> 14) & 0x3fff) + 1 };
@@ -139,7 +140,11 @@ function provenanceJson(generationId: string, provenance: MediaProvenance | unde
 
 /** Nombre legible en la biblioteca: «IA · <encargo recortado>.png». */
 function fileNameFor(prompt: string | undefined, generationId: string, index: number, extension: string): string {
-  const words = (prompt ?? '').replace(/[\\/:*?"<>|\s]+/g, ' ').trim().slice(0, 60).trim();
+  const words = (prompt ?? '')
+    .replace(/[\\/:*?"<>|\s]+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .trim();
   const base = words ? `IA · ${words}` : `IA · ${generationId.slice(0, 8)}`;
   return `${base}${index > 0 ? ` (${index + 1})` : ''}.${extension}`;
 }
@@ -162,10 +167,16 @@ export function createSupabaseMediaStorage(
       const mimeType = sniffed ?? declared;
       const extension = EXTENSIONS[mimeType];
       if (!extension) {
-        throw new MediaProviderFailure('bad_response', 'El proveedor ha entregado un archivo de un tipo que no se admite');
+        throw new MediaProviderFailure(
+          'bad_response',
+          'El proveedor ha entregado un archivo de un tipo que no se admite',
+        );
       }
       if ((object.kind === 'image') !== mimeType.startsWith('image/')) {
-        throw new MediaProviderFailure('bad_response', 'El proveedor ha entregado un archivo que no es del tipo pedido');
+        throw new MediaProviderFailure(
+          'bad_response',
+          'El proveedor ha entregado un archivo que no es del tipo pedido',
+        );
       }
       const path = `${object.organizationId}/${object.brandId}/ia/${object.generationId}-${object.index}.${extension}`;
       await backend.upload(path, object.bytes, mimeType);
@@ -219,7 +230,9 @@ export interface SupabaseStorageClientLike {
 export function supabaseMediaStorageBackend(client: SupabaseStorageClientLike): MediaStorageBackend {
   return {
     async upload(path, bytes, contentType) {
-      const { error } = await client.storage.from(BRAND_MEDIA_BUCKET).upload(path, bytes, { contentType, upsert: true });
+      const { error } = await client.storage
+        .from(BRAND_MEDIA_BUCKET)
+        .upload(path, bytes, { contentType, upsert: true });
       if (error) {
         throw new MediaProviderFailure('storage_failed', 'No se ha podido guardar el archivo en el almacenamiento', {
           retryable: true,

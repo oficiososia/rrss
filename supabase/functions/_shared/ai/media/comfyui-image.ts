@@ -91,8 +91,10 @@ export function isComfyUiBaseUrl(raw: string): boolean {
   }
 }
 
-const text = (value: unknown, fallback: string) => (typeof value === 'string' && value.trim() ? value.trim() : fallback);
-const num = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+const text = (value: unknown, fallback: string) =>
+  typeof value === 'string' && value.trim() ? value.trim() : fallback;
+const num = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
 /** FNV-1a de 32 bits: semilla estable a partir de la clave de la generación. */
 function seedFrom(key: string): number {
@@ -158,8 +160,14 @@ export function buildFlux2KleinGraph(params: {
       inputs: { image: [`${id}`, 0], upscale_method: 'lanczos', megapixels: 1 },
     };
     graph[`${id + 2}`] = { class_type: 'VAEEncode', inputs: { pixels: [`${id + 1}`, 0], vae: ['72', 0] } };
-    graph[`${id + 3}`] = { class_type: 'ReferenceLatent', inputs: { conditioning: positive, latent: [`${id + 2}`, 0] } };
-    graph[`${id + 4}`] = { class_type: 'ReferenceLatent', inputs: { conditioning: negative, latent: [`${id + 2}`, 0] } };
+    graph[`${id + 3}`] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: positive, latent: [`${id + 2}`, 0] },
+    };
+    graph[`${id + 4}`] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: negative, latent: [`${id + 2}`, 0] },
+    };
     positive = [`${id + 3}`, 0];
     negative = [`${id + 4}`, 0];
   });
@@ -213,9 +221,13 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
     try {
       const response = await options.fetch(url, { headers, signal: controller.signal });
       if (!response.ok) {
-        throw new MediaProviderFailure('download_failed', `No se ha podido descargar un archivo (HTTP ${response.status})`, {
-          retryable: response.status >= 500 || response.status === 429,
-        });
+        throw new MediaProviderFailure(
+          'download_failed',
+          `No se ha podido descargar un archivo (HTTP ${response.status})`,
+          {
+            retryable: response.status >= 500 || response.status === 429,
+          },
+        );
       }
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (bytes.byteLength > maxBytes) {
@@ -247,7 +259,8 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
     form.append('overwrite', 'true');
     const body = await requestJson(`${base}/upload/image`, { method: 'POST', headers: auth, body: form }, http(signal));
     const name = isRecord(body) && typeof body.name === 'string' ? body.name : null;
-    if (!name) throw new MediaProviderFailure('bad_response', `${PROVIDER_NAME} no ha aceptado la imagen de referencia`);
+    if (!name)
+      throw new MediaProviderFailure('bad_response', `${PROVIDER_NAME} no ha aceptado la imagen de referencia`);
     const subfolder = isRecord(body) && typeof body.subfolder === 'string' && body.subfolder ? body.subfolder : '';
     return subfolder ? `${subfolder}/${name}` : name;
   }
@@ -272,7 +285,11 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
       for (const [index, reference] of references.entries()) {
         uploaded.push(await uploadReference(reference, index, key, signal));
       }
-      const size = comfySize(request.size.width, request.size.height, num(model.settings.max_pixels, DEFAULT_MAX_PIXELS));
+      const size = comfySize(
+        request.size.width,
+        request.size.height,
+        num(model.settings.max_pixels, DEFAULT_MAX_PIXELS),
+      );
       const graph = buildFlux2KleinGraph({
         prompt: request.prompt,
         width: size.width,
@@ -359,7 +376,8 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
       // /interrupt detiene LO QUE ESTÉ EN MARCHA, sea de quien sea: solo se
       // llama si lo que está en marcha es este trabajo.
       const queue = await request(`${base}/queue`, { headers: auth }, http(signal)).catch(() => null);
-      const running = queue && isRecord(queue.body) && Array.isArray(queue.body.queue_running) ? queue.body.queue_running : [];
+      const running =
+        queue && isRecord(queue.body) && Array.isArray(queue.body.queue_running) ? queue.body.queue_running : [];
       const isRunning = running.some((item) => Array.isArray(item) && item[1] === job.id);
       if (isRunning) {
         await post('/interrupt', {});

@@ -6,7 +6,12 @@
 // La dispara `pg_cron` (migración 20261118210000) cada 30 s, y solo si hay
 // trabajos pendientes. SOLO con la clave de servicio: cualquier otra llamada
 // recibe 401 sin que se toque la cola. No la llama nunca el navegador.
-import { MEDIA_JOB_KIND, type ClaimedJob, type MediaJobResult, type MediaService } from '../_shared/ai/media/contract.ts';
+import {
+  MEDIA_JOB_KIND,
+  type ClaimedJob,
+  type MediaJobResult,
+  type MediaService,
+} from '../_shared/ai/media/contract.ts';
 import { timingSafeEqual } from '../_shared/ai/media/http.ts';
 import type { RpcClient } from '../_shared/ai/contract.ts';
 

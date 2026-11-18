@@ -185,7 +185,10 @@ describe('adaptador ComfyUI', () => {
       code: 'provider_error',
       message: expect.stringMatching(/faltan nodos o archivos de modelo/),
     });
-    expect(await provider.poll!({ id: 'p-2' }, model, signal)).toMatchObject({ status: 'failed', code: 'provider_error' });
+    expect(await provider.poll!({ id: 'p-2' }, model, signal)).toMatchObject({
+      status: 'failed',
+      code: 'provider_error',
+    });
   });
 
   it('cancelar quita el trabajo de la cola, y solo interrumpe si es el que está en marcha', async () => {

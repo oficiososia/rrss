@@ -72,7 +72,13 @@ const rpc: RpcClient = async (fn, args) => {
 
 const reader: MediaReader = {
   getGeneration: async (id) => {
-    const rows = await asService<{ id: string; organization_id: string; brand_id: string; provider: string; status: string }>(
+    const rows = await asService<{
+      id: string;
+      organization_id: string;
+      brand_id: string;
+      provider: string;
+      status: string;
+    }>(
       db,
       `select id, organization_id, brand_id, provider, status::text as status from public.ai_generations where id = $1`,
       [id],
@@ -256,7 +262,9 @@ describe('almacenamiento de los medios generados', () => {
     const again = await storage.put(object);
     expect(first.path).toBe(`${org}/${brand}/ia/${generation!.id}-0.png`);
     expect(again).toEqual(first);
-    const rows = await asService<Row>(db, `select * from public.media_assets where ai_generation_id = $1`, [generation!.id]);
+    const rows = await asService<Row>(db, `select * from public.media_assets where ai_generation_id = $1`, [
+      generation!.id,
+    ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       id: first.assetId,
@@ -286,7 +294,11 @@ describe('almacenamiento de los medios generados', () => {
     const before = uploads.length;
     const base = { organizationId: 'o', brandId: 'b', generationId: 'g', kind: 'image' as const, index: 0 };
     await expect(
-      createSupabaseMediaStorage(backend, { maxBytes: 10 }).put({ ...base, mimeType: 'image/png', bytes: simulatedPng('x') }),
+      createSupabaseMediaStorage(backend, { maxBytes: 10 }).put({
+        ...base,
+        mimeType: 'image/png',
+        bytes: simulatedPng('x'),
+      }),
     ).rejects.toMatchObject({ code: 'too_large' });
     await expect(
       storage.put({ ...base, mimeType: 'text/plain', bytes: new TextEncoder().encode('texto') }),
@@ -383,13 +395,14 @@ describe('función ai-media', () => {
     const foreignAsset = await addAsset(db, other.owner, other.org, other.brand);
     const ownAsset = await addAsset(db, owner, org, brand);
     const handler = mediaHandler();
-    const generate = (input: Record<string, unknown>) => call(handler, token, { action: 'image.generate', brandId: brand, input });
+    const generate = (input: Record<string, unknown>) =>
+      call(handler, token, { action: 'image.generate', brandId: brand, input });
 
     expect(errorOf((await generate({ prompt: '  ', aspectRatio: '1:1' })).body).message).toMatch(/Describe la imagen/);
     expect(errorOf((await generate({ prompt: 'x', aspectRatio: '3:1' })).body).message).toMatch(/proporción/);
-    expect(errorOf((await generate({ prompt: 'x', aspectRatio: '1:1', model: 'bfl:flux-2-pro' })).body).message).toMatch(
-      /no está disponible/,
-    );
+    expect(
+      errorOf((await generate({ prompt: 'x', aspectRatio: '1:1', model: 'bfl:flux-2-pro' })).body).message,
+    ).toMatch(/no está disponible/);
     const foreign = await generate({ prompt: 'x', aspectRatio: '1:1', referenceAssetIds: [foreignAsset] });
     expect(foreign.status).toBe(400);
     expect(errorOf(foreign.body).message).toMatch(/referencia/);
@@ -439,7 +452,11 @@ describe('generación asíncrona y función ai-media-poll', () => {
     const started = await call(mediaHandler(), token, {
       action: 'image.generate',
       brandId: brand,
-      input: { prompt: 'Cócteles en la barra', aspectRatio: '9:16', model: `simulated-image-async:${LOCAL_TEST_IMAGE_ASYNC_MODEL}` },
+      input: {
+        prompt: 'Cócteles en la barra',
+        aspectRatio: '9:16',
+        model: `simulated-image-async:${LOCAL_TEST_IMAGE_ASYNC_MODEL}`,
+      },
     });
     expect(started.status).toBe(202);
     expect(started.body).toMatchObject({ status: 'pending' });
@@ -455,9 +472,11 @@ describe('generación asíncrona y función ai-media-poll', () => {
     // Sin la clave: 401 y la cola intacta.
     const denied = await poll(pollRequest({ authorization: 'Bearer de-un-usuario' }));
     expect(denied.status).toBe(401);
-    const [queued] = await asService<Row>(db, `select status::text as status from public.jobs where idempotency_key = $1`, [
-      `ai-media:${generationId}`,
-    ]);
+    const [queued] = await asService<Row>(
+      db,
+      `select status::text as status from public.jobs where idempotency_key = $1`,
+      [`ai-media:${generationId}`],
+    );
     expect(queued!.status).toBe('queued');
 
     // El simulado asíncrono «termina» a los 2 s.
@@ -467,18 +486,23 @@ describe('generación asíncrona y función ai-media-poll', () => {
     const body = (await response.json()) as { processed: number; results: { status: string; generationId: string }[] };
     expect(body.results).toContainEqual(expect.objectContaining({ status: 'completed', generationId }));
 
-    const [generation] = await as<Row>(db, owner, `select status::text as status from public.ai_generations where id = $1`, [
-      generationId,
-    ]);
+    const [generation] = await as<Row>(
+      db,
+      owner,
+      `select status::text as status from public.ai_generations where id = $1`,
+      [generationId],
+    );
     expect(generation!.status).toBe('succeeded');
     const assets = await as<Row>(db, owner, `select provenance from public.media_assets where ai_generation_id = $1`, [
       generationId,
     ]);
     expect(assets).toHaveLength(1);
     expect(assets[0]!.provenance).toMatchObject({ prompt: 'Cócteles en la barra', provider: 'simulated-image-async' });
-    const [job] = await asService<Row>(db, `select status::text as status from public.jobs where idempotency_key = $1`, [
-      `ai-media:${generationId}`,
-    ]);
+    const [job] = await asService<Row>(
+      db,
+      `select status::text as status from public.jobs where idempotency_key = $1`,
+      [`ai-media:${generationId}`],
+    );
     expect(job!.status).toBe('succeeded');
 
     // Sin trabajos pendientes no hace nada.
@@ -535,7 +559,9 @@ describe('función ai-media-webhook', () => {
 describe('imagen simulada: solo con la variable y un Supabase local', () => {
   it('sin la variable no hace nada', () => {
     expect(loadLocalTestMediaConfig({ SUPABASE_URL: 'http://127.0.0.1:55321' })).toBeNull();
-    expect(loadLocalTestMediaConfig({ AI_E2E_SIMULATED_PROVIDER: ' ', SUPABASE_URL: 'http://127.0.0.1:55321' })).toBeNull();
+    expect(
+      loadLocalTestMediaConfig({ AI_E2E_SIMULATED_PROVIDER: ' ', SUPABASE_URL: 'http://127.0.0.1:55321' }),
+    ).toBeNull();
   });
 
   it.each(['http://127.0.0.1:55321', 'http://localhost:54321', 'http://kong:8000'])('se admite con %s', (url) => {
@@ -583,11 +609,10 @@ describe('migración de imágenes con IA', () => {
   it('el disparador de pg_cron no hace nada sin trabajos ni sin Vault, y nadie más lo puede ejecutar', async () => {
     expect((await db.query<Row>(`select private.ai_media_poll_dispatch() as r`))[0]!.r).toBeNull();
     const { owner, org, brand } = await setup();
-    await asService(
-      db,
-      `select public.enqueue_job($1, 'ai.media.poll', '{}'::jsonb, 'prueba-disparador', $2)`,
-      [org, brand],
-    );
+    await asService(db, `select public.enqueue_job($1, 'ai.media.poll', '{}'::jsonb, 'prueba-disparador', $2)`, [
+      org,
+      brand,
+    ]);
     // Hay trabajo, pero en PGlite no hay Vault ni pg_net: avisa y no llama a nada.
     expect((await db.query<Row>(`select private.ai_media_poll_dispatch() as r`))[0]!.r).toBeNull();
     await expect(as(db, owner, `select private.ai_media_poll_dispatch()`)).rejects.toThrow(/permission denied/);

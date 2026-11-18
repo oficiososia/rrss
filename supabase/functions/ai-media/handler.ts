@@ -16,7 +16,12 @@
 //
 // Errores: mismos códigos, estados y mensajes que `ai-generate`.
 import { AiError, type AiErrorCode } from '../_shared/ai/contract.ts';
-import { MediaRequestError, type AspectRatio, type ImageRequest, type MediaInput } from '../_shared/ai/media/contract.ts';
+import {
+  MediaRequestError,
+  type AspectRatio,
+  type ImageRequest,
+  type MediaInput,
+} from '../_shared/ai/media/contract.ts';
 import type { MediaRuntime } from '../_shared/ai/media/runtime.ts';
 
 export const AI_MEDIA_ACTIONS = ['image.models', 'image.estimate', 'image.generate'] as const;
@@ -119,7 +124,10 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
     'access-control-allow-methods': 'POST, OPTIONS',
   };
   const json = (status: number, body: unknown) =>
-    new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json; charset=utf-8' } });
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, 'content-type': 'application/json; charset=utf-8' },
+    });
   const fail = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
     json(status, { error: { code, message, retryable: false, ...extra } });
 
@@ -148,7 +156,10 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
     } catch {
       return fail(400, 'invalid_request', 'La petición no es JSON válido.');
     }
-    const { action, brandId, input } = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+    const { action, brandId, input } = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
     if (typeof action !== 'string' || !(AI_MEDIA_ACTIONS as readonly string[]).includes(action)) {
       return fail(400, 'invalid_request', `Indica la acción: ${AI_MEDIA_ACTIONS.join(', ')}.`);
     }
