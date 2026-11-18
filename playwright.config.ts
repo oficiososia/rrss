@@ -71,6 +71,8 @@ export default defineConfig({
         VITE_SUPABASE_ANON_KEY: supabase.anonKey,
         // La IA de texto existe en este entorno: la sirve la función local con el proveedor simulado.
         VITE_AI_TEXT_ENABLED: 'true',
+        // El trabajador de medios existe en este entorno: lo arranca tests/e2e/11-reels.spec.ts contra el stack local.
+        VITE_MEDIA_WORKER_ENABLED: 'true',
       },
     },
   ],

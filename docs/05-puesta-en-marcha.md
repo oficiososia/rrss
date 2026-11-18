@@ -53,8 +53,16 @@ npm run test:e2e
 No hace falta `.env.local` para la prueba: `playwright.config.ts` lee la URL y
 la clave `anon` del stack local con `supabase status -o env` (la clave anónima
 local es pública y la misma en todas las máquinas) y se las pasa a Vite por
-entorno, junto con `VITE_AI_TEXT_ENABLED=true`. Para `npm run dev` contra el
-stack local sí hace falta `.env.local` con esas dos variables.
+entorno, junto con `VITE_AI_TEXT_ENABLED=true` y `VITE_MEDIA_WORKER_ENABLED=true`.
+Para `npm run dev` contra el stack local sí hace falta `.env.local` con esas dos
+variables.
+
+`11-reels.spec.ts` arranca además el **trabajador de medios** de verdad contra
+el stack local (`node worker/scripts/run-supabase.ts local`, que lee la URL y la
+clave de servicio de `supabase status` en el momento). Necesita Node ≥ 22.18,
+`npm ci` en `worker/` y `ffmpeg`/`ffprobe` en el PATH (ver `worker/README.md`).
+Para ejecutar solo ese archivo tras una tanda completa:
+`E2E_CONTINUAR=1 npx playwright test tests/e2e/11-reels.spec.ts`.
 
 Playwright (Chromium; la primera vez, `npx playwright install chromium`) arranca
 dos procesos: `supabase functions serve --env-file supabase/functions/e2e.env`
@@ -93,14 +101,14 @@ El producto usa **cuentas nuevas**, sin relación con las de Casa Tomás.
 
 #### Lo que hay (18/11/2026)
 
-| Qué | Valor |
-|---|---|
-| Proyecto de staging | `zzkdrfhqmjfvrdsoguio` (`https://zzkdrfhqmjfvrdsoguio.supabase.co`), en la cuenta de Supabase de Oficiosos |
-| Región | West EU (Irlanda) |
-| Plan | **Gratuito**, por decisión del dueño. Se trabaja dentro de sus límites y se avisa antes de cualquier cosa que obligue a pasar a Pro |
-| Base de datos | Postgres 17. Las 8 migraciones de `supabase/migrations/` aplicadas y registradas; 19 tablas en `public`, todas con RLS; cubo `brand-media` (privado, 50 MB por archivo) |
-| Funciones | `ai-generate` desplegada **sin proveedor de IA ni secretos**: responde que la IA no está disponible. `VITE_AI_TEXT_ENABLED` no debe activarse contra este proyecto |
-| Producción | No existe todavía |
+| Qué                 | Valor                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Proyecto de staging | `zzkdrfhqmjfvrdsoguio` (`https://zzkdrfhqmjfvrdsoguio.supabase.co`), en la cuenta de Supabase de Oficiosos                                                              |
+| Región              | West EU (Irlanda)                                                                                                                                                       |
+| Plan                | **Gratuito**, por decisión del dueño. Se trabaja dentro de sus límites y se avisa antes de cualquier cosa que obligue a pasar a Pro                                     |
+| Base de datos       | Postgres 17. Las 8 migraciones de `supabase/migrations/` aplicadas y registradas; 19 tablas en `public`, todas con RLS; cubo `brand-media` (privado, 50 MB por archivo) |
+| Funciones           | `ai-generate` desplegada **sin proveedor de IA ni secretos**: responde que la IA no está disponible. `VITE_AI_TEXT_ENABLED` no debe activarse contra este proyecto      |
+| Producción          | No existe todavía                                                                                                                                                       |
 
 #### El envoltorio `scripts/supabase-rrss.sh`
 
@@ -153,25 +161,25 @@ después staging.
 
 Configurado por la API de gestión (`PATCH /v1/projects/{ref}/config/auth`):
 
-| Ajuste | Valor | Campo de la API |
-|---|---|---|
-| Confirmar correo | **Activado** (requisito de seguridad: las invitaciones se aceptan por coincidencia de correo) | `mailer_autoconfirm = false` |
-| Longitud mínima de contraseña | 8 | `password_min_length` |
-| Protección contra contraseñas filtradas | **No disponible en el plan gratuito** (la API responde 402, `entitlement_required`): es de Pro en adelante | `password_hibp_enabled` |
-| URL del sitio | `http://localhost:5173` (aún no hay dominio) | `site_url` |
-| Direcciones de retorno | `http://localhost:5173/**` y `http://127.0.0.1:5173/**` (cubren `/` tras confirmar el correo y `/restablecer` al recuperar la contraseña) | `uri_allow_list` |
-| Registro abierto | Sí | `disable_signup = false` |
+| Ajuste                                  | Valor                                                                                                                                     | Campo de la API              |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| Confirmar correo                        | **Activado** (requisito de seguridad: las invitaciones se aceptan por coincidencia de correo)                                             | `mailer_autoconfirm = false` |
+| Longitud mínima de contraseña           | 8                                                                                                                                         | `password_min_length`        |
+| Protección contra contraseñas filtradas | **No disponible en el plan gratuito** (la API responde 402, `entitlement_required`): es de Pro en adelante                                | `password_hibp_enabled`      |
+| URL del sitio                           | `http://localhost:5173` (aún no hay dominio)                                                                                              | `site_url`                   |
+| Direcciones de retorno                  | `http://localhost:5173/**` y `http://127.0.0.1:5173/**` (cubren `/` tras confirmar el correo y `/restablecer` al recuperar la contraseña) | `uri_allow_list`             |
+| Registro abierto                        | Sí                                                                                                                                        | `disable_signup = false`     |
 
 Cuando haya dominio o vistas previas de Vercel hay que cambiar la URL del sitio
 y añadir sus direcciones de retorno.
 
 #### Limitaciones del correo integrado (plan gratuito, sin SMTP propio)
 
-Según la documentación de Supabase (*Auth → Send emails with custom SMTP*,
+Según la documentación de Supabase (_Auth → Send emails with custom SMTP_,
 consultada el 18/11/2026):
 
 - **Solo envía a direcciones del equipo** de la organización de Supabase
-  (pestaña *Team*). A cualquier otra dirección responde
+  (pestaña _Team_). A cualquier otra dirección responde
   «Email address not authorized».
 - **2 correos por hora** en todo el proyecto (valor que Supabase puede cambiar
   sin aviso; la API lo muestra en `rate_limit_email_sent`).
@@ -182,7 +190,7 @@ solo se pueden probar en staging con correos de miembros del equipo de
 Supabase, y a ritmo de dos correos por hora. La prueba de extremo a extremo
 (`npm run test:e2e`), que registra muchas cuentas con correos inventados, **no
 se puede repetir en staging** sin un SMTP propio (se configura en
-*Authentication → SMTP* o con los campos `smtp_*` de la misma API; el plan
+_Authentication → SMTP_ o con los campos `smtp_*` de la misma API; el plan
 gratuito lo admite).
 
 #### Alertas de Supabase (advisors, 18/11/2026)
@@ -217,12 +225,15 @@ gratuito lo admite).
 
 1. Proyecto nuevo importando este repositorio (framework: Vite).
 2. Variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`: las de producción
-   en *Production*, las de staging en *Preview*.
+   en _Production_, las de staging en _Preview_.
    `VITE_AI_TEXT_ENABLED=true` solo en el entorno cuya función `ai-generate`
    tenga un proveedor de IA de texto configurado: sin ella no se enseñan
    «Redactar con IA», la comprobación de tono ni la propuesta de perfil (lo que
    no funciona no sale en la interfaz). `VITE_AI_ACCOUNT_CURRENCY` (opcional)
-   fija la moneda de los importes de IA.
+   fija la moneda de los importes de IA. `VITE_MEDIA_WORKER_ENABLED=true` solo
+   en el entorno que tenga desplegado el trabajador de medios (`worker/`) contra
+   su Supabase: sin ella no aparece «Montar un reel» en la biblioteca (un reel
+   encargado sin trabajador se quedaría en cola para siempre).
 3. Rama de producción `main`; `staging` como entorno de validación.
 4. Dominio propio.
 

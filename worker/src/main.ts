@@ -37,7 +37,11 @@ async function main(): Promise<number> {
   const supabase = { url: config.SUPABASE_URL, serviceKey: config.SUPABASE_SERVICE_ROLE_KEY };
   const worker = createWorker({
     queue: createSupabaseQueue(supabase),
-    storage: createSupabaseStorage({ ...supabase, bucket: config.WORKER_BUCKET }),
+    storage: createSupabaseStorage({
+      ...supabase,
+      bucket: config.WORKER_BUCKET,
+      maxObjectBytes: config.WORKER_MAX_UPLOAD_BYTES,
+    }),
     handlers: createMediaHandlers({ tools, defaultFontFile, fontsDir: config.WORKER_FONTS_DIR }),
     logger,
     workerId: config.WORKER_ID,

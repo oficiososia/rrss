@@ -154,7 +154,7 @@ describe('Reels en la biblioteca', () => {
     vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
     seedWorkspace({ orgRole: 'member', brandRole: 'viewer' });
     seedLibrary();
-    fake.tables.media_assets.push({
+    fake.rows('media_assets').push({
       ...asset('reel-1', 'video', 'reel-corte-ritmico.mp4', 'video/mp4', 4500),
       created_at: '2026-11-18T11:00:00Z',
     });
