@@ -1,4 +1,5 @@
 import {
+  CalendarDays,
   Building2,
   ClipboardList,
   FileText,
@@ -57,6 +58,7 @@ function navItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
     { to: `${b}/contenidos`, label: 'Contenidos', icon: FileText },
     // Encargos: solo con la marca en modo agencia (quien los atiende es la agencia).
     ...(brand.ai_mode === 'agency' ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList }] : []),
+    { to: `${b}/calendario`, label: 'Calendario', icon: CalendarDays },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },

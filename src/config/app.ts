@@ -32,6 +32,17 @@ export function mediaWorkerEnabled(): boolean {
   return import.meta.env.VITE_MEDIA_WORKER_ENABLED === 'true';
 }
 
+/**
+ * ¿Hay publicación en redes en este entorno? Hace falta la aplicación de Meta
+ * del producto y las funciones `social-connect` y `social-publish` configuradas
+ * (docs/publicacion.md). Sin ella no se enseña conectar cuentas ni programar
+ * para publicar (lo que no funciona no sale en la interfaz); el calendario de lo
+ * ya programado sí se puede ver. Se activa con `VITE_SOCIAL_PUBLISHING_ENABLED=true`.
+ */
+export function socialPublishingEnabled(): boolean {
+  return import.meta.env.VITE_SOCIAL_PUBLISHING_ENABLED === 'true';
+}
+
 export const STORAGE_BUCKET = 'brand-media';
 /** Tope del cubo (ver supabase/migrations/…_storage_brand_media.sql). */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;

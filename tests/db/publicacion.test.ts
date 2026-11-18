@@ -763,10 +763,7 @@ describe('función social-publish', () => {
     const handler = createSocialPublishHandler({
       serviceKeys: ['clave-de-servicio-de-pruebas-larga'],
       rpc,
-      publisher: () => {
-        const { rpc: _r, workerName: _w, ...rest } = publisherDeps();
-        return rest;
-      },
+      publisher: () => publisherDeps(),
       accountsToCheck: async () => [],
       checkTokens: async () => 0,
       workerName: WORKER,

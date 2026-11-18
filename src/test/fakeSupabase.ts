@@ -121,6 +121,14 @@ class Query implements PromiseLike<QueryResult> {
     this.filters.push((row) => regex.test(String(row[column] ?? '')));
     return this;
   }
+  gte(column: string, value: unknown) {
+    this.filters.push((row) => String(row[column]) >= String(value));
+    return this;
+  }
+  lt(column: string, value: unknown) {
+    this.filters.push((row) => String(row[column]) < String(value));
+    return this;
+  }
   gt(column: string, value: unknown) {
     this.filters.push((row) => String(row[column]) > String(value));
     return this;
