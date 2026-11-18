@@ -999,6 +999,46 @@ describe('IA y cola de trabajos', () => {
     ).toEqual([]);
   });
 
+  it('cancelar un trabajo de medios: solo de una marca que se edita y solo de medios', async () => {
+    const reel = async (org: string, brand: string, key: string) =>
+      (
+        await serviceRpc<{ id: string }>(db, 'enqueue_job', {
+          p_organization_id: org,
+          p_brand_id: brand,
+          p_kind: 'media.reel.template',
+          p_payload: { output: { path: `${org}/${brand}/reels/${key}.mp4` } },
+          p_idempotency_key: key,
+        })
+      ).id;
+    const reelA1 = await reel(orgA, marcaA1, 'cancelar-a1');
+    const reelB1 = await reel(orgB, marcaB1, 'cancelar-b1');
+    const reelG1 = await reel(agencia, marcaG1, 'cancelar-g1');
+    const cancelar = (user: TestUser | null, job: string, pattern = /No tienes permiso para cancelar/) =>
+      denied(db, user, `select public.cancel_media_job($1)`, [job], pattern);
+    // Otra organización, otra marca de la misma, sin permiso de edición o sin sesión.
+    await cancelar(ana, reelB1);
+    await cancelar(berta, reelA1);
+    await cancelar(editorA, reelB1);
+    await cancelar(clienteA, reelA1);
+    await cancelar(sinMarcaA, reelA1);
+    await cancelar(ana, reelG1); // lectora en la agencia
+    await cancelar(superadmin, reelA1);
+    await cancelar(ajeno, reelA1);
+    await cancelar(null, reelA1, /permission denied for function/);
+    // Un trabajo que no es de medios (o de toda la organización) no se cancela por aquí.
+    await cancelar(ana, jobA1);
+    await cancelar(ana, jobOrgA);
+    for (const id of [reelA1, reelB1, reelG1, jobA1, jobOrgA]) {
+      const [row] = await db.query<{ status: string }>(`select status from public.jobs where id = $1`, [id]);
+      expect(row!.status, id).toBe('queued');
+    }
+    // Quien edita la marca, sí.
+    const [hecho] = await as<{ status: string }>(db, editorA, `select status from public.cancel_media_job($1)`, [reelA1]);
+    expect(hecho!.status).toBe('cancelled');
+    await serviceRpc(db, 'cancel_job', { p_job_id: reelB1 });
+    await serviceRpc(db, 'cancel_job', { p_job_id: reelG1 });
+  });
+
   it('ser superadministrador no abre las generaciones ni el consumo de los clientes', async () => {
     for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
       expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);

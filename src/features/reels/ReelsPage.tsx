@@ -5,7 +5,7 @@
 // Vive dentro de la Biblioteca (no es un área del menú): parte de sus recursos
 // y deja allí el resultado. El área «Crear» (docs/03-experiencia-de-usuario.md)
 // no existe todavía; cuando exista, podrá encargar reels con la misma función.
-import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2, XCircle } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   Field,
@@ -29,12 +30,13 @@ import { useSignedUrls } from '@/features/library/api';
 import { useBrand } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
 import { cn, formatDateTime } from '@/lib/utils';
-import { useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
+import { useCancelMediaJob, useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
 import {
   buildReelInput,
   describeJob,
   estimateDuration,
   formatSeconds,
+  isActive,
   jobPieceCount,
   jobTemplateName,
   MAX_PIECES,
@@ -96,7 +98,7 @@ function ReelsScreen() {
         ) : (
           <Notice>Solo quien edita la marca puede montar reels. Aquí puedes ver los encargos y su estado.</Notice>
         )}
-        <ReelJobs brandId={brand.id} />
+        <ReelJobs brandId={brand.id} canCancel={canEdit} />
       </div>
     </>
   );
@@ -491,8 +493,18 @@ function ReelBuilder({ brandId }: { brandId: string }) {
   );
 }
 
-function ReelJobs({ brandId }: { brandId: string }) {
+function ReelJobs({ brandId, canCancel }: { brandId: string; canCancel: boolean }) {
   const jobs = useReelJobs(brandId);
+  const cancel = useCancelMediaJob(brandId);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const confirmCancel = () => {
+    if (!cancelling) return;
+    cancel.mutate(cancelling, {
+      onSuccess: () => toast.success('Reel cancelado. No se montará ni llegará a la biblioteca.'),
+      onError: (error) => toast.error(translateError(error)),
+      onSettled: () => setCancelling(null),
+    });
+  };
   return (
     <Card className="self-start">
       <CardHeader title="Encargos recientes" />
@@ -526,6 +538,17 @@ function ReelJobs({ brandId }: { brandId: string }) {
                       {view.detail}
                     </p>
                   )}
+                  {canCancel && isActive(job) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCancelling(job.id)}
+                      data-testid="reel-job-cancel"
+                    >
+                      <XCircle className="h-4 w-4" aria-hidden />
+                      {job.status === 'running' ? 'Detener el montaje' : 'Cancelar el encargo'}
+                    </Button>
+                  )}
                   {view.assetId && (
                     <Link
                       to={`..?recurso=${view.assetId}`}
@@ -542,6 +565,15 @@ function ReelJobs({ brandId }: { brandId: string }) {
           </ul>
         )}
       </CardBody>
+      <ConfirmDialog
+        open={cancelling !== null}
+        onOpenChange={(open) => !open && !cancel.isPending && setCancelling(null)}
+        title="¿Cancelar este reel?"
+        description="Si ya se está montando, se detiene. No se podrá retomar: para tenerlo habrá que encargarlo otra vez."
+        confirmLabel="Sí, cancelarlo"
+        onConfirm={confirmCancel}
+        loading={cancel.isPending}
+      />
     </Card>
   );
 }

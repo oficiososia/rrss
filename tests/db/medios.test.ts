@@ -409,6 +409,53 @@ describe('encargar desde la aplicación', () => {
   });
 });
 
+describe('cancelar desde la aplicación', () => {
+  const cancel = async (user: TestUser, id: string) => {
+    const { sql, params } = rpcStatement('cancel_media_job', { p_job_id: id });
+    return (await as<{ data: JobRow }>(db, user, sql, params))[0]!.data;
+  };
+
+  it('quien edita la marca cancela un reel en cola; deja hueco para otro', async () => {
+    const input = { template: { id: 'corte-ritmico' }, plan: { media: [{ type: 'photo', path: fotoA }] } };
+    const jobs = [];
+    for (let i = 0; i < 5; i++) jobs.push(await request(editor, marcaA, 'media.reel.template', input));
+    expect(await cancel(editor, jobs[0]!.id)).toMatchObject({ status: 'cancelled' });
+    expect((await jobById(jobs[0]!.id)).finished_at).not.toBeNull();
+    // El trabajador ya no lo reclama, y cabe un encargo más.
+    expect((await claim()).map((j) => j.id)).not.toContain(jobs[0]!.id);
+    await request(editor, marcaA, 'media.reel.template', input);
+  });
+
+  it('se puede cancelar mientras se monta: el trabajador ya no lo puede cerrar ni llega a la biblioteca', async () => {
+    const job = await request(editor, marcaA, 'media.reel.template', reelInput());
+    const [running] = await claim();
+    expect(running!.id).toBe(job.id);
+    expect(await cancel(ana, job.id)).toMatchObject({ status: 'cancelled', locked_by: null });
+    await expect(complete(job.id, reelResult(job.payload.output!.path))).rejects.toThrow();
+    await expect(
+      serviceRpc(db, 'extend_job_lease', { p_job_id: job.id, p_worker: 'medios-1', p_lease_seconds: 60 }),
+    ).rejects.toThrow();
+    expect(await assetsOf(job.id)).toEqual([]);
+  });
+
+  it('también los recortes; lo terminado ya no se cancela', async () => {
+    const job = await request(editor, marcaA, 'media.image.process', {
+      source: { path: fotoA },
+      outputs: [{ aspect: '1:1' }],
+    });
+    expect(await cancel(editor, job.id)).toMatchObject({ status: 'cancelled' });
+    await denied(db, editor, `select public.cancel_media_job($1)`, [job.id], /ya ha terminado/);
+  });
+
+  it('quien solo ve la marca, o es de otra, no cancela', async () => {
+    const job = await request(editor, marcaA, 'media.reel.template', reelInput());
+    for (const user of [cliente, lector, berta]) {
+      await denied(db, user, `select public.cancel_media_job($1)`, [job.id], /No tienes permiso para cancelar/);
+    }
+    expect(await jobById(job.id)).toMatchObject({ status: 'queued' });
+  });
+});
+
 describe('el resultado llega a la biblioteca al completarse', () => {
   it('el reel terminado aparece en la biblioteca de su marca, con su procedencia', async () => {
     const job = await request(editor, marcaA, 'media.reel.template', reelInput());

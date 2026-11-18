@@ -637,6 +637,18 @@ type RequestEnums = {
 
 // ─────────────────────── fin del bloque de encargos ───────────────────────
 
+// ───────────── Pulido de la Fase 2 (migraciones 2026111911…) ─────────────
+// Cancelar un trabajo de medios desde la aplicación (20261119111000).
+
+type PolishTables = Record<never, never>;
+
+type PolishFunctions = {
+  /** Cancela un reel o un recorte en cola o en curso de una marca que se edita. */
+  cancel_media_job: { Args: { p_job_id: string }; Returns: JobRow };
+};
+
+// ─────────────────────── fin del bloque de pulido ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -718,7 +730,8 @@ export type Database = {
     } & Phase2Tables &
       ContentTables &
       Phase2MediaTables &
-      RequestTables;
+      RequestTables &
+      PolishTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -746,7 +759,8 @@ export type Database = {
     } & Phase2Functions &
       ContentFunctions &
       MediaJobFunctions &
-      RequestFunctions;
+      RequestFunctions &
+      PolishFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

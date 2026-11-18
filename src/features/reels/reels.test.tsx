@@ -182,4 +182,47 @@ describe('Reels en la biblioteca', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByDisplayValue('reel-corte-ritmico.mp4')).toBeInTheDocument();
   });
+
+  it('quien edita cancela un encargo en cola o montándose; lo terminado no se cancela', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
+    seedLibrary();
+    fake.tables.jobs = [
+      job('j-cola', 'queued', { created_at: '2026-11-18T10:04:00Z' }),
+      job('j-montando', 'running', { created_at: '2026-11-18T10:03:00Z' }),
+      job('j-fallo', 'failed', { created_at: '2026-11-18T10:01:00Z', last_error: 'x' }),
+    ];
+    fake.rpc('cancel_media_job', (args) => {
+      const row = fake.rows('jobs').find((j) => j.id === args.p_job_id)!;
+      Object.assign(row, { status: 'cancelled', locked_by: null, locked_until: null });
+      return row;
+    });
+    const { user } = renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    const buttons = await screen.findAllByTestId('reel-job-cancel');
+    expect(buttons.map((b) => b.textContent)).toEqual(['Cancelar el encargo', 'Detener el montaje']);
+
+    await user.click(buttons[1]!);
+    expect(await screen.findByText('¿Cancelar este reel?')).toBeInTheDocument();
+    await user.click(screen.getByTestId('confirm-action'));
+    await screen.findByText(/Reel cancelado/);
+    expect(fake.callsTo('cancel_media_job', 'rpc')[0]!.payload).toEqual({ p_job_id: 'j-montando' });
+    await waitFor(() =>
+      expect(screen.getAllByTestId('reel-job-status').map((s) => s.textContent)).toEqual([
+        'En cola',
+        'Cancelado',
+        'Falló',
+      ]),
+    );
+    expect(screen.getAllByTestId('reel-job-cancel')).toHaveLength(1);
+  });
+
+  it('quien solo ve la marca no puede cancelar', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'member', brandRole: 'reviewer' });
+    seedLibrary();
+    fake.tables.jobs = [job('j-cola', 'queued')];
+    renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    expect(await screen.findByTestId('reel-job-status')).toHaveTextContent('En cola');
+    expect(screen.queryByTestId('reel-job-cancel')).not.toBeInTheDocument();
+  });
 });
