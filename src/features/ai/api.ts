@@ -11,7 +11,16 @@ import { supabase } from '@/lib/supabase';
 
 // ── Tipos del contrato ────────────────────────────────────────────────────
 
-export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal';
+export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal' | 'analytics.summary';
+
+/** Interpretación de la analítica (Fase 5): solo hipótesis, cada una con los datos en que se apoya. */
+export interface AnalyticsSummaryResult {
+  action: 'analytics.summary';
+  generationId: string;
+  hypotheses: { id: string; kind: 'hypothesis'; source: 'ai'; text: string; basedOn: string[] }[];
+  /** Propuestas de la IA descartadas por no apoyarse en ningún dato medido. */
+  discarded: number;
+}
 
 /** Límites de la red tal como los espera la tarea `post.caption`. */
 export interface AiNetworkLimits {
@@ -101,6 +110,7 @@ export type AiErrorCode =
   | 'provider_timeout'
   | 'too_large'
   | 'internal'
+  | 'agency_mode'
   | 'network'
   | 'client_timeout';
 
@@ -119,6 +129,7 @@ const KNOWN_CODES = new Set<string>([
   'provider_timeout',
   'too_large',
   'internal',
+  'agency_mode',
 ]);
 
 const MESSAGES: Record<AiErrorCode, string> = {
@@ -143,6 +154,7 @@ const MESSAGES: Record<AiErrorCode, string> = {
   too_large: 'El texto es demasiado largo para enviarlo a la IA.',
   network: 'No hay conexión con el servidor. Comprueba tu red.',
   internal: 'Algo ha fallado al usar la IA. Inténtalo de nuevo.',
+  agency_mode: 'Esta marca trabaja en modo agencia: la IA del servicio no se usa en ella.',
 };
 
 /** Mensaje para personas de cada código. */
@@ -257,6 +269,14 @@ export function checkBrandWithAi(brandId: string, text: string): Promise<BrandCh
 
 export function proposeProfile(brandId: string, sources: ProfileSourceText[]): Promise<ProfileProposalResult> {
   return invokeAiGenerate<ProfileProposalResult>('profile.proposal', brandId, { sources });
+}
+
+/** Interpreta las cifras medidas de un periodo (AAAA-MM-DD, `to` excluido). Solo devuelve hipótesis. */
+export function summarizeAnalytics(
+  brandId: string,
+  period: { from: string; to: string },
+): Promise<AnalyticsSummaryResult> {
+  return invokeAiGenerate<AnalyticsSummaryResult>('analytics.summary', brandId, period);
 }
 
 /** Mutación sin `mutate`: solo `mutateAsync`. */

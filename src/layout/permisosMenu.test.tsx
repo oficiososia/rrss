@@ -37,6 +37,7 @@ describe('Menú de una marca', () => {
       'Inicio',
       'Contenidos',
       'Calendario',
+      'Analítica',
       'Biblioteca',
       'Marca',
       'Equipo',
