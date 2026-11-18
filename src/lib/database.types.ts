@@ -110,6 +110,8 @@ export type MediaAssetRow = {
   folder: string;
   tags: string[];
   rights: Json;
+  /** De dónde sale el recurso (p. ej. una exportación del editor). Se fija al crear; vacío si se subió a mano. */
+  provenance: Json;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -583,6 +585,7 @@ export type Database = {
           folder?: string;
           tags?: string[];
           rights?: Json;
+          provenance?: Json;
         },
         { kind?: AssetKind; file_name?: string; folder?: string; tags?: string[]; rights?: Json }
       >;
