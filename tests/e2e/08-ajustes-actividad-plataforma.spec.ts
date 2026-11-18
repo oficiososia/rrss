@@ -83,7 +83,11 @@ test('equipo y actividad cargan con los datos reales de la organización', async
   await expect(actividad).toContainText(`${NOMBRES.ana} actualizó la marca`);
   await expect(actividad).toContainText(`${NOMBRES.ana} cambió los datos de la organización`);
   await expect(actividad).toContainText(`${NOMBRES.ana} cambió el rol de ${NOMBRES.carla} a Revisor`);
-  await expect(actividad).toContainText(`aceptó la invitación enviada a ${correo('eva')}`);
+  await expect(actividad).toContainText(
+    `${NOMBRES.eva} aceptó la invitación y entró en la organización como Administrador`,
+  );
+  // Las altas que trae la invitación no se repiten como «Eva añadió a Eva».
+  await expect(actividad).not.toContainText(`${NOMBRES.eva} añadió a ${NOMBRES.eva}`);
   await expect(actividad).toContainText('guardó la versión 2 del perfil de marca');
   // No queda ninguna frase sin traducir («insert en tabla»).
   await expect(actividad.getByText(/\b(insert|update|delete) en \w+/)).toHaveCount(0);

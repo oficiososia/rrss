@@ -637,6 +637,34 @@ describe('invitaciones', () => {
     );
     expect(fila!.role).toBe('member');
   });
+
+  it('la actividad registra las altas de una invitación como tales, y solo en esa transacción', async () => {
+    const nueva = await createUser(db, 'actividad@a.test');
+    const [inv] = await as<{ token: string; invitation_id: string }>(
+      db,
+      ana,
+      `select invitation_id, token from public.create_invitation($1, $2, 'member', $3, 'editor')`,
+      [orgA, nueva.email, marcaA1],
+    );
+    await as(db, nueva, `select public.accept_invitation($1)`, [inv!.token]);
+    const filas = await db.query<{ entity_type: string; actor_id: string; via: string | null }>(
+      `select entity_type, actor_id, data ->> 'via' as via from public.audit_logs
+       where actor_id = $1 order by id`,
+      [nueva.id],
+    );
+    expect(filas.map((f) => [f.entity_type, f.via])).toEqual([
+      ['organization_members', 'invitation'],
+      ['brand_members', 'invitation'],
+      ['invitations', 'invitation'],
+    ]);
+    // La marca no se queda pegada: lo siguiente que se registra no la lleva.
+    await as(db, ana, `select * from public.create_invitation($1, 'otra-mas@a.test')`, [orgA]);
+    const [siguiente] = await db.query<{ via: string | null }>(
+      `select data ->> 'via' as via from public.audit_logs where actor_id = $1 order by id desc limit 1`,
+      [ana.id],
+    );
+    expect(siguiente!.via).toBeNull();
+  });
 });
 
 describe('almacenamiento', () => {

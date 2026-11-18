@@ -19,16 +19,25 @@ const CONTENT_STATUS_TEXT: Record<string, string> = {
   approved: 'aprobado',
 };
 
-/** Frase en español para una fila del registro de auditoría. */
+/**
+ * Frase en español para una fila del registro de auditoría, o `null` si la
+ * fila no se muestra porque otra ya lo cuenta: al aceptar una invitación, las
+ * altas de miembro que trae consigo (marcadas por el servidor con
+ * `data.via = 'invitation'`) las resume la línea «aceptó la invitación y entró
+ * como…».
+ */
 export function describeAudit(
-  log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'>,
+  log: Pick<AuditLogRow, 'action' | 'entity_type' | 'data'> & { actor_id?: string | null },
   nameOf: (userId: string) => string,
-): string {
+): string | null {
   const { action, entity_type: entity, data } = log;
   const name = str(data, 'name');
   const who = () => nameOf(str(data, 'user_id')) || 'un usuario';
-  const orgRole = () => ORG_ROLE_LABEL[str(data, 'role') as OrgRole] ?? str(data, 'role');
-  const brandRole = () => BRAND_ROLE_LABEL[str(data, 'role') as BrandRole] ?? str(data, 'role');
+  const orgRole = (key = 'role') => ORG_ROLE_LABEL[str(data, key) as OrgRole] ?? str(data, key);
+  const brandRole = (key = 'role') => BRAND_ROLE_LABEL[str(data, key) as BrandRole] ?? str(data, key);
+  const viaInvitation = str(data, 'via') === 'invitation';
+  // Alta de uno mismo (registros anteriores a la marca `via`, o quien se añade a sí mismo).
+  const self = Boolean(log.actor_id) && log.actor_id === str(data, 'user_id');
 
   switch (`${entity}:${action}`) {
     case 'organizations:insert':
@@ -36,6 +45,8 @@ export function describeAudit(
     case 'organizations:update':
       return `cambió los datos de la organización`;
     case 'organization_members:insert':
+      if (viaInvitation) return null;
+      if (self) return `entró en la organización como ${orgRole()}`;
       return `añadió a ${who()} como ${orgRole()}`;
     case 'organization_members:update':
       return `cambió el rol de ${who()} a ${orgRole()}`;
@@ -48,6 +59,8 @@ export function describeAudit(
     case 'brands:delete':
       return `eliminó la marca «${name}»`;
     case 'brand_members:insert':
+      if (viaInvitation) return null;
+      if (self) return `entró en la marca como ${brandRole()}`;
       return `dio acceso a ${who()} como ${brandRole()}`;
     case 'brand_members:update':
       return `cambió el rol de ${who()} a ${brandRole()}`;
@@ -64,7 +77,11 @@ export function describeAudit(
     case 'invitations:insert':
       return `invitó a ${str(data, 'email')}`;
     case 'invitations:update':
-      if (str(data, 'accepted_at')) return `aceptó la invitación enviada a ${str(data, 'email')}`;
+      if (str(data, 'accepted_at')) {
+        return str(data, 'brand_id')
+          ? `aceptó la invitación y entró como ${brandRole('brand_role')}`
+          : `aceptó la invitación y entró en la organización como ${orgRole('org_role')}`;
+      }
       if (str(data, 'revoked_at')) return `anuló la invitación de ${str(data, 'email')}`;
       return `actualizó la invitación de ${str(data, 'email')}`;
     case 'usage_quotas:insert':
