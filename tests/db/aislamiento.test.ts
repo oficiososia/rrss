@@ -37,6 +37,8 @@ let genA1: string, genB1: string, genG1: string;
 let jobA1: string, jobOrgA: string, jobB1: string;
 // Contenidos (Fase 2): una pieza con una versión guardada en cada marca.
 let contentA1: string, contentA2: string, contentB1: string, contentG1: string;
+// Encargos (modo agencia): uno por organización.
+let requestA1: string, requestB1: string, requestG1: string;
 
 const PROFILE = { business: { description: 'Negocio de prueba' } };
 
@@ -137,6 +139,20 @@ beforeAll(async () => {
   contentA2 = await content(ana, orgA, marcaA2);
   contentB1 = await content(berta, orgB, marcaB1);
   contentG1 = await content(gema, agencia, marcaG1);
+
+  // Encargos: uno pedido en cada organización.
+  const request = async (user: TestUser, brand: string) => {
+    const [row] = await as<{ id: string }>(
+      db,
+      user,
+      `select id from public.create_content_request($1, 'Encargo', 'Texto del encargo', 'instagram', 'post')`,
+      [brand],
+    );
+    return row!.id;
+  };
+  requestA1 = await request(clienteA, marcaA1);
+  requestB1 = await request(berta, marcaB1);
+  requestG1 = await request(gema, marcaG1);
 });
 
 afterAll(async () => {
@@ -162,6 +178,8 @@ const TENANT_TABLES = [
   'jobs',
   'content_items',
   'content_versions',
+  'content_requests',
+  'content_request_comments',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -250,6 +268,8 @@ describe('aislamiento entre organizaciones', () => {
       'jobs',
       'content_items',
       'content_versions',
+      'content_requests',
+      'content_request_comments',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -998,6 +1018,75 @@ describe('contenidos y versiones', () => {
     await denied(db, null, `select public.restore_content_version($1, 1)`, [contentA1], noFunction);
     await denied(db, null, `select public.set_content_status($1, 'draft')`, [contentA1], noFunction);
     await denied(db, null, `select public.archive_content_item($1)`, [contentA1], noFunction);
+  });
+});
+
+describe('encargos (modo agencia)', () => {
+  const requests = async (user: TestUser) =>
+    (await as<{ id: string }>(db, user, `select id::text as id from public.content_requests`)).map((r) => r.id).sort();
+  const threads = async (user: TestUser) =>
+    (await as<{ id: string }>(db, user, `select distinct request_id::text as id from public.content_request_comments`))
+      .map((r) => r.id)
+      .sort();
+
+  it('una organización no ve los encargos ni la conversación de otra', async () => {
+    expect(await requests(berta)).toEqual([requestB1]);
+    expect(await threads(berta)).toEqual([requestB1]);
+    expect(await requests(ana)).toEqual([requestA1, requestG1].sort());
+    expect(await requests(gema)).toEqual([requestG1]);
+    expect(await requests(superadmin)).toEqual([]);
+    expect(await as(db, berta, `select id from public.pending_content_requests()`)).toEqual([{ id: requestB1 }]);
+  });
+
+  it('no se pide, comenta, toma, entrega, acepta ni cancela en la organización ajena', async () => {
+    await denied(db, ana, `select public.create_content_request($1, 't', 'b', 'instagram', 'post')`, [marcaB1]);
+    await denied(db, ana, `select public.comment_content_request($1, 'hola')`, [requestB1]);
+    await denied(db, ana, `select public.take_content_request($1)`, [requestB1]);
+    await denied(db, ana, `select public.release_content_request($1)`, [requestB1]);
+    await denied(db, ana, `select public.deliver_content_request($1, '{"schemaVersion":1}'::jsonb, 1)`, [requestB1]);
+    await denied(db, ana, `select public.request_content_request_changes($1, 'x')`, [requestB1]);
+    await denied(db, ana, `select public.accept_content_request($1)`, [requestB1]);
+    await denied(db, ana, `select public.cancel_content_request($1)`, [requestB1]);
+    // Un recurso o una pieza de otra organización no se cuelan en un encargo propio.
+    await denied(
+      db,
+      ana,
+      `select public.create_content_request($1, 't', 'b', 'instagram', 'post', null, array[$2::uuid])`,
+      [marcaA1, assetB1],
+      /no es de esta marca/,
+    );
+    await denied(
+      db,
+      ana,
+      `select public.create_content_request($1, 't', 'b', 'instagram', 'post', null, '{}', null, $2)`,
+      [marcaA1, contentB1],
+      /no es de esta marca/,
+    );
+    const [fila] = await db.query(`select status from public.content_requests where id = $1`, [requestB1]);
+    expect(fila!.status).toBe('requested');
+  });
+
+  it('dentro de la organización: ve quien ve la marca; el lector de la agencia no toma nada', async () => {
+    expect(await requests(clienteA)).toEqual([requestA1]);
+    expect(await requests(editorA)).toEqual([requestA1]);
+    expect(await requests(sinMarcaA)).toEqual([]);
+    // Ana es solo lectora en la agencia: ve el encargo, no lo comenta ni lo toma.
+    await denied(db, ana, `select public.comment_content_request($1, 'hola')`, [requestG1]);
+    await denied(db, ana, `select public.take_content_request($1)`, [requestG1]);
+  });
+
+  it('sin sesión no se ejecuta ninguna función de encargos', async () => {
+    const noFunction = /permission denied for function/;
+    await denied(
+      db,
+      null,
+      `select public.create_content_request($1, 't', 'b', 'instagram', 'post')`,
+      [marcaA1],
+      noFunction,
+    );
+    await denied(db, null, `select * from public.pending_content_requests()`, [], noFunction);
+    await denied(db, null, `select public.take_content_request($1)`, [requestA1], noFunction);
+    await denied(db, null, `select public.accept_content_request($1)`, [requestA1], noFunction);
   });
 });
 
