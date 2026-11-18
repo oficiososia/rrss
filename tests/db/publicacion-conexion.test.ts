@@ -40,7 +40,9 @@ function call(user: TestUser | null): RpcClient {
     const list = names.map((n, i) => `${n} => $${i + 1}`).join(', ');
     const sql = `select to_jsonb(public.${fn}(${list})) as data`;
     try {
-      const rows = user ? await as<{ data: unknown }>(db, user, sql, params) : await asService<{ data: unknown }>(db, sql, params);
+      const rows = user
+        ? await as<{ data: unknown }>(db, user, sql, params)
+        : await asService<{ data: unknown }>(db, sql, params);
       return { data: rows[0]?.data ?? null, error: null };
     } catch (error) {
       const { code, message } = error as { code?: string; message: string };
@@ -128,7 +130,9 @@ describe('conectar una cuenta (OAuth)', () => {
 
     // El token no es legible desde el cliente, ni en claro en la base de datos.
     await expect(as(db, ana, `select * from private.social_account_secrets`)).rejects.toThrow(/permission denied/);
-    await expect(as(db, ana, `select public.social_account_token($1)`, [cuenta!.id])).rejects.toThrow(/permission denied/);
+    await expect(as(db, ana, `select public.social_account_token($1)`, [cuenta!.id])).rejects.toThrow(
+      /permission denied/,
+    );
     const [secreto] = await db.query<{ access_token_ciphertext: string; key_id: string }>(
       `select key_id, access_token_ciphertext from private.social_account_secrets where account_id = $1`,
       [cuenta!.id],
@@ -147,7 +151,9 @@ describe('conectar una cuenta (OAuth)', () => {
   });
 
   it('volver a conectar la misma cuenta la renueva (misma fila); cancelar en Meta vuelve con «denied»', async () => {
-    const [antes] = await db.query<{ id: string }>(`select id from public.social_accounts where brand_id = $1`, [marca]);
+    const [antes] = await db.query<{ id: string }>(`select id from public.social_accounts where brand_id = $1`, [
+      marca,
+    ]);
     const state = new URL(await start(ana)).searchParams.get('state')!;
     await callback({ code: 'sim-code-3', state });
     const filas = await db.query<{ id: string }>(
@@ -178,13 +184,13 @@ describe('conectar una cuenta (OAuth)', () => {
       ],
     });
     const s1 = new URL(await start(ana)).searchParams.get('state')!;
-    expect(await callback({ code: 'sim-code-6', state: s1 }, config({ graph: createMetaGraph({ fetch: sinIg.fetch }) }))).toMatch(
-      /social=no_instagram$/,
-    );
+    expect(
+      await callback({ code: 'sim-code-6', state: s1 }, config({ graph: createMetaGraph({ fetch: sinIg.fetch }) })),
+    ).toMatch(/social=no_instagram$/);
     const s2 = new URL(await start(ana)).searchParams.get('state')!;
-    expect(await callback({ code: 'sim-code-7', state: s2 }, config({ graph: createMetaGraph({ fetch: varias.fetch }) }))).toMatch(
-      /social=several_accounts$/,
-    );
+    expect(
+      await callback({ code: 'sim-code-7', state: s2 }, config({ graph: createMetaGraph({ fetch: varias.fetch }) })),
+    ).toMatch(/social=several_accounts$/);
   });
 
   it('el inicio exige sesión y una configuración completa', async () => {
@@ -200,9 +206,9 @@ describe('conectar una cuenta (OAuth)', () => {
     );
     expect(con.status).toBe(200);
     expect(((await con.json()) as { url: string }).url).toMatch(/^https:\/\/www\.facebook\.com\//);
-    await expect(startConnect(config({ meta: null }), call(ana), { brandId: marca, network: 'instagram' })).rejects.toMatchObject(
-      { status: 503 },
-    );
+    await expect(
+      startConnect(config({ meta: null }), call(ana), { brandId: marca, network: 'instagram' }),
+    ).rejects.toMatchObject({ status: 503 });
   });
 
   it('en la prueba local (simulada) no hay diálogo de Meta: se vuelve directo al callback', async () => {
@@ -231,9 +237,10 @@ describe('conectar una cuenta (OAuth)', () => {
       { id: cuenta!.id, brand_id: marca, network: 'instagram', external_id: cuenta!.external_id },
     ]);
     expect(n).toBe(1);
-    const [despues] = await db.query(`select status, token_checked_at is not null as comprobada from public.social_accounts where id = $1`, [
-      cuenta!.id,
-    ]);
+    const [despues] = await db.query(
+      `select status, token_checked_at is not null as comprobada from public.social_accounts where id = $1`,
+      [cuenta!.id],
+    );
     expect(despues).toEqual({ status: 'needs_reauth', comprobada: true });
   });
 });
@@ -247,7 +254,12 @@ describe('cifrado de los tokens', () => {
     expect(a.ciphertext).not.toBe(b.ciphertext);
     expect(await decryptToken(KEYS, a.keyId, a.ciphertext, binding)).toBe('secreto');
     await expect(
-      decryptToken(KEYS, a.keyId, a.ciphertext, tokenBinding({ brandId: 'otra', network: 'instagram', externalId: '1' })),
+      decryptToken(
+        KEYS,
+        a.keyId,
+        a.ciphertext,
+        tokenBinding({ brandId: 'otra', network: 'instagram', externalId: '1' }),
+      ),
     ).rejects.toBeInstanceOf(TokenKeyError);
   });
 
@@ -282,9 +294,9 @@ describe('errores de Meta y guarda de solo local', () => {
     expect(() =>
       loadSocialLocalTest({ SOCIAL_E2E_SIMULATED_GRAPH: 'true', SUPABASE_URL: 'https://abc.supabase.co' }),
     ).toThrow(LocalTestConfigError);
-    expect(() => loadSocialLocalTest({ SOCIAL_E2E_SIMULATED_GRAPH: 'si', SUPABASE_URL: 'http://127.0.0.1:55321' })).toThrow(
-      LocalTestConfigError,
-    );
+    expect(() =>
+      loadSocialLocalTest({ SOCIAL_E2E_SIMULATED_GRAPH: 'si', SUPABASE_URL: 'http://127.0.0.1:55321' }),
+    ).toThrow(LocalTestConfigError);
     const local = loadSocialLocalTest({ SOCIAL_E2E_SIMULATED_GRAPH: 'true', SUPABASE_URL: 'http://kong:8000' });
     expect(local?.problems[0]).toMatch(/SIMULADA/);
     // Fuera de local, la configuración usa el fetch real y dice lo que falta.

@@ -217,20 +217,33 @@ export function CalendarPage() {
               type="button"
               aria-pressed={view === v.value}
               onClick={() => setView(v.value)}
-              className={cn('px-3 py-1.5 text-sm', view === v.value ? 'bg-primary-soft text-primary' : 'hover:bg-subtle')}
+              className={cn(
+                'px-3 py-1.5 text-sm',
+                view === v.value ? 'bg-primary-soft text-primary' : 'hover:bg-subtle',
+              )}
               data-testid={`calendar-view-${v.value}`}
             >
               {v.label}
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="icon" aria-label="Anterior" onClick={() => setAnchor(shiftAnchor(view, anchor, -1))}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Anterior"
+          onClick={() => setAnchor(shiftAnchor(view, anchor, -1))}
+        >
           <ChevronLeft className="h-4 w-4" aria-hidden />
         </Button>
         <Button variant="secondary" size="sm" onClick={() => setAnchor(new Date())}>
           Hoy
         </Button>
-        <Button variant="ghost" size="icon" aria-label="Siguiente" onClick={() => setAnchor(shiftAnchor(view, anchor, 1))}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Siguiente"
+          onClick={() => setAnchor(shiftAnchor(view, anchor, 1))}
+        >
           <ChevronRight className="h-4 w-4" aria-hidden />
         </Button>
         <h2 className="mr-auto text-sm font-semibold capitalize" data-testid="calendar-title">
@@ -291,7 +304,10 @@ export function CalendarPage() {
           <ErrorState error={calendar.error} onRetry={() => void calendar.refetch()} />
         </Card>
       ) : view === 'month' || view === 'week' ? (
-        <div className="overflow-x-auto rounded-xl border-l border-t border-border bg-surface" data-testid="calendar-grid">
+        <div
+          className="overflow-x-auto rounded-xl border-l border-t border-border bg-surface"
+          data-testid="calendar-grid"
+        >
           <div className="grid min-w-[42rem] grid-cols-7">
             {WEEKDAYS.map((d) => (
               <div key={d} className="border-b border-r border-border px-1 py-1 text-xs font-medium text-muted">
@@ -316,7 +332,9 @@ export function CalendarPage() {
                   if (entry) drop(moveToHour(new Date(entry.scheduled_at), anchor, h), ev);
                 }}
               >
-                <span className="w-12 shrink-0 pt-1 text-xs tabular-nums text-muted">{String(h).padStart(2, '0')}:00</span>
+                <span className="w-12 shrink-0 pt-1 text-xs tabular-nums text-muted">
+                  {String(h).padStart(2, '0')}:00
+                </span>
                 <div className="flex-1 space-y-1">{list.map((e) => chip(e))}</div>
               </li>
             );

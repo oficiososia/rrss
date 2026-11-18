@@ -19,7 +19,15 @@ import {
   useRetryPublication,
   type CalendarEntry,
 } from './api';
-import { DISPLAY_LABEL, DISPLAY_TONE, displayState, fromLocalInput, HOLD_REASON_TEXT, isEditable, toLocalInput } from './calendar';
+import {
+  DISPLAY_LABEL,
+  DISPLAY_TONE,
+  displayState,
+  fromLocalInput,
+  HOLD_REASON_TEXT,
+  isEditable,
+  toLocalInput,
+} from './calendar';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
   started: 'En curso',
@@ -83,7 +91,9 @@ export function PublicationDialog({
       open={Boolean(entry)}
       onOpenChange={onOpenChange}
       title={content?.title ?? 'Publicación'}
-      description={content ? `${targetLabel(entry.network, entry.format)} · ${formatDateTime(entry.scheduled_at)}` : undefined}
+      description={
+        content ? `${targetLabel(entry.network, entry.format)} · ${formatDateTime(entry.scheduled_at)}` : undefined
+      }
       size="lg"
     >
       <div className="space-y-4" data-testid="publication-dialog">
@@ -149,7 +159,10 @@ export function PublicationDialog({
               onClick={() => {
                 const at = fromLocalInput(when);
                 if (!at) return toast.error('Indica el día y la hora.');
-                reschedule.mutate({ publicationId: entry.id, scheduledAt: at }, { onSuccess: done('Movida'), onError: failed });
+                reschedule.mutate(
+                  { publicationId: entry.id, scheduledAt: at },
+                  { onSuccess: done('Movida'), onError: failed },
+                );
               }}
             >
               Mover
@@ -253,10 +266,7 @@ export function PublicationDialog({
                   disabled={!body.trim()}
                   loading={comment.isPending}
                   onClick={() =>
-                    comment.mutate(
-                      { contentId: content.id, body },
-                      { onSuccess: () => setBody(''), onError: failed },
-                    )
+                    comment.mutate({ contentId: content.id, body }, { onSuccess: () => setBody(''), onError: failed })
                   }
                   data-testid="publication-comment-send"
                 >

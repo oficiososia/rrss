@@ -169,12 +169,7 @@ async function exportOf(brand: string, contentId: string, version: number | null
 
 const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
 
-async function schedule(
-  contentId: string,
-  assets: string[],
-  account = cuenta,
-  user: TestUser = editor,
-): Promise<Pub> {
+async function schedule(contentId: string, assets: string[], account = cuenta, user: TestUser = editor): Promise<Pub> {
   return userCall<Pub>(user, 'save_publication', {
     p_publication_id: null,
     p_content_id: contentId,
@@ -453,9 +448,9 @@ describe('aprobaciones y comentarios en la pieza', () => {
   it('comentar y pedir cambios; el lector solo lee', async () => {
     const p = await piece();
     await userCall(revisor, 'comment_content_item', { p_content_id: p.contentId, p_body: 'Me gusta la foto' });
-    await expect(userCall(lector, 'comment_content_item', { p_content_id: p.contentId, p_body: 'Hola' })).rejects.toThrow(
-      /permiso/,
-    );
+    await expect(
+      userCall(lector, 'comment_content_item', { p_content_id: p.contentId, p_body: 'Hola' }),
+    ).rejects.toThrow(/permiso/);
     const item = await userCall<{ status: string }>(revisor, 'request_content_changes', {
       p_content_id: p.contentId,
       p_message: 'Cambia el titular',
@@ -491,9 +486,12 @@ describe('publicador con la Graph API simulada', () => {
     expect(graph.published[0]!.caption).toBe('Pan de otoño #panaderia\n\n#otoño');
     expect(graph.published[0]!.mediaUrls[0]).toMatch(/^https:\/\/almacen\.pruebas\.invalid\/firmada\//);
 
-    const intentos = await as(db, lector, `select outcome, external_id from public.publication_attempts where publication_id = $1`, [
-      pub.id,
-    ]);
+    const intentos = await as(
+      db,
+      lector,
+      `select outcome, external_id from public.publication_attempts where publication_id = $1`,
+      [pub.id],
+    );
     expect(intentos).toEqual([{ outcome: 'published', external_id: after.external_id }]);
 
     // Otra pasada no hace nada: ya está publicada.
@@ -542,7 +540,11 @@ describe('publicador con la Graph API simulada', () => {
     const p = await piece();
     const pub = await schedule(p.contentId, p.assets);
     await makeDue(pub.id);
-    graph.fail({ op: 'media_publish', mode: 'error', error: { code: 2, message: 'Service temporarily unavailable', status: 503 } });
+    graph.fail({
+      op: 'media_publish',
+      mode: 'error',
+      error: { code: 2, message: 'Service temporarily unavailable', status: 503 },
+    });
     const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
     expect(r).toMatchObject({ outcome: 'retrying' });
     const tras = await pubOf(pub.id);
@@ -577,7 +579,9 @@ describe('publicador con la Graph API simulada', () => {
     expect(r?.outcome).toBe('not_ready');
     expect(graph.published).toHaveLength(0);
     expect(await pubOf(pub.id)).toMatchObject({ status: 'planned', hold_reason: 'not_approved' });
-    const [intento] = await db.query(`select outcome from public.publication_attempts where publication_id = $1`, [pub.id]);
+    const [intento] = await db.query(`select outcome from public.publication_attempts where publication_id = $1`, [
+      pub.id,
+    ]);
     expect(intento).toEqual({ outcome: 'not_ready' });
   });
 
@@ -656,7 +660,9 @@ describe('publicador con la Graph API simulada', () => {
       [pub.id],
     );
     expect(job).toEqual({ attempts: 0, status: 'queued', later: true });
-    const [account] = await db.query(`select quota_usage, quota_total from public.social_accounts where id = $1`, [cuenta]);
+    const [account] = await db.query(`select quota_usage, quota_total from public.social_accounts where id = $1`, [
+      cuenta,
+    ]);
     expect(account).toEqual({ quota_usage: 50, quota_total: 50 });
 
     // Cuando hay cupo otra vez, sale.

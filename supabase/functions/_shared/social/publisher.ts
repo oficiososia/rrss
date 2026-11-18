@@ -228,7 +228,11 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
     const age = now() - (Date.parse(containerCreatedAt ?? '') || now());
     if (age > CONTAINER_MAX_AGE_MS) {
       await saveContainer(null);
-      return fail('container_timeout', 'Instagram no terminó de procesar el medio a tiempo; se volverá a intentar.', false);
+      return fail(
+        'container_timeout',
+        'Instagram no terminó de procesar el medio a tiempo; se volverá a intentar.',
+        false,
+      );
     }
     return defer(CONTAINER_WAIT_SECONDS, true, 'container_in_progress', 'Instagram está procesando el medio.');
   }
@@ -397,11 +401,7 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
           case 'rejected':
             return await fail('rejected', `Instagram lo rechazó: ${e.message}`, true);
           default:
-            return await fail(
-              e.kind,
-              `No se pudo publicar: ${e.message}`,
-              job.attempts >= job.max_attempts,
-            );
+            return await fail(e.kind, `No se pudo publicar: ${e.message}`, job.attempts >= job.max_attempts);
         }
       }
       if (e instanceof RpcFailure) {

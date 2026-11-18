@@ -168,7 +168,9 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
           id: p.id,
           name: p.name,
           access_token: `sim-page-${p.id}-${nextId()}`,
-          ...(p.instagram ? { instagram_business_account: { id: p.instagram.id, username: p.instagram.username } } : {}),
+          ...(p.instagram
+            ? { instagram_business_account: { id: p.instagram.id, username: p.instagram.username } }
+            : {}),
         })),
       });
     }
@@ -258,7 +260,10 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
     if (method === 'GET' && parts[2] === 'media') {
       const failure = takeFailure('media_list');
       if (failure) return failureResponse(failure);
-      const mine = published.filter((m) => m.igUserId === parts[1]).reverse().slice(0, 10);
+      const mine = published
+        .filter((m) => m.igUserId === parts[1])
+        .reverse()
+        .slice(0, 10);
       return json(200, {
         data: mine.map((m) => ({ id: m.id, caption: m.caption, timestamp: m.timestamp, permalink: m.permalink })),
       });
@@ -278,7 +283,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
         return json(200, { id, status_code: container.status, status: container.status === 'ERROR' ? 'Error' : 'Ok' });
       }
       const media = published.find((m) => m.id === id);
-      if (media) return json(200, { id, permalink: media.permalink, caption: media.caption, timestamp: media.timestamp });
+      if (media)
+        return json(200, { id, permalink: media.permalink, caption: media.caption, timestamp: media.timestamp });
       return graphError(400, 100, 'Unsupported get request. Object does not exist', 33);
     }
 
@@ -286,7 +292,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
   }
 
   function failureResponse(failure: SimulatedFailure): Response {
-    if (failure.mode === 'timeout' || failure.mode === 'timeout_after') throw new SimulatedTimeout('Simulado: sin respuesta');
+    if (failure.mode === 'timeout' || failure.mode === 'timeout_after')
+      throw new SimulatedTimeout('Simulado: sin respuesta');
     const e = failure.error ?? { code: 2, message: 'Service temporarily unavailable' };
     return graphError(e.status ?? 400, e.code, e.message ?? 'Error simulado', e.subcode);
   }

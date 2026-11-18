@@ -155,13 +155,14 @@ function AccountRow({
         <ul className="mt-2 space-y-1 text-xs text-warning">
           {account.status === 'needs_reauth' && (
             <Warning>
-              El acceso ha caducado o se ha retirado{account.last_error ? `: ${account.last_error}` : ''}. Lo
-              programado está detenido.
+              El acceso ha caducado o se ha retirado{account.last_error ? `: ${account.last_error}` : ''}. Lo programado
+              está detenido.
             </Warning>
           )}
           {account.status === 'active' && tokenExpiresSoon(account.token_expires_at) && (
             <Warning>
-              El acceso caduca el {formatDate(account.token_expires_at!)}: vuelve a conectar la cuenta antes para renovarlo.
+              El acceso caduca el {formatDate(account.token_expires_at!)}: vuelve a conectar la cuenta antes para
+              renovarlo.
             </Warning>
           )}
           {quota && (

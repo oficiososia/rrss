@@ -27,7 +27,10 @@ export function createSocialConnectHandler(deps: SocialConnectDeps): (request: R
     'access-control-allow-methods': 'POST, OPTIONS',
   };
   const json = (status: number, body: unknown) =>
-    new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json; charset=utf-8' } });
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, 'content-type': 'application/json; charset=utf-8' },
+    });
 
   return async (request) => {
     const url = new URL(request.url);

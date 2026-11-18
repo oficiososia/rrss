@@ -115,15 +115,7 @@ export function rangeTitle(view: CalendarView, anchor: Date): string {
  * en revisión) o «Detenida» con el motivo.
  */
 export type DisplayState =
-  | 'idea'
-  | 'draft'
-  | 'in_review'
-  | 'held'
-  | 'scheduled'
-  | 'publishing'
-  | 'published'
-  | 'failed'
-  | 'cancelled';
+  'idea' | 'draft' | 'in_review' | 'held' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
 
 export function displayState(
   pub: Pick<ScheduledPublicationRow, 'status' | 'hold_reason' | 'external_id'>,

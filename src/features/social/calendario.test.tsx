@@ -97,11 +97,7 @@ function account(patch: Partial<SocialAccountRow> = {}): SocialAccountRow {
 
 function seed({ orgRole = 'owner', brandRole }: { orgRole?: OrgRole; brandRole?: BrandRole } = {}) {
   seedWorkspace({ orgRole, brandRole });
-  fake.tables.content_items = [
-    content('c-prog'),
-    content('c-pub'),
-    content('c-rev', { status: 'in_review' }),
-  ];
+  fake.tables.content_items = [content('c-prog'), content('c-pub'), content('c-rev', { status: 'in_review' })];
   fake.tables.scheduled_publications = [
     pub('p-prog', 'c-prog'),
     pub('p-pub', 'c-pub', {
@@ -218,7 +214,9 @@ describe('Calendario', () => {
       pub('p-fail', 'c-prog', { status: 'failed', last_error: 'Instagram lo rechazó', last_error_code: 'rejected' }),
     );
     fake.rpc('retry_publication', () => pub('p-fail', 'c-prog'));
-    fake.rpc('reschedule_publication', (args) => pub('p-prog', 'c-prog', { scheduled_at: String(args.p_scheduled_at) }));
+    fake.rpc('reschedule_publication', (args) =>
+      pub('p-prog', 'c-prog', { scheduled_at: String(args.p_scheduled_at) }),
+    );
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     const failed = (await screen.findAllByTestId('calendar-entry')).find(
       (e) => e.getAttribute('data-state') === 'failed',

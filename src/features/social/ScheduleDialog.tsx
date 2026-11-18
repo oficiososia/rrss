@@ -4,8 +4,22 @@ import { Button, Dialog, Field, Input, Notice, Select } from '@/components/ui';
 import { targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
 import { translateError } from '@/lib/errors';
-import { exportsOf, useSavePublication, usePublishableMedia, useSchedulableContents, useSocialAccounts, videosOf } from './api';
-import { defaultScheduleDate, fromLocalInput, HOLD_REASON_TEXT, isPast, PUBLISHABLE_TARGETS, toLocalInput } from './calendar';
+import {
+  exportsOf,
+  useSavePublication,
+  usePublishableMedia,
+  useSchedulableContents,
+  useSocialAccounts,
+  videosOf,
+} from './api';
+import {
+  defaultScheduleDate,
+  fromLocalInput,
+  HOLD_REASON_TEXT,
+  isPast,
+  PUBLISHABLE_TARGETS,
+  toLocalInput,
+} from './calendar';
 
 interface ScheduleDialogProps {
   brandId: string;
@@ -80,7 +94,10 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
       {
         onSuccess: (pub) => {
           if (pub.status === 'scheduled') toast.success('Programada');
-          else toast.info(`En el calendario, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`);
+          else
+            toast.info(
+              `En el calendario, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+            );
           onOpenChange(false);
         },
         onError: (e) => setError(translateError(e)),
@@ -149,7 +166,11 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
         {content && supported && (
           <Field
             label="Cuenta"
-            hint={liveAccounts.length === 0 ? 'No hay ninguna cuenta conectada: conéctala en Marca → Cuentas conectadas.' : undefined}
+            hint={
+              liveAccounts.length === 0
+                ? 'No hay ninguna cuenta conectada: conéctala en Marca → Cuentas conectadas.'
+                : undefined
+            }
           >
             {(props) => (
               <Select

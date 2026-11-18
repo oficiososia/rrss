@@ -45,6 +45,8 @@ export function loadSocialLocalTest(env: Record<string, string | undefined>): So
     fetch: shared.fetch,
     graph: shared,
     keyRing: parseKeyRing(`${LOCAL_KEY_ID}:${btoa(LOCAL_KEY)}`, LOCAL_KEY_ID),
-    problems: [`${SOCIAL_LOCAL_TEST_FLAG}=true: Graph API de Meta SIMULADA para pruebas locales. Nunca en un entorno con clientes.`],
+    problems: [
+      `${SOCIAL_LOCAL_TEST_FLAG}=true: Graph API de Meta SIMULADA para pruebas locales. Nunca en un entorno con clientes.`,
+    ],
   };
 }

@@ -20,7 +20,8 @@ export const socialKeys = {
   accounts: (brandId: string) => ['brand', brandId, 'social', 'accounts'] as const,
   calendar: (brandId: string) => ['brand', brandId, 'social', 'calendar'] as const,
   range: (brandId: string, from: string, to: string) => ['brand', brandId, 'social', 'calendar', from, to] as const,
-  attempts: (brandId: string, publicationId: string) => ['brand', brandId, 'social', 'attempts', publicationId] as const,
+  attempts: (brandId: string, publicationId: string) =>
+    ['brand', brandId, 'social', 'attempts', publicationId] as const,
   comments: (brandId: string, contentId: string) => ['brand', brandId, 'social', 'comments', contentId] as const,
   candidates: (brandId: string) => ['brand', brandId, 'social', 'candidates'] as const,
   media: (brandId: string) => ['brand', brandId, 'social', 'media'] as const,
@@ -316,7 +317,9 @@ export function useRequestChanges(brandId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { contentId: string; message: string }) =>
-      unwrap(await supabase.rpc('request_content_changes', { p_content_id: input.contentId, p_message: input.message })),
+      unwrap(
+        await supabase.rpc('request_content_changes', { p_content_id: input.contentId, p_message: input.message }),
+      ),
     onSettled: (_d, _e, input) => {
       void qc.invalidateQueries({ queryKey: socialKeys.calendar(brandId) });
       void qc.invalidateQueries({ queryKey: contentKeys.all(brandId) });

@@ -41,7 +41,12 @@ export const META_DIALOG_HOST = 'https://www.facebook.com';
 /** Versión de la Graph API por defecto (la de los ejemplos de la documentación consultada). */
 export const DEFAULT_GRAPH_API_VERSION = 'v27.0';
 /** Permisos mínimos para publicar en Instagram con Facebook Login (documentación de publicación). */
-export const INSTAGRAM_SCOPES = ['instagram_basic', 'instagram_content_publish', 'pages_show_list', 'pages_read_engagement'];
+export const INSTAGRAM_SCOPES = [
+  'instagram_basic',
+  'instagram_content_publish',
+  'pages_show_list',
+  'pages_read_engagement',
+];
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -133,8 +138,7 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
     return String(r.id);
   };
 
-  const at = (seconds: unknown): number | null =>
-    typeof seconds === 'number' && seconds > 0 ? seconds * 1000 : null;
+  const at = (seconds: unknown): number | null => (typeof seconds === 'number' && seconds > 0 ? seconds * 1000 : null);
 
   return {
     // ── Conexión (OAuth) ──────────────────────────────────────────────────
@@ -158,7 +162,12 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
     },
     async exchangeLongLived({ appId, appSecret, token }) {
       const r = await call<{ access_token?: string; expires_in?: number }>('GET', '/oauth/access_token', {
-        query: { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: token },
+        query: {
+          grant_type: 'fb_exchange_token',
+          client_id: appId,
+          client_secret: appSecret,
+          fb_exchange_token: token,
+        },
       });
       if (!r.access_token) throw new SocialApiError({ kind: 'unexpected', message: 'Meta no devolvió el token largo' });
       return { accessToken: r.access_token, expiresIn: typeof r.expires_in === 'number' ? r.expires_in : null };

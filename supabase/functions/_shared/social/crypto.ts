@@ -38,12 +38,17 @@ function toBase64(bytes: Uint8Array): string {
 
 /** Lee las claves del entorno. Lanza TokenKeyError con un mensaje claro si algo no cuadra. */
 export function parseKeyRing(rawKeys: string | undefined, currentKeyId: string | undefined): TokenKeyRing {
-  if (!rawKeys?.trim()) throw new TokenKeyError('Falta SOCIAL_TOKEN_KEYS (claves para cifrar los tokens de las redes).');
+  if (!rawKeys?.trim())
+    throw new TokenKeyError('Falta SOCIAL_TOKEN_KEYS (claves para cifrar los tokens de las redes).');
   const keys = new Map<string, Uint8Array>();
-  for (const entry of rawKeys.split(',').map((e) => e.trim()).filter(Boolean)) {
+  for (const entry of rawKeys
+    .split(',')
+    .map((e) => e.trim())
+    .filter(Boolean)) {
     const at = entry.indexOf(':');
     const id = at > 0 ? entry.slice(0, at) : '';
-    if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) throw new TokenKeyError('SOCIAL_TOKEN_KEYS: cada clave va como «id:base64».');
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(id))
+      throw new TokenKeyError('SOCIAL_TOKEN_KEYS: cada clave va como «id:base64».');
     let key: Uint8Array;
     try {
       key = fromBase64(entry.slice(at + 1));

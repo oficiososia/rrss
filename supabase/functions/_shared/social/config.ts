@@ -46,7 +46,8 @@ export function loadSocialConfig(env: Record<string, string | undefined>, realFe
 
   let keyRing: TokenKeyRing | null = null;
   try {
-    keyRing = local && !env.SOCIAL_TOKEN_KEYS ? local.keyRing : parseKeyRing(env.SOCIAL_TOKEN_KEYS, env.SOCIAL_TOKEN_KEY_ID);
+    keyRing =
+      local && !env.SOCIAL_TOKEN_KEYS ? local.keyRing : parseKeyRing(env.SOCIAL_TOKEN_KEYS, env.SOCIAL_TOKEN_KEY_ID);
   } catch (e) {
     problems.push(e instanceof TokenKeyError ? e.message : 'SOCIAL_TOKEN_KEYS no es válida');
   }

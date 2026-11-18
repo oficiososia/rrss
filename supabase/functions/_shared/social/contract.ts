@@ -96,7 +96,11 @@ export interface InstagramApi {
     p: { imageUrl: string; caption?: string; altText?: string },
   ): Promise<string>;
   createCarouselItem(igUserId: string, token: string, p: { imageUrl: string; altText?: string }): Promise<string>;
-  createCarouselContainer(igUserId: string, token: string, p: { children: string[]; caption?: string }): Promise<string>;
+  createCarouselContainer(
+    igUserId: string,
+    token: string,
+    p: { children: string[]; caption?: string },
+  ): Promise<string>;
   createReelContainer(
     igUserId: string,
     token: string,

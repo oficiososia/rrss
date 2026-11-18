@@ -19,13 +19,7 @@ import type { SocialConfig } from './config.ts';
 import { decryptToken, encryptToken, tokenBinding } from './crypto.ts';
 
 export type ConnectResult =
-  | 'connected'
-  | 'denied'
-  | 'expired'
-  | 'no_instagram'
-  | 'several_accounts'
-  | 'forbidden'
-  | 'failed';
+  'connected' | 'denied' | 'expired' | 'no_instagram' | 'several_accounts' | 'forbidden' | 'failed';
 
 export class ConnectError extends Error {
   override name = 'ConnectError';
@@ -87,9 +81,7 @@ export async function finishConnect(
 ): Promise<string> {
   const appUrl = config.appUrl ?? '';
   const back = (ctx: { organization_id: string; brand_id: string } | null, result: ConnectResult) =>
-    ctx
-      ? `${appUrl}/o/${ctx.organization_id}/m/${ctx.brand_id}/marca?social=${result}`
-      : `${appUrl}/?social=${result}`;
+    ctx ? `${appUrl}/o/${ctx.organization_id}/m/${ctx.brand_id}/marca?social=${result}` : `${appUrl}/?social=${result}`;
 
   if (!config.meta || !config.callbackUrl || !config.keyRing) return back(null, 'failed');
   const state = params.get('state') ?? '';
