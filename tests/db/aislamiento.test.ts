@@ -1290,9 +1290,9 @@ describe('imágenes generadas con IA en la biblioteca', () => {
   it('la otra organización no ve ni el recurso ni su procedencia', async () => {
     const deA = await generated(orgA, marcaA1, genA1);
     const deB = await generated(orgB, marcaB1, genB1);
-    expect(await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA])).toEqual([
-      { p: 'encargo privado' },
-    ]);
+    expect(
+      await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA]),
+    ).toEqual([{ p: 'encargo privado' }]);
     expect(
       await as(db, ana, `select 1 from public.media_assets where id = $1 or provenance->>'generation_id' = $2`, [
         deB,
@@ -1421,7 +1421,11 @@ describe('RGPD: aceptaciones, exportar y borrar', () => {
   it('el servidor tampoco borra una organización en nombre de quien no es su propietario', async () => {
     for (const user of [berta, adminA, gestorA, gema, ajeno]) {
       await expect(
-        service('gdpr_delete_organization', { p_user_id: user.id, p_organization_id: orgA, p_confirmation: 'Empresa A' }),
+        service('gdpr_delete_organization', {
+          p_user_id: user.id,
+          p_organization_id: orgA,
+          p_confirmation: 'Empresa A',
+        }),
       ).rejects.toThrow(/propietario/);
     }
     await expect(
