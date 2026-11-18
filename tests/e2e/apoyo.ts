@@ -352,6 +352,8 @@ export async function registrar(page: Page, alias: Alias): Promise<void> {
   await page.getByTestId('register-name').fill(NOMBRES[alias]);
   await page.getByTestId('register-email').fill(correo(alias));
   await page.getByTestId('register-password').fill(CLAVE_INICIAL);
+  // Consentimiento (RGPD): sin la casilla el botón no se activa.
+  await page.getByTestId('register-accept').check();
   await page.getByTestId('register-submit').click();
   await expect(page.getByTestId('register-confirm')).toContainText(correo(alias));
 }
