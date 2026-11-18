@@ -124,6 +124,21 @@ describe('sesión', () => {
     }
   });
 
+  it('repite una petición rechazada por un token «del futuro» (reloj del servidor por detrás)', async () => {
+    let calls = 0;
+    const flaky: typeof fetch = async (input, init) => {
+      if (String(input).includes('/rest/v1/rpc/') && calls++ === 0) {
+        return new Response(JSON.stringify({ code: 'PGRST303', message: 'JWT issued at future' }), { status: 401 });
+      }
+      return fetch(input, init);
+    };
+    fake.rpc.pending_content_requests = () => ({ status: 200, body: [] });
+    const retrying = createClient({ url: fake.url, anonKey: ANON_KEY, fetch: flaky, retryDelayMs: 1 });
+    await retrying.signIn(AGENCY_USER.email, PASSWORD);
+    await expect(pending(retrying)).resolves.toEqual([]);
+    expect(calls).toBe(2);
+  });
+
   it('una contraseña equivocada se dice claramente', async () => {
     const other = createClient({ url: fake.url, anonKey: ANON_KEY });
     await expect(other.signIn(AGENCY_USER.email, 'mala')).rejects.toThrow(/Invalid login credentials/);

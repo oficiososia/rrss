@@ -8,6 +8,8 @@ export interface SupabaseClientOptions {
   url: string;
   anonKey: string;
   fetch?: typeof fetch;
+  /** Espera antes de repetir una petición rechazada por un token «del futuro» (ms). */
+  retryDelayMs?: number;
 }
 
 export interface Session {
@@ -76,6 +78,25 @@ export function createClient(options: SupabaseClientOptions): SupabaseClient {
   const doFetch = options.fetch ?? fetch;
   const base = options.url.replace(/\/+$/, '');
   let session: Session | null = null;
+  const retryDelay = options.retryDelayMs ?? 1000;
+
+  /**
+   * Un token recién emitido puede llegar a PostgREST o a Storage con su reloj
+   * un segundo por detrás («JWT issued at future», PGRST303): se repite la
+   * petición tras una espera corta, hasta dos veces. Cualquier otro error sale tal cual.
+   */
+  async function send(url: string, init: RequestInit): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const response = await doFetch(url, init);
+      if (response.status !== 401 || attempt >= 2) return response;
+      const text = await response
+        .clone()
+        .text()
+        .catch(() => '');
+      if (!/PGRST303|issued at future|iat/i.test(text)) return response;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+    }
+  }
 
   const headers = (json = true): Record<string, string> => {
     if (!session) throw new Error('Primero hay que iniciar sesión.');
@@ -106,7 +127,7 @@ export function createClient(options: SupabaseClientOptions): SupabaseClient {
     },
 
     async rpc<T>(name: string, args: Record<string, unknown> = {}) {
-      const response = await doFetch(`${base}/rest/v1/rpc/${name}`, {
+      const response = await send(`${base}/rest/v1/rpc/${name}`, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify(args),
@@ -117,14 +138,14 @@ export function createClient(options: SupabaseClientOptions): SupabaseClient {
     },
 
     async select<T>(table: string, query: string) {
-      const response = await doFetch(`${base}/rest/v1/${table}?${query}`, { headers: headers(false) });
+      const response = await send(`${base}/rest/v1/${table}?${query}`, { headers: headers(false) });
       if (!response.ok) throw await apiError(response, `No se ha podido leer ${table}`);
       return (await response.json()) as T[];
     },
 
     async signUrls(bucket, paths, expiresInSeconds) {
       if (!paths.length) return [];
-      const response = await doFetch(`${base}/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
+      const response = await send(`${base}/storage/v1/object/sign/${encodeURIComponent(bucket)}`, {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify({ expiresIn: expiresInSeconds, paths }),
