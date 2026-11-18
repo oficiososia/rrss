@@ -3,7 +3,7 @@
 import { checkAltText, checkHashtagCount, checkLength, checkMentionCount } from './limits';
 import { checkEmojis, checkReadability } from './style';
 import { checkBrandHashtags, checkCallToAction, checkForbiddenPhrases } from './vocabulary';
-import { checkContrast, checkPalette } from './visual';
+import { checkContrast, checkPalette, checkSafeZone } from './visual';
 import type {
   BrandCheckInput,
   BrandCheckOptions,
@@ -25,6 +25,7 @@ export const CHECK_ORDER: CheckId[] = [
   'brand-hashtags',
   'call-to-action',
   'contrast',
+  'safe-zone',
   'palette',
   'emojis',
   'alt-text',
@@ -49,6 +50,7 @@ export function verifyPiece(input: BrandCheckInput, options: BrandCheckOptions =
     'brand-hashtags': checkBrandHashtags(text, brand),
     'call-to-action': checkCallToAction(text, brand),
     contrast: checkContrast(input.textLayers),
+    'safe-zone': checkSafeZone(input.textLayers, input.safeArea, input.limits.label),
     palette: checkPalette(input.imagePalette, brand.brandColors, input.imageKind, options),
     emojis: checkEmojis(text, brand.emojiPolicy),
     'alt-text': checkAltText(text, input.hasImage, limits),

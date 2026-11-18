@@ -107,6 +107,26 @@ export interface NetworkFormatSpec {
   text: TextSpec;
   /** Reglas sin cifra que el informe recoge. */
   notes?: Sourced<string>[];
+  /**
+   * Zona que la interfaz de la red puede tapar (nombre, botones, pie…), para
+   * un lienzo de la proporción indicada. Ninguna red publica la cifra: todas
+   * son orientativas.
+   */
+  safeZone?: Sourced<SafeZoneSpec>;
+}
+
+/** Márgenes que tapa la interfaz, como fracción del lado del lienzo (0–1). */
+export interface SafeInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export interface SafeZoneSpec {
+  /** Proporción del lienzo a la que se refieren los márgenes. */
+  ratio: AspectRatio;
+  insets: SafeInsets;
 }
 
 export const NETWORKS: { id: NetworkId; label: string }[] = [
@@ -146,6 +166,23 @@ const YOUTUBE_SHORTS = 'https://support.google.com/youtube/answer/10059070';
 const PINTEREST_SPECS = 'https://help.pinterest.com/business/article/pinterest-product-specs';
 const GBP_API = 'https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts';
 const GBP_MEDIA = 'https://www.ayrshare.com/docs/media-guidelines/google-business-profile.md';
+
+// Zonas seguras del vídeo vertical: no hay cifra oficial (informe 06, «Zonas
+// seguras en vídeo vertical»). La más citada se atribuye a la guía de reels de
+// Meta: 14 % arriba, 35 % abajo y ~6 % por lado en 1080×1920. El informe propone
+// una sola caja conservadora para todo vídeo vertical y avisar de que es orientativa.
+const SAFE_ZONE_SOURCE = 'https://www.hopperhq.com/blog/instagram-reel-size/';
+const VERTICAL_INSETS: SafeZoneSpec = { ratio: '9:16', insets: { top: 0.14, bottom: 0.35, left: 0.06, right: 0.06 } };
+const metaSafeZone = unverified(
+  VERTICAL_INSETS,
+  SAFE_ZONE_SOURCE,
+  'Cifra atribuida a la guía de reels de Meta por una fuente secundaria; orientativa.',
+);
+const verticalSafeZone = unverified(
+  VERTICAL_INSETS,
+  SAFE_ZONE_SOURCE,
+  'Sin cifra propia de esta red: se usa la caja conservadora del vídeo vertical que propone el informe (atribuida a Meta); orientativa.',
+);
 
 const PINTEREST_NOTE = 'Cifra de la página oficial de anuncios; aplicarla a pines orgánicos está sin verificar.';
 
@@ -211,6 +248,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
     },
     text: { ...instagramCaption, altTextSupported: official(false, IG_MEDIA) },
     notes: [official('Portada en JPEG de 8 MB como máximo.', IG_MEDIA)],
+    safeZone: metaSafeZone,
   },
   {
     network: 'instagram',
@@ -229,6 +267,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
     },
     text: {},
     notes: [official('Sin colaboradores.', IG_MEDIA)],
+    safeZone: metaSafeZone,
   },
   {
     network: 'facebook',
@@ -245,6 +284,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
     },
     text: {},
     notes: [official('La descripción admite hashtags; la guía no indica su límite ni el peso máximo.', FB_REELS)],
+    safeZone: metaSafeZone,
   },
   {
     network: 'facebook',
@@ -274,6 +314,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
       caption: official({ maxLength: 2200, unit: 'utf16' }, TIKTOK_POST),
     },
     notes: [official('Los hashtags y las menciones deben ir separados por un espacio.', TIKTOK_POST)],
+    safeZone: verticalSafeZone,
   },
   {
     network: 'tiktok',
@@ -340,6 +381,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
       title: official({ maxLength: 100, unit: 'characters' }, YOUTUBE_SHORTS),
     },
     notes: [official('Vídeo vertical.', YOUTUBE_SHORTS)],
+    safeZone: verticalSafeZone,
   },
   {
     network: 'pinterest',

@@ -4,6 +4,7 @@
 
 import type { ContentDocument, Layer, ShapeLayer } from '@/features/content/document';
 import { NETWORKS, type NetworkFormatSpec } from '@/features/content/networks';
+import { safeZoneFor } from '@/features/content/safeZones';
 import { lengthUnitOf } from '@/features/content/textUnits';
 import { blendOver, parseHex, type Rgb } from './color';
 import { brandRulesFromProfile, type ProfileLike } from './profile';
@@ -186,6 +187,7 @@ export function textLayersFromDocument(
       background: backgroundBehind(document, index),
       fontSizePt: Math.round(layer.fontSize * pxPerUnit * PT_PER_CSS_PX * 10) / 10,
       bold: layer.fontWeight >= BOLD_WEIGHT,
+      bounds: bounds(corners(layer)),
     });
   });
   return result;
@@ -211,6 +213,7 @@ export function buildBrandCheckInput(
   const shown = document.layers.filter(isShown);
   const altTextSupported = spec?.text.altTextSupported?.value !== false;
   const { copy } = document;
+  const zone = safeZoneFor(spec, document.canvas);
   return {
     text: {
       caption: copy.caption,
@@ -224,5 +227,6 @@ export function buildBrandCheckInput(
     hasImage: shown.length > 0 && altTextSupported,
     imageKind: shown.length === 0 ? undefined : shown.some((l) => l.type === 'image') ? 'photo' : 'graphic',
     imagePalette: options.imagePalette,
+    ...(zone ? { safeArea: { ...zone.safe, provenance: zone.provenance } } : {}),
   };
 }

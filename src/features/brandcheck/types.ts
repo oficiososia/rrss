@@ -48,6 +48,18 @@ export interface TextLayer {
   bold?: boolean;
   /** Texto exento de contraste según WCAG (logotipos, texto puramente decorativo). */
   exempt?: boolean;
+  /** Caja que ocupa en el lienzo (con su giro), en unidades del lienzo. Sin dato no se comprueba la zona segura. */
+  bounds?: { left: number; top: number; right: number; bottom: number };
+}
+
+/** Zona del lienzo que la interfaz de la red no tapa (ver `content/safeZones.ts`). */
+export interface SafeArea {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  /** `unverified` = cifra orientativa, sin fuente oficial. */
+  provenance: 'official' | 'unverified';
 }
 
 /** Color de la paleta dominante ya extraída de la imagen. */
@@ -99,6 +111,8 @@ export interface BrandCheckInput {
   hasImage?: boolean;
   imageKind?: ImageKind;
   imagePalette?: PaletteColor[];
+  /** Zona segura del formato. Sin ella (el formato no la tiene o no aplica a este lienzo), no se comprueba. */
+  safeArea?: SafeArea;
 }
 
 /** Umbrales ajustables; los valores por defecto están justificados en `thresholds.ts`. */
@@ -126,6 +140,7 @@ export type CheckId =
   | 'brand-hashtags'
   | 'call-to-action'
   | 'contrast'
+  | 'safe-zone'
   | 'palette'
   | 'emojis'
   | 'readability'
@@ -142,6 +157,7 @@ export type FindingCode =
   | 'CALL_TO_ACTION_MISSING'
   | 'CONTRAST_TOO_LOW'
   | 'CONTRAST_UNKNOWN_BACKGROUND'
+  | 'TEXT_IN_UNSAFE_ZONE'
   | 'PALETTE_OFF_BRAND'
   | 'EMOJIS_NOT_ALLOWED'
   | 'EMOJIS_EXCEEDED'

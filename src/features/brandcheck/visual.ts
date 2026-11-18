@@ -2,7 +2,7 @@
 
 import { blendOver, contrastRatio, deltaE2000, isLargeText, parseHex, requiredContrast, rgbToLab } from './color';
 import { DEFAULT_PALETTE_MATCH_DELTA_E, DEFAULT_PALETTE_MIN_COVERAGE, DEFAULT_PALETTE_MIN_WEIGHT } from './thresholds';
-import type { BrandCheckOptions, BrandColor, Finding, ImageKind, PaletteColor, TextLayer } from './types';
+import type { BrandCheckOptions, BrandColor, Finding, ImageKind, PaletteColor, SafeArea, TextLayer } from './types';
 
 const round = (n: number, digits = 2) => Math.round(n * 10 ** digits) / 10 ** digits;
 
@@ -46,6 +46,45 @@ export function checkContrast(layers: TextLayer[] | undefined): Finding[] {
       measured: ratio,
       threshold: needed,
       target,
+    });
+  }
+  return findings;
+}
+
+/**
+ * Textos de la imagen que caen, aunque sea en parte, donde la interfaz de la
+ * red puede taparlos (historias y reels). Avisa, no bloquea: las cifras de las
+ * zonas seguras no son oficiales y el mensaje lo dice.
+ */
+export function checkSafeZone(
+  layers: TextLayer[] | undefined,
+  safe: SafeArea | undefined,
+  networkLabel?: string,
+): Finding[] {
+  if (!safe) return [];
+  const findings: Finding[] = [];
+  for (const layer of layers ?? []) {
+    const b = layer.bounds;
+    if (!b) continue;
+    const area = (b.right - b.left) * (b.bottom - b.top);
+    if (area <= 0) continue;
+    const inside =
+      Math.max(0, Math.min(b.right, safe.right) - Math.max(b.left, safe.left)) *
+      Math.max(0, Math.min(b.bottom, safe.bottom) - Math.max(b.top, safe.top));
+    const outside = Math.round((1 - inside / area) * 100);
+    if (outside <= 0) continue;
+    findings.push({
+      code: 'TEXT_IN_UNSAFE_ZONE',
+      check: 'safe-zone',
+      severity: 'warn',
+      message: `Un texto de la imagen tiene el ${outside} % de su caja donde la interfaz de ${
+        networkLabel ?? 'la red'
+      } puede taparlo. Muévelo hacia el centro.${
+        safe.provenance === 'unverified' ? ' Zona orientativa: la red no publica la cifra.' : ''
+      }`,
+      measured: `${outside} %`,
+      threshold: '0 %',
+      target: { part: 'textLayer', layerId: layer.id },
     });
   }
   return findings;
