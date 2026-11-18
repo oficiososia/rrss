@@ -1,5 +1,5 @@
 import { brandProfileSchema } from '@/features/brand/profile';
-import { contentDocumentSchema, type ContentDocument, type LayerInput } from '@/features/content/document';
+import { contentDocumentSchema, DOCUMENT_SCHEMA_VERSION, type ContentDocument, type LayerInput } from '@/features/content/document';
 import { getFormatSpec } from '@/features/content/networks';
 import { backgroundBehind, buildBrandCheckInput, limitsFromSpec, textLayersFromDocument } from './document';
 import { verifyPiece } from './verify';
@@ -9,7 +9,7 @@ const ID = '3f2b6c1e-8a4d-4c7b-9e2f-1a2b3c4d5e6f';
 
 function doc(layers: LayerInput[], copy: object = {}, backgroundColor = '#FFFFFF'): ContentDocument {
   return contentDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor },
     layers,
     copy,

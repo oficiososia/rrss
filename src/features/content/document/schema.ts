@@ -5,7 +5,12 @@ import { z } from 'zod';
 // editor, el render del servidor y la IA leen y escriben este mismo JSON.
 // Se guarda en content_versions.data; `schemaVersion` permite migrarlo
 // (ver migrate.ts) sin migraciones de base de datos.
-export const DOCUMENT_SCHEMA_VERSION = 1;
+//
+// Versiones:
+//   1  lienzo, capas (imagen, texto, logotipo, forma) y texto de la publicación.
+//   2  grupos de capas (`groupId`, opcional). Un documento de la 1 se lee igual:
+//      sus capas quedan sin grupo.
+export const DOCUMENT_SCHEMA_VERSION = 2;
 
 // ── Lienzo ───────────────────────────────────────────────────────────────
 
@@ -73,12 +78,14 @@ const anchorSchema = z
 // Común a todas las capas. `x`, `y` son la esquina superior izquierda de la
 // caja sin girar; `rotation`, grados en sentido horario alrededor de su centro.
 // El orden de apilado es el del array `layers`: la primera capa queda al fondo.
+const layerIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'El identificador de la capa solo admite letras, números, guion y guion bajo');
+
 const layerBase = {
-  id: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[A-Za-z0-9_-]+$/, 'El identificador de la capa solo admite letras, números, guion y guion bajo'),
+  id: layerIdSchema,
   name: z.string().max(120).default(''),
   x: coordinate,
   y: coordinate,
@@ -89,6 +96,12 @@ const layerBase = {
   visible: z.boolean().default(true),
   locked: z.boolean().default(false),
   anchor: anchorSchema,
+  /**
+   * Grupo al que pertenece (versión 2). Las capas con el mismo `groupId` se
+   * eligen y se mueven juntas en el editor; cada una conserva su posición y su
+   * lugar en el apilado. Sin grupo, el campo no está.
+   */
+  groupId: layerIdSchema.optional(),
 };
 
 /** De dónde sale una imagen: un recurso de la biblioteca o una generación de IA. Nunca la imagen incrustada. */

@@ -60,7 +60,7 @@ import {
   updateContentItem,
   useContentMutations,
 } from './api';
-import { DocumentError, createEmptyDocument } from './document';
+import { DOCUMENT_SCHEMA_VERSION, DocumentError, createEmptyDocument } from './document';
 
 const ITEM: ContentItemRow = {
   id: 'c1',
@@ -183,10 +183,10 @@ describe('saveContentVersion', () => {
         payload: {
           p_content_id: 'c1',
           p_data: expect.objectContaining({
-            schemaVersion: 1,
+            schemaVersion: DOCUMENT_SCHEMA_VERSION,
             copy: expect.objectContaining({ caption: 'Hola', hashtags: ['otoño'], mentions: [] }),
           }),
-          p_schema_version: 1,
+          p_schema_version: DOCUMENT_SCHEMA_VERSION,
           p_change_note: 'Con pie',
           p_expected_version: 2,
         },

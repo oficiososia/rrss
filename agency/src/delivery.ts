@@ -16,7 +16,7 @@
 import {
   createEmptyDocument,
   postCopySchema,
-  validateDocument,
+  validateDocumentFromAnyVersion,
   type AspectRatio,
   type ContentDocument,
   type DocumentIssue,
@@ -101,7 +101,8 @@ export function parseDelivery(input: unknown): DeliveryParse {
     if (!isObject(input.document)) {
       issues.push({ path: 'document', message: 'El documento debe ser un objeto' });
     } else {
-      const validation = validateDocument({ ...input.document, copy: main.copy ?? {} });
+      // Admite documentos escritos con una versión anterior del esquema: se migran a la actual.
+      const validation = validateDocumentFromAnyVersion({ ...input.document, copy: main.copy ?? {} });
       if (validation.ok) document = validation.document;
       else issues.push(...validation.issues.map((issue) => ({ ...issue, path: `document.${issue.path}` })));
     }

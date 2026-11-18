@@ -1,4 +1,4 @@
-import { validateDocument, type DocumentIssue } from './document';
+import { validateDocument, type DocumentIssue, type DocumentValidation } from './document';
 import { DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './schema';
 
 /** Convierte un documento de la versión N del esquema a la N + 1. No debe modificar el que recibe. */
@@ -6,11 +6,26 @@ export type DocumentMigration = (document: Record<string, unknown>) => Record<st
 
 /**
  * Migraciones del esquema: la entrada `n` lleva un documento de la versión `n`
- * a la `n + 1`. Hoy solo existe la versión 1, así que está vacía. Al cambiar el
- * esquema: subir DOCUMENT_SCHEMA_VERSION y añadir aquí la función que adapta
- * los documentos guardados (los antiguos no se reescriben: se migran al leer).
+ * a la `n + 1`. Al cambiar el esquema: subir DOCUMENT_SCHEMA_VERSION y añadir
+ * aquí la función que adapta los documentos guardados (los antiguos no se
+ * reescriben: se migran al leer).
  */
-export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {};
+export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
+  // 1 → 2: llegan los grupos de capas. Un documento de la 1 no tiene ninguno; si
+  // alguna capa trajera ya un `groupId` (no debería), se quita para que no se
+  // agrupe nada que la persona no agrupó.
+  1: (document) => {
+    const layers = Array.isArray(document.layers)
+      ? document.layers.map((layer: unknown) => {
+          if (typeof layer !== 'object' || layer === null || !('groupId' in layer)) return layer;
+          const rest = { ...(layer as Record<string, unknown>) };
+          delete rest.groupId;
+          return rest;
+        })
+      : document.layers;
+    return { ...document, layers };
+  },
+};
 
 export type DocumentFailure =
   /** No es un objeto o no dice su versión de esquema. */
@@ -65,6 +80,20 @@ export function runMigrations(
     version += 1;
   }
   return document;
+}
+
+/**
+ * Como `validateDocument`, pero acepta también documentos de versiones
+ * anteriores del esquema (los migra antes). Para lo que llega de fuera ya
+ * escrito con una versión concreta, como la entrega de la agencia.
+ */
+export function validateDocumentFromAnyVersion(input: unknown): DocumentValidation {
+  try {
+    return validateDocument(runMigrations(input));
+  } catch (error) {
+    if (!(error instanceof DocumentError)) throw error;
+    return { ok: false, issues: [{ path: 'schemaVersion', message: error.message }] };
+  }
 }
 
 /**

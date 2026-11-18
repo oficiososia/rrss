@@ -10,6 +10,7 @@ import {
   migrateDocument,
   runMigrations,
   validateDocument,
+  validateDocumentFromAnyVersion,
   type ContentDocumentInput,
   type DocumentMigration,
 } from './index';
@@ -20,7 +21,7 @@ const GENERATION = '22222222-2222-4222-8222-222222222222';
 /** Documento de ejemplo con una capa de cada tipo, escrito como lo escribiría un editor o la IA. */
 function sample(): ContentDocumentInput {
   return {
-    schemaVersion: 1,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '4:5', width: 1080, height: 1350, backgroundColor: '#101010' },
     layers: [
       {
@@ -180,7 +181,7 @@ describe('validateDocument', () => {
   });
 
   it('no migra: un documento de otra versión del esquema no es válido tal cual', () => {
-    expect(issuesOf({ ...sample(), schemaVersion: 2 })[0]?.path).toBe('schemaVersion');
+    expect(issuesOf({ ...sample(), schemaVersion: DOCUMENT_SCHEMA_VERSION + 1 })[0]?.path).toBe('schemaVersion');
     expect(issuesOf(null)).not.toEqual([]);
     expect(issuesOf('texto')).not.toEqual([]);
   });
@@ -263,5 +264,43 @@ describe('migrar entre versiones del esquema', () => {
     expect((error as DocumentError).issues[0]?.path).toBe('layers.0.type');
     expect((error as DocumentError).message).toBe('El documento no es válido.');
     expect(reasonOf(() => migrateDocument({ schemaVersion: 99 }))).toBe('newer_version');
+  });
+});
+
+describe('versión 2: grupos de capas', () => {
+  /** Un documento tal y como lo guardaba la versión 1 de la aplicación (sin grupos). */
+  const savedV1 = () => ({ ...sample(), schemaVersion: 1 });
+
+  it('un documento guardado con la versión 1 se lee igual, sin grupos', () => {
+    const document = migrateDocument(savedV1());
+    expect(document.schemaVersion).toBe(2);
+    expect(document.layers).toHaveLength(sample().layers!.length);
+    expect(document.layers.every((layer) => layer.groupId === undefined)).toBe(true);
+    // Lo demás no cambia: mismo resultado que validar el de la versión actual.
+    const current = validateDocument({ ...sample(), schemaVersion: DOCUMENT_SCHEMA_VERSION });
+    expect(current.ok && current.document).toEqual(document);
+  });
+
+  it('la migración 1 → 2 no agrupa nada que no estuviera agrupado y no toca el original', () => {
+    const raw = savedV1() as Record<string, unknown> & { layers: Record<string, unknown>[] };
+    raw.layers[0] = { ...raw.layers[0], groupId: 'colado' };
+    const migrated = runMigrations(raw) as { layers: Record<string, unknown>[] };
+    expect(migrated.layers[0]).not.toHaveProperty('groupId');
+    expect(raw.layers[0]).toHaveProperty('groupId', 'colado');
+  });
+
+  it('acepta capas con grupo y rechaza un identificador de grupo mal formado', () => {
+    const layers = sample().layers!.map((layer) => ({ ...layer, groupId: 'g1' }));
+    const ok = validateDocument({ ...sample(), layers });
+    expect(ok.ok && ok.document.layers.every((layer) => layer.groupId === 'g1')).toBe(true);
+    const bad = validateDocument({ ...sample(), layers: [{ ...layers[0]!, groupId: 'con espacio' }] });
+    expect(bad.ok).toBe(false);
+  });
+
+  it('validateDocumentFromAnyVersion migra lo antiguo y dice por qué no puede con lo más nuevo', () => {
+    expect(validateDocumentFromAnyVersion(savedV1()).ok).toBe(true);
+    const newer = validateDocumentFromAnyVersion({ ...sample(), schemaVersion: DOCUMENT_SCHEMA_VERSION + 1 });
+    expect(newer.ok).toBe(false);
+    if (!newer.ok) expect(newer.issues[0]?.path).toBe('schemaVersion');
   });
 });
