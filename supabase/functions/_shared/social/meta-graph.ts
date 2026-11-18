@@ -46,6 +46,8 @@ export const INSTAGRAM_SCOPES = [
   'instagram_content_publish',
   'pages_show_list',
   'pages_read_engagement',
+  // Analítica (Fase 5): leer las métricas de la cuenta y de sus publicaciones.
+  'instagram_manage_insights',
 ];
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
