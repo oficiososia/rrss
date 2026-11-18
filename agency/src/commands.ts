@@ -17,6 +17,7 @@ import {
   variantsComment,
   type Delivery,
 } from './delivery.ts';
+import { checkPlanFile, deliverPlan, isPlanRequest, planContext, PlanError, type PlanDelivery } from './plans.ts';
 import type { SupabaseClient } from './supabase.ts';
 
 export const MEDIA_BUCKET = 'brand-media';
@@ -42,6 +43,10 @@ export interface RequestRow {
   claimed_until: string | null;
   created_at: string;
   updated_at: string;
+  /** Lo añade la migración de campañas: `plan` = encargo de un plan de campaña. */
+  kind?: 'piece' | 'plan';
+  campaign_id?: string | null;
+  delivered_plan_version?: number | null;
 }
 
 interface BrandRow {
@@ -323,8 +328,46 @@ export async function context(client: SupabaseClient, workDir: string, id: strin
     },
     'pieza-actual.json': current,
   };
+  if (isPlanRequest(request)) {
+    // Un plan de campaña no tiene pieza ni red única: en su lugar, la campaña,
+    // la biblioteca y la plantilla del plan (plans.ts).
+    for (const name of ['red.json', 'recursos.json', 'pieza-actual.json']) delete files[name];
+    for (const [name, data] of Object.entries(files)) await writeJson(path.join(dir, name), data);
+    const extra = await asCommandError(() => planContext(client, dir, request));
+    return { dir, files: [...Object.keys(files), ...extra.files] };
+  }
   for (const [name, data] of Object.entries(files)) await writeJson(path.join(dir, name), data);
   return { dir, files: Object.keys(files) };
+}
+
+// ── planes de campaña ────────────────────────────────────────────────────
+
+async function asCommandError<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof PlanError) throw new CommandError(error.message);
+    throw error;
+  }
+}
+
+/** Comprueba el archivo de un plan con la campaña que dejó `contexto` (sin red). */
+export function checkPlan(file: string, contextDir?: string): Promise<PlanDelivery> {
+  return asCommandError(() => checkPlanFile(file, contextDir));
+}
+
+/** Entrega el plan de un encargo de tipo «plan» tomado por esta sesión. */
+export async function deliverCampaignPlan(
+  client: SupabaseClient,
+  workDir: string,
+  id: string,
+  file: string,
+): Promise<{ request: RequestRow; pieces: number }> {
+  const request = await fetchRequest(client, id);
+  const lock = await readJson<LockFile>(lockFile(workDir, request.id));
+  const result = await asCommandError(() => deliverPlan(client, request, file, lock?.token ?? null));
+  await rm(lockFile(workDir, request.id), { force: true });
+  return { request: result.request as RequestRow, pieces: result.pieces };
 }
 
 // ── comprobar ────────────────────────────────────────────────────────────
@@ -405,6 +448,9 @@ export async function deliver(
 ): Promise<DeliverOutcome> {
   const delivery = await readDelivery(file);
   const request = await fetchRequest(client, id);
+  if (isPlanRequest(request)) {
+    throw new CommandError('Este encargo es un plan de campaña: entrégalo con «entregar-plan».');
+  }
   if (request.status !== 'in_progress') {
     throw new CommandError(`El encargo está «${request.status}»: tómalo antes de entregar («tomar ${request.id}»).`);
   }

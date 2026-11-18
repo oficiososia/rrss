@@ -62,6 +62,8 @@ npm run agencia -- tomar <id> [--renovar]
 npm run agencia -- contexto <id>
 npm run agencia -- comprobar <carpeta>/entrega.json [--contexto <carpeta>] [--json]
 npm run agencia -- entregar <id> <carpeta>/entrega.json [--aun-con-bloqueos]
+npm run agencia -- comprobar-plan <carpeta>/plan.json [--contexto <carpeta>]
+npm run agencia -- entregar-plan <id> <carpeta>/plan.json
 npm run agencia -- comentar <id> "texto"
 npm run agencia -- soltar <id>
 ```
@@ -73,6 +75,8 @@ npm run agencia -- soltar <id>
 | `contexto` | Escribe en `<trabajo>/<id>/`: `encargo.json` (encargo y conversación), `perfil.json` (perfil de marca vigente), `red.json` (límites y especificación de la red y formato, proporción del lienzo), `recursos.json` (recursos de referencia y logotipos con URL firmadas que caducan a las 6 h) y `pieza-actual.json` (documento vigente si el encargo es sobre una pieza existente) |
 | `comprobar` | Sin red: valida la entrega con el esquema del documento y `PostCopy` de la aplicación y pasa el **verificador de marca sin IA** (`src/features/brandcheck`) a la pieza y a cada variante. Sale con 1 si hay bloqueos |
 | `entregar` | Vuelve a leer del servidor el encargo, el perfil y la pieza, valida y comprueba, y llama a `deliver_content_request`: crea la pieza (o una versión nueva de la enlazada) en **borrador** con la nota «Entregado por la agencia» y marca el encargo como entregado. Las variantes se publican como comentario. Con bloqueos no entrega salvo `--aun-con-bloqueos` |
+| `comprobar-plan` | Sin red: valida un plan de campaña con el mismo esquema que la aplicación (`src/features/campaigns/plan.ts`) contra la campaña de `campana.json`, y ensaya el motor que lo convertirá en borradores |
+| `entregar-plan` | Vuelve a leer la campaña del servidor, valida y llama a `deliver_campaign_plan`: el encargo queda entregado y la campaña, «por revisar». No crea piezas: las crea el motor cuando el cliente acepta el plan en Campañas |
 | `comentar` | Comentario en la conversación del encargo |
 | `soltar` | Devuelve un encargo tomado a la cola sin entregarlo |
 
@@ -108,6 +112,42 @@ Ejemplo completo: [`ejemplos/entrega.json`](./ejemplos/entrega.json).
   proporción recomendada para la red.
 - Las imágenes y logotipos solo pueden ser recursos de la biblioteca de la marca
   (`assetId`), nunca imágenes incrustadas.
+
+## Encargos de tipo «plan» (Campañas)
+
+Con la marca en modo agencia, el cliente pide desde **Campañas** un plan
+(«prepara la semana que viene») con redes y fechas. Llega a `pendientes` como un
+encargo más, con formato `plan`. Se toma igual (`tomar`); `contexto` escribe
+`encargo.json` y `perfil.json` y, en vez de `red.json`, `recursos.json` y
+`pieza-actual.json`:
+
+- `campana.json`: instrucción, fechas, redes con sus formatos del catálogo y las reglas del plan;
+- `biblioteca.json`: fotos y vídeos de la marca (id, nombre, etiquetas, carpeta) para sugerir por su id;
+- `plan-plantilla.json`: el archivo de entrega con la forma exacta.
+
+Ejemplo completo: [`ejemplos/plan.json`](./ejemplos/plan.json).
+
+```jsonc
+{
+  "format": "rrss.agency-plan",
+  "version": 1,
+  "note": "Nota para la conversación (opcional)",
+  "plan": {
+    "objective": "…",
+    "summary": "…",
+    "reasoning": { "observed": [], "dataBacked": [], "hypotheses": [], "dataNote": "…" },
+    "pieces": [
+      { "network": "instagram", "format": "post", "date": "2026-11-23", "idea": "…", "caption": "…",
+        "hashtags": ["sin_almohadilla"], "assetIds": [], "why": "…" }
+    ]
+  }
+}
+```
+
+La forma es **cerrada**: cualquier campo de más invalida el plan entero (también
+en la base de datos). El cliente puede pedir cambios (el encargo vuelve a la
+cola) o aceptarlo en Campañas; al aceptarlo, la plataforma crea las piezas como
+**borradores**. Ni la agencia ni el plan aprueban, programan o publican nada.
 
 ## Cuenta de la agencia en staging
 
