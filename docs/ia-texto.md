@@ -10,7 +10,8 @@ respuestas HTTP simuladas. Tampoco hay pantallas: es la parte de servidor.
 | Adaptadores Vertex AI (UE), Anthropic directo, Mistral, Bedrock (UE) | Implementados; **sin probar contra el servicio real** (solo HTTP simulado) |
 | Tareas: texto de publicación, propuesta de perfil, comprobación de marca | Implementadas y probadas con el proveedor simulado. **La calidad de los textos no se ha medido** con ningún modelo |
 | Lógica de `ai-generate` (`handler.ts`) | Probada en Node con la base de datos real |
-| Arranque de `ai-generate` en Deno (`index.ts`) | **Sin ejecutar ni desplegar** (no hay Deno en la máquina de desarrollo) |
+| Arranque de `ai-generate` en Deno (`index.ts`) | Ejecutado **solo en local** (`supabase functions serve`, edge-runtime 1.74) con el proveedor simulado de pruebas locales, en la prueba de extremo a extremo de la Fase 2. **Sin desplegar** |
+| Interfaz (redactar en el editor, comprobar tono, proponer perfil desde fuentes de texto, consumo de IA, cupo en Plataforma) | Probada con Supabase simulado (componentes) y de extremo a extremo en local con el proveedor simulado |
 
 ## 1. Dónde está cada cosa
 
@@ -109,6 +110,7 @@ Solo nombres en `.env.example`. Son secretos de la función; nunca `VITE_`.
 | `AI_ALLOWED_ORIGIN` | Origen permitido para CORS |
 | `AI_VERTEX_PROJECT_ID`, `AI_VERTEX_LOCATION`, `AI_VERTEX_SERVICE_ACCOUNT_JSON` | Vertex: proyecto, ubicación (`eu`) y el JSON de la cuenta de servicio |
 | `ANTHROPIC_API_KEY` | Anthropic directo (además exige `AI_ALLOW_NON_EU_PROCESSING=true`) |
+| `AI_E2E_SIMULATED_PROVIDER` | **Solo pruebas locales.** `true` usa el proveedor simulado de `text/local-test.ts`; exige además que `SUPABASE_URL` sea local (`http` y host `127.0.0.1`, `localhost` o `kong`). En otro entorno la función no arranca. Va en `supabase/functions/e2e.env` |
 | `MISTRAL_API_KEY` | Mistral |
 | `AI_BEDROCK_REGION` y `AI_BEDROCK_ACCESS_KEY_ID` + `AI_BEDROCK_SECRET_ACCESS_KEY` (+ `AI_BEDROCK_SESSION_TOKEN`), o `AI_BEDROCK_BEARER_TOKEN` | Bedrock |
 
@@ -124,7 +126,8 @@ Reglas:
 - Sin `AI_TEXT_*` no hay IA: no existe modelo por defecto.
 - Un adaptador sin sus credenciales no se carga y la tarea falla diciendo qué
   falta. **Nunca se sustituye por otro ni por el simulado**: el simulado no se
-  puede elegir por configuración.
+  puede elegir con `AI_TEXT_*`. La única vía es `AI_E2E_SIMULATED_PROVIDER`,
+  limitada a un Supabase local.
 - Los avisos de configuración van al registro del servidor con nombres de
   variables, nunca con valores. Al navegador solo llega «la IA no está
   disponible».

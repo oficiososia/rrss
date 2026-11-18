@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test';
-import { readFileSync } from 'node:fs';
 import { abrir, dato, LOCAL, MARCA_A, MARCA_B, ORG_A, ORG_B, sinErrores, sql } from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
@@ -57,7 +56,9 @@ test('con la sesión de Bruno, la API tampoco entrega ni deja tocar datos de la 
   await page.goto('/');
   await expect(page.getByTestId('org-switcher').first()).toBeVisible();
 
-  const anon = /^VITE_SUPABASE_ANON_KEY=(.*)$/m.exec(readFileSync('.env.local', 'utf8'))?.[1]?.trim() ?? '';
+  // La clave anónima del stack local (pública), la misma que recibe la aplicación (playwright.config.ts).
+  const anon = process.env.E2E_SUPABASE_ANON_KEY ?? '';
+  expect(anon, 'clave anónima del stack local').not.toBe('');
   const datos = { api: LOCAL.api, anon, orgA: dato('orgA'), marcaA: dato('marcaA'), ruta: dato('rutaArchivoA') };
 
   // Las mismas llamadas que haría la aplicación, hechas desde su navegador con su sesión.

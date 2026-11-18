@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { DIR_ESTADO, ESTADO_JSON, LOCAL, type Estado } from './apoyo';
 
 /**
@@ -11,16 +10,15 @@ import { DIR_ESTADO, ESTADO_JSON, LOCAL, type Estado } from './apoyo';
  * relanzar un solo archivo mientras se depura).
  */
 export default async function globalSetup(): Promise<void> {
-  const envLocal = path.resolve('.env.local');
-  if (!existsSync(envLocal)) {
-    throw new Error(
-      'Falta .env.local con la URL y la clave anónima del Supabase local (ver docs/05-puesta-en-marcha.md).',
-    );
+  // playwright.config.ts lee la URL y la clave anónima de `supabase status` y se las pasa a Vite.
+  const url = process.env.E2E_SUPABASE_URL_DETECTADA ?? '';
+  if (!url) {
+    throw new Error('No se pudo leer `supabase status`: arranca el Supabase local con `supabase start`.');
   }
-  const env = readFileSync(envLocal, 'utf8');
-  const url = /^VITE_SUPABASE_URL=(.*)$/m.exec(env)?.[1]?.trim() ?? '';
   if (url !== LOCAL.api) {
-    throw new Error(`La prueba e2e solo corre contra el Supabase local (${LOCAL.api}); .env.local apunta a «${url}».`);
+    throw new Error(
+      `La prueba e2e solo corre contra el Supabase local (${LOCAL.api}); \`supabase status\` da «${url}».`,
+    );
   }
 
   const salud = await fetch(`${LOCAL.api}/auth/v1/health`).catch(() => null);

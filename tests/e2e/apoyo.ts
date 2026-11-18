@@ -51,6 +51,9 @@ export interface Estado {
   invitaciones?: Partial<Record<Alias, string>>;
   /** Ruta en Storage de un archivo de la marca A (para la prueba de aislamiento). */
   rutaArchivoA?: string;
+  /** Pieza de contenido de la marca A creada en la prueba de la Fase 2. */
+  piezaA?: string;
+  piezaB?: string;
 }
 
 export function leerEstado(): Estado {
@@ -91,6 +94,12 @@ export interface Sesion {
   page: Page;
   /** Errores de consola y excepciones de página vistos en esta sesión. */
   errores: string[];
+  /**
+   * Direcciones que respondieron 401 «JWT issued at future» (PGRST303): el
+   * PostgREST local guarda la hora con hasta un segundo de retraso y rechaza un
+   * token recién emitido. La aplicación lo reintenta y sigue; no es un fallo suyo.
+   */
+  tokensDelFuturo: Set<string>;
 }
 
 /**
@@ -111,6 +120,16 @@ export async function abrir(browser: Browser, alias?: Alias, opciones: { proxy?:
     storageState: guardada,
   });
   const errores: string[] = [];
+  const tokensDelFuturo = new Set<string>();
+  context.on('response', (respuesta) => {
+    if (respuesta.status() !== 401 || !respuesta.url().startsWith(`${LOCAL.api}/rest/`)) return;
+    void respuesta
+      .text()
+      .then((cuerpo) => {
+        if (cuerpo.includes('JWT issued at future')) tokensDelFuturo.add(respuesta.url());
+      })
+      .catch(() => undefined);
+  });
   context.on('page', (p) => {
     p.on('console', (m) => {
       if (m.type() === 'error') errores.push(`[consola] ${m.text()} — ${m.location().url}`);
@@ -122,7 +141,7 @@ export async function abrir(browser: Browser, alias?: Alias, opciones: { proxy?:
     await entrar(page, alias);
     await guardarSesion(context, alias);
   }
-  return { context, page, errores };
+  return { context, page, errores, tokensDelFuturo };
 }
 
 export async function entrar(page: Page, alias: Alias, contrasena = clave(alias)): Promise<void> {
@@ -162,7 +181,11 @@ export async function cerrarSesion(page: Page): Promise<void> {
 
 /** Falla si la sesión ha visto errores de consola que no estén entre los esperados. */
 export function sinErrores(sesion: Sesion, esperados: RegExp[] = []): void {
-  const inesperados = sesion.errores.filter((e) => !esperados.some((patron) => patron.test(e)));
+  const inesperados = sesion.errores.filter(
+    (e) =>
+      !esperados.some((patron) => patron.test(e)) &&
+      ![...sesion.tokensDelFuturo].some((url) => e.includes('status of 401') && e.includes(url)),
+  );
   expect(inesperados, 'errores de consola').toEqual([]);
 }
 
