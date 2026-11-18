@@ -8,6 +8,7 @@ import {
   Redo2,
   Save,
   SearchX,
+  Sparkles,
   Square,
   Stamp,
   Type,
@@ -40,9 +41,10 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
-import { aiTextEnabled } from '@/config/app';
+import { aiImageEnabled, aiTextEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
+import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
 import { useActiveProfile } from '@/features/brand/api';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
@@ -168,6 +170,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [historyOpen, setHistoryOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState(false);
   const [logoPicker, setLogoPicker] = useState(false);
+  const [imageAi, setImageAi] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
@@ -179,6 +182,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
   const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
   const aiEnabled = aiTextEnabled();
+  const aiImage = aiImageEnabled();
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
 
@@ -636,6 +640,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <ImageIcon className="h-4 w-4" aria-hidden />
             Imagen
           </Button>
+          {aiImage && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={full}
+              onClick={() => setImageAi(true)}
+              data-testid="add-image-ai"
+              title="Generar una imagen con IA"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden />
+              Con IA
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -849,6 +866,20 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               });
             }}
           />
+          {aiImage && (
+            <GenerateImageDialog
+              brandId={brand.id}
+              open={imageAi}
+              onOpenChange={setImageAi}
+              canvasRatio={canvas.aspectRatio}
+              // Una capa más: se deshace con Ctrl+Z como cualquier otra; la imagen queda en la biblioteca.
+              onGenerated={(image) => {
+                setImageAi(false);
+                dispatch({ type: 'add', layer: newImageLayer(canvas, state.document.layers, image) });
+                toast.success('Imagen generada y añadida al diseño. Está también en la biblioteca.');
+              }}
+            />
+          )}
           <LogoPickerDialog
             brandId={brand.id}
             logoIds={logoIds}

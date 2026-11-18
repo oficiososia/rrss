@@ -12,6 +12,16 @@ export function aiTextEnabled(): boolean {
   return import.meta.env.VITE_AI_TEXT_ENABLED === 'true';
 }
 
+/**
+ * ¿Hay generación de imágenes con IA en este entorno? Igual que el texto: la
+ * función `ai-media` solo genera con un modelo de imagen configurado en el
+ * servidor; sin él, el botón «Con IA» del editor no se enseña. Se activa con
+ * `VITE_AI_IMAGE_ENABLED=true` en el despliegue que lo tenga.
+ */
+export function aiImageEnabled(): boolean {
+  return import.meta.env.VITE_AI_IMAGE_ENABLED === 'true';
+}
+
 export const STORAGE_BUCKET = 'brand-media';
 /** Tope del cubo (ver supabase/migrations/…_storage_brand_media.sql). */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
