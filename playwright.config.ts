@@ -20,7 +20,8 @@ export const E2E_BASE_URL = `http://127.0.0.1:${E2E_PORT}`;
 function localSupabase(): { url: string; anonKey: string } {
   let output = '';
   try {
-    // Con intérprete de órdenes: en Windows la CLI instalada con npm es un `.cmd`.
+    // execSync usa el intérprete del sistema (en Windows la CLI de npm es un `.cmd`;
+    // en Linux/CI la instala supabase/setup-cli como binario). Nada más depende del SO.
     output = execSync('supabase status -o env', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     return { url: '', anonKey: '' };
@@ -41,10 +42,15 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  // En CI (GitHub Actions) una prueba `.only` olvidada no debe colar un verde falso.
+  forbidOnly: !!process.env.CI,
   // Holgados a propósito: con Docker y otros procesos en la misma máquina hay parones de varios segundos.
   timeout: 180_000,
   expect: { timeout: 20_000 },
-  reporter: [['list'], ['html', { open: 'never' }]],
+  // En CI se añaden las anotaciones de GitHub; el informe HTML se sube como artefacto si falla.
+  reporter: process.env.CI
+    ? [['list'], ['github'], ['html', { open: 'never' }]]
+    : [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: E2E_BASE_URL,
     locale: 'es-ES',

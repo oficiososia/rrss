@@ -1,6 +1,17 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { DIR_ESTADO, ESTADO_JSON, LOCAL, type Estado } from './apoyo';
 
+/** Espera (hasta `margenMs`; 0 = un solo intento) a que la URL responda con éxito. */
+async function responde(url: string, margenMs: number): Promise<boolean> {
+  const limite = Date.now() + margenMs;
+  for (;;) {
+    const respuesta = await fetch(url).catch(() => null);
+    if (respuesta?.ok) return true;
+    if (Date.now() >= limite) return false;
+    await new Promise((listo) => setTimeout(listo, 2_000));
+  }
+}
+
 /**
  * Antes de la tanda: comprueba que el backend es el LOCAL y que responde, y
  * prepara el estado compartido. Cada tanda usa correos con un sufijo propio,
@@ -21,10 +32,12 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  const salud = await fetch(`${LOCAL.api}/auth/v1/health`).catch(() => null);
-  if (!salud?.ok) throw new Error('El Supabase local no responde. Arráncalo con `supabase start`.');
-  const buzon = await fetch(`${LOCAL.buzon}/api/v1/info`).catch(() => null);
-  if (!buzon?.ok) throw new Error(`El buzón de correo local no responde en ${LOCAL.buzon}.`);
+  // En CI los servicios pueden tardar unos segundos en responder tras `supabase start`.
+  const margen = process.env.CI ? 60_000 : 0;
+  const salud = await responde(`${LOCAL.api}/auth/v1/health`, margen);
+  if (!salud) throw new Error('El Supabase local no responde. Arráncalo con `supabase start`.');
+  const buzon = await responde(`${LOCAL.buzon}/api/v1/info`, margen);
+  if (!buzon) throw new Error(`El buzón de correo local no responde en ${LOCAL.buzon}.`);
 
   if (process.env.E2E_CONTINUAR === '1' && existsSync(ESTADO_JSON)) return;
 
