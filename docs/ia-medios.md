@@ -330,5 +330,5 @@ Supabase local (`SUPABASE_URL` por http con host `127.0.0.1`, `localhost` o
 simulado-e2e-asincrono` (asíncrono, termina a los 2 s), a 0,02 unidades de
 cuenta por imagen (precio inventado). Con la variable y otro Supabase, la
 función no arranca. Escenario: `tests/e2e/10-fase2-imagen-con-ia.spec.ts`
-(escrito; se ejecuta al integrar; `playwright.config.ts` ya pasa
+(pasa en la tanda completa desde el 18/11/2026; `playwright.config.ts` pasa
 `VITE_AI_IMAGE_ENABLED=true`).

@@ -12,8 +12,8 @@ import { abrir, dato, LOCAL, sinErrores, sql } from './apoyo';
 // Parte de lo que dejó 09: Ana (organización A, marca La Espiga) tiene la pieza
 // «Hogaza de otoño» con una versión guardada y 5 unidades de cupo.
 //
-// ESCRITO Y SIN EJECUTAR (18/11/2026): se ejecutará al integrar. Necesita
-// `VITE_AI_IMAGE_ENABLED=true` en el servidor de Vite de playwright.config.ts.
+// Necesita `VITE_AI_IMAGE_ENABLED=true` en el servidor de Vite de
+// playwright.config.ts (ya está). Pasa en la tanda completa desde el 18/11/2026.
 
 test.describe.configure({ mode: 'serial' });
 
