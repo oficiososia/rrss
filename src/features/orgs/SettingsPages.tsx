@@ -49,6 +49,8 @@ export function SettingsLayout() {
     { to: `${base}/equipo`, label: 'Equipo' },
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
     ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
+    // RGPD: exportar y borrar la organización, solo propietarios.
+    ...(org.role === 'owner' ? [{ to: `${base}/datos`, label: 'Datos' }] : []),
   ];
   return (
     <>

@@ -45,6 +45,12 @@ const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m)
 const ReelsPage = lazy(() => import('@/features/reels/ReelsPage').then((m) => ({ default: m.ReelsPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
 const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
+// RGPD: páginas legales públicas, «Mi cuenta» y los datos de la organización.
+const LegalPage = lazy(() => import('@/features/legal/LegalPage').then((m) => ({ default: m.LegalPage })));
+const AccountPage = lazy(() => import('@/features/privacy/AccountPage').then((m) => ({ default: m.AccountPage })));
+const OrganizationDataPage = lazy(() =>
+  import('@/features/privacy/OrganizationDataPage').then((m) => ({ default: m.OrganizationDataPage })),
+);
 
 function MissingConfig() {
   return (
@@ -102,11 +108,13 @@ export function App() {
                 </Route>
                 <Route path="/restablecer" element={<ResetPasswordPage />} />
                 <Route path="/invitacion/:token" element={<InvitationPage />} />
+                <Route path="/legal/:slug" element={<LegalPage />} />
 
                 <Route element={<RequireAuth />}>
                   <Route path="/" element={<RootRedirect />} />
                   <Route path="/bienvenida" element={<WelcomePage />} />
                   <Route path="/plataforma" element={<PlatformPage />} />
+                  <Route path="/cuenta" element={<AccountPage />} />
                   <Route path="/o/:orgId" element={<OrgLayout />}>
                     <Route index element={<OrgHomePage />} />
                     <Route path="marcas/nueva" element={<BrandWizardPage />} />
@@ -116,6 +124,7 @@ export function App() {
                       <Route path="equipo" element={<TeamSettingsPage />} />
                       <Route path="actividad" element={<ActivitySettingsPage />} />
                       <Route path="ia" element={<AiUsageSettingsPage />} />
+                      <Route path="datos" element={<OrganizationDataPage />} />
                     </Route>
                     <Route path="m/:brandId" element={<BrandLayout />}>
                       <Route index element={<Navigate to="inicio" replace />} />

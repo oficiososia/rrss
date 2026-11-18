@@ -1,5 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { LEGAL_VERSIONS } from '@/features/legal/legal';
 import { fake } from '@/test/fakeSupabase';
 import { renderApp } from '@/test/fixtures';
 import { redirectTarget } from './AuthProvider';
@@ -93,11 +94,13 @@ describe('Acceso: redirección tras entrar', () => {
 describe('Acceso: registro', () => {
   async function fillRegister(
     user: ReturnType<typeof renderApp>['user'],
-    values: { name?: string; email?: string; password?: string },
+    values: { name?: string; email?: string; password?: string; accept?: boolean },
   ) {
     if (values.name) await user.type(await screen.findByLabelText('Nombre'), values.name);
     if (values.email) await user.type(screen.getByLabelText('Correo electrónico'), values.email);
     if (values.password) await user.type(screen.getByLabelText('Contraseña'), values.password);
+    // Casilla de las condiciones y la política de privacidad (sin marcar de serie).
+    if (values.accept !== false) await user.click(screen.getByTestId('register-accept'));
   }
 
   it('exige nombre, correo y 8 caracteres de contraseña', async () => {
@@ -112,6 +115,18 @@ describe('Acceso: registro', () => {
     await user.type(screen.getByLabelText('Contraseña'), '1234');
     expect(submit).toBeEnabled();
     expect(screen.queryByText('Le faltan caracteres.')).not.toBeInTheDocument();
+  });
+
+  it('sin aceptar las condiciones y la política de privacidad no se crea la cuenta', async () => {
+    const { user } = renderApp('/registro');
+    await fillRegister(user, { name: 'Ana', email: 'ana@example.com', password: 'secreta123', accept: false });
+    const accept = screen.getByTestId('register-accept');
+    expect(accept).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Crear cuenta' })).toBeDisabled();
+    expect(screen.getByRole('link', { name: 'condiciones de uso' })).toHaveAttribute('href', '/legal/condiciones');
+    expect(screen.getByRole('link', { name: 'política de privacidad' })).toHaveAttribute('href', '/legal/privacidad');
+    await user.click(accept);
+    expect(screen.getByRole('button', { name: 'Crear cuenta' })).toBeEnabled();
   });
 
   it('un nombre en blanco no basta', async () => {
@@ -131,7 +146,13 @@ describe('Acceso: registro', () => {
     expect(fake.auth.signUp).toHaveBeenCalledWith(
       expect.objectContaining({
         email: 'ana@example.com',
-        options: expect.objectContaining({ data: { full_name: 'Ana Pérez' } }),
+        // Las versiones aceptadas van en los metadatos: la base de datos las apunta.
+        options: expect.objectContaining({
+          data: {
+            full_name: 'Ana Pérez',
+            legal: { terms_version: LEGAL_VERSIONS.terms, privacy_version: LEGAL_VERSIONS.privacy },
+          },
+        }),
       }),
     );
     expect(screen.getByRole('link', { name: 'Volver a iniciar sesión' })).toBeInTheDocument();
