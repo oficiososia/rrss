@@ -286,3 +286,54 @@ export function createSimulatedVideoProvider(options: SimulatedVideoOptions = {}
     },
   };
 }
+
+// ───────────────────────── Imagen asíncrona ─────────────────────────
+
+export const SIMULATED_IMAGE_ASYNC_PROVIDER_ID = 'simulated-image-async';
+
+export interface SimulatedAsyncImageOptions {
+  /** Tiempo hasta que el trabajo «termina». Por defecto, 2 s. */
+  readyAfterMs?: number;
+  now?: () => number;
+}
+
+/**
+ * Imagen simulada ASÍNCRONA y SIN ESTADO: el identificador del trabajo lleva
+ * el instante de inicio y la huella de la petición, así que cualquier instancia
+ * de la función (la que lanza y la que sondea son distintas) sabe contestar.
+ * Sirve para probar de extremo a extremo el seguimiento por sondeo.
+ */
+export function createSimulatedAsyncImageProvider(options: SimulatedAsyncImageOptions = {}): MediaProvider {
+  const now = options.now ?? Date.now;
+  const readyAfterMs = options.readyAfterMs ?? 2000;
+  return {
+    id: SIMULATED_IMAGE_ASYNC_PROVIDER_ID,
+    kinds: ['image'],
+    testedAgainstRealService: false,
+    estimateUsage: imageUsage,
+
+    async start(start): Promise<MediaStartResult> {
+      if (start.request.kind !== 'image') {
+        throw new MediaProviderFailure('invalid_request', 'El proveedor simulado de imagen solo genera imágenes');
+      }
+      const seed = hash(fingerprint(start.request)).toString(16);
+      return { status: 'pending', job: { id: `simasync.${now()}.${seed}` } };
+    },
+
+    async poll(job: ProviderJobRef): Promise<MediaOutcome> {
+      const [, startedAt, seed] = job.id.split('.');
+      const started = Number(startedAt);
+      if (!Number.isFinite(started) || !seed) {
+        return { status: 'failed', code: 'bad_response', message: 'Trabajo simulado desconocido' };
+      }
+      if (now() - started < readyAfterMs) return { status: 'pending' };
+      return {
+        status: 'completed',
+        outputs: [{ mimeType: 'image/png', bytes: simulatedPng(`async|${seed}`) }],
+        usage: { images: 1 },
+      };
+    },
+
+    async cancel(): Promise<void> {},
+  };
+}

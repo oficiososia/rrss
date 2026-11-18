@@ -491,6 +491,31 @@ type Phase2MediaTables = {
 
 // ─────────────────────── fin del bloque de IA de medios (Fase 2) ───────────────────────
 
+// ──────────── Fase 2 · Imágenes generadas con IA: procedencia en la biblioteca ────────────
+// Migración 20261118210000_ai_media_images. La procedencia va en
+// `media_assets.provenance` (columna de la exportación, 20261118120000) con
+// `type: 'ai_generation'`; ese tipo solo lo puede escribir el servidor.
+
+export type MediaAssetAiProvenance = {
+  type: 'ai_generation';
+  generation_id: string;
+  provider?: string | null;
+  model?: string | null;
+  purpose?: string | null;
+  prompt?: string | null;
+  data_region?: AiMediaDataRegion;
+  trains_on_inputs?: AiMediaTrainsOnInputs;
+  untested_adapter?: boolean;
+};
+
+/** Lo que la generación deja en `ai_generations.output` (servicio de medios). */
+export type AiMediaGenerationOutput = {
+  assets?: { kind: string; path: string; mime_type: string; bytes: number; asset_id?: string }[];
+  error?: string;
+};
+
+// ──────────────── fin del bloque de imágenes generadas con IA (Fase 2) ────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;

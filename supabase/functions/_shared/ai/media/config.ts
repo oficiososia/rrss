@@ -5,8 +5,9 @@
 // anotado con el nombre exacto de la variable que le falta para poder decirlo
 // con claridad. Aquí no se elige proveedor: eso lo hacen el registro de
 // modelos (qué está activo) y, si se quiere fijar uno, AI_MEDIA_*_MODEL.
-import type { MediaProvider } from './contract.ts';
+import type { DataRegion, MediaProvider } from './contract.ts';
 import { BFL_DEFAULT_BASE_URL, BFL_PROVIDER_ID, createBflImageProvider, isBflBaseUrl } from './bfl-image.ts';
+import { COMFYUI_PROVIDER_ID, createComfyUiImageProvider, isComfyUiBaseUrl } from './comfyui-image.ts';
 import { createFalVideoProvider, FAL_PROVIDER_ID } from './fal-video.ts';
 import { createGoogleTokenSource, parseServiceAccount } from './google-auth.ts';
 import { createHiggsfieldVideoProvider, HIGGSFIELD_PROVIDER_ID } from './higgsfield-video.ts';
@@ -20,6 +21,7 @@ import {
   SIMULATED_VIDEO_PROVIDER_ID,
 } from './simulated.ts';
 import { createVertexImageProvider, VERTEX_IMAGE_PROVIDER_ID } from './vertex-image.ts';
+import { isLocalSupabaseUrl } from '../text/local-test.ts';
 
 /** Variables de entorno, tal como las da `Deno.env.toObject()`. */
 export type MediaEnv = Record<string, string | undefined>;
@@ -41,6 +43,9 @@ export const MEDIA_ENV = {
   higgsfieldKeySecret: 'HIGGSFIELD_API_KEY_SECRET',
   higgsfieldWebhookSecret: 'HIGGSFIELD_WEBHOOK_SECRET',
   falKey: 'FAL_KEY',
+  comfyUiBaseUrl: 'COMFYUI_BASE_URL',
+  comfyUiToken: 'COMFYUI_API_TOKEN',
+  comfyUiDataRegion: 'COMFYUI_DATA_REGION',
 } as const;
 
 const value = (env: MediaEnv, name: string): string | undefined => {
@@ -117,11 +122,33 @@ export function createMediaProviders(env: MediaEnv, options: { fetch: FetchLike 
     createFalVideoProvider({ apiKey: value(env, MEDIA_ENV.falKey)!, fetch }),
   );
 
-  // Simulados: solo si se piden a propósito. Nunca en un entorno con clientes.
-  if (value(env, MEDIA_ENV.simulated) === 'true') {
+  // Imagen · ComfyUI propio (modelos abiertos). Región: la que se declare.
+  load(COMFYUI_PROVIDER_ID, [MEDIA_ENV.comfyUiBaseUrl], () => {
+    const baseUrl = value(env, MEDIA_ENV.comfyUiBaseUrl)!;
+    if (!isComfyUiBaseUrl(baseUrl)) {
+      throw new Error(`${MEDIA_ENV.comfyUiBaseUrl} debe ser https (o http solo en localhost), sin usuario ni contraseña`);
+    }
+    const region = value(env, MEDIA_ENV.comfyUiDataRegion) ?? 'unknown';
+    if (!['eu', 'us', 'global', 'unknown'].includes(region)) {
+      throw new Error(`${MEDIA_ENV.comfyUiDataRegion} debe ser eu, us, global o unknown`);
+    }
+    return createComfyUiImageProvider({
+      baseUrl,
+      token: value(env, MEDIA_ENV.comfyUiToken),
+      dataRegion: region as DataRegion,
+      fetch,
+    });
+  });
+
+  // Simulados: solo si se piden a propósito Y contra un Supabase local. Nunca
+  // en un entorno con clientes.
+  const simulated = value(env, MEDIA_ENV.simulated) === 'true';
+  if (simulated && isLocalSupabaseUrl(env.SUPABASE_URL)) {
     providers.push(createSimulatedImageProvider(), createSimulatedVideoProvider());
   } else {
-    const reason = `solo se carga con ${MEDIA_ENV.simulated}=true (pruebas)`;
+    const reason = simulated
+      ? `${MEDIA_ENV.simulated}=true solo se admite con un Supabase local (SUPABASE_URL http://127.0.0.1, localhost o kong)`
+      : `solo se carga con ${MEDIA_ENV.simulated}=true y un Supabase local (pruebas)`;
     unavailable.push({ id: SIMULATED_IMAGE_PROVIDER_ID, reason }, { id: SIMULATED_VIDEO_PROVIDER_ID, reason });
   }
 

@@ -1022,8 +1022,9 @@ describe('configuración del servidor', () => {
       ideogram: 'falta la variable IDEOGRAM_API_KEY',
       higgsfield: 'faltan las variables HIGGSFIELD_API_KEY_ID y HIGGSFIELD_API_KEY_SECRET',
       fal: 'falta la variable FAL_KEY',
-      'simulated-image': 'solo se carga con AI_MEDIA_SIMULATED=true (pruebas)',
-      'simulated-video': 'solo se carga con AI_MEDIA_SIMULATED=true (pruebas)',
+      comfyui: 'falta la variable COMFYUI_BASE_URL',
+      'simulated-image': 'solo se carga con AI_MEDIA_SIMULATED=true y un Supabase local (pruebas)',
+      'simulated-video': 'solo se carga con AI_MEDIA_SIMULATED=true y un Supabase local (pruebas)',
     });
   });
 
@@ -1066,9 +1067,17 @@ describe('configuración del servidor', () => {
     expect(reasons.bfl).toMatch(/BFL_API_BASE_URL debe ser/);
   });
 
-  it('los simulados solo se cargan si se piden a propósito', () => {
-    const ids = createMediaProviders({ AI_MEDIA_SIMULATED: 'true' }, { fetch }).providers.map((p) => p.id);
-    expect(ids).toEqual(['simulated-image', 'simulated-video']);
+  it('los simulados solo se cargan si se piden a propósito y contra un Supabase local', () => {
+    const local = { AI_MEDIA_SIMULATED: 'true', SUPABASE_URL: 'http://127.0.0.1:55321' };
+    expect(createMediaProviders(local, { fetch }).providers.map((p) => p.id)).toEqual([
+      'simulated-image',
+      'simulated-video',
+    ]);
+    for (const url of [undefined, 'https://abcdefgh.supabase.co', 'http://ejemplo.test', 'https://127.0.0.1:55321']) {
+      const result = createMediaProviders({ AI_MEDIA_SIMULATED: 'true', SUPABASE_URL: url }, { fetch });
+      expect(result.providers).toEqual([]);
+      expect(result.unavailable.find((u) => u.id === 'simulated-image')?.reason).toMatch(/solo se admite con un Supabase local/);
+    }
   });
 
   it('lee qué modelo se fija, si se admite salir de la UE y la dirección de los webhooks', () => {

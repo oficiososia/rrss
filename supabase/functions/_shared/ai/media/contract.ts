@@ -213,6 +213,27 @@ export interface StoredMedia {
   path: string;
   mimeType: string;
   bytes: number;
+  /** Recurso de la biblioteca (`media_assets.id`), si el almacenamiento lo crea. */
+  assetId?: string;
+}
+
+/**
+ * De dónde sale un medio generado: viaja hasta el almacenamiento para que el
+ * recurso de la biblioteca diga que lo hizo una IA, cuál y con qué encargo.
+ * Sin secretos ni URL firmadas.
+ */
+export interface MediaProvenance {
+  provider: string;
+  model: string;
+  /** Para qué se pidió (`post.visual`…). */
+  purpose?: string;
+  /** El encargo tal como lo escribió la persona. */
+  prompt?: string;
+  /** Usuario en cuyo nombre se generó. */
+  requestedBy?: string;
+  dataRegion: DataRegion;
+  trainsOnInputs: TrainsOnInputs;
+  untestedAdapter: boolean;
 }
 
 /**
@@ -232,7 +253,9 @@ export interface MediaStorage {
     index: number;
     mimeType: string;
     bytes: Uint8Array;
-  }): Promise<{ path: string }>;
+    /** Procedencia, para el recurso de la biblioteca. */
+    provenance?: MediaProvenance;
+  }): Promise<{ path: string; assetId?: string }>;
 }
 
 /** Lo que el servicio necesita leer de la base de datos (con la clave de servicio). */

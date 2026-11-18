@@ -26,6 +26,7 @@ import {
   type MediaJobResult,
   type MediaModel,
   type MediaOutputRef,
+  type MediaProvenance,
   type MediaProvider,
   type MediaReader,
   type MediaRequest,
@@ -108,6 +109,10 @@ interface JobPayload {
   estimated_usage: MediaUsage;
   started_at: number;
   deadline_at: number;
+  /** Para la procedencia del recurso: para qué se pidió, el encargo y quién lo pidió. */
+  purpose?: string;
+  prompt?: string;
+  user_id?: string;
 }
 
 function parsePayload(value: unknown): JobPayload | null {
@@ -130,6 +135,9 @@ function parsePayload(value: unknown): JobPayload | null {
     estimated_usage: usage,
     started_at,
     deadline_at,
+    purpose: text(value.purpose),
+    prompt: text(value.prompt),
+    user_id: text(value.user_id),
   };
 }
 
@@ -215,7 +223,13 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
 
   /** Guarda en el almacenamiento lo que entregó el proveedor (bytes o URL de descarga). */
   async function store(
-    target: { organizationId: string; brandId: string; generationId: string; kind: 'image' | 'video' },
+    target: {
+      organizationId: string;
+      brandId: string;
+      generationId: string;
+      kind: 'image' | 'video';
+      provenance?: MediaProvenance;
+    },
     provider: MediaProvider,
     outputs: MediaOutputRef[],
   ): Promise<StoredMedia[]> {
@@ -237,8 +251,17 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
         bytes = file.bytes;
         mimeType = mimeType || file.contentType?.split(';')[0]?.trim() || 'application/octet-stream';
       }
-      const { path } = await config.storage.put({ ...target, index, mimeType, bytes });
-      assets.push({ kind: target.kind, path, mimeType, bytes: bytes.byteLength });
+      const { path, assetId } = await config.storage.put({
+        organizationId: target.organizationId,
+        brandId: target.brandId,
+        generationId: target.generationId,
+        kind: target.kind,
+        provenance: target.provenance,
+        index,
+        mimeType,
+        bytes,
+      });
+      assets.push({ kind: target.kind, path, mimeType, bytes: bytes.byteLength, ...(assetId ? { assetId } : {}) });
     }
     return assets;
   }
@@ -261,8 +284,18 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
     outputs: MediaOutputRef[];
     startedAt: number;
     providerRequestId: string | undefined;
+    /** Para qué se pidió, el encargo y quién lo pidió (procedencia del recurso). */
+    origin?: { purpose?: string; prompt?: string; requestedBy?: string };
   }): Promise<{ assets: StoredMedia[]; usage: MediaUsage; costMicros: number }> {
-    const assets = await store(context, context.provider, context.outputs);
+    const provenance: MediaProvenance = {
+      provider: context.provider.id,
+      model: context.model?.model ?? '',
+      ...context.origin,
+      dataRegion: context.provider.dataRegion ?? context.model?.dataRegion ?? 'unknown',
+      trainsOnInputs: context.model?.trainsOnInputs ?? 'unknown',
+      untestedAdapter: !context.provider.testedAgainstRealService,
+    };
+    const assets = await store({ ...context, provenance }, context.provider, context.outputs);
 
     const usage = context.usage ?? context.estimatedUsage;
     let costMicros = context.reserveMicros;
@@ -276,7 +309,13 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       p_cost_micros: costMicros,
       p_usage: usage,
       p_output: {
-        assets: assets.map((a) => ({ kind: a.kind, path: a.path, mime_type: a.mimeType, bytes: a.bytes })),
+        assets: assets.map((a) => ({
+          kind: a.kind,
+          path: a.path,
+          mime_type: a.mimeType,
+          bytes: a.bytes,
+          ...(a.assetId ? { asset_id: a.assetId } : {}),
+        })),
         data_region: context.provider.dataRegion ?? context.model?.dataRegion ?? 'unknown',
         trains_on_inputs: context.model?.trainsOnInputs ?? 'unknown',
         untested_adapter: !context.provider.testedAgainstRealService,
@@ -428,6 +467,11 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
           outputs: started.outputs,
           startedAt,
           providerRequestId: started.providerRequestId,
+          origin: {
+            purpose: params.purpose,
+            prompt: request.prompt,
+            requestedBy: params.userId,
+          },
         });
         return { ...base, status: 'completed', ...settled };
       } catch (error) {
@@ -460,6 +504,9 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       estimated_usage: estimatedUsage,
       started_at: startedAt,
       deadline_at: startedAt + options.asyncDeadlineSeconds * 1000,
+      purpose: params.purpose,
+      prompt: request.prompt,
+      user_id: params.userId,
     };
     const queued = await rpc('enqueue_job', {
       p_organization_id: organizationId,
@@ -566,6 +613,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
             outputs: outcome.outputs,
             startedAt: payload.started_at,
             providerRequestId: payload.job.id,
+            origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id },
           });
           await finishJob({ status: 'completed', cost_micros: settled.costMicros });
           return { status: 'completed', generationId, assets: settled.assets, costMicros: settled.costMicros };
@@ -671,6 +719,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       outputs: event.outcome.outputs,
       startedAt: payload.started_at,
       providerRequestId: payload.job.id,
+      origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id },
     });
     return { status: 'completed', generationId };
   }
