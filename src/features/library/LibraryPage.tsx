@@ -6,7 +6,7 @@ import { mediaWorkerEnabled } from '@/config/app';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
-import { useAssetFacets, useAssets, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
+import { useAssetFacets, useAssets, useAssetsByIds, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
 import { AssetDialog } from './AssetDialog';
 import { ASSET_KIND_LABEL, ASSET_KINDS } from './labels';
 import { UploadPanel } from './UploadPanel';
@@ -53,12 +53,18 @@ export function LibraryPage() {
   const assets = useAssets(brand.id, filters);
   const facets = useAssetFacets(brand.id);
   const rows = useMemo(() => assets.data?.pages.flat() ?? [], [assets.data]);
+  // Un recurso que no está en la página cargada (p. ej. un recorte recién hecho) se lee aparte.
+  const inRows = rows.some((a) => a.id === selectedId);
+  const outside = useAssetsByIds(brand.id, selectedId && !assets.isPending && !inRows ? [selectedId] : []);
+  const selected = rows.find((a) => a.id === selectedId) ?? outside.data?.find((a) => a.id === selectedId) ?? null;
   const previewPaths = useMemo(
-    () => rows.filter((a) => a.mime_type.startsWith('image/') || a.id === selectedId).map((a) => a.storage_path),
-    [rows, selectedId],
+    () => [
+      ...rows.filter((a) => a.mime_type.startsWith('image/') || a.id === selectedId).map((a) => a.storage_path),
+      ...(selected && !inRows ? [selected.storage_path] : []),
+    ],
+    [rows, selectedId, selected, inRows],
   );
   const urls = useSignedUrls(previewPaths);
-  const selected = rows.find((a) => a.id === selectedId) ?? null;
   const filtering = Boolean(kind || tag || folder || deferredSearch.trim());
 
   return (
@@ -238,6 +244,7 @@ export function LibraryPage() {
           url={urls.data?.get(selected.storage_path)}
           canEdit={canEdit}
           onClose={closeSelected}
+          onOpenAsset={setSelectedId}
         />
       )}
     </>

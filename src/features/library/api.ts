@@ -137,6 +137,11 @@ export interface UploadInput {
   dimensions?: MediaDimensions;
   /** Huella ya calculada (para no leer el archivo dos veces). */
   sha256?: string;
+  /**
+   * Provisional: se sube antes de enlazarlo (logotipo del perfil sin guardar).
+   * Si nadie lo enlaza ni lo organiza, el servidor lo borra pasadas 48 horas.
+   */
+  provisional?: boolean;
   /** Porcentaje real (0-100) de bytes subidos del archivo. */
   onProgress?: (percent: number) => void;
 }
@@ -205,6 +210,8 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
       folder: input.folder ?? '',
       tags: input.tags ?? [],
       ...(input.provenance ? { provenance: input.provenance } : {}),
+      // El valor da igual: la base de datos fija el plazo.
+      ...(input.provisional ? { provisional_until: new Date().toISOString() } : {}),
     })
     .select('*')
     .single();

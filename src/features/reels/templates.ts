@@ -13,7 +13,13 @@ const templateSummarySchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/),
   name: z.string().min(1),
   description: z.string().default(''),
-  canvas: z.object({ fps: z.number().int().positive().default(30) }).passthrough(),
+  canvas: z
+    .object({
+      width: z.number().int().positive().default(1080),
+      height: z.number().int().positive().default(1920),
+      fps: z.number().int().positive().default(30),
+    })
+    .passthrough(),
   timing: z
     .object({
       photoSeconds: z.number().positive().default(2.5),
@@ -28,6 +34,15 @@ const templateSummarySchema = z.object({
     })
     .passthrough(),
   text: z.object({ position: z.enum(['top', 'center', 'bottom']).default('bottom') }).passthrough(),
+  // Exportación (worker/src/reel/schema.ts): para estimar el peso antes de encargar.
+  export: z
+    .object({
+      crf: z.number().int().default(21),
+      preset: z.string().default('veryfast'),
+      audioBitrateKbps: z.number().int().positive().default(128),
+    })
+    .passthrough()
+    .default({}),
 });
 
 export type ReelTemplateSummary = z.infer<typeof templateSummarySchema>;

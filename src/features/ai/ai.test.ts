@@ -63,6 +63,9 @@ describe('errores de ai-generate', () => {
     expect((await toAiError(http(402, { error: { code: 'quota_missing' } }))).message).toMatch(/no tiene cupo/);
     expect((await toAiError(http(503, { error: { code: 'not_configured' } }))).message).toMatch(/falta configurarla/);
     expect((await toAiError(http(422, { error: { code: 'refused' } }))).message).toMatch(/se ha negado/);
+    const agency = await toAiError(http(409, { error: { code: 'agency_mode', message: 'del servidor' } }));
+    expect(agency.code).toBe('agency_mode');
+    expect(agency.message).toMatch(/redacta por encargo a la agencia.*Encargos/);
     expect((await toAiError(http(504, { error: { code: 'provider_timeout' } }))).message).toMatch(/tardado demasiado/);
     const failed = await toAiError(
       http(502, { error: { code: 'provider_failed', retryable: true, generationId: 'g-1' } }),

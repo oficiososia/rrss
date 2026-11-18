@@ -6,6 +6,8 @@
 //   1. verifica la sesión (token del usuario);
 //   2. valida la petición;
 //   3. lee el perfil de marca CON LA IDENTIDAD DEL USUARIO (la RLS decide si lo ve);
+//      si la marca redacta «por encargo a la agencia» (`brands.ai_mode = 'agency'`),
+//      rechaza la petición (409 `agency_mode`) antes de tocar el cupo;
 //   4. llama a la tarea, que pasa por el servicio: reservar cupo → generar → registrar.
 //
 // El permiso de «crear contenido en la marca» lo impone la base de datos al
@@ -27,6 +29,8 @@ export interface BrandProfileLookup {
   brandVisible: boolean;
   /** Perfil activo (`brand_profiles.data`), o `null` si la marca aún no tiene. */
   profile: Json | null;
+  /** Cómo se redacta en la marca (`brands.ai_mode`). En `agency` no se usa este servicio. */
+  aiMode: 'api' | 'agency';
 }
 
 export interface AiGenerateDeps {
@@ -116,6 +120,15 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
       // 3. Perfil de marca, con la identidad del usuario.
       const lookup = await deps.loadBrandProfile(accessToken, brandId);
       if (!lookup.brandVisible) return fail(404, 'brand_not_found', 'No existe esa marca o no tienes acceso a ella.');
+      // Modo agencia: la marca ha decidido que redacta la agencia por encargo.
+      // Se impone aquí (no solo ocultando botones) y antes de reservar cupo.
+      if (lookup.aiMode === 'agency') {
+        return fail(
+          409,
+          'agency_mode',
+          'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
+        );
+      }
       if (action !== 'profile.proposal' && lookup.profile === null) {
         return fail(409, 'brand_profile_missing', 'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.');
       }

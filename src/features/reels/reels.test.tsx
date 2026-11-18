@@ -182,4 +182,64 @@ describe('Reels en la biblioteca', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByDisplayValue('reel-corte-ritmico.mp4')).toBeInTheDocument();
   });
+
+  it('quien edita cancela un encargo en cola o montándose; lo terminado no se cancela', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
+    seedLibrary();
+    fake.tables.jobs = [
+      job('j-cola', 'queued', { created_at: '2026-11-18T10:04:00Z' }),
+      job('j-montando', 'running', { created_at: '2026-11-18T10:03:00Z' }),
+      job('j-fallo', 'failed', { created_at: '2026-11-18T10:01:00Z', last_error: 'x' }),
+    ];
+    fake.rpc('cancel_media_job', (args) => {
+      const row = fake.rows('jobs').find((j) => j.id === args.p_job_id)!;
+      Object.assign(row, { status: 'cancelled', locked_by: null, locked_until: null });
+      return row;
+    });
+    const { user } = renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    const buttons = await screen.findAllByTestId('reel-job-cancel');
+    expect(buttons.map((b) => b.textContent)).toEqual(['Cancelar el encargo', 'Detener el montaje']);
+
+    await user.click(buttons[1]!);
+    expect(await screen.findByText('¿Cancelar este reel?')).toBeInTheDocument();
+    await user.click(screen.getByTestId('confirm-action'));
+    await screen.findByText(/Reel cancelado/);
+    expect(fake.callsTo('cancel_media_job', 'rpc')[0]!.payload).toEqual({ p_job_id: 'j-montando' });
+    await waitFor(() =>
+      expect(screen.getAllByTestId('reel-job-status').map((s) => s.textContent)).toEqual([
+        'En cola',
+        'Cancelado',
+        'Falló',
+      ]),
+    );
+    expect(screen.getAllByTestId('reel-job-cancel')).toHaveLength(1);
+  });
+
+  it('quien solo ve la marca no puede cancelar', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'member', brandRole: 'reviewer' });
+    seedLibrary();
+    fake.tables.jobs = [job('j-cola', 'queued')];
+    renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    expect(await screen.findByTestId('reel-job-status')).toHaveTextContent('En cola');
+    expect(screen.queryByTestId('reel-job-cancel')).not.toBeInTheDocument();
+  });
+
+  it('avisa antes de montar si el reel puede pasar de 50 MB', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner' });
+    seedLibrary();
+    fake.rows('media_assets').push(asset('clip-largo', 'video', 'sala.mp4', 'video/mp4', 20_000));
+    const { user } = renderApp(`${BRAND_BASE}/biblioteca/reels`);
+    await user.click(await screen.findByText('Pase lateral'));
+    const add = await screen.findByRole('button', { name: 'Añadir «sala.mp4»' });
+    await user.click(add);
+    expect(screen.getByTestId('reel-size')).toHaveTextContent(/MB/);
+    expect(screen.queryByTestId('reel-size-warning')).not.toBeInTheDocument();
+    for (let i = 0; i < 8; i++) await user.click(add);
+    expect(screen.getByTestId('reel-size-warning')).toHaveTextContent(/Puede pasar de 50 MB/);
+    // Es un aviso: se puede encargar igual.
+    expect(screen.getByTestId('reel-submit')).toBeEnabled();
+  });
 });

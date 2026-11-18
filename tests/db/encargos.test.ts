@@ -441,3 +441,121 @@ describe('modo de IA de la marca', () => {
     await denied(db, duena, `update public.brands set ai_mode = 'otro' where id = $1`, [marca], /check constraint/);
   });
 });
+
+describe('avisos dentro de la aplicación', () => {
+  const avisos = (user: TestUser, request?: string) =>
+    as<{ kind: string; request_id: string; read_at: string | null }>(
+      db,
+      user,
+      `select kind, request_id, read_at from public.request_notifications
+       where ($1::uuid is null or request_id = $1) order by created_at`,
+      [request ?? null],
+    );
+  const sinLeer = async (user: TestUser, request: string) =>
+    (await avisos(user, request)).filter((a) => a.read_at === null).map((a) => a.kind);
+
+  it('un encargo nuevo avisa a quien puede prepararlo; la entrega, a quien lo pidió', async () => {
+    const pedido = await pedir(cliente);
+    // Quien edita la marca (también la propietaria de la organización); nadie más, ni quien lo pide.
+    for (const user of [agencia, otraSesion, duena]) {
+      expect(await sinLeer(user, pedido.id), user.email).toEqual(['request_created']);
+    }
+    for (const user of [cliente, revisor, lector]) expect(await avisos(user, pedido.id), user.email).toEqual([]);
+
+    await rpc(agencia, 'take_content_request', { p_request_id: pedido.id });
+    await rpc(agencia, 'deliver_content_request', {
+      p_request_id: pedido.id,
+      p_data: DOC('Hola'),
+      p_schema_version: 1,
+    });
+    expect(await sinLeer(cliente, pedido.id)).toEqual(['request_delivered']);
+    // Quien entrega no se avisa a sí mismo.
+    expect((await avisos(agencia, pedido.id)).map((a) => a.kind)).toEqual(['request_created']);
+  });
+
+  it('quien edita y pide un encargo no se avisa a sí mismo', async () => {
+    const pedido = await pedir(agencia);
+    expect(await avisos(agencia, pedido.id)).toEqual([]);
+    expect(await sinLeer(otraSesion, pedido.id)).toEqual(['request_created']);
+  });
+
+  it('marcar como leído: de un encargo o todos los de la marca, y solo los propios', async () => {
+    const uno = await pedir(cliente);
+    const dos = await pedir(cliente);
+    const [marcados] = await as<{ n: number }>(
+      db,
+      agencia,
+      `select public.mark_request_notifications_read($1, $2) as n`,
+      [marca, uno.id],
+    );
+    expect(marcados!.n).toBe(1);
+    expect(await sinLeer(agencia, uno.id)).toEqual([]);
+    expect(await sinLeer(agencia, dos.id)).toEqual(['request_created']);
+    // Los de otra persona no se tocan.
+    expect(await sinLeer(otraSesion, uno.id)).toEqual(['request_created']);
+    await as(db, agencia, `select public.mark_request_notifications_read($1)`, [marca]);
+    expect(await sinLeer(agencia, dos.id)).toEqual([]);
+    // Nadie escribe avisos a mano.
+    await denied(
+      db,
+      agencia,
+      `insert into public.request_notifications (user_id, request_id, brand_id, organization_id, kind)
+       values ($1, $2, $3, $4, 'request_created')`,
+      [cliente.id, uno.id, marca, org],
+    );
+    await denied(db, agencia, `update public.request_notifications set read_at = null where request_id = $1`, [uno.id]);
+  });
+
+  it('un encargo cancelado o aceptado deja de avisar', async () => {
+    const pedido = await pedir(cliente);
+    await rpc(cliente, 'cancel_content_request', { p_request_id: pedido.id });
+    expect(await sinLeer(agencia, pedido.id)).toEqual([]);
+  });
+
+  it('quien pierde el acceso a la marca deja de ver sus avisos', async () => {
+    const pasajera = await createUser(db, 'pasajera@cliente.test', 'Pasajera');
+    await join(db, duena, pasajera, org, 'member', marca, 'editor');
+    const pedido = await pedir(cliente);
+    expect(await sinLeer(pasajera, pedido.id)).toEqual(['request_created']);
+    await as(db, duena, `delete from public.brand_members where brand_id = $1 and user_id = $2`, [marca, pasajera.id]);
+    expect(await avisos(pasajera, pedido.id)).toEqual([]);
+  });
+});
+
+describe('entregar desde la aplicación', () => {
+  it('sin clave de sesión: la aplicación toma y entrega; la herramienta (con clave) es otra sesión', async () => {
+    const pedido = await pedir(cliente);
+    const tomado = await rpc(agencia, 'take_content_request', { p_request_id: pedido.id, p_claim_token: null });
+    expect(tomado).toMatchObject({ status: 'in_progress', claimed_by: agencia.id, claim_token: null });
+    // La misma cuenta desde la herramienta, con su clave, no puede quitárselo ni entregar.
+    await denied(
+      db,
+      agencia,
+      `select public.take_content_request($1, 'sesion-herramienta')`,
+      [pedido.id],
+      /otra persona u otra sesión/,
+    );
+    await denied(
+      db,
+      agencia,
+      `select public.deliver_content_request($1, $2::jsonb, 1, 'sesion-herramienta')`,
+      [pedido.id, JSON.stringify(DOC('x'))],
+      /otra persona u otra sesión/,
+    );
+    // Entregar una pieza existente = su documento como versión de la pieza del encargo.
+    const entregado = await rpc(agencia, 'deliver_content_request', {
+      p_request_id: pedido.id,
+      p_data: DOC('Ya llega el otoño'),
+      p_schema_version: 1,
+      p_claim_token: null,
+      p_title: 'Menú de otoño',
+      p_change_note: 'Entregado desde la aplicación',
+    });
+    expect(entregado).toMatchObject({ status: 'delivered', delivered_version: 1 });
+    const [nota] = await db.query<{ body: string }>(
+      `select body from public.content_request_comments where request_id = $1 and status = 'delivered'`,
+      [pedido.id],
+    );
+    expect(nota!.body).toBe('Entregado desde la aplicación');
+  });
+});

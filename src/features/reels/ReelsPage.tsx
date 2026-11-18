@@ -5,7 +5,7 @@
 // Vive dentro de la Biblioteca (no es un área del menú): parte de sus recursos
 // y deja allí el resultado. El área «Crear» (docs/03-experiencia-de-usuario.md)
 // no existe todavía; cuando exista, podrá encargar reels con la misma función.
-import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2, XCircle } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  ConfirmDialog,
   EmptyState,
   ErrorState,
   Field,
@@ -28,13 +29,14 @@ import { mediaWorkerEnabled } from '@/config/app';
 import { useSignedUrls } from '@/features/library/api';
 import { useBrand } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
-import { cn, formatDateTime } from '@/lib/utils';
-import { useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
+import { cn, formatBytes, formatDateTime } from '@/lib/utils';
+import { useCancelMediaJob, useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
 import {
   buildReelInput,
   describeJob,
   estimateDuration,
   formatSeconds,
+  isActive,
   jobPieceCount,
   jobTemplateName,
   MAX_PIECES,
@@ -45,6 +47,7 @@ import {
   type ReelText,
   type TextPosition,
 } from './plan';
+import { estimateReelSize } from './size';
 import { REEL_TEMPLATES } from './templates';
 
 const POSITION_LABEL: Record<TextPosition, string> = { top: 'Arriba', center: 'Centro', bottom: 'Abajo' };
@@ -96,7 +99,7 @@ function ReelsScreen() {
         ) : (
           <Notice>Solo quien edita la marca puede montar reels. Aquí puedes ver los encargos y su estado.</Notice>
         )}
-        <ReelJobs brandId={brand.id} />
+        <ReelJobs brandId={brand.id} canCancel={canEdit} />
       </div>
     </>
   );
@@ -121,7 +124,16 @@ function ReelBuilder({ brandId }: { brandId: string }) {
   );
   const urls = useSignedUrls(thumbPaths);
   const estimate = template ? estimateDuration(template, pieces) : { total: 0 };
-  const problems = reelProblems(template, pieces, texts);
+  const size = template ? estimateReelSize(template, pieces) : null;
+  const problems = [
+    ...reelProblems(template, pieces, texts),
+    // Si ni en el caso favorable cabe, el trabajador lo rechazará seguro: no se encarga.
+    ...(size?.verdict === 'exceeds'
+      ? [
+          `El reel pesaría al menos ${formatBytes(size.low)} y el almacenamiento admite ${formatBytes(size.limit)} por archivo. Acórtalo o usa menos clips.`,
+        ]
+      : []),
+  ];
   const maxSeconds = template?.timing.maxTotalSeconds ?? 0;
 
   const touch = () => {
@@ -464,6 +476,22 @@ function ReelBuilder({ brandId }: { brandId: string }) {
               style={{ width: `${maxSeconds ? Math.min(100, (estimate.total / maxSeconds) * 100) : 0}%` }}
             />
           </div>
+          {size && pieces.length > 0 && (
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <span className="font-medium">Peso estimado</span>
+              <span data-testid="reel-size">
+                {formatBytes(size.low)} – {formatBytes(size.high)}
+              </span>
+            </div>
+          )}
+          {size?.verdict === 'maybe' && (
+            <div data-testid="reel-size-warning">
+              <Notice tone="warning">
+                Puede pasar de {formatBytes(size.limit)}, el máximo que admite el almacenamiento por archivo; si pasa,
+                el montaje fallará al final. Para asegurarlo, acorta el reel o usa menos segundos de clip.
+              </Notice>
+            </div>
+          )}
           {problems.length > 0 && pieces.length > 0 && (
             <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
               {problems.map((p) => (
@@ -491,8 +519,18 @@ function ReelBuilder({ brandId }: { brandId: string }) {
   );
 }
 
-function ReelJobs({ brandId }: { brandId: string }) {
+function ReelJobs({ brandId, canCancel }: { brandId: string; canCancel: boolean }) {
   const jobs = useReelJobs(brandId);
+  const cancel = useCancelMediaJob(brandId);
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const confirmCancel = () => {
+    if (!cancelling) return;
+    cancel.mutate(cancelling, {
+      onSuccess: () => toast.success('Reel cancelado. No se montará ni llegará a la biblioteca.'),
+      onError: (error) => toast.error(translateError(error)),
+      onSettled: () => setCancelling(null),
+    });
+  };
   return (
     <Card className="self-start">
       <CardHeader title="Encargos recientes" />
@@ -526,6 +564,17 @@ function ReelJobs({ brandId }: { brandId: string }) {
                       {view.detail}
                     </p>
                   )}
+                  {canCancel && isActive(job) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCancelling(job.id)}
+                      data-testid="reel-job-cancel"
+                    >
+                      <XCircle className="h-4 w-4" aria-hidden />
+                      {job.status === 'running' ? 'Detener el montaje' : 'Cancelar el encargo'}
+                    </Button>
+                  )}
                   {view.assetId && (
                     <Link
                       to={`..?recurso=${view.assetId}`}
@@ -542,6 +591,15 @@ function ReelJobs({ brandId }: { brandId: string }) {
           </ul>
         )}
       </CardBody>
+      <ConfirmDialog
+        open={cancelling !== null}
+        onOpenChange={(open) => !open && !cancel.isPending && setCancelling(null)}
+        title="¿Cancelar este reel?"
+        description="Si ya se está montando, se detiene. No se podrá retomar: para tenerlo habrá que encargarlo otra vez."
+        confirmLabel="Sí, cancelarlo"
+        onConfirm={confirmCancel}
+        loading={cancel.isPending}
+      />
     </Card>
   );
 }

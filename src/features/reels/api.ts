@@ -85,3 +85,17 @@ export function useRequestReel(brandId: string) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: reelKeys.jobs(brandId) }),
   });
 }
+
+/**
+ * Cancela un trabajo de medios (reel o recorte) en cola o montándose. Lo puede
+ * hacer quien edita la marca (`cancel_media_job`); el trabajador lo deja al
+ * renovar su reserva y no llega nada a la biblioteca.
+ */
+export function useCancelMediaJob(brandId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (jobId: string) => unwrap(await supabase.rpc('cancel_media_job', { p_job_id: jobId })),
+    // La clave de los reels es el prefijo de la de los recortes: se refrescan las dos.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: reelKeys.jobs(brandId) }),
+  });
+}

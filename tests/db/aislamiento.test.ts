@@ -180,6 +180,7 @@ const TENANT_TABLES = [
   'content_versions',
   'content_requests',
   'content_request_comments',
+  'request_notifications',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -270,6 +271,7 @@ describe('aislamiento entre organizaciones', () => {
       'content_versions',
       'content_requests',
       'content_request_comments',
+      'request_notifications',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -637,6 +639,34 @@ describe('invitaciones', () => {
     );
     expect(fila!.role).toBe('member');
   });
+
+  it('la actividad registra las altas de una invitación como tales, y solo en esa transacción', async () => {
+    const nueva = await createUser(db, 'actividad@a.test');
+    const [inv] = await as<{ token: string; invitation_id: string }>(
+      db,
+      ana,
+      `select invitation_id, token from public.create_invitation($1, $2, 'member', $3, 'editor')`,
+      [orgA, nueva.email, marcaA1],
+    );
+    await as(db, nueva, `select public.accept_invitation($1)`, [inv!.token]);
+    const filas = await db.query<{ entity_type: string; actor_id: string; via: string | null }>(
+      `select entity_type, actor_id, data ->> 'via' as via from public.audit_logs
+       where actor_id = $1 order by id`,
+      [nueva.id],
+    );
+    expect(filas.map((f) => [f.entity_type, f.via])).toEqual([
+      ['organization_members', 'invitation'],
+      ['brand_members', 'invitation'],
+      ['invitations', 'invitation'],
+    ]);
+    // La marca no se queda pegada: lo siguiente que se registra no la lleva.
+    await as(db, ana, `select * from public.create_invitation($1, 'otra-mas@a.test')`, [orgA]);
+    const [siguiente] = await db.query<{ via: string | null }>(
+      `select data ->> 'via' as via from public.audit_logs where actor_id = $1 order by id desc limit 1`,
+      [ana.id],
+    );
+    expect(siguiente!.via).toBeNull();
+  });
 });
 
 describe('almacenamiento', () => {
@@ -971,6 +1001,48 @@ describe('IA y cola de trabajos', () => {
     ).toEqual([]);
   });
 
+  it('cancelar un trabajo de medios: solo de una marca que se edita y solo de medios', async () => {
+    const reel = async (org: string, brand: string, key: string) =>
+      (
+        await serviceRpc<{ id: string }>(db, 'enqueue_job', {
+          p_organization_id: org,
+          p_brand_id: brand,
+          p_kind: 'media.reel.template',
+          p_payload: { output: { path: `${org}/${brand}/reels/${key}.mp4` } },
+          p_idempotency_key: key,
+        })
+      ).id;
+    const reelA1 = await reel(orgA, marcaA1, 'cancelar-a1');
+    const reelB1 = await reel(orgB, marcaB1, 'cancelar-b1');
+    const reelG1 = await reel(agencia, marcaG1, 'cancelar-g1');
+    const cancelar = (user: TestUser | null, job: string, pattern = /No tienes permiso para cancelar/) =>
+      denied(db, user, `select public.cancel_media_job($1)`, [job], pattern);
+    // Otra organización, otra marca de la misma, sin permiso de edición o sin sesión.
+    await cancelar(ana, reelB1);
+    await cancelar(berta, reelA1);
+    await cancelar(editorA, reelB1);
+    await cancelar(clienteA, reelA1);
+    await cancelar(sinMarcaA, reelA1);
+    await cancelar(ana, reelG1); // lectora en la agencia
+    await cancelar(superadmin, reelA1);
+    await cancelar(ajeno, reelA1);
+    await cancelar(null, reelA1, /permission denied for function/);
+    // Un trabajo que no es de medios (o de toda la organización) no se cancela por aquí.
+    await cancelar(ana, jobA1);
+    await cancelar(ana, jobOrgA);
+    for (const id of [reelA1, reelB1, reelG1, jobA1, jobOrgA]) {
+      const [row] = await db.query<{ status: string }>(`select status from public.jobs where id = $1`, [id]);
+      expect(row!.status, id).toBe('queued');
+    }
+    // Quien edita la marca, sí.
+    const [hecho] = await as<{ status: string }>(db, editorA, `select status from public.cancel_media_job($1)`, [
+      reelA1,
+    ]);
+    expect(hecho!.status).toBe('cancelled');
+    await serviceRpc(db, 'cancel_job', { p_job_id: reelB1 });
+    await serviceRpc(db, 'cancel_job', { p_job_id: reelG1 });
+  });
+
   it('ser superadministrador no abre las generaciones ni el consumo de los clientes', async () => {
     for (const table of ['usage_quotas', 'ai_generations', 'ai_usage', 'jobs']) {
       expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
@@ -1131,6 +1203,36 @@ describe('encargos (modo agencia)', () => {
     await denied(db, null, `select * from public.pending_content_requests()`, [], noFunction);
     await denied(db, null, `select public.take_content_request($1)`, [requestA1], noFunction);
     await denied(db, null, `select public.accept_content_request($1)`, [requestA1], noFunction);
+    await denied(db, null, `select public.mark_request_notifications_read($1)`, [marcaA1], noFunction);
+  });
+
+  it('los avisos de encargos son de cada persona y de su organización', async () => {
+    const mine = async (user: TestUser) =>
+      (await as<{ id: string }>(db, user, `select request_id::text as id from public.request_notifications`))
+        .map((r) => r.id)
+        .sort();
+    // El encargo de A1 (pedido por el cliente) avisa a quien edita A1: Ana, la administradora y el editor.
+    expect(await mine(editorA)).toEqual([requestA1]);
+    expect(await mine(clienteA)).toEqual([]);
+    expect(await mine(sinMarcaA)).toEqual([]);
+    expect(await mine(berta)).toEqual([]); // Berta pidió el suyo: no se avisa a sí misma.
+    expect(await mine(superadmin)).toEqual([]);
+    expect(await mine(ajeno)).toEqual([]);
+    // Ninguna fila de otra persona, aunque sea de la misma organización.
+    const [ajenos] = await as<{ n: number }>(
+      db,
+      editorA,
+      `select count(*)::int as n from public.request_notifications where user_id <> $1`,
+      [editorA.id],
+    );
+    expect(ajenos!.n).toBe(0);
+    // Marcar como leído solo toca los propios, también con la marca ajena.
+    await as(db, berta, `select public.mark_request_notifications_read($1)`, [marcaA1]);
+    const [sigue] = await db.query<{ read_at: string | null }>(
+      `select read_at from public.request_notifications where user_id = $1 and request_id = $2`,
+      [editorA.id, requestA1],
+    );
+    expect(sigue!.read_at).toBeNull();
   });
 });
 
@@ -1289,9 +1391,9 @@ describe('imágenes generadas con IA en la biblioteca', () => {
   it('la otra organización no ve ni el recurso ni su procedencia', async () => {
     const deA = await generated(orgA, marcaA1, genA1);
     const deB = await generated(orgB, marcaB1, genB1);
-    expect(await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA])).toEqual([
-      { p: 'encargo privado' },
-    ]);
+    expect(
+      await as(db, ana, `select provenance->>'prompt' as p from public.media_assets where id = $1`, [deA]),
+    ).toEqual([{ p: 'encargo privado' }]);
     expect(
       await as(db, ana, `select 1 from public.media_assets where id = $1 or provenance->>'generation_id' = $2`, [
         deB,

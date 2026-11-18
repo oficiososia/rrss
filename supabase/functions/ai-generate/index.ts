@@ -54,9 +54,10 @@ const handler = createAiGenerateHandler({
       ...options,
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
     });
-    const brand = await asUser.from('brands').select('id').eq('id', brandId).maybeSingle();
+    const brand = await asUser.from('brands').select('id, ai_mode').eq('id', brandId).maybeSingle();
     if (brand.error) throw new Error('No se ha podido leer la marca');
-    if (!brand.data) return { brandVisible: false, profile: null };
+    if (!brand.data) return { brandVisible: false, profile: null, aiMode: 'api' };
+    const aiMode = brand.data.ai_mode === 'agency' ? 'agency' : 'api';
     const profile = await asUser
       .from('brand_profiles')
       .select('data')
@@ -64,7 +65,7 @@ const handler = createAiGenerateHandler({
       .eq('status', 'active')
       .maybeSingle();
     if (profile.error) throw new Error('No se ha podido leer el perfil de marca');
-    return { brandVisible: true, profile: (profile.data?.data as Json | undefined) ?? null };
+    return { brandVisible: true, profile: (profile.data?.data as Json | undefined) ?? null, aiMode };
   },
 
   log: (event, data) => console.error(`[ai-generate] ${event}`, JSON.stringify(data)),
