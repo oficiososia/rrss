@@ -5,7 +5,7 @@ Estado a 19/11/2026:
 | Qué | Estado |
 |---|---|
 | Planes como datos, suscripción por organización y límites impuestos por la base de datos | Implementado y probado en base de datos (`tests/db/planes.test.ts`, `tests/db/aislamiento.test.ts`) |
-| Panel de margen, edición de planes y asignación manual en Plataforma; «Configuración → Plan» | Implementado y probado en componentes (`src/features/billing/planes.test.tsx`); escenario e2e 13 escrito, **sin ejecutar** |
+| Panel de margen, edición de planes y asignación manual en Plataforma; «Configuración → Plan» | Implementado y probado en componentes (`src/features/billing/planes.test.tsx`); escenario e2e `15-planes` escrito, **sin ejecutar** |
 | Stripe: Checkout, portal de cliente y webhook | Escrito contra la documentación oficial y probado con un Stripe simulado y avisos firmados en la prueba (`tests/db/facturacion-stripe.test.ts`). **Sin probar contra Stripe real** (ni en modo de pruebas) |
 
 ## Modelo

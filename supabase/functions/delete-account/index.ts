@@ -1,7 +1,7 @@
 // Edge Function `delete-account` (RGPD, derecho de supresión): borra la cuenta
 // de quien llama. Lógica y garantías en ../_shared/gdpr/handler.ts.
 // Sin desplegar todavía: probada en Node contra las migraciones reales
-// (tests/db/rgpd.test.ts) y en el escenario e2e 14 (sin ejecutar).
+// (tests/db/rgpd.test.ts) y en el escenario e2e 16 (sin ejecutar).
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createGdprDeps, type GdprAdminClient, type GdprAnonClient } from '../_shared/gdpr/deps.ts';
 import { createDeleteAccountHandler } from '../_shared/gdpr/handler.ts';

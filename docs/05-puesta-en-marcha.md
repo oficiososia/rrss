@@ -82,7 +82,12 @@ prueba llama con la clave de servicio local porque en local no hay secretos de
 Vault), `11-reels.spec.ts` (encargar un reel, montarlo con el trabajador y
 verlo en la biblioteca) y `12-modo-agencia-encargos.spec.ts` (una clienta pide
 un encargo, la herramienta `agency/` lo toma y entrega, la clienta pide un
-cambio y acepta; necesita `npm ci` en `agency/`).
+cambio y acepta; necesita `npm ci` en `agency/`). Siguen, sin ejecutar todavía en local, los de las Fases 3 a 6, en el orden de
+las fases: `13-publicacion-calendario.spec.ts` (conectar Instagram con la Graph
+API simulada, programar y publicar), `14-campanas-plan-por-instruccion.spec.ts`
+(plan de campaña y borradores), `15-planes.spec.ts` (margen y asignación de
+planes; deja la organización B en «Heredado») y `16-rgpd.spec.ts` (registro con
+consentimiento, descargar mis datos y borrar una cuenta de usar y tirar).
 
 El proveedor simulado solo se activa con `AI_E2E_SIMULATED_PROVIDER=true` **y**
 un Supabase local (dentro de Docker la función ve `SUPABASE_URL=http://kong:8000`,
