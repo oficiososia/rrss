@@ -53,6 +53,8 @@ export async function startConnect(
   const { data, error } = await userRpc('social_oauth_begin', { p_brand_id: input.brandId, p_network: input.network });
   if (error) {
     if (error.code === '42501' || error.code === '28000') throw new ConnectError(403, 'forbidden', error.message);
+    // Planes: la publicación no está en el plan de la organización.
+    if (error.code === 'PL002') throw new ConnectError(402, 'plan_feature', error.message);
     throw new ConnectError(400, 'refused', error.message);
   }
   const state = String(data);

@@ -138,7 +138,9 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
         return fail(
           409,
           'agency_mode',
-          'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
+          action === 'campaign.plan'
+            ? 'Esta marca trabaja por encargo a la agencia: pide el plan de campaña desde «Campañas».'
+            : 'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
         );
       }
       if (action !== 'profile.proposal' && lookup.profile === null) {

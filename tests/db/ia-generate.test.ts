@@ -304,6 +304,14 @@ describe('modo agencia', () => {
       expect(response).toMatchObject({ status: 409, body: { error: { code: 'agency_mode', retryable: false } } });
       expect((response.body.error as Row).message).toMatch(/Encargos/);
     }
+    // El plan de campaña también se pide a la agencia (desde Campañas).
+    const plan = await t.call(t.token, {
+      action: 'campaign.plan',
+      brandId: t.brand,
+      input: { instruction: 'Otoño', startDate: '2026-12-01', endDate: '2026-12-07', targets: [] },
+    });
+    expect(plan).toMatchObject({ status: 409, body: { error: { code: 'agency_mode', retryable: false } } });
+    expect((plan.body.error as Row).message).toMatch(/Campañas/);
     expect(t.provider.calls).toEqual([]);
     // Ni reserva de cupo ni generación registrada.
     expect(await generations(t.org)).toEqual([]);
