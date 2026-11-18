@@ -3,32 +3,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 
-// Propuesta de perfil con IA desde la pestaña «Fuentes»: solo con las fuentes
-// de texto plano, que son las únicas que ya guardan su contenido legible.
+// Propuesta de perfil con IA desde la pestaña «Fuentes»: con el texto que el
+// trabajador ya ha extraído de las fuentes (PDF, Word, texto, web).
 
 const SOURCES_URL = `${BRAND_BASE}/marca?seccion=fuentes`;
-const TXT_PATH = `${ORG_ID}/${BRAND_ID}/sources/notas.txt`;
 
-function source(id: string, kind: 'text' | 'pdf', title: string, path: string) {
+type Kind = 'text' | 'pdf' | 'website';
+
+function source(id: string, kind: Kind, title: string, text: string | null, createdAt: string) {
   return {
     id,
     brand_id: BRAND_ID,
     organization_id: ORG_ID,
     kind,
     title,
-    storage_path: path,
-    url: null,
-    mime_type: kind === 'text' ? 'text/plain' : 'application/pdf',
+    storage_path: kind === 'website' ? null : `${ORG_ID}/${BRAND_ID}/sources/${id}`,
+    url: kind === 'website' ? 'https://marca.test/' : null,
+    mime_type: kind === 'text' ? 'text/plain' : kind === 'pdf' ? 'application/pdf' : null,
     bytes: 100,
-    status: 'pending',
+    status: text === null ? 'processing' : 'ready',
     error: null,
     created_by: ME.id,
-    created_at: '2026-11-10T09:00:00Z',
-    updated_at: '2026-11-10T09:00:00Z',
+    created_at: createdAt,
+    updated_at: createdAt,
+    extracted_text: text,
+    extracted_chars: text?.length ?? null,
+    extraction: text === null ? null : { format: kind, truncated: false },
+    extracted_at: text === null ? null : createdAt,
+    extraction_job_id: `job-${id}`,
   };
 }
 
-function seed(kinds: ('text' | 'pdf')[]) {
+function seed(rows: ReturnType<typeof source>[]) {
   seedWorkspace({ orgRole: 'owner' });
   fake.tables.brand_profiles = [
     {
@@ -45,12 +51,7 @@ function seed(kinds: ('text' | 'pdf')[]) {
       created_at: '2026-11-01T10:00:00Z',
     },
   ];
-  fake.tables.brand_knowledge_sources = kinds.map((kind, i) =>
-    kind === 'text'
-      ? source(`s-${i}`, 'text', 'notas.txt', TXT_PATH)
-      : source(`s-${i}`, 'pdf', 'Manual.pdf', `${ORG_ID}/${BRAND_ID}/sources/manual.pdf`),
-  );
-  fake.files[TXT_PATH] = 'Somos una casa de comidas de barrio.';
+  fake.tables.brand_knowledge_sources = rows;
   fake.rpc('save_brand_profile', (args) => {
     for (const row of fake.rows('brand_profiles')) row.status = 'archived';
     const row = { ...fake.rows('brand_profiles')[0]!, id: 'perfil-2', version: 2, status: 'active', data: args.p_data };
@@ -59,11 +60,15 @@ function seed(kinds: ('text' | 'pdf')[]) {
   });
 }
 
+const MANUAL = source('s-pdf', 'pdf', 'Manual.pdf', 'Somos una casa de comidas de barrio.', '2026-11-10T09:00:00Z');
+const WEB = source('s-web', 'website', 'marca.test', 'Menú del día y comida casera.', '2026-11-09T09:00:00Z');
+const PENDING = source('s-txt', 'text', 'notas.txt', null, '2026-11-11T09:00:00Z');
+
 const PROPOSAL = {
   action: 'profile.proposal',
   generationId: 'g-p',
   status: 'proposal',
-  sources: ['notas.txt'],
+  sources: ['Manual.pdf', 'marca.test'],
   notes: [],
   proposal: {
     business: { description: 'Casa de comidas de barrio', products: [], locations: [], valueProps: [] },
@@ -79,10 +84,11 @@ describe('Propuesta de perfil con IA', () => {
     vi.unstubAllEnvs();
   });
 
-  it('lee solo las fuentes de texto, y lo aceptado se guarda como versión nueva marcada como de la IA', async () => {
-    seed(['text', 'pdf']);
+  it('envía el texto extraído de las fuentes listas (PDF y web), y lo aceptado se guarda como versión nueva de la IA', async () => {
+    seed([PENDING, MANUAL, WEB]);
     fake.fn('ai-generate', () => ({ status: 200, body: PROPOSAL }));
     const { user } = renderApp(SOURCES_URL);
+    expect(await screen.findByText('Hay 1 fuente extrayendo su texto todavía.')).toBeInTheDocument();
     await user.click(await screen.findByTestId('profile-ai-propose'));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByTestId('ai-proposal-run'));
@@ -94,7 +100,12 @@ describe('Propuesta de perfil con IA', () => {
     expect(sent).toEqual({
       action: 'profile.proposal',
       brandId: BRAND_ID,
-      input: { sources: [{ title: 'notas.txt', text: 'Somos una casa de comidas de barrio.' }] },
+      input: {
+        sources: [
+          { title: 'Manual.pdf', text: 'Somos una casa de comidas de barrio.' },
+          { title: 'marca.test', text: 'Menú del día y comida casera.' },
+        ],
+      },
     });
     const saved = fake.callsTo('save_brand_profile', 'rpc')[0]!.payload as {
       p_data: { business: { description: string } };
@@ -106,18 +117,18 @@ describe('Propuesta de perfil con IA', () => {
     expect(saved.p_change_note).toBe('Propuesta de la IA: 1 campos aceptados');
   });
 
-  it('sin fuentes de texto no aparece', async () => {
-    seed(['pdf']);
+  it('sin fuentes con texto extraído no aparece', async () => {
+    seed([PENDING]);
     renderApp(SOURCES_URL);
-    await screen.findByText('Manual.pdf');
+    await screen.findByText('notas.txt');
     expect(screen.queryByTestId('profile-ai-propose')).not.toBeInTheDocument();
   });
 
   it('sin IA configurada en el entorno no aparece', async () => {
     vi.unstubAllEnvs();
-    seed(['text']);
+    seed([MANUAL]);
     renderApp(SOURCES_URL);
-    await screen.findByText('notas.txt');
+    await screen.findByText('Manual.pdf');
     await waitFor(() => expect(screen.queryByTestId('profile-ai-propose')).not.toBeInTheDocument());
   });
 });
