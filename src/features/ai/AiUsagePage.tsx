@@ -61,14 +61,21 @@ function QuotaCard({ orgId, periodStart }: { orgId: string; periodStart: string 
           <div className="space-y-4">
             <Notice tone="warning">
               <span data-testid="ai-no-quota">
-                Esta organización no tiene cupo de IA asignado, así que nadie puede usar la IA en sus marcas. El cupo lo
-                asigna la plataforma: pídeselo a quien la administra.
+                Esta organización no tiene cupo de IA asignado: su plan no incluye IA, así que nadie puede usarla en sus
+                marcas. Para tenerla, cambia de plan o pídeselo a quien administra la plataforma.
               </span>
             </Notice>
             {ledger.data.consumedMicros > 0 && <Figures ledger={ledger.data} limit={null} />}
           </div>
         ) : (
-          <Figures ledger={ledger.data} limit={Number(quota.data.limit_value)} />
+          <div className="space-y-3">
+            <p className="text-xs text-muted" data-testid="ai-quota-source">
+              {quota.data.source === 'plan'
+                ? `Cupo incluido en el plan «${quota.data.plan_name ?? ''}».`
+                : 'Cupo asignado por la plataforma (sustituye al del plan).'}
+            </p>
+            <Figures ledger={ledger.data} limit={Number(quota.data.limit_value)} />
+          </div>
         )}
       </CardBody>
     </Card>

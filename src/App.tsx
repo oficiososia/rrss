@@ -8,6 +8,7 @@ import { APP_NAME } from '@/config/app';
 import { LoginPage, RecoverPage, RegisterPage, ResetPasswordPage } from '@/features/auth/AuthPages';
 import { AuthProvider, RequireAuth, RequireGuest } from '@/features/auth/AuthProvider';
 import { AiUsageSettingsPage } from '@/features/ai/AiUsagePage';
+import { PlanSettingsPage } from '@/features/billing/PlanSettingsPage';
 import { InvitationPage } from '@/features/invitations/InvitationPage';
 import { BrandLayout, OrgLayout, RootRedirect } from '@/features/orgs/layouts';
 import { OrgHomePage } from '@/features/orgs/OrgHomePage';
@@ -117,6 +118,7 @@ export function App() {
                       <Route path="equipo" element={<TeamSettingsPage />} />
                       <Route path="actividad" element={<ActivitySettingsPage />} />
                       <Route path="ia" element={<AiUsageSettingsPage />} />
+                      <Route path="plan" element={<PlanSettingsPage />} />
                     </Route>
                     <Route path="m/:brandId" element={<BrandLayout />}>
                       <Route index element={<Navigate to="inicio" replace />} />

@@ -283,7 +283,9 @@ describe('cupo de IA', () => {
 });
 
 describe('reservas simultáneas', () => {
-  it('reservar bloquea la fila del cupo hasta el final de la transacción', async () => {
+  // Desde los planes (20261119310000) se bloquea la fila de la suscripción, que
+  // existe siempre, en vez de la del cupo sobrescrito.
+  it('reservar bloquea la fila de la suscripción hasta el final de la transacción', async () => {
     const t = await tenant(1000);
     const { sql, params } = rpcStatement('ai_reserve_generation', reserveArgs(t, 100));
     await db.exec('begin');
@@ -292,7 +294,7 @@ describe('reservas simultáneas', () => {
       // xmax = transacción que tiene bloqueada la fila: la siguiente reserva
       // de esta organización tiene que esperar a que esta termine.
       const [row] = await db.query<{ locked: boolean }>(
-        `select xmax = pg_current_xact_id()::xid as locked from public.usage_quotas where organization_id = $1`,
+        `select xmax = pg_current_xact_id()::xid as locked from public.subscriptions where organization_id = $1`,
         [t.org],
       );
       expect(row!.locked).toBe(true);

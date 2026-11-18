@@ -201,11 +201,13 @@ const TENANT_TABLES = [
   'content_comments',
   'scheduled_publications',
   'publication_attempts',
+  'subscriptions',
+  'billing_events',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
 // usuario con sesión y solo los escribe un superadministrador.
-const PLATFORM_TABLES = ['ai_media_models'];
+const PLATFORM_TABLES = ['ai_media_models', 'plans'];
 
 describe('catálogo: nada queda abierto por olvido', () => {
   it('todas las tablas de public tienen RLS activado', async () => {
@@ -293,6 +295,7 @@ describe('aislamiento entre organizaciones', () => {
       'content_requests',
       'content_request_comments',
       'request_notifications',
+      'subscriptions',
     ]) {
       const column = table === 'brands' ? 'organization_id' : 'organization_id';
       const rows = await as(db, berta, `select distinct ${column}::text as org from public.${table}`);
@@ -1653,5 +1656,88 @@ describe('publicación: cuentas, calendario, intentos y comentarios (Fase 3)', (
     }
     // El reloj tampoco lo ejecuta la clave de servicio: solo pg_cron.
     await expect(asService(db, `select private.social_publish_dispatch()`)).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe('planes y suscripciones (Fase 6)', () => {
+  it('cada organización solo ve su suscripción, y solo sus administradores', async () => {
+    expect(
+      (await as(db, ana, `select organization_id from public.subscriptions`)).map((r) => r.organization_id),
+    ).toEqual([orgA]);
+    expect(
+      (await as(db, berta, `select organization_id from public.subscriptions`)).map((r) => r.organization_id),
+    ).toEqual([orgB]);
+    // Un miembro sin administración no ve el dinero de su organización.
+    expect(await as(db, editorA, `select organization_id from public.subscriptions`)).toEqual([]);
+    expect(await as(db, sinMarcaA, `select organization_id from public.subscriptions`)).toEqual([]);
+    const todas = await as(db, superadmin, `select organization_id from public.subscriptions`);
+    expect(todas.map((r) => r.organization_id)).toEqual(expect.arrayContaining([orgA, orgB, agencia]));
+  });
+
+  it('nadie escribe a mano una suscripción, ni siquiera su propietaria', async () => {
+    const legacy = await db.query<{ id: string }>(`select id from public.plans where code = 'enterprise'`);
+    await denied(db, ana, `update public.subscriptions set plan_id = $1 where organization_id = $2`, [
+      legacy[0]!.id,
+      orgA,
+    ]);
+    await denied(db, ana, `insert into public.subscriptions (organization_id) values ($1)`, [orgA]);
+    await denied(db, ana, `delete from public.subscriptions where organization_id = $1`, [orgA]);
+  });
+
+  it('el plan y su uso solo los consultan los administradores de la organización', async () => {
+    const [propio] = await as<{ data: { plan: { code: string } } }>(
+      db,
+      ana,
+      `select public.organization_plan_usage($1) as data`,
+      [orgA],
+    );
+    expect(propio!.data.plan.code).toBe('legacy');
+    await denied(db, ana, `select public.organization_plan_usage($1)`, [orgB], /administradores/);
+    await denied(db, editorA, `select public.organization_plan_usage($1)`, [orgA], /administradores/);
+    await denied(db, ajeno, `select public.organization_plan_usage($1)`, [orgA], /administradores/);
+    await denied(db, null, `select public.organization_plan_usage($1)`, [orgA]);
+  });
+
+  it('los planes los lee cualquiera con sesión y solo los cambia un superadministrador', async () => {
+    const vistos = (await as(db, ajeno, `select code from public.plans order by sort_order`)).map((r) => r.code);
+    expect(vistos).toEqual(expect.arrayContaining(['trial', 'basic', 'professional', 'agency', 'enterprise']));
+    await denied(db, ana, `insert into public.plans (code, name) values ('pirata', 'Pirata')`);
+    expect(await as(db, ana, `update public.plans set price_micros = 0 where code = 'agency' returning id`)).toEqual(
+      [],
+    );
+    await denied(db, ana, `delete from public.plans where code = 'agency'`);
+    await denied(db, superadmin, `update public.plans set is_default = true where code = 'agency'`);
+    await denied(db, superadmin, `update public.plans set code = 'otro' where code = 'agency'`);
+  });
+
+  it('las funciones de superadministración y las de Stripe no las usa nadie más', async () => {
+    const [plan] = await db.query<{ id: string }>(`select id from public.plans where code = 'agency'`);
+    for (const user of [ana, adminA, editorA, ajeno]) {
+      await denied(db, user, `select public.admin_set_organization_plan($1, $2)`, [orgA, plan!.id]);
+      await denied(db, user, `select * from public.admin_billing_overview('2026-11-01')`);
+      await denied(db, user, `select public.admin_set_default_plan($1)`, [plan!.id]);
+      await denied(db, user, `select public.admin_clear_ai_quota($1)`, [orgA]);
+      await denied(db, user, `select public.billing_checkout_context($1, $2)`, [ana.id, orgA]);
+      await denied(db, user, `select public.billing_apply_stripe_event('evt_x', 'customer.subscription.updated')`);
+    }
+    expect(await as(db, ana, `select id from public.billing_events`)).toEqual([]);
+  });
+
+  it('los límites del plan no los esquiva nadie escribiendo directamente con su sesión', async () => {
+    // Una organización nueva con el plan «Prueba»: una marca y dos personas.
+    const owner = await createUser(db, 'limites@l.test');
+    const org = await createOrg(db, owner, 'Con límites');
+    const [prueba] = await db.query<{ id: string }>(`select id from public.plans where code = 'trial'`);
+    await as(db, superadmin, `select public.admin_set_organization_plan($1, $2)`, [org, prueba!.id]);
+    await createBrand(db, owner, org, 'Única');
+    await denied(
+      db,
+      owner,
+      `insert into public.brands (organization_id, name) values ($1, 'Segunda')`,
+      [org],
+      /límite de marcas/,
+    );
+    // La propietaria no puede subirse el plan ni el cupo.
+    await denied(db, owner, `select public.admin_set_organization_plan($1, null)`, [org]);
   });
 });

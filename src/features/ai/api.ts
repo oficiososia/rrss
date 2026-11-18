@@ -323,19 +323,37 @@ function nextPeriod(periodStart: string): string {
 }
 
 /** Cupo mensual de la organización, o `null` si no tiene. Lo leen sus administradores (RLS). */
+/**
+ * Cupo mensual de IA vigente de una organización: el que haya sobrescrito la
+ * plataforma (`usage_quotas`) o, si no hay, el de su plan (Fase 6). `null` si
+ * ninguno de los dos da cupo.
+ */
+export interface AiQuota {
+  limit_value: number;
+  source: 'override' | 'plan';
+  /** Nombre del plan, si el cupo sale de él. */
+  plan_name: string | null;
+}
+
 export function useAiQuota(orgId: string, enabled = true) {
   return useQuery({
     queryKey: aiKeys.quota(orgId),
     enabled,
-    queryFn: async (): Promise<UsageQuotaRow | null> =>
-      unwrap(
+    queryFn: async (): Promise<AiQuota | null> => {
+      const override = unwrap(
         await supabase
           .from('usage_quotas')
           .select('*')
           .eq('organization_id', orgId)
           .eq('metric', 'ai_cost_micros')
           .maybeSingle(),
-      ),
+      ) as UsageQuotaRow | null;
+      if (override) return { limit_value: Number(override.limit_value), source: 'override', plan_name: null };
+      const plan = unwrap(await supabase.rpc('organization_plan_usage', { p_organization_id: orgId }));
+      return plan.ai_limit_micros > 0
+        ? { limit_value: Number(plan.ai_limit_micros), source: 'plan', plan_name: plan.plan.name }
+        : null;
+    },
   });
 }
 

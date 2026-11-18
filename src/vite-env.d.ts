@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   readonly VITE_MEDIA_WORKER_ENABLED?: string;
   /** `true` si hay aplicación de Meta y publicador configurados: enseña conectar cuentas y programar para publicar. */
   readonly VITE_SOCIAL_PUBLISHING_ENABLED?: string;
+  /** `true` si las funciones de pago (Stripe) están desplegadas y configuradas: enseña contratar y cambiar de plan. */
+  readonly VITE_BILLING_ENABLED?: string;
 }
 interface ImportMeta {
   readonly env: ImportMetaEnv;

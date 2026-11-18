@@ -377,6 +377,9 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       const { code, message, details } = reservation.error;
       if (code === 'AI001') throw new AiError('quota_exhausted', message, { details: parseDetails(details) });
       if (code === 'AI002') throw new AiError('quota_missing', message);
+      // Planes (Fase 6): la tarea no está en el plan, o no queda espacio para el resultado.
+      if (code === 'PL002') throw new AiError('quota_missing', message);
+      if (code === 'PL001') throw new AiError('quota_exhausted', message);
       if (code === '42501') throw new AiError('forbidden', message);
       throw new AiError('internal', 'No se ha podido reservar el cupo de IA. Inténtalo de nuevo.', { retryable: true });
     }

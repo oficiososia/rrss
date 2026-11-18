@@ -408,6 +408,11 @@ verify_jwt = false
 [functions.social-connect]
 verify_jwt = false
 
+# Avisos de Stripe: no traen un JWT de Supabase; los autentica la firma
+# Stripe-Signature (_shared/billing/handlers.ts).
+[functions.billing-webhook]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   abrir,
+  asignarPlan,
   cerrarSesion,
   confirmarCorreo,
   correo,
@@ -50,7 +51,10 @@ test('Ana se registra, confirma el correo y crea una organización de tipo empre
   await s.page.getByTestId('org-submit').click();
   // Una empresa empieza por dar de alta su marca.
   await expect(s.page).toHaveURL(/\/o\/[0-9a-f-]{36}\/marcas\/nueva$/);
-  guardarEstado({ orgA: idDeUrl(s.page.url(), 'o') });
+  const orgA = idDeUrl(s.page.url(), 'o');
+  guardarEstado({ orgA });
+  // Sin los límites del plan «Prueba»: los escenarios siguientes son anteriores a los planes.
+  await asignarPlan(orgA, 'legacy');
   await expect(s.page.getByTestId('org-switcher').first()).toContainText(ORG_A);
 
   sinErrores(s, [ERROR_400]);
@@ -88,7 +92,9 @@ test('Bruno se registra y crea una organización independiente de tipo agencia',
   await s.page.getByTestId('org-submit').click();
   // Una agencia empieza por su panel de marcas.
   await expect(s.page).toHaveURL(/\/o\/[0-9a-f-]{36}$/);
-  guardarEstado({ orgB: idDeUrl(s.page.url(), 'o') });
+  const orgB = idDeUrl(s.page.url(), 'o');
+  guardarEstado({ orgB });
+  await asignarPlan(orgB, 'legacy');
   await expect(s.page.getByText(`Las marcas que gestiona ${ORG_B}.`)).toBeVisible();
   await expect(s.page.getByTestId('new-brand-empty')).toBeVisible();
 

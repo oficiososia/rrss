@@ -33,6 +33,8 @@ function seedUsage({ limit }: { limit: number | null }) {
     ledgerRow(4, null, 'reserve', M),
     ledgerRow(5, null, 'settle', -M, 500_000),
   ];
+  // Sin cupo sobrescrito, el cupo sale del plan (Fase 6): aquí, uno sin IA.
+  fake.rpc('organization_plan_usage', () => ({ plan: { name: 'Prueba' }, ai_limit_micros: 0 }));
   fake.rpc('ai_cost_by_organization', (args) =>
     String(args.p_from).startsWith(PERIOD)
       ? [{ organization_id: ORG_ID, organization_name: 'Grupo Demo', generations: 2, cost_micros: 2 * M }]
@@ -75,6 +77,16 @@ describe('Ajustes → Consumo de IA', () => {
     renderApp(`${BASE}/ajustes/ia`);
     expect(await screen.findByTestId('ai-no-quota')).toHaveTextContent(/no tiene cupo de IA asignado/);
     expect(screen.queryByTestId('ai-quota-available')).not.toBeInTheDocument();
+  });
+
+  it('sin cupo sobrescrito, enseña el cupo incluido en el plan', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    seedUsage({ limit: null });
+    fake.rpc('organization_plan_usage', () => ({ plan: { name: 'Profesional' }, ai_limit_micros: 10 * M }));
+    renderApp(`${BASE}/ajustes/ia`);
+    expect(await screen.findByTestId('ai-quota-limit')).toHaveTextContent('10,00 unidades de cuenta');
+    expect(screen.getByTestId('ai-quota-source')).toHaveTextContent('Cupo incluido en el plan «Profesional».');
+    expect(screen.queryByTestId('ai-no-quota')).not.toBeInTheDocument();
   });
 
   it('con el cupo comprometido entero, avisa de que está agotado', async () => {

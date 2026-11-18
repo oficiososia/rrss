@@ -90,6 +90,13 @@ export function describeAudit(
       return `cambió el cupo mensual de IA`;
     case 'usage_quotas:delete':
       return `retiró el cupo mensual de IA`;
+    // Planes (Fase 6): sin importes, como el cupo.
+    case 'subscriptions:insert':
+      return `dio de alta la suscripción de la organización`;
+    case 'subscriptions:update':
+      if (str(data, 'source') === 'stripe') return `actualizó la suscripción de pago (${str(data, 'status')})`;
+      if (str(data, 'source') === 'default') return `devolvió la organización al plan por defecto`;
+      return `cambió el plan de la organización`;
     case 'content_items:insert':
       return `creó el contenido «${str(data, 'title')}»`;
     case 'content_items:update':
