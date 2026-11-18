@@ -100,6 +100,30 @@ supabase db reset
 Al terminar, `supabase stop` libera los contenedores (los datos quedan en un
 volumen de Docker; `supabase stop --no-backup` los borra).
 
+### La prueba de extremo a extremo en CI
+
+El trabajo `e2e` de `.github/workflows/ci.yml` repite en GitHub Actions lo que
+se hace en local: instala la CLI de Supabase (`supabase/setup-cli`, versión
+fijada a la usada en local), levanta el stack desde `supabase/config.toml`
+(`supabase start -x studio,vector,imgproxy,analytics`), hace `npm ci` en la
+raíz, `worker/` y `agency/`, instala FFmpeg y Chromium y ejecuta
+`npm run test:e2e`. No usa secretos: la clave anónima del stack local es pública.
+
+- **No bloquea el PR todavía** (`continue-on-error: true`): hasta que se vea
+  estable en GitHub, un fallo deja el trabajo en rojo pero no rompe la
+  comprobación global. Cuando haya varias ejecuciones seguidas en verde, quitar
+  esa línea y marcarlo como obligatorio.
+- **Tiempo:** tope de 45 minutos; se estiman 20-30 (arranque del stack y de
+  Chromium unos 3-5 min la primera vez, y la tanda local de 57 escenarios).
+- **Cachés:** npm (tres `package-lock.json`) y el navegador de Playwright por
+  versión. Las imágenes de Docker de Supabase no se cachean: se bajan en cada
+  ejecución (guardarlas cuesta lo mismo y gasta el límite de caché).
+- **Si falla** se sube el artefacto `e2e-informe` (14 días): `playwright-report/`,
+  `test-results/` (capturas y trazas, con `E2E_TRAZA=1`) y `diagnostico/` (registros
+  de los contenedores). Una traza se abre con `npx playwright show-trace <zip>`.
+- En CI (`CI=true`) `global-setup.ts` espera hasta 60 s a que respondan la API y
+  el buzón, y el informe añade las anotaciones de GitHub.
+
 ## Entornos remotos
 
 El producto usa **cuentas nuevas**, sin relación con las de Casa Tomás.
