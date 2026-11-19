@@ -11,7 +11,7 @@ import { supabase } from '@/lib/supabase';
 
 // ── Tipos del contrato ────────────────────────────────────────────────────
 
-export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal' | 'analytics.summary';
+export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal' | 'analytics.summary' | 'editor.copilot';
 
 /** Interpretación de la analítica (Fase 5): solo hipótesis, cada una con los datos en que se apoya. */
 export interface AnalyticsSummaryResult {
@@ -278,6 +278,16 @@ export function summarizeAnalytics(
   period: { from: string; to: string },
 ): Promise<AnalyticsSummaryResult> {
   return invokeAiGenerate<AnalyticsSummaryResult>('analytics.summary', brandId, period);
+}
+
+/**
+ * Copiloto por voz (`editor.copilot`): lo dictado + el estado del documento →
+ * operaciones de editor. La respuesta NO se usa tal cual: la valida
+ * `parseCopilotResponse` (src/features/content/copilot/operations.ts) y las
+ * aplica `applyCopilotOperations`, que valida el documento resultante.
+ */
+export function requestEditorCopilot(brandId: string, input: unknown): Promise<{ action: 'editor.copilot' }> {
+  return invokeAiGenerate<{ action: 'editor.copilot' }>('editor.copilot', brandId, input);
 }
 
 /** Mutación sin `mutate`: solo `mutateAsync`. */

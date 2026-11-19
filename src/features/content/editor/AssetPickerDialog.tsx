@@ -1,8 +1,10 @@
-import { Images, Search } from 'lucide-react';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Images, Search, Upload } from 'lucide-react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, EmptyState, ErrorState, Input, Skeleton, Spinner } from '@/components/ui';
-import { useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { assetKeys, uploadAsset, useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { translateError } from '@/lib/errors';
 import type { MediaAssetRow } from '@/lib/database.types';
 
 interface PickerProps {
@@ -50,14 +52,83 @@ function AssetGrid({
   );
 }
 
-/** Elegir una imagen de la biblioteca de la marca. */
+/**
+ * Subir una foto desde el dispositivo a la biblioteca de la marca y elegirla
+ * en el mismo paso (queda en la biblioteca como cualquier otra).
+ */
+function UploadPhoto({
+  organizationId,
+  brandId,
+  onUploaded,
+}: {
+  organizationId: string;
+  brandId: string;
+  onUploaded: (asset: MediaAssetRow) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function upload(file: File) {
+    setBusy(true);
+    setError(null);
+    try {
+      const asset = await uploadAsset({ organizationId, brandId, file, kind: 'image' });
+      await queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
+      onUploaded(asset);
+    } catch (err) {
+      setError(translateError(err));
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = '';
+    }
+  }
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        aria-label="Subir una foto"
+        data-testid="picker-upload-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void upload(file);
+        }}
+      />
+      <Button variant="secondary" size="sm" loading={busy} onClick={() => input.current?.click()}>
+        <Upload className="h-4 w-4" aria-hidden />
+        Subir una foto
+      </Button>
+      <span className="text-xs text-muted">Se guarda también en la biblioteca.</span>
+      {error && (
+        <p role="alert" className="w-full text-sm text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Elegir una imagen de la biblioteca de la marca (o subirla, si se indica la organización). */
 export function ImagePickerDialog({
   brandId,
   libraryPath,
   open,
   onOpenChange,
   onPick,
-}: PickerProps & { brandId: string; libraryPath: string }) {
+  uploadTo,
+  title = 'Añadir imagen',
+}: PickerProps & {
+  brandId: string;
+  libraryPath: string;
+  /** Con la organización, se ofrece subir una foto desde el dispositivo. */
+  uploadTo?: { organizationId: string };
+  title?: string;
+}) {
   const [search, setSearch] = useState('');
   const deferred = useDeferredValue(search);
   const filters = useMemo(() => ({ kind: 'image' as const, tag: '', folder: '', search: deferred }), [deferred]);
@@ -68,10 +139,11 @@ export function ImagePickerDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Añadir imagen"
-      description="Fotos de la biblioteca de la marca."
+      title={title}
+      description={uploadTo ? 'Fotos de la biblioteca de la marca, o sube una nueva.' : 'Fotos de la biblioteca de la marca.'}
       size="lg"
     >
+      {uploadTo && <UploadPhoto organizationId={uploadTo.organizationId} brandId={brandId} onUploaded={onPick} />}
       <div className="relative mb-4">
         <Search
           className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"

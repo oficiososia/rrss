@@ -38,6 +38,18 @@ aislamiento entre organizaciones, ajustes, actividad y panel de plataforma.
 - **Fuentes de marca**: extracción de texto de PDF, Word y webs (con protección SSRF y `robots.txt`) para la propuesta de perfil; **tipografías de marca** en editor, exportación y reels.
 - **Modo agencia**: encargos con avisos, entrega desde la herramienta `agency/` o desde la interfaz; el servidor impide la IA de texto en marcas en modo agencia.
 
+### Copiloto por voz del editor (rama `f4/copiloto-voz`, 19/11/2026)
+Botón «Dictar» en el editor: cada frase dictada (Web Speech API, es-ES) se
+convierte con la IA de texto (tarea `editor.copilot`, esquema estricto y
+saneado) en operaciones de capas —foto de fondo difuminada, logotipo, textos
+literales con tipografías y colores del perfil— que se aplican al momento y se
+deshacen con un solo Ctrl+Z por orden. El documento pasa a la **versión 3**
+(desenfoque de imágenes, también en la exportación y en los reels del
+trabajador; migración `20261121010000_reel_media_blur.sql`). Interruptor
+`VITE_AI_VOICE_COPILOT_ENABLED` además de `VITE_AI_TEXT_ENABLED`. Probado con
+el proveedor simulado y una Web Speech API simulada; **sin probar** con un
+proveedor real ni con el dictado real. Detalle en `docs/copiloto-voz.md`.
+
 ### Fase 3 · Calendario y publicación
 Cuentas de Instagram por OAuth (tokens cifrados fuera de `public`), calendario
 (mes, semana, día y por red) con arrastrar y soltar y aprobación por lotes,
@@ -98,7 +110,8 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 4. Alojamiento del trabajador de medios.
 5. Música para los reels y su licencia.
 6. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
-7. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
+7. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
+8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
 
 ## Pendientes conocidos
 
@@ -112,7 +125,8 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Fase 4: lotes, coordinador y automatizaciones.
 - Avisos de encargos por sondeo (60 s), sin tiempo real ni correo.
 - El trabajador usa la clave de servicio; falta un rol de Postgres limitado.
-- Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`).
+- Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED` y `AI_TEXT_EDITOR_COPILOT_*`.
+- Copiloto por voz: el dictado de Chrome envía el audio a Google (falta en el registro de tratamientos); la pantalla de reels no ofrece todavía el desenfoque que el plan ya admite.
 
 ## Siguiente paso
 
