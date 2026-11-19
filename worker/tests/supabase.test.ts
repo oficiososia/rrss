@@ -37,10 +37,25 @@ beforeAll(async () => {
       response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(data));
     };
+    // drive-media: la imagen va con la dirección firmada, sin cabeceras.
+    if (request.url!.startsWith('/functions/v1/drive-media/file/')) {
+      if (request.headers.authorization) return json(400, { message: 'no hace falta sesión' });
+      const ticket = decodeURIComponent(request.url!.slice('/functions/v1/drive-media/file/'.length));
+      if (ticket !== 'firma-de-prueba') return json(403, {});
+      response.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      return response.end(Buffer.from('jpeg-de-drive'));
+    }
     if (request.headers.apikey !== KEY || request.headers.authorization !== `Bearer ${KEY}`) {
       return json(401, { message: 'Invalid API key' });
     }
     if (request.url!.startsWith('/rest/v1/rpc/')) return json(rpcReply.status, rpcReply.body);
+    if (request.url === '/functions/v1/drive-media/sign') {
+      const { paths } = JSON.parse(body.toString()) as { paths: string[] };
+      const tickets = Object.fromEntries(
+        paths.filter((p) => p.endsWith('/drive/archivoDeDrive01')).map((p) => [p, { full: 'firma-de-prueba' }]),
+      );
+      return json(200, { tickets });
+    }
     const object = decodeURIComponent(request.url!.replace('/storage/v1/object/', ''));
     if (request.method === 'POST') {
       objects.set(object, body);
@@ -160,5 +175,20 @@ describe('almacenamiento por la API de Storage', () => {
   it('un archivo que no existe es un fallo sin remedio', async () => {
     const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media' });
     await expect(storage.download('org/marca/no-existe.jpg', path.join(dir, 'x'))).rejects.toThrow(PermanentError);
+  });
+
+  it('un recurso de Google Drive se baja por drive-media con una dirección firmada', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media' });
+    const org = '11111111-1111-4111-8111-111111111111';
+    const marca = '22222222-2222-4222-8222-222222222222';
+    const target = path.join(dir, 'drive.jpg');
+    await storage.download(`${org}/${marca}/drive/archivoDeDrive01`, target);
+    expect((await readFile(target)).toString()).toBe('jpeg-de-drive');
+    expect(seen.map((s) => s.url)).toEqual([
+      '/functions/v1/drive-media/sign',
+      '/functions/v1/drive-media/file/firma-de-prueba',
+    ]);
+    // Uno que ya no existe (o de otra organización): fallo sin remedio.
+    await expect(storage.download(`${org}/${marca}/drive/otroArchivo0001`, target)).rejects.toThrow(PermanentError);
   });
 });

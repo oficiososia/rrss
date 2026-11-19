@@ -13,6 +13,7 @@ import {
   xhrUpload,
 } from '@/lib/files';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';
 
 export const ASSET_PAGE_SIZE = 48;
 
@@ -29,7 +30,7 @@ export const assetKeys = {
   facets: (brandId: string) => ['brand', brandId, 'assets', 'facets'] as const,
   count: (brandId: string) => ['brand', brandId, 'assets', 'count'] as const,
   byIds: (brandId: string, ids: string[]) => ['brand', brandId, 'assets', 'ids', ids] as const,
-  signed: (paths: string[]) => ['signed-urls', paths] as const,
+  signed: (paths: string[], variant: DriveVariant = 'full') => ['signed-urls', paths, variant] as const,
 };
 
 /** Escapa los comodines de LIKE para buscar el texto tal cual. */
@@ -99,18 +100,31 @@ export function useAssetsByIds(brandId: string, ids: string[]) {
   });
 }
 
-/** URL firmadas (1 h) para previsualizar archivos del cubo privado. */
-export function useSignedUrls(paths: string[]) {
+/**
+ * URL firmadas (1 h) para previsualizar archivos del cubo privado. Los recursos
+ * que viven en Google Drive (ruta `…/drive/<id>`) se piden a la función
+ * `drive-media`, que comprueba que se ven y firma su dirección; `variant`
+ * 'thumb' pide la miniatura de Drive (para cuadrículas).
+ */
+export function useSignedUrls(paths: string[], options: { variant?: DriveVariant } = {}) {
+  const variant = options.variant ?? 'full';
   return useQuery({
-    queryKey: assetKeys.signed(paths),
+    queryKey: assetKeys.signed(paths, variant),
     enabled: paths.length > 0,
     staleTime: 30 * 60_000,
     queryFn: async (): Promise<Map<string, string>> => {
-      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrls(paths, 3600);
-      if (error) throw error;
       const map = new Map<string, string>();
-      for (const item of data ?? []) {
-        if (item.path && item.signedUrl) map.set(item.path, item.signedUrl);
+      const drivePaths = paths.filter(isDrivePath);
+      const storagePaths = paths.filter((p) => !isDrivePath(p));
+      if (storagePaths.length > 0) {
+        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrls(storagePaths, 3600);
+        if (error) throw error;
+        for (const item of data ?? []) {
+          if (item.path && item.signedUrl) map.set(item.path, item.signedUrl);
+        }
+      }
+      if (drivePaths.length > 0) {
+        for (const [path, url] of await signDrivePaths(drivePaths, variant)) map.set(path, url);
       }
       return map;
     },

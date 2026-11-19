@@ -54,6 +54,18 @@ export function socialPublishingEnabled(): boolean {
   return import.meta.env.VITE_SOCIAL_PUBLISHING_ENABLED === 'true';
 }
 
+/**
+ * ¿Hay biblioteca con Google Drive en este entorno? Hace falta el cliente OAuth
+ * de Google del producto y la función `drive-media` configurada
+ * (docs/biblioteca-drive.md). Sin ella no se enseña «Google Drive» en los
+ * ajustes ni «Desde Google Drive» en la biblioteca; con ella, añadir fotos de
+ * Drive solo sale si la organización tiene una conexión activa. Se activa con
+ * `VITE_DRIVE_LIBRARY_ENABLED=true`.
+ */
+export function driveLibraryEnabled(): boolean {
+  return import.meta.env.VITE_DRIVE_LIBRARY_ENABLED === 'true';
+}
+
 export const STORAGE_BUCKET = 'brand-media';
 /** Tope del cubo (ver supabase/migrations/…_storage_brand_media.sql). */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;

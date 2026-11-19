@@ -9,6 +9,7 @@ import { LoginPage, RecoverPage, RegisterPage, ResetPasswordPage } from '@/featu
 import { AuthProvider, RequireAuth, RequireGuest } from '@/features/auth/AuthProvider';
 import { AiUsageSettingsPage } from '@/features/ai/AiUsagePage';
 import { PlanSettingsPage } from '@/features/billing/PlanSettingsPage';
+import { DriveSettingsPage } from '@/features/drive/DriveSettingsPage';
 import { InvitationPage } from '@/features/invitations/InvitationPage';
 import { BrandLayout, OrgLayout, RootRedirect } from '@/features/orgs/layouts';
 import { OrgHomePage } from '@/features/orgs/OrgHomePage';
@@ -141,6 +142,7 @@ export function App() {
                       <Route path="ia" element={<AiUsageSettingsPage />} />
                       <Route path="plan" element={<PlanSettingsPage />} />
                       <Route path="datos" element={<OrganizationDataPage />} />
+                      <Route path="drive" element={<DriveSettingsPage />} />
                     </Route>
                     <Route path="m/:brandId" element={<BrandLayout />}>
                       <Route index element={<Navigate to="inicio" replace />} />

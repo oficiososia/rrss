@@ -72,6 +72,18 @@ en PDF generado sin intervención. Detalle en `docs/analitica.md`.
 - **Planes como datos** (Prueba, Básico, Profesional, Agencia, Enterprise, Heredado) con límites que impone la base de datos, panel de **margen por cliente**, «Configuración → Plan». Stripe (Checkout, portal y webhook) escrito y probado con Stripe simulado. Detalle en `docs/facturacion.md`.
 - **RGPD**: páginas legales como plantillas, consentimiento en el registro, descargar mis datos, exportar la organización, borrar cuenta y organización, registro de tratamientos (`docs/rgpd.md`) y etiqueta «Generado con IA» por pieza.
 
+### Biblioteca con Google Drive (rama `f4/biblioteca-drive`, 19/11/2026)
+La organización conecta su Google Drive (OAuth, solo lectura, token de refresco
+cifrado como los de Meta) y sus marcas añaden a la biblioteca fotos de Drive **sin
+copiarlas a Storage**: el recurso guarda el id del archivo y la imagen la sirve la
+función `drive-media` con direcciones firmadas, tras comprobar por RLS que quien la pide
+ve la marca. Editor, exportación y trabajador de medios la leen por ahí. No ocupa plan.
+Migración `20261122010000` (con vuelta atrás), interruptor `VITE_DRIVE_LIBRARY_ENABLED`.
+Probado contra Drive simulado (base de datos y función); la prueba e2e
+`19-biblioteca-drive.spec.ts` está escrita y **sin ejecutar**; las fotos HEIC del
+iPhone no se pueden usar todavía. Sin desplegar en staging. Detalle en
+`docs/biblioteca-drive.md`.
+
 ## Sin probar contra el servicio real
 
 | Servicio | Estado | Detalle |
@@ -80,6 +92,7 @@ en PDF generado sin intervención. Detalle en `docs/analitica.md`.
 | IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai) | Adaptadores escritos, sin claves; vídeo apagado | `docs/ia-medios.md` |
 | Meta (OAuth, publicación, métricas) | Adaptador escrito; sin aplicación de Meta | `docs/publicacion.md`, `docs/analitica.md` |
 | Stripe | Funciones escritas; sin cuenta | `docs/facturacion.md` |
+| Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
 
 ## En staging
 
@@ -100,6 +113,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 | Cobrar | Cuenta de Stripe, moneda, precios por plan y portal configurado |
 | Correo para cualquiera (registro, recuperación, invitaciones) | SMTP propio (Resend u otro); hoy solo llega al equipo de Supabase, 2 por hora |
 | Reels y recortes en staging | Encender el trabajador contra staging o alojarlo (recomendado: Fly.io en Fráncfort) |
+| Fotos de Drive en staging | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar), aplicar la migración `20261122010000` y desplegar `drive-media`; convertir las HEIC a JPEG |
 | Clientes reales | Supabase de producción en Pro (copias de seguridad, sin pausas), dominio propio, páginas legales completadas y revisadas por un abogado, contrato de encargo con cada cliente |
 
 ## Decisiones del dueño pendientes

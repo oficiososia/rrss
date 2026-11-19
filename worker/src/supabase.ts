@@ -72,6 +72,9 @@ export function createSupabaseQueue(options: SupabaseOptions): JobQueue {
 /** Tope de subida estándar de Supabase y del cubo `brand-media` (50 MB en el plan gratuito). */
 export const DEFAULT_MAX_OBJECT_BYTES = 50 * 1024 * 1024;
 
+/** Ruta virtual de un recurso de la biblioteca que vive en Google Drive. */
+export const DRIVE_PATH = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/drive\/[A-Za-z0-9_-]{10,200}$/i;
+
 const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
 
 export function createSupabaseStorage(
@@ -90,9 +93,30 @@ export function createSupabaseStorage(
   const objectUrl = (objectPath: string) =>
     `${base}/storage/v1/object/${encodeURIComponent(options.bucket)}/${objectPath.split('/').map(encodeURIComponent).join('/')}`;
 
+  // Recursos que viven en Google Drive (ruta virtual `<org>/<marca>/drive/<id>`,
+  // migración 20261122010000): no están en Storage. Se piden a la función
+  // `drive-media`, que con la clave de servicio firma su dirección.
+  async function driveUrl(objectPath: string, signal?: AbortSignal): Promise<string> {
+    const response = await doFetch(`${base}/functions/v1/drive-media/sign`, {
+      method: 'POST',
+      headers: { ...authHeaders(options.serviceKey), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: [objectPath] }),
+      signal,
+    });
+    if (!response.ok)
+      throw new Error(`Google Drive no firmó «${objectPath}»: ${response.status} ${await errorText(response)}`);
+    const body = (await response.json()) as { tickets?: Record<string, { full?: string }> };
+    const ticket = body.tickets?.[objectPath]?.full;
+    if (!ticket) throw new PermanentError(`No existe el recurso de Google Drive «${objectPath}»`);
+    return `${base}/functions/v1/drive-media/file/${encodeURIComponent(ticket)}`;
+  }
+
   return {
     async download(objectPath, destinationFile, signal) {
-      const response = await doFetch(objectUrl(objectPath), { headers: authHeaders(options.serviceKey), signal });
+      const fromDrive = DRIVE_PATH.test(objectPath);
+      const response = fromDrive
+        ? await doFetch(await driveUrl(objectPath, signal), { signal })
+        : await doFetch(objectUrl(objectPath), { headers: authHeaders(options.serviceKey), signal });
       if (!response.ok || !response.body) {
         const message = await errorText(response);
         // Storage responde 400 o 404 cuando el objeto no existe: reintentar no lo arregla.

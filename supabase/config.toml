@@ -418,6 +418,12 @@ verify_jwt = false
 [functions.social-insights]
 verify_jwt = false
 
+# Biblioteca con Google Drive: Google vuelve al callback sin JWT y las imágenes
+# se piden con una dirección firmada; cada ruta comprueba lo suyo
+# (drive-media/handler.ts).
+[functions.drive-media]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327
