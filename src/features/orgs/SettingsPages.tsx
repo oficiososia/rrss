@@ -22,6 +22,7 @@ import {
   Select,
   Spinner,
 } from '@/components/ui';
+import { driveLibraryEnabled } from '@/config/app';
 import { ActivityList } from '@/features/audit/ActivityList';
 import { useUser } from '@/features/auth/AuthProvider';
 import { InviteDialog } from '@/features/invitations/InviteDialog';
@@ -50,6 +51,8 @@ export function SettingsLayout() {
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
     ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
     ...(isAdmin ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
+    // Biblioteca con Google Drive: solo si el entorno la tiene.
+    ...(driveLibraryEnabled() ? [{ to: `${base}/drive`, label: 'Google Drive' }] : []),
     // RGPD: exportar y borrar la organización, solo propietarios.
     ...(org.role === 'owner' ? [{ to: `${base}/datos`, label: 'Datos' }] : []),
   ];

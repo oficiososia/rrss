@@ -1,8 +1,10 @@
-import { Clapperboard, FileText, Film, Images, Music, Search, Upload } from 'lucide-react';
+import { Clapperboard, FileText, Film, HardDrive, Images, Music, Search, Upload } from 'lucide-react';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from '@/components/ui';
-import { mediaWorkerEnabled } from '@/config/app';
+import { driveLibraryEnabled, mediaWorkerEnabled } from '@/config/app';
+import { isDriveAsset, useDriveConnections } from '@/features/drive/api';
+import { DriveImportDialog } from '@/features/drive/DriveImportDialog';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
@@ -33,6 +35,11 @@ export function LibraryPage() {
   const canEdit = can('edit');
   useStorageCleanup(brand.id, canEdit);
   const [uploading, setUploading] = useState(false);
+  // Google Drive: solo si el entorno lo tiene y la organización tiene una conexión activa.
+  const driveConnections = useDriveConnections(org.id, driveLibraryEnabled() && canEdit);
+  const canUseDrive =
+    driveLibraryEnabled() && canEdit && (driveConnections.data ?? []).some((c) => c.status === 'active');
+  const [drivePicking, setDrivePicking] = useState(false);
   const [kind, setKind] = useState<AssetKind | ''>('');
   const [tag, setTag] = useState('');
   const [folder, setFolder] = useState('');
@@ -64,7 +71,10 @@ export function LibraryPage() {
     ],
     [rows, selectedId, selected, inRows],
   );
-  const urls = useSignedUrls(previewPaths);
+  // Cuadrícula con miniaturas (las de Drive, la miniatura de Google); la ficha, con el archivo entero.
+  const urls = useSignedUrls(previewPaths, { variant: 'thumb' });
+  const selectedPaths = useMemo(() => (selected ? [selected.storage_path] : []), [selected]);
+  const selectedUrls = useSignedUrls(selectedPaths);
   const filtering = Boolean(kind || tag || folder || deferredSearch.trim());
 
   return (
@@ -84,6 +94,12 @@ export function LibraryPage() {
                   <Clapperboard className="h-4 w-4" aria-hidden />
                   Montar un reel
                 </Link>
+              )}
+              {canUseDrive && (
+                <Button variant="secondary" onClick={() => setDrivePicking(true)} data-testid="library-drive">
+                  <HardDrive className="h-4 w-4" aria-hidden />
+                  Desde Google Drive
+                </Button>
               )}
               <Button
                 onClick={() => setUploading((v) => !v)}
@@ -216,7 +232,13 @@ export function LibraryPage() {
                     <span className="block truncate text-sm font-medium">{asset.file_name}</span>
                     <span className="flex items-center justify-between gap-2 text-xs text-muted">
                       <span>{formatBytes(asset.bytes)}</span>
-                      {asset.kind !== 'image' && <Badge>{ASSET_KIND_LABEL[asset.kind]}</Badge>}
+                      {isDriveAsset(asset) ? (
+                        <span data-testid="library-asset-drive">
+                          <Badge>Drive</Badge>
+                        </span>
+                      ) : (
+                        asset.kind !== 'image' && <Badge>{ASSET_KIND_LABEL[asset.kind]}</Badge>
+                      )}
                     </span>
                   </span>
                 </button>
@@ -237,11 +259,13 @@ export function LibraryPage() {
         </>
       )}
 
+      {canUseDrive && <DriveImportDialog brandId={brand.id} open={drivePicking} onOpenChange={setDrivePicking} />}
+
       {selected && (
         <AssetDialog
           key={selected.id}
           asset={selected}
-          url={urls.data?.get(selected.storage_path)}
+          url={selectedUrls.data?.get(selected.storage_path) ?? urls.data?.get(selected.storage_path)}
           canEdit={canEdit}
           onClose={closeSelected}
           onOpenAsset={setSelectedId}

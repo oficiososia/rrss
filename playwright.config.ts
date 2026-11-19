@@ -83,6 +83,8 @@ export default defineConfig({
         VITE_MEDIA_WORKER_ENABLED: 'true',
         // Publicación (Fase 3): conectar y programar, contra la Graph API simulada de social-publish/social-connect.
         VITE_SOCIAL_PUBLISHING_ENABLED: 'true',
+        // Biblioteca con Google Drive, contra el Drive simulado de drive-media.
+        VITE_DRIVE_LIBRARY_ENABLED: 'true',
       },
     },
   ],

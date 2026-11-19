@@ -114,10 +114,20 @@ export type MediaAssetRow = {
   rights: Json;
   /** De dónde sale el recurso (p. ej. una exportación del editor). Se fija al crear; vacío si se subió a mano. */
   provenance: Json;
+  /**
+   * Dónde vive el archivo: en Storage o en Google Drive (migración 20261122010000).
+   * Los de Drive tienen una ruta virtual `<org>/<marca>/drive/<id>` y solo los da
+   * de alta el servidor. Opcionales aquí para no obligar a las pruebas antiguas.
+   */
+  source?: AssetSource;
+  drive_connection_id?: string | null;
+  drive_file_id?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
 };
+
+export type AssetSource = 'storage' | 'google_drive';
 
 export type InvitationRow = {
   id: string;
@@ -1341,6 +1351,41 @@ export type AnalyticsMediaSummaryRow = {
   metrics: Record<string, number | string>;
 };
 
+// ── Biblioteca con Google Drive (migración 20261122010000) ──────────────────
+// Conexiones de Drive de la organización. El token de refresco no está aquí:
+// vive cifrado en el esquema `private`, sin acceso desde el cliente.
+
+export type DriveConnectionStatus = 'active' | 'needs_reauth' | 'disconnected';
+
+export type DriveConnectionRow = {
+  id: string;
+  organization_id: string;
+  provider: 'google_drive';
+  account_email: string;
+  display_name: string;
+  status: DriveConnectionStatus;
+  scopes: string[];
+  last_error: string | null;
+  connected_by: string | null;
+  connected_at: string;
+  disconnected_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type DriveTables = {
+  drive_connections: Table<DriveConnectionRow>;
+};
+
+type DriveFunctions = {
+  drive_oauth_begin: { Args: { p_organization_id: string }; Returns: string };
+  disconnect_drive: { Args: { p_connection_id: string }; Returns: DriveConnectionRow };
+  drive_connection_for_brand: {
+    Args: { p_brand_id: string; p_connection_id?: string | null };
+    Returns: { id: string; organization_id: string; account_email: string; user_id: string };
+  };
+};
+
 type AnalyticsTables = {
   analytics_metric_definitions: Table<AnalyticsMetricDefinitionRow>;
   account_metrics_daily: Table<AccountMetricDailyRow>;
@@ -1447,7 +1492,8 @@ export type Database = {
       BillingTables &
       CampaignTables &
       RgpdTables &
-      AnalyticsTables;
+      AnalyticsTables &
+      DriveTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1482,7 +1528,8 @@ export type Database = {
       BillingFunctions &
       CampaignFunctions &
       RgpdFunctions &
-      AnalyticsFunctions;
+      AnalyticsFunctions &
+      DriveFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
