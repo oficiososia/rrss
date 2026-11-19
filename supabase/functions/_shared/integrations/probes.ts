@@ -26,7 +26,7 @@ import { BFL_DEFAULT_BASE_URL, isBflBaseUrl } from '../ai/media/bfl-image.ts';
 import { isComfyUiBaseUrl } from '../ai/media/comfyui-image.ts';
 import { MEDIA_ENV } from '../ai/media/config.ts';
 import { DEFAULT_GRAPH_API_VERSION, META_GRAPH_HOST } from '../social/meta-graph.ts';
-import { parseKeyRing, TokenKeyError } from '../social/crypto.ts';
+import { loadSocialConfig } from '../social/config.ts';
 import type { IntegrationId } from './catalog.ts';
 import type { Env } from './settings.ts';
 
@@ -138,19 +138,27 @@ async function probeMeta(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       }
     }
   }
-  // Cifrado de los tokens: sin claves no se puede conectar ninguna cuenta.
+  // Cifrado de los tokens: sin claves no se puede conectar ninguna cuenta. Se
+  // cargan igual que en las funciones (en la prueba local, la clave fija de pruebas).
   try {
-    parseKeyRing(env.SOCIAL_TOKEN_KEYS, env.SOCIAL_TOKEN_KEY_ID);
-    checks.push({
-      name: 'Cifrado de los tokens',
-      ok: true,
-      message: 'Las claves de cifrado de los tokens están bien.',
+    const social = loadSocialConfig(env, async () => {
+      throw new Error('sin red');
     });
-  } catch (e) {
+    const keyProblem = social.problems.find((p) => p.includes('SOCIAL_TOKEN_KEY'));
+    checks.push(
+      social.keyRing
+        ? { name: 'Cifrado de los tokens', ok: true, message: 'Las claves de cifrado de los tokens están bien.' }
+        : {
+            name: 'Cifrado de los tokens',
+            ok: false,
+            message: keyProblem ?? 'Faltan las claves de cifrado de los tokens (SOCIAL_TOKEN_KEYS): genera una.',
+          },
+    );
+  } catch {
     checks.push({
       name: 'Cifrado de los tokens',
       ok: false,
-      message: e instanceof TokenKeyError ? e.message : 'Las claves de cifrado de los tokens no son válidas.',
+      message: 'La configuración de la publicación no es válida.',
     });
   }
   return summarize(checks, 'Meta no está configurada.');

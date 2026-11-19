@@ -32,6 +32,16 @@ export interface Call {
 }
 
 type Listener = (event: string, session: Session | null) => void;
+
+/** Disponibilidad de las integraciones que responde el servidor simulado por defecto. */
+export const ALL_AVAILABLE = {
+  publishing: true,
+  socialOAuth: true,
+  socialToken: true,
+  aiText: true,
+  aiImage: true,
+  billing: true,
+};
 type Op = 'select' | 'insert' | 'update' | 'delete';
 
 export function makeUser(overrides: Partial<{ id: string; email: string; fullName: string }> = {}): User {
@@ -320,6 +330,14 @@ export class FakeSupabase {
     this.session = null;
     this.rpcs = new Map();
     this.functionHandlers = new Map();
+    // Plataforma → Integraciones: por defecto, el servidor dice que todo está
+    // configurado; lo que se enseña lo deciden los interruptores VITE_* de cada
+    // prueba. Una prueba puede sustituirlo con `fake.fn('platform-integrations', …)`.
+    this.functionHandlers.set('platform-integrations', (body) =>
+      (body as { action?: string } | undefined)?.action === 'availability'
+        ? { status: 200, body: { ...ALL_AVAILABLE } }
+        : { status: 404, body: { error: { message: 'Sin simular en la prueba' } } },
+    );
     this.failures = [];
     this.listeners = new Set();
     this.auth.getSession.mockReset().mockImplementation(async () => ({ data: { session: this.session }, error: null }));

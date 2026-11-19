@@ -45,7 +45,6 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
-import { aiImageEnabled, aiTextEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
@@ -90,6 +89,7 @@ import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
 import { safeZoneFor } from './safeZones';
 import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage } from './status';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
@@ -202,9 +202,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
   const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
   // Con la marca en modo agencia no se redacta con el servicio de IA: se pide a la agencia.
-  const aiEnabled = aiTextEnabled() && brand.ai_mode !== 'agency';
+  const aiText = useFeature('aiText');
+  const aiEnabled = aiText && brand.ai_mode !== 'agency';
   // La imagen con IA es otro servicio, independiente del texto: depende solo de su interruptor.
-  const aiImage = aiImageEnabled();
+  const aiImage = useFeature('aiImage');
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
   const selectedLayers = useMemo(() => {

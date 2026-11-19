@@ -9,7 +9,6 @@ import { translateError } from '@/lib/errors';
 import { cn, formatDate } from '@/lib/utils';
 import { useOpenBillingPortal, usePlans, usePlanUsage, useStartCheckout } from './api';
 import {
-  billingEnabled as isBillingEnabled,
   FEATURE_LABEL,
   INTERVAL_LABEL,
   PLAN_FEATURES,
@@ -19,13 +18,17 @@ import {
   usageRatio,
   usageText,
 } from './labels';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 /**
  * Configuración → Plan: plan vigente, uso frente a sus límites y, si la
- * facturación está activa (`VITE_BILLING_ENABLED`), contratar o cambiar de plan
+ * facturación está activa (`VITE_BILLING_ENABLED` y Stripe configurado en el servidor), contratar o cambiar de plan
  * en Stripe. Solo propietarios y administradores (lo impone también la base de datos).
  */
-export function PlanSettingsPage({ billingEnabled = isBillingEnabled() }: { billingEnabled?: boolean }) {
+export function PlanSettingsPage({ billingEnabled: forced }: { billingEnabled?: boolean }) {
+  // Interruptor de compilación Y Stripe configurado en el servidor (useFeature).
+  const live = useFeature('billing');
+  const billingEnabled = forced ?? live;
   const { org, isAdmin } = useOrg();
   const usage = usePlanUsage(org.id, isAdmin);
   const [params] = useSearchParams();

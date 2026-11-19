@@ -789,6 +789,8 @@ export type SocialAccountRow = {
   connected_by: string | null;
   connected_at: string;
   disconnected_at: string | null;
+  /** Por OAuth o pegando un token (20261120010000). */
+  connection_method: SocialConnectionMethod;
   created_at: string;
   updated_at: string;
 };
@@ -1404,6 +1406,49 @@ type AnalyticsFunctions = {
 
 // ─────────────────────── fin del bloque de analítica ───────────────────────
 
+// ───────────── Plataforma → Integraciones (20261120010000) ─────────────
+// Solo superadministradores. Los secretos nunca llegan: `value` es null y
+// `hint` es una pista («…a1b2» o el correo de la cuenta de servicio).
+
+export type SocialConnectionMethod = 'oauth' | 'token';
+
+export type IntegrationSettingRow = {
+  setting_key: string;
+  integration: string;
+  is_secret: boolean;
+  value: string | null;
+  hint: string | null;
+  updated_at: string;
+  updated_by_email: string | null;
+};
+
+export type IntegrationTestRow = {
+  integration: string;
+  ok: boolean;
+  message: string;
+  tested_at: string;
+  tested_by_email: string | null;
+};
+
+export type IntegrationAuditRow = {
+  id: number;
+  created_at: string;
+  action: 'set' | 'delete' | 'test';
+  integration: string;
+  setting_key: string | null;
+  actor_email: string | null;
+  data: Json;
+};
+
+type IntegrationFunctions = {
+  admin_integration_settings: { Args: Record<string, never>; Returns: IntegrationSettingRow[] };
+  admin_integration_tests: { Args: Record<string, never>; Returns: IntegrationTestRow[] };
+  admin_integration_audit: { Args: { p_limit?: number }; Returns: IntegrationAuditRow[] };
+  admin_set_integration_setting: { Args: { p_key: string; p_value: string }; Returns: undefined };
+  admin_delete_integration_setting: { Args: { p_key: string }; Returns: boolean };
+};
+// ───────────────────── fin del bloque de integraciones ─────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -1529,6 +1574,7 @@ export type Database = {
       CampaignFunctions &
       RgpdFunctions &
       AnalyticsFunctions &
+      IntegrationFunctions &
       DriveFunctions;
     Enums: {
       org_kind: OrgKind;
