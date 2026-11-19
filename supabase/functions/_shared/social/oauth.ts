@@ -82,8 +82,12 @@ export async function finishConnect(
   log: (event: string, data: Record<string, unknown>) => void = () => undefined,
 ): Promise<string> {
   const appUrl = config.appUrl ?? '';
+  // Vuelve a la pestaña «Datos de la marca», donde vive la tarjeta de cuentas
+  // conectadas: es la que lee `?social=` y dice cómo fue.
   const back = (ctx: { organization_id: string; brand_id: string } | null, result: ConnectResult) =>
-    ctx ? `${appUrl}/o/${ctx.organization_id}/m/${ctx.brand_id}/marca?social=${result}` : `${appUrl}/?social=${result}`;
+    ctx
+      ? `${appUrl}/o/${ctx.organization_id}/m/${ctx.brand_id}/marca?seccion=datos&social=${result}`
+      : `${appUrl}/?social=${result}`;
 
   if (!config.meta || !config.callbackUrl || !config.keyRing) return back(null, 'failed');
   const state = params.get('state') ?? '';

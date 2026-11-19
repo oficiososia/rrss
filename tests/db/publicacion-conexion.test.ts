@@ -117,7 +117,7 @@ describe('conectar una cuenta (OAuth)', () => {
   it('vuelta de Meta: guarda la cuenta con el token cifrado y vuelve a la aplicación', async () => {
     const state = new URL(await start(ana)).searchParams.get('state')!;
     const location = await callback({ code: 'sim-code-1', state });
-    expect(location).toBe(`${APP}/o/${org}/m/${marca}/marca?social=connected`);
+    expect(location).toBe(`${APP}/o/${org}/m/${marca}/marca?seccion=datos&social=connected`);
 
     const [cuenta] = await as<{ id: string; status: string; external_id: string; username: string; scopes: string[] }>(
       db,
@@ -164,7 +164,7 @@ describe('conectar una cuenta (OAuth)', () => {
 
     const state2 = new URL(await start(ana)).searchParams.get('state')!;
     expect(await callback({ error: 'access_denied', state: state2 })).toBe(
-      `${APP}/o/${org}/m/${marca}/marca?social=denied`,
+      `${APP}/o/${org}/m/${marca}/marca?seccion=datos&social=denied`,
     );
   });
 
