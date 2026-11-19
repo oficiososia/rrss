@@ -1,8 +1,7 @@
 import { ChevronRight, Megaphone, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Skeleton } from '@/components/ui';
-import { aiTextEnabled } from '@/config/app';
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Skeleton, Spinner } from '@/components/ui';
 import { useSources } from '@/features/brand/api';
 import { networkLabel } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
@@ -11,12 +10,16 @@ import { useCampaigns } from './api';
 import { CAMPAIGN_STATUS_LABEL, CAMPAIGN_STATUS_TONE, campaignPaths, campaignsAvailable } from './labels';
 import { NewCampaignDialog } from './NewCampaignDialog';
 import { shortDay } from './plan';
+import { useFeatureStatus } from '@/features/platform/integrations/useFeature';
 
 /** Campañas de la marca: pedir un plan y ver en qué punto está cada uno. */
 export function CampaignListPage() {
   const { org } = useOrg();
   const { brand } = useBrand();
-  const available = campaignsAvailable(brand, aiTextEnabled());
+  const aiText = useFeatureStatus('aiText');
+  // Con la marca en modo agencia no hace falta esperar al servidor.
+  if (aiText === undefined && brand.ai_mode !== 'agency') return <Spinner />;
+  const available = campaignsAvailable(brand, aiText === true);
   if (!available) return <Navigate to={`/o/${org.id}/m/${brand.id}/inicio`} replace />;
   return <CampaignList />;
 }

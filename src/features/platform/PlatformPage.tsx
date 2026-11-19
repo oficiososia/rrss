@@ -1,4 +1,4 @@
-import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Plug, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
@@ -36,7 +36,20 @@ export function PlatformPage() {
           </Card>
         ) : (
           <>
-            <PageHeader title="Plataforma" description="Todas las organizaciones dadas de alta y lo que ocupan." />
+            <PageHeader
+              title="Plataforma"
+              description="Todas las organizaciones dadas de alta y lo que ocupan."
+              action={
+                <Link
+                  to="/plataforma/integraciones"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+                  data-testid="platform-integrations-link"
+                >
+                  <Plug className="h-4 w-4" aria-hidden />
+                  Integraciones
+                </Link>
+              }
+            />
             <Card className="overflow-hidden">
               {orgs.isPending ? (
                 <Spinner />

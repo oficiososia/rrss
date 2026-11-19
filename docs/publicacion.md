@@ -97,7 +97,34 @@ que ya no vale, la marca como «hay que volver a conectarla»; si tiene fecha de
 caducidad, la anota y la interfaz avisa 7 días antes. **Renovar es volver a
 conectar**: la documentación de Meta no ofrece refrescar en silencio un token de
 usuario, y el token de página (el que publica) no caduca si sale de un token
-largo.
+largo. Las cuentas conectadas con un token pegado (abajo) se comprueban con
+`debug_token` sobre el propio token, sin la aplicación del producto.
+
+### Conectar con un token (sin OAuth)
+
+Para cuentas que ya tienen su propia aplicación de Meta y un **token de acceso
+de página de larga duración** (por ejemplo, un negocio que ya publica con su
+aplicación): en Marca → Datos de la marca → Cuentas conectadas, quien gestiona
+la marca pulsa «Conectar con un token» y pega el token y el identificador de la
+cuenta de Instagram (IG User ID). `social-connect/token`
+(`supabase/functions/_shared/social/token-connect.ts`):
+
+1. comprueba el permiso y el plan con la sesión de quien conecta, igual que al
+   empezar el OAuth (`social_oauth_begin`, con su freno de intentos);
+2. valida el token contra la Graph API: `debug_token` con el propio token (vale
+   aunque sea de otra aplicación de Meta): que es válido, sus permisos
+   (`instagram_basic` e `instagram_content_publish` son obligatorios;
+   sin `instagram_manage_insights` publica pero no mide) y su caducidad; y
+   `GET /{ig-user-id}` con el token, para saber que da acceso a esa cuenta;
+3. lo cifra igual que los de OAuth y da de alta la cuenta con
+   `social_account_connect_token` (`social_accounts.connection_method = 'token'`).
+
+A partir de ahí publica y mide igual. La interfaz dice que el token sustituye al
+OAuth para esa cuenta y que caduca: cuando Meta diga que ya no vale, la cuenta
+pasa a «hay que volver a conectarla» y se pega uno nuevo. Solo tokens de
+Facebook Login (graph.facebook.com, empiezan por `EAA`); los de «inicio de
+sesión de Instagram» (`IG…`) se rechazan con un mensaje claro. Volver a conectar
+por OAuth deja la cuenta como `oauth`. Probado solo contra la Graph API simulada.
 
 ## 3. Por qué una Edge Function y no el trabajador de medios
 
@@ -140,8 +167,23 @@ developers.facebook.com.
 
 ## 5. Variables y secretos
 
-En los **secretos de las Edge Functions** (`supabase secrets set …`), nunca en
-el navegador ni en el repositorio:
+**Desde la interfaz (recomendado):** un superadministrador las mete en
+**Plataforma → Integraciones → Meta (Instagram)**: App ID, App Secret,
+`config_id` de Facebook Login for Business, versión de la Graph API y dirección
+de la aplicación, y genera ahí la clave de cifrado de los tokens («Generar
+clave»; rotar = generar otra: las anteriores se conservan). Se guardan cifradas
+en Supabase Vault (migración `20261120010000`), mandan sobre las variables de
+abajo y las funciones las leen sin redesplegar (caché de 30 s). «Probar
+conexión» pregunta a Meta por la aplicación (`GET /{app-id}` con el token de
+aplicación: no publica nada) y comprueba las claves de cifrado. Una clave de
+cifrado con la que hay tokens guardados no se puede quitar. Las claves de
+cifrado del entorno y las de la base de datos se usan juntas: lo cifrado con
+una clave del entorno se sigue descifrando. `SOCIAL_CALLBACK_URL` ya no hace
+falta si `SUPABASE_URL` es https: se deduce
+(`…/functions/v1/social-connect/callback`).
+
+**O en los secretos de las Edge Functions** (`supabase secrets set …`), como
+hasta ahora; nunca en el navegador ni en el repositorio:
 
 | Variable | Para qué |
 |---|---|
@@ -156,8 +198,12 @@ el navegador ni en el repositorio:
 | `SOCIAL_TOKEN_KEY_ID` | La clave con la que se cifra lo nuevo (las demás solo descifran: rotación) |
 
 En el **despliegue de la aplicación** (Vercel): `VITE_SOCIAL_PUBLISHING_ENABLED=true`
-solo cuando todo lo anterior esté configurado. Sin ella no aparecen conectar
-cuentas ni programar; el calendario se puede ver.
+permite la publicación en ese despliegue; la interfaz la enseña solo si además
+el servidor dice que hay claves de cifrado de los tokens (`platform-integrations`,
+acción `availability`, solo booleanos). «Conectar Instagram» (OAuth) sale si
+también está la aplicación de Meta; «Conectar con un token», con las claves de
+cifrado. Sin ellas no aparecen conectar cuentas ni programar; el calendario se
+puede ver.
 
 En **Vault** (como el sondeo de imagen): `rrss_project_url` y
 `rrss_service_role_key`. Sin ellos, pg_cron no llama al publicador (deja un
@@ -182,8 +228,10 @@ un Supabase local (misma guarda que la IA simulada).
 3. Crear la aplicación de Meta (sección 4) en modo desarrollo, con la persona
    que va a probar como administradora o probadora de la aplicación y su cuenta
    de Instagram profesional unida a una página.
-4. Poner los secretos (sección 5) y, en Vault, `rrss_project_url` y
-   `rrss_service_role_key`.
+4. Aplicar la migración `20261120010000` y desplegar `platform-integrations`;
+   meter la aplicación de Meta y generar la clave de cifrado en Plataforma →
+   Integraciones (o poner los secretos de la sección 5) y, en Vault,
+   `rrss_project_url` y `rrss_service_role_key`.
 5. Desplegar la aplicación con `VITE_SOCIAL_PUBLISHING_ENABLED=true`.
 6. Prueba: conectar la cuenta en Marca → Datos de la marca → Cuentas
    conectadas; crear una pieza, guardarla, exportarla en JPEG a la biblioteca,

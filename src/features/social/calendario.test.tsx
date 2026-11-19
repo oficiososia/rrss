@@ -89,6 +89,7 @@ function account(patch: Partial<SocialAccountRow> = {}): SocialAccountRow {
     connected_by: null,
     connected_at: '2026-11-18T09:00:00Z',
     disconnected_at: null,
+    connection_method: 'oauth',
     created_at: '2026-11-18T09:00:00Z',
     updated_at: '2026-11-18T09:00:00Z',
     ...patch,

@@ -2,7 +2,6 @@ import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, Plus } from 'luci
 import { useMemo, useState, type DragEvent } from 'react';
 import { toast } from 'sonner';
 import { Badge, Button, Card, ErrorState, Notice, PageHeader, Select, Skeleton } from '@/components/ui';
-import { socialPublishingEnabled } from '@/config/app';
 import { networkLabel } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
@@ -29,6 +28,7 @@ import {
 } from './calendar';
 import { PublicationDialog } from './PublicationDialog';
 import { ScheduleDialog } from './ScheduleDialog';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 const WEEKDAYS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
@@ -39,7 +39,7 @@ export function CalendarPage() {
   const { brand, can } = useBrand();
   const canEdit = can('edit');
   const canApprove = can('approve');
-  const publishing = socialPublishingEnabled();
+  const publishing = useFeature('publishing');
 
   const [view, setView] = useState<CalendarView>('month');
   const [anchor, setAnchor] = useState(() => new Date());

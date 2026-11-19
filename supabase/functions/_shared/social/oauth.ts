@@ -161,27 +161,38 @@ export async function checkAccountTokens(
   accounts: Array<{ id: string; brand_id: string; network: string; external_id: string }>,
   log: (event: string, data: Record<string, unknown>) => void = () => undefined,
 ): Promise<number> {
-  if (!config.meta || !config.keyRing) return 0;
+  if (!config.keyRing) return 0;
   let checked = 0;
   for (const account of accounts) {
     try {
       const secret = (await rpc('social_account_token', { p_account_id: account.id })).data as {
         key_id: string;
         access_token_ciphertext: string;
+        connection_method?: string;
       } | null;
       if (!secret) continue;
+      // Las cuentas de OAuth se comprueban con la aplicación del producto; las
+      // conectadas con un token pegado, con el propio token (puede ser de otra aplicación).
+      const byToken = secret.connection_method === 'token';
+      if (!byToken && !config.meta) continue;
       const token = await decryptToken(
         config.keyRing,
         secret.key_id,
         secret.access_token_ciphertext,
         tokenBinding({ brandId: account.brand_id, network: account.network, externalId: account.external_id }),
       );
-      const info = await config.graph.debugToken({ appId: config.meta.appId, appSecret: config.meta.appSecret, token });
+      const info = byToken
+        ? await config.graph.inspectToken(token)
+        : await config.graph.debugToken({ appId: config.meta!.appId, appSecret: config.meta!.appSecret, token });
       const expiresAt = info.expiresAt ?? info.dataAccessExpiresAt;
       await rpc('social_account_report', {
         p_account_id: account.id,
         p_status: info.isValid ? null : 'needs_reauth',
-        p_last_error: info.isValid ? null : 'Meta indica que el acceso ya no es válido: vuelve a conectar la cuenta.',
+        p_last_error: info.isValid
+          ? null
+          : byToken
+            ? 'Meta indica que el token ya no es válido: pega uno nuevo.'
+            : 'Meta indica que el acceso ya no es válido: vuelve a conectar la cuenta.',
         p_token_expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
         p_token_checked: true,
       });

@@ -33,6 +33,8 @@ import {
   type PageWithInstagram,
   type PublishedMedia,
   type PublishingLimit,
+  type SelfTokenInfo,
+  type TokenConnectApi,
   type TokenInfo,
 } from './contract.ts';
 
@@ -84,7 +86,7 @@ export function classifyGraphError(httpStatus: number, body: unknown): SocialApi
   return new SocialApiError({ kind: 'rejected', message, ...base });
 }
 
-export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaLoginApi {
+export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaLoginApi & TokenConnectApi {
   const version = options.apiVersion ?? DEFAULT_GRAPH_API_VERSION;
   const timeoutMs = options.timeoutMs ?? 30_000;
 
@@ -211,6 +213,47 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
         expiresAt: at(d.expires_at),
         dataAccessExpiresAt: at(d.data_access_expires_at),
         scopes: Array.isArray(d.scopes) ? d.scopes.map(String) : [],
+      };
+    },
+
+    // ── Conectar con un token pegado ─────────────────────────────────────
+    // https://developers.facebook.com/docs/graph-api/reference/debug_token:
+    // access_token puede ser el propio token inspeccionado.
+    async inspectToken(token): Promise<SelfTokenInfo> {
+      const r = await call<{
+        data?: {
+          is_valid?: boolean;
+          expires_at?: number;
+          data_access_expires_at?: number;
+          scopes?: string[];
+          type?: string;
+          app_id?: string | number;
+        };
+      }>('GET', '/debug_token', { query: { input_token: token, access_token: token } });
+      const d = r.data ?? {};
+      return {
+        isValid: d.is_valid === true,
+        expiresAt: at(d.expires_at),
+        dataAccessExpiresAt: at(d.data_access_expires_at),
+        scopes: Array.isArray(d.scopes) ? d.scopes.map(String) : [],
+        type: typeof d.type === 'string' ? d.type : null,
+        appId: d.app_id !== undefined && d.app_id !== null ? String(d.app_id) : null,
+      };
+    },
+    async tokenOwner(token) {
+      const r = await call<{ id?: string; name?: string }>('GET', '/me', { token, query: { fields: 'id,name' } });
+      return { id: idOf(r, 'del dueño del token'), name: typeof r.name === 'string' ? r.name : null };
+    },
+    async instagramAccount(igUserId, token) {
+      const r = await call<{ id?: string; username?: string; name?: string }>(
+        'GET',
+        `/${encodeURIComponent(igUserId)}`,
+        { token, query: { fields: 'id,username,name' } },
+      );
+      return {
+        id: idOf(r, 'de la cuenta de Instagram'),
+        username: typeof r.username === 'string' ? r.username : null,
+        name: typeof r.name === 'string' ? r.name : null,
       };
     },
 

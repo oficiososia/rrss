@@ -14,7 +14,6 @@ import {
   Select,
   Skeleton,
 } from '@/components/ui';
-import { aiTextEnabled } from '@/config/app';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { summarizeAnalytics, type AnalyticsSummaryResult } from '@/features/ai/api';
 import { useBrand } from '@/features/orgs/context';
@@ -45,6 +44,7 @@ import {
   useRequestReport,
 } from './api';
 import { BarChart } from './BarChart';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 type RangeKey = 'last7' | 'last28' | 'thisMonth' | 'lastMonth';
 const RANGES: Record<RangeKey, string> = {
@@ -86,6 +86,7 @@ const REPORT_STATUS: Record<
 /** Panel de analítica de la marca (Fase 5): cifras medidas, comparación, publicaciones, dato frente a hipótesis. */
 export function AnalyticsPage() {
   const { brand, can } = useBrand();
+  const aiText = useFeature('aiText');
   const [range, setRange] = useState<RangeKey>('last28');
   const period = useMemo(() => periodFor(range), [range]);
   const previous = useMemo(() => previousPeriod(period), [period]);
@@ -160,7 +161,7 @@ export function AnalyticsPage() {
             analysis={analysis}
             brandId={brand.id}
             period={period}
-            aiAvailable={aiTextEnabled() && brand.ai_mode !== 'agency' && can('edit')}
+            aiAvailable={aiText && brand.ai_mode !== 'agency' && can('edit')}
           />
           <Unmeasurable analysis={analysis} />
           <Captures runs={runs.data ?? []} />

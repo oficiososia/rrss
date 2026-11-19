@@ -96,7 +96,20 @@ Lo que hacen todos:
 
 ## 3. Configuración (variables de entorno de la función)
 
-Solo nombres en `.env.example`. Son secretos de la función; nunca `VITE_`.
+**Desde la interfaz:** un superadministrador puede meter todo esto en
+**Plataforma → Integraciones → IA de texto** (proveedor y modelo de todas las
+tareas o de cada una, cuenta de servicio de Vertex en JSON, claves de Anthropic
+y Mistral, credenciales de Bedrock, tabla de precios, criterio de datos y tiempo
+máximo). Los secretos se guardan cifrados en Supabase Vault (migración
+`20261120010000`) y no se vuelven a ver; cada ajuste se llama como su variable
+y manda sobre ella. `ai-generate` los lee en cada petición (caché de 30 s), sin
+redesplegar. «Probar conexión» lista los modelos (Anthropic, Mistral, Bedrock)
+o pide un token de acceso con la cuenta de servicio (Vertex): no genera texto ni
+gasta cupo. La interfaz enseña la IA de texto si `VITE_AI_TEXT_ENABLED=true` en
+el despliegue **y** alguna tarea tiene proveedor cargado y precio completo.
+
+**O como variables.** Solo nombres en `.env.example`. Son secretos de la
+función; nunca `VITE_`.
 
 | Variable | Para qué |
 |---|---|
