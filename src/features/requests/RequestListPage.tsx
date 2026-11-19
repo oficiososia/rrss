@@ -93,10 +93,9 @@ export function RequestListPage() {
               status
                 ? 'Prueba con otro estado.'
                 : canRequest
-                  ? 'Pide una publicación: cuenta qué necesitas y adjunta fotos de la biblioteca.'
+                  ? 'Pide una publicación con «Nuevo encargo»: cuenta qué necesitas y adjunta fotos de la biblioteca.'
                   : 'Cuando alguien pida una publicación, aparecerá aquí.'
             }
-            action={!status && newButton}
           />
         </Card>
       ) : (

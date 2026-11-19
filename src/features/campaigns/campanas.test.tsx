@@ -129,7 +129,10 @@ describe('la sección Campañas', () => {
 
     const { user } = renderApp(`${BRAND_BASE}/campanas`);
     expect(await screen.findAllByRole('link', { name: /Campañas/ })).not.toHaveLength(0);
-    await user.click(await screen.findByTestId('campaign-new'));
+    // Con la lista vacía hay un solo botón para pedir (el de la cabecera).
+    await screen.findByText('Todavía no hay campañas');
+    expect(screen.getAllByTestId('campaign-new')).toHaveLength(1);
+    await user.click(screen.getByTestId('campaign-new'));
     const dialog = await screen.findByRole('dialog');
     await user.type(within(dialog).getByTestId('campaign-instruction'), 'Prepara la semana que viene');
     await user.click(within(dialog).getByTestId('campaign-submit'));

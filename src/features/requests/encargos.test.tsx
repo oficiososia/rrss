@@ -129,7 +129,10 @@ describe('Pedir un encargo', () => {
       return row;
     });
     const { user } = renderApp(`${BRAND_BASE}/encargos`);
-    await user.click(await screen.findByTestId('request-new'));
+    // Con la lista vacía hay un solo botón para pedir (el de la cabecera).
+    await screen.findByText('Todavía no hay encargos');
+    expect(screen.getAllByTestId('request-new')).toHaveLength(1);
+    await user.click(screen.getByTestId('request-new'));
     const dialog = await screen.findByRole('dialog');
     await user.type(within(dialog).getByTestId('request-title'), 'Navidad');
     await user.type(within(dialog).getByTestId('request-brief'), 'Felicitación con la foto del comedor');

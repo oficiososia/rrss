@@ -70,10 +70,9 @@ function CampaignList() {
             title="Todavía no hay campañas"
             description={
               canAsk
-                ? 'Pide un plan con tus palabras («prepara la semana que viene») y revísalo antes de crear nada.'
+                ? `Pide un plan con «${mode === 'ai' ? 'Preparar un plan' : 'Pedir un plan'}» y tus palabras («prepara la semana que viene»), y revísalo antes de crear nada.`
                 : 'Cuando alguien pida un plan, aparecerá aquí.'
             }
-            action={newButton}
           />
         </Card>
       ) : (
