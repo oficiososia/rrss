@@ -106,7 +106,10 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await page.waitForFunction(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true);
 
   // Orden 1. «Esta foto» sin ninguna elegida: el editor pide la foto y se sube desde el dispositivo.
-  await page.evaluate((texto) => (globalThis as unknown as { __decir: (t: string) => void }).__decir(texto), ORDEN_MENU);
+  await page.evaluate(
+    (texto) => (globalThis as unknown as { __decir: (t: string) => void }).__decir(texto),
+    ORDEN_MENU,
+  );
   const ordenes = page.getByTestId('copilot-order');
   await expect(ordenes.first()).toContainText('foto difuminada detrás');
   await expect(ordenes.first()).toHaveAttribute('data-status', 'photo');

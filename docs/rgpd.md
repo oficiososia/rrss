@@ -52,6 +52,8 @@ privacidad). Resumen:
 | Anthropic API directa, Ideogram | IA | EE. UU. / sin documentar | Sí | Apagados: solo con permiso expreso de la organización |
 | Higgsfield, fal.ai | Vídeo con IA | Sin región UE | Sí | Apagados |
 | Alojamiento del trabajador de medios | Reels y recortes | [PENDIENTE] | [PENDIENTE] | Sin decidir |
+| Google · reconocimiento de voz del navegador (Web Speech API de Chrome) | Copiloto por voz del editor: **el dictado de Chrome envía el audio a los servidores de Google** para pasarlo a texto; el producto solo recibe el texto. Lo contrata el navegador de la persona, no el producto, y no se puede pedir región UE | Sin documentar | Sí (Google, EE. UU.) [CONFIRMAR CON EL ABOGADO cómo informarlo] | Apagado salvo `VITE_AI_VOICE_COPILOT_ENABLED`; la persona lo enciende al pulsar «Dictar» |
+| Google Drive (API) | Biblioteca con fotos de Drive: la organización conecta su cuenta (solo lectura) y las imágenes se piden a Drive cada vez que se ven; el token de refresco se guarda cifrado | La de la cuenta de Google de la organización | Sí (Google, EE. UU.) [CONFIRMAR DPA] | Opcional, sin cliente OAuth todavía |
 
 Al activar un proveedor nuevo hay que añadirlo aquí, en `legal.ts` y avisar a
 los clientes según el contrato de encargo.
@@ -133,6 +135,9 @@ las preguntas al abogado (`docs/06-decisiones-fase-2.md`, apartado 5).
 ## 7. Pendiente
 
 - Contrato de encargo del tratamiento con los clientes y registro como encargado.
+- Añadir a la política de privacidad (`src/features/legal/legal.ts`) el dictado de
+  Chrome (el audio va a Google) y Google Drive, y avisar en el propio copiloto
+  antes del primer dictado.
 - Rellenar los huecos de las páginas legales y que un abogado las revise.
 - Plazos de conservación marcados «a decidir»; purga de invitaciones caducadas
   y de anotaciones de `storage_cleanup_queue` de organizaciones borradas (solo

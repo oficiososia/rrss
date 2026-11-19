@@ -15,7 +15,7 @@ textos van exactamente como se dictan.
 |---|---|
 | Desenfoque de imágenes en el documento (versión 3), lienzo, exportación y reels del trabajador | Implementado y probado (unitarias, base de datos y FFmpeg en el trabajador) |
 | Tarea `editor.copilot` en `ai-generate` (esquema estricto, saneado, cupo y coste) | Implementada y probada con la base de datos real y el proveedor simulado |
-| Interfaz (botón «Dictar», transcripción en vivo, órdenes, foto «esta», deshacer) | Implementada; prueba de extremo a extremo escrita (`tests/e2e/18-copiloto-voz.spec.ts`) |
+| Interfaz (botón «Dictar», transcripción en vivo, órdenes, foto «esta», deshacer) | Implementada; prueba de extremo a extremo escrita (`tests/e2e/19-copiloto-voz.spec.ts`) |
 | Dictado real del navegador y calidad con un modelo real | **Sin probar** |
 
 ## 1. Cómo funciona
@@ -37,8 +37,9 @@ ORDEN + estado del documento + fotos elegidas ──► ai-generate (editor.copi
   anterior. Si el navegador corta tras un silencio, se vuelve a empezar solo
   hasta que se pulsa «Parar» o se cierra el copiloto. Si el navegador no tiene
   dictado, el botón no sale. En Chrome el reconocimiento lo hace un servicio
-  de Google (el audio sale del navegador hacia Google): pendiente de recoger en
-  el registro de tratamientos (`docs/rgpd.md`) antes de activarlo con clientes.
+  de Google (el audio sale del navegador hacia Google): recogido en el registro
+  de tratamientos (`docs/rgpd.md`, apartado 3); falta llevarlo a la política de
+  privacidad y avisar antes del primer dictado, antes de activarlo con clientes.
 - **Interpretación.** Tarea `editor.copilot`
   (`supabase/functions/_shared/ai/text/tasks/editor-copilot.ts`).
 - **Aplicación.** `src/features/content/copilot/apply.ts`, pura: la IA dice qué
@@ -116,8 +117,8 @@ elegida; las pruebas comprueban que se descartan.
 
 | Variable | Dónde | Para qué |
 |---|---|---|
-| `VITE_AI_VOICE_COPILOT_ENABLED` | Despliegue de la aplicación | `true` enseña «Dictar». Además hace falta `VITE_AI_TEXT_ENABLED=true` (regla de honestidad: sin proveedor, no sale) y un navegador con dictado |
-| `AI_TEXT_EDITOR_COPILOT_PROVIDER` / `_MODEL` | Secretos de `ai-generate` | Adaptador y modelo solo para el copiloto (si no, los de `AI_TEXT_PROVIDER` / `AI_TEXT_MODEL`) |
+| `VITE_AI_VOICE_COPILOT_ENABLED` | Despliegue de la aplicación | `true` enseña «Dictar». Además hace falta `VITE_AI_TEXT_ENABLED=true`, que el servidor diga que la IA de texto está configurada (`platform-integrations`, como el resto de la IA; regla de honestidad: sin proveedor, no sale) y un navegador con dictado |
+| `AI_TEXT_EDITOR_COPILOT_PROVIDER` / `_MODEL` | Plataforma → Integraciones → IA de texto («Copiloto por voz del editor», migración `20261123010000`) o secretos de `ai-generate` | Adaptador y modelo solo para el copiloto (si no, los de `AI_TEXT_PROVIDER` / `AI_TEXT_MODEL`) |
 
 Sin llevar a `.env.example` (pendiente conocido de `docs/ESTADO.md`).
 

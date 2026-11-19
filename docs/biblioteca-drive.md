@@ -12,9 +12,9 @@ Estado a 19/11/2026:
 | Base de datos: conexiones, token cifrado, recursos de Drive (migración `20261122010000`, con vuelta atrás) | Implementado y probado (PGlite, migraciones reales; casos en `tests/db/aislamiento.test.ts` y `tests/db/biblioteca-drive.test.ts`) |
 | Edge Function `drive-media` (conectar, navegar, añadir, firmar, servir) | Probada contra **Drive simulado** |
 | Adaptador real de Google (`_shared/drive/google-drive.ts`) | Escrito contra la documentación, **sin probar contra Google**: falta el cliente OAuth |
-| Interfaz: «Configuración → Google Drive» y «Biblioteca → Desde Google Drive» | Compila y pasa lint; la recorre la prueba e2e |
+| Interfaz: «Configuración → Google Drive» y «Biblioteca → Desde Google Drive» | Implementada; solo sale con Drive configurado en Plataforma → Integraciones; la recorre la prueba e2e |
 | Editor, exportación y trabajador de medios leyendo de Drive | Editor y exportación por `useSignedUrls`; trabajador por `drive-media/sign` (probado con servidor simulado) |
-| Prueba e2e `tests/e2e/19-biblioteca-drive.spec.ts` | Escrita, **sin ejecutar** (Docker no estaba en marcha) |
+| Prueba e2e `tests/e2e/20-biblioteca-drive.spec.ts` | Escrita, **sin ejecutar** (Docker no estaba en marcha) |
 | Fotos HEIC del iPhone | **No se pueden usar**: el navegador no las pinta y Drive no les hace miniatura. Hay que convertirlas a JPEG antes |
 | Desplegado en staging | **No** (ni migración ni función) |
 
@@ -72,7 +72,10 @@ conectarla».
 
 ## 3. Variables y secretos
 
-Funciones (`drive-media`); ninguna llega al navegador:
+Funciones (`drive-media`); ninguna llega al navegador. El cliente de Google y la
+dirección de la aplicación se meten en **Plataforma → Integraciones → Google Drive**
+(migración `20261123010000`; el secreto, cifrado en Vault) y mandan sobre las
+variables; el resto, como variables de la función:
 
 | Variable | Qué es |
 |---|---|
@@ -83,19 +86,17 @@ Funciones (`drive-media`); ninguna llega al navegador:
 | `SOCIAL_TOKEN_KEYS`, `SOCIAL_TOKEN_KEY_ID` | Las mismas de Meta (docs/publicacion.md): cifran el token y firman las direcciones |
 | `DRIVE_E2E_SIMULATED=true` | Solo pruebas locales: Drive simulado; la función no arranca si `SUPABASE_URL` no es local |
 
-Aplicación: `VITE_DRIVE_LIBRARY_ENABLED=true` enseña «Configuración → Google Drive» y,
-con una conexión activa, «Desde Google Drive» en la biblioteca. Sin la variable no sale
-nada de Drive. (Pendiente de llevar a `.env.example`, como el resto de variables nuevas.)
+Aplicación: `VITE_DRIVE_LIBRARY_ENABLED=true` permite Drive en ese despliegue, pero
+«Configuración → Google Drive» y «Conectar Google Drive» solo salen si además el
+servidor dice que Drive está configurado (`platform-integrations`, acción
+`availability`: cliente OAuth, direcciones y claves de cifrado), y «Desde Google
+Drive» en la biblioteca, si además hay una conexión activa. (Pendiente de llevar a
+`.env.example`, como el resto de variables nuevas.)
 
-**Para el integrador de «Plataforma → Integraciones»** (rama `f4/integraciones`): la
-función ya lee la configuración efectiva con `createRpcSettingsLoader`, así que basta con
-añadir al catálogo una integración `google_drive` con `GOOGLE_DRIVE_CLIENT_ID` (no
-secreto), `GOOGLE_DRIVE_CLIENT_SECRET` (secreto) y `DRIVE_APP_URL` (no secreto) en los
-tres sitios que deben coincidir (`private.integration_setting_keys` y el `check` de
-`integration` en la migración, `_shared/integrations/catalog.ts` y
-`src/features/platform/integrations/catalog.ts`), y una prueba de conexión inocua
-(p. ej. comprobar que el cliente existe con una petición al punto de tokens sin código).
-No se ha tocado su catálogo desde esta rama para no chocar.
+«Probar conexión» de Google Drive comprueba que la configuración está completa sin
+llamar a Google: no hay una llamada gratuita que valide un cliente OAuth sin una
+persona que lo autorice, así que el cliente **se comprueba al conectar** (como
+Ideogram).
 
 ## 4. Lo que hace falta de Google (lo crea el dueño)
 
