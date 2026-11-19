@@ -19,11 +19,13 @@ import { CENTER, focalCropExpr, h264Args, type FocalPoint } from '../handlers/sh
 import type { ReelTemplate } from './schema.ts';
 
 export type ResolvedMedia =
-  | { type: 'photo'; file: string; orientation: number; focalPoint?: FocalPoint; seconds?: number }
+  | { type: 'photo'; file: string; orientation: number; focalPoint?: FocalPoint; seconds?: number; blur?: number }
   | {
       type: 'video';
       file: string;
       focalPoint?: FocalPoint;
+      /** Desenfoque de 0 a 100 (ver `blurSigma`). */
+      blur?: number;
       startAt: number;
       seconds?: number;
       /** Duración real del clip y si trae sonido, según ffprobe. */
@@ -83,6 +85,18 @@ const AVERAGE_GLYPH_WIDTH = 0.56;
 
 const hex = (color: string, opacity = 1) =>
   `0x${color.slice(1).toUpperCase()}${opacity < 1 ? `@${num(opacity, 2)}` : ''}`;
+
+/**
+ * Desviación del desenfoque gaussiano de FFmpeg (`gblur`) para una intensidad
+ * de 0 a 100 sobre un cuadro de `width` × `height`. Es la misma cuenta que el
+ * editor (`blurRadius` en src/features/content/document/schema.ts): 100 = el
+ * 5 % del lado menor. El filtro `blur()` del lienzo del navegador también toma
+ * la desviación, así que se ve igual en el editor y en el reel.
+ */
+export function blurSigma(blur: number | undefined, width: number, height: number): number {
+  if (!blur || blur <= 0) return 0;
+  return (Math.min(blur, 100) / 100) * 0.05 * Math.min(width, height);
+}
 
 /** Parte un texto en líneas que quepan en el ancho dado. Respeta los saltos de línea. */
 export function wrapText(text: string, maxChars: number): string[] {
@@ -151,6 +165,11 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
   const crop = (w: number, h: number, focal: FocalPoint = CENTER) =>
     `crop=${w}:${h}:${focalCropExpr('w', w, focal.x)}:${focalCropExpr('h', h, focal.y)}`;
   const finish = 'setsar=1,format=yuv420p,settb=AVTB';
+  // Desenfoque después del recorte: el radio es relativo al cuadro que se ve.
+  const blurFilter = (blur: number | undefined, w: number, h: number) => {
+    const sigma = blurSigma(blur, w, h);
+    return sigma > 0 ? [`gblur=sigma=${num(sigma, 2)}`] : [];
+  };
   let photoCount = 0;
 
   media.forEach((item, index) => {
@@ -183,6 +202,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           ...orientationFilters(item.orientation),
           `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=lanczos:out_range=tv`,
           crop(sw, sh, item.focalPoint),
+          ...blurFilter(item.blur, sw, sh),
           `zoompan=z='${motion.z}':x='${motion.x}':y='${centerY}':d=${count}:s=${width}x${height}:fps=${fps}`,
           `trim=duration=${num(seconds)}`,
           finish,
@@ -195,6 +215,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           `fps=${fps}`,
           `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=bicubic:out_range=tv`,
           crop(width, height, item.focalPoint),
+          ...blurFilter(item.blur, width, height),
           // Si al clip le falta algún fotograma al final, se repite el último.
           'tpad=stop_mode=clone:stop_duration=1',
           `trim=duration=${num(seconds)}`,

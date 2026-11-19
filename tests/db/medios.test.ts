@@ -190,6 +190,16 @@ describe('encargar desde la aplicación', () => {
     // El plan llega tal cual al trabajador.
     expect(job.payload).toMatchObject({ template: { id: 'fundido-suave' }, plan: reelInput().plan });
 
+    // Con desenfoque en una pieza (mismo 0–100 que el editor), también llega tal cual.
+    const blurred = await request(
+      editor,
+      marcaA,
+      'media.reel.template',
+      { template: { id: 'fundido-suave' }, plan: { media: [{ type: 'photo', path: fotoA, blur: 40 }] } },
+      'reel-desenfocado-1',
+    );
+    expect(blurred.payload).toMatchObject({ plan: { media: [{ type: 'photo', path: fotoA, blur: 40 }] } });
+
     // Repetir el encargo (doble clic, reintento de red) devuelve el mismo trabajo.
     const again = await request(editor, marcaA, 'media.reel.template', reelInput(), 'reel-unico-1');
     expect(again.id).toBe(job.id);
@@ -260,6 +270,16 @@ describe('encargar desde la aplicación', () => {
       { template: { id: 'fundido-suave' }, plan: { media: [] } },
       bad,
     );
+    // Desenfoque de la pieza (20261121010000): número de 0 a 100.
+    for (const blur of [101, -1, 'mucho']) {
+      await rejected(
+        editor,
+        marcaA,
+        'media.reel.template',
+        { template: { id: 'fundido-suave' }, plan: { media: [{ type: 'photo', path: fotoA, blur }] } },
+        /desenfoque va de 0 a 100/,
+      );
+    }
     await rejected(
       editor,
       marcaA,

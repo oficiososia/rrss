@@ -25,6 +25,20 @@ export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
       : document.layers;
     return { ...document, layers };
   },
+  // 2 → 3: llega el desenfoque de las imágenes. Un documento de la 2 no tiene
+  // ninguno; si alguna capa trajera ya `blur` (no debería), se quita para no
+  // desenfocar nada que la persona no desenfocó.
+  2: (document) => {
+    const layers = Array.isArray(document.layers)
+      ? document.layers.map((layer: unknown) => {
+          if (typeof layer !== 'object' || layer === null || !('blur' in layer)) return layer;
+          const rest = { ...(layer as Record<string, unknown>) };
+          delete rest.blur;
+          return rest;
+        })
+      : document.layers;
+    return { ...document, layers };
+  },
 };
 
 export type DocumentFailure =

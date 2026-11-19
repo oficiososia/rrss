@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blurRadius,
   ASPECT_RATIOS,
   CANVAS_SIZES,
   DOCUMENT_MIGRATIONS,
@@ -273,7 +274,7 @@ describe('versión 2: grupos de capas', () => {
 
   it('un documento guardado con la versión 1 se lee igual, sin grupos', () => {
     const document = migrateDocument(savedV1());
-    expect(document.schemaVersion).toBe(2);
+    expect(document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
     expect(document.layers).toHaveLength(sample().layers!.length);
     expect(document.layers.every((layer) => layer.groupId === undefined)).toBe(true);
     // Lo demás no cambia: mismo resultado que validar el de la versión actual.
@@ -302,5 +303,38 @@ describe('versión 2: grupos de capas', () => {
     const newer = validateDocumentFromAnyVersion({ ...sample(), schemaVersion: DOCUMENT_SCHEMA_VERSION + 1 });
     expect(newer.ok).toBe(false);
     if (!newer.ok) expect(newer.issues[0]?.path).toBe('schemaVersion');
+  });
+});
+
+describe('versión 3: desenfoque de imágenes', () => {
+  const savedV2 = () => ({ ...sample(), schemaVersion: 2 });
+
+  it('un documento de la versión 2 se lee igual, con las imágenes nítidas', () => {
+    const document = migrateDocument(savedV2());
+    expect(document.schemaVersion).toBe(3);
+    expect(document.layers.every((layer) => layer.type !== 'image' || layer.blur === undefined)).toBe(true);
+  });
+
+  it('la migración 2 → 3 quita un desenfoque colado y no toca el original', () => {
+    const raw = savedV2() as Record<string, unknown> & { layers: Record<string, unknown>[] };
+    raw.layers[0] = { ...raw.layers[0], blur: 50 };
+    const migrated = runMigrations(raw) as { layers: Record<string, unknown>[] };
+    expect(migrated.layers[0]).not.toHaveProperty('blur');
+    expect(raw.layers[0]).toHaveProperty('blur', 50);
+  });
+
+  it('acepta un desenfoque de 0 a 100 en las imágenes y rechaza lo que se sale', () => {
+    const image = sample().layers!.find((layer) => layer.type === 'image')!;
+    const ok = validateDocument({ ...sample(), layers: [{ ...image, blur: 40 }] });
+    expect(ok.ok && ok.document.layers[0]).toMatchObject({ blur: 40 });
+    expect(validateDocument({ ...sample(), layers: [{ ...image, blur: 101 }] }).ok).toBe(false);
+    expect(validateDocument({ ...sample(), layers: [{ ...image, blur: -1 }] }).ok).toBe(false);
+  });
+
+  it('el radio del desenfoque es relativo a la caja', () => {
+    expect(blurRadius(undefined, { width: 1080, height: 1080 })).toBe(0);
+    expect(blurRadius(0, { width: 1080, height: 1080 })).toBe(0);
+    expect(blurRadius(100, { width: 1080, height: 1350 })).toBeCloseTo(54);
+    expect(blurRadius(50, { width: 540, height: 540 })).toBeCloseTo(13.5);
   });
 });

@@ -368,6 +368,11 @@
                     "type": "number",
                     "minimum": 0.5,
                     "maximum": 10
+                  },
+                  "blur": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
                   }
                 },
                 "required": [
@@ -417,6 +422,11 @@
                     "type": "number",
                     "minimum": 0.5,
                     "maximum": 30
+                  },
+                  "blur": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
                   }
                 },
                 "required": [

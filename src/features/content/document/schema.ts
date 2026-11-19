@@ -10,7 +10,14 @@ import { z } from 'zod';
 //   1  lienzo, capas (imagen, texto, logotipo, forma) y texto de la publicación.
 //   2  grupos de capas (`groupId`, opcional). Un documento de la 1 se lee igual:
 //      sus capas quedan sin grupo.
-export const DOCUMENT_SCHEMA_VERSION = 2;
+//   3  desenfoque de las imágenes (`blur`, opcional). Un documento de la 2 se
+//      lee igual: sus imágenes quedan nítidas. Se sube la versión para que una
+//      aplicación anterior no abra (y al guardar pierda) un desenfoque que no
+//      sabe dibujar: dirá que el documento es de una versión más reciente.
+export const DOCUMENT_SCHEMA_VERSION = 3;
+
+/** Desenfoque máximo de una imagen (intensidad, en %). */
+export const MAX_IMAGE_BLUR = 100;
 
 // ── Lienzo ───────────────────────────────────────────────────────────────
 
@@ -124,7 +131,24 @@ const imageLayerSchema = z.object({
   fit: z.enum(['cover', 'contain']).default('cover'),
   /** Punto de interés de la imagen (0–1): lo que no debe perderse al recortar. */
   focus: z.object({ x: z.number().min(0).max(1).default(0.5), y: z.number().min(0).max(1).default(0.5) }).default({}),
+  /**
+   * Desenfoque (versión 3), de 0 (nítida) a 100. Es una intensidad relativa a
+   * la caja de la capa, no píxeles: el radio real es `blurRadius` (ver
+   * blurRadius más abajo), así sale igual en el editor, al exportar a
+   * cualquier tamaño y en los reels. Sin desenfoque, el campo no está.
+   */
+  blur: z.number().finite().min(0).max(MAX_IMAGE_BLUR).optional(),
 });
+
+/**
+ * Radio del desenfoque, en las unidades de la caja: un 100 % equivale al 5 %
+ * del lado menor de la capa (en un fondo de 1080 px, 54 px). Lo usan el lienzo,
+ * la exportación y el trabajador de reels (que lo calcula igual sobre el vídeo).
+ */
+export function blurRadius(blur: number | undefined, box: { width: number; height: number }): number {
+  if (!blur || blur <= 0) return 0;
+  return (Math.min(blur, MAX_IMAGE_BLUR) / 100) * 0.05 * Math.min(Math.abs(box.width), Math.abs(box.height));
+}
 
 const textLayerSchema = z.object({
   ...layerBase,

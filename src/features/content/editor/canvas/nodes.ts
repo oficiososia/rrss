@@ -1,4 +1,4 @@
-import type { ContentDocument, Layer } from '../../document';
+import { blurRadius, type ContentDocument, type Layer } from '../../document';
 import { layerToNodeBox, type NodeBox } from '../geometry';
 
 // Descripción plana, sin Konva, de lo que hay que dibujar por cada capa. Es la
@@ -38,6 +38,8 @@ export type NodeSpec =
       focus: { x: number; y: number };
       /** Texto del marcador mientras no hay imagen. */
       placeholder: string;
+      /** Radio del desenfoque en unidades del lienzo (0 = nítida). Ver `blurRadius`. */
+      blur: number;
     })
   | (NodeCommon & {
       kind: 'rect' | 'ellipse';
@@ -79,6 +81,7 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
         fit: layer.fit,
         focus: layer.focus,
         placeholder: layer.source.kind === 'asset' ? 'Imagen' : 'Imagen generada',
+        blur: blurRadius(layer.blur, layer),
       };
     case 'logo':
       return {
@@ -88,6 +91,7 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
         fit: 'contain',
         focus: { x: 0.5, y: 0.5 },
         placeholder: 'Logotipo',
+        blur: 0,
       };
     case 'shape':
       return {

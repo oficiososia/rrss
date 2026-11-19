@@ -63,6 +63,10 @@ export function drawSpecShape(context: Context, shape: Shape, spec: NodeSpec, im
   }
   if (spec.kind !== 'image') return;
   if (image instanceof HTMLImageElement && image.naturalWidth > 0) {
+    if (spec.blur > 0) {
+      drawBlurredImage(context._context, image, spec, width, height);
+      return;
+    }
     const natural = { width: image.naturalWidth, height: image.naturalHeight };
     if (spec.fit === 'cover') {
       const crop = coverCrop(natural, { width, height }, spec.focus);
@@ -88,5 +92,69 @@ export function drawSpecShape(context: Context, shape: Shape, spec: NodeSpec, im
   native.textBaseline = 'middle';
   const label = image === 'error' ? `${spec.placeholder} no disponible` : spec.placeholder;
   native.fillText(label, width / 2, height / 2, width * 0.9);
+  native.restore();
+}
+
+/** Escala del contexto respecto a las unidades del lienzo (zoom del editor × densidad de la pantalla). */
+function contextScale(native: CanvasRenderingContext2D): number {
+  const matrix = typeof native.getTransform === 'function' ? native.getTransform() : null;
+  return matrix ? Math.hypot(matrix.a, matrix.b) || 1 : 1;
+}
+
+/** ¿Admite el navegador `filter` en el lienzo 2D? (Safari antiguo no.) */
+function supportsCanvasFilter(native: CanvasRenderingContext2D): boolean {
+  return typeof native.filter === 'string';
+}
+
+/**
+ * Imagen desenfocada dentro de su caja. El desenfoque oscurece y transparenta
+ * los bordes; para que no se note, la imagen se dibuja un poco más grande que
+ * la caja (el doble del radio por cada lado) y se recorta a la caja.
+ *
+ * El radio va en unidades del lienzo; el filtro del navegador trabaja en
+ * píxeles reales, así que se multiplica por la escala del contexto (el mismo
+ * dibujo vale para el editor ampliado y para la exportación a 2160 px). Sin
+ * `filter` (Safari antiguo), se aproxima reduciendo y volviendo a ampliar.
+ */
+function drawBlurredImage(
+  native: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  spec: Extract<NodeSpec, { kind: 'image' }>,
+  width: number,
+  height: number,
+): void {
+  const natural = { width: image.naturalWidth, height: image.naturalHeight };
+  const margin = spec.blur * 2;
+  const outer = { width: width + margin * 2, height: height + margin * 2 };
+  native.save();
+  native.beginPath();
+  native.rect(0, 0, width, height);
+  native.clip();
+  const scale = contextScale(native);
+  const draw = (target: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) => {
+    if (spec.fit === 'cover') {
+      const crop = coverCrop(natural, { width: w, height: h }, spec.focus);
+      target.drawImage(image, crop.x, crop.y, crop.width, crop.height, x, y, w, h);
+    } else {
+      const box = containBox(natural, { width: w, height: h });
+      target.drawImage(image, x + box.x, y + box.y, box.width, box.height);
+    }
+  };
+  if (supportsCanvasFilter(native)) {
+    native.filter = `blur(${Math.max(0.5, spec.blur * scale).toFixed(2)}px)`;
+    draw(native, -margin, -margin, outer.width, outer.height);
+  } else {
+    // Aproximación: a 1/(radio) del tamaño y de vuelta, con suavizado.
+    const factor = Math.max(1, spec.blur * scale);
+    const small = window.document.createElement('canvas');
+    small.width = Math.max(1, Math.round((outer.width * scale) / factor));
+    small.height = Math.max(1, Math.round((outer.height * scale) / factor));
+    const smallContext = small.getContext('2d');
+    if (smallContext) {
+      draw(smallContext, 0, 0, small.width, small.height);
+      native.imageSmoothingEnabled = true;
+      native.drawImage(small, -margin, -margin, outer.width, outer.height);
+    }
+  }
   native.restore();
 }

@@ -114,6 +114,13 @@ export const reelTemplateSchema = z.strictObject({
 export type ReelTemplate = z.output<typeof reelTemplateSchema>;
 export type ReelTemplateInput = z.input<typeof reelTemplateSchema>;
 
+/**
+ * Desenfoque de la pieza, de 0 (nítida) a 100: la misma escala que `blur` en
+ * las imágenes del documento de contenidos (versión 3). El radio es el 5 % del
+ * lado menor del lienzo por cada 100 (ver `blurSigma` en build.ts).
+ */
+const blurSchema = z.number().min(0).max(100).optional();
+
 const mediaItemSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('photo'),
@@ -121,6 +128,7 @@ const mediaItemSchema = z.discriminatedUnion('type', [
     focalPoint: focalPointSchema.optional(),
     /** Segundos en pantalla; por defecto, los de la plantilla. */
     seconds: z.number().min(0.5).max(10).optional(),
+    blur: blurSchema,
   }),
   z.strictObject({
     type: z.literal('video'),
@@ -130,6 +138,7 @@ const mediaItemSchema = z.discriminatedUnion('type', [
     startAt: z.number().min(0).default(0),
     /** Segundos que se toman; por defecto, el máximo de la plantilla. */
     seconds: z.number().min(0.5).max(30).optional(),
+    blur: blurSchema,
   }),
 ]);
 
