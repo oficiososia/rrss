@@ -22,11 +22,11 @@ import {
   Select,
   Spinner,
 } from '@/components/ui';
-import { driveLibraryEnabled } from '@/config/app';
 import { ActivityList } from '@/features/audit/ActivityList';
 import { useUser } from '@/features/auth/AuthProvider';
 import { InviteDialog } from '@/features/invitations/InviteDialog';
 import { assignableOrgRoles, BRAND_ROLE_LABEL, canRemoveMember, ORG_ROLE_LABEL } from '@/features/permissions/roles';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 import type { OrgKind, OrgRole } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn, formatDate } from '@/lib/utils';
@@ -45,14 +45,15 @@ import { useOrg } from './context';
 export function SettingsLayout() {
   const { org, isAdmin } = useOrg();
   const base = `/o/${org.id}/ajustes`;
+  const drive = useFeature('drive');
   const tabs = [
     { to: `${base}/general`, label: 'General' },
     { to: `${base}/equipo`, label: 'Equipo' },
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
     ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
     ...(isAdmin ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
-    // Biblioteca con Google Drive: solo si el entorno la tiene.
-    ...(driveLibraryEnabled() ? [{ to: `${base}/drive`, label: 'Google Drive' }] : []),
+    // Biblioteca con Google Drive: solo si el entorno la tiene y está configurada.
+    ...(drive ? [{ to: `${base}/drive`, label: 'Google Drive' }] : []),
     // RGPD: exportar y borrar la organización, solo propietarios.
     ...(org.role === 'owner' ? [{ to: `${base}/datos`, label: 'Datos' }] : []),
   ];

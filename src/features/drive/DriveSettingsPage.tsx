@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, ErrorState, Skeleton } from '@/components/ui';
 import { driveLibraryEnabled } from '@/config/app';
 import { useOrg } from '@/features/orgs/context';
+import { useFeatureStatus } from '@/features/platform/integrations/useFeature';
 import type { DriveConnectionRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
@@ -21,11 +22,14 @@ const CONNECT_RESULT: Record<string, { ok: boolean; text: string }> = {
 
 /**
  * Configuración · Google Drive. Solo aparece si el entorno tiene la biblioteca
- * con Drive configurada (VITE_DRIVE_LIBRARY_ENABLED). Conectar y desconectar es
+ * con Drive (VITE_DRIVE_LIBRARY_ENABLED) y el servidor tiene el cliente OAuth
+ * de Google configurado (Plataforma → Integraciones). Conectar y desconectar es
  * de quien administra la organización; el resto ve qué cuenta hay.
  */
 export function DriveSettingsPage() {
   const { org, isAdmin } = useOrg();
+  // `undefined` mientras el servidor responde; `false` si no está configurado.
+  const configured = useFeatureStatus('drive');
   const connections = useDriveConnections(org.id, driveLibraryEnabled());
   const disconnect = useDisconnectDrive(org.id);
   const [connecting, setConnecting] = useState(false);
@@ -104,7 +108,11 @@ export function DriveSettingsPage() {
             </div>
           ))
         )}
-        {isAdmin ? (
+        {configured === false ? (
+          <p className="text-sm text-muted" data-testid="drive-not-configured">
+            Google Drive no está configurado en este entorno: no se puede conectar ninguna cuenta.
+          </p>
+        ) : configured === undefined ? null : isAdmin ? (
           <Button onClick={() => void connect()} loading={connecting} data-testid="drive-connect">
             <Link2 className="h-4 w-4" aria-hidden />
             {list.length === 0 ? 'Conectar Google Drive' : 'Conectar otra cuenta o volver a conectar'}

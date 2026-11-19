@@ -161,6 +161,25 @@ describe('interruptores: compilación Y servidor', () => {
     await screen.findByTestId('brand-ai-mode');
     expect(screen.queryByTestId('social-accounts')).toBeNull();
   });
+
+  it('con VITE_DRIVE_LIBRARY_ENABLED pero sin Google Drive configurado, no se ofrece conectar', async () => {
+    vi.stubEnv('VITE_DRIVE_LIBRARY_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner' });
+    fake.fn('platform-integrations', () => ({ status: 200, body: { ...ALL_AVAILABLE, drive: false } }));
+    renderApp(`/o/${ORG_ID}/ajustes/drive`);
+    expect(await screen.findByTestId('drive-not-configured')).toBeInTheDocument();
+    expect(screen.queryByTestId('drive-connect')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Google Drive' })).toBeNull();
+  });
+
+  it('con Google Drive configurado, sale en los ajustes y se puede conectar', async () => {
+    vi.stubEnv('VITE_DRIVE_LIBRARY_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner' });
+    fake.fn('platform-integrations', () => ({ status: 200, body: { ...ALL_AVAILABLE } }));
+    renderApp(`/o/${ORG_ID}/ajustes/drive`);
+    expect(await screen.findByTestId('drive-connect')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Google Drive' })).toBeInTheDocument();
+  });
 });
 
 describe('conectar Instagram con un token', () => {

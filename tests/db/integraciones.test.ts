@@ -257,6 +257,11 @@ describe('guardar y leer ajustes (base de datos)', () => {
       message: 'Meta reconoce la aplicación',
       tested_by_email: 'root@integraciones.test',
     });
+    // Google Drive (20261123010000) también es una integración; una inventada, no.
+    await asService(db, `select public.integration_record_test($1, 'google_drive', true, 'completa')`, [root.id]);
+    await expect(
+      asService(db, `select public.integration_record_test($1, 'dropbox', true, 'x')`, [root.id]),
+    ).rejects.toThrow(/no existe/);
   });
 
   it('no se puede quitar una clave de cifrado con la que hay tokens guardados', async () => {
@@ -356,6 +361,7 @@ describe('configuración efectiva', () => {
       aiText: false,
       aiImage: false,
       billing: false,
+      drive: false,
     });
     const keys = `k1:${Buffer.alloc(32, 1).toString('base64')}`;
     const some = computeAvailability(
@@ -378,6 +384,57 @@ describe('configuración efectiva', () => {
     expect(some).toMatchObject({ publishing: true, socialOAuth: true, socialToken: true, billing: true });
     // Sin precios completos, la IA de texto no está lista.
     expect(some.aiText).toBe(false);
+    // Sin el cliente OAuth de Google, Drive no está listo.
+    expect(some.drive).toBe(false);
+    const drive = computeAvailability(
+      {
+        SUPABASE_URL: 'https://proyecto.supabase.co',
+        SOCIAL_TOKEN_KEYS: keys,
+        GOOGLE_DRIVE_CLIENT_ID: '123-abc.apps.googleusercontent.com',
+        GOOGLE_DRIVE_CLIENT_SECRET: 'secreto-de-cliente',
+        DRIVE_APP_URL: 'https://app.test',
+      },
+      [],
+    );
+    // La vuelta de Google se deduce de la URL https de Supabase.
+    expect(drive.drive).toBe(true);
+  });
+});
+
+describe('Probar conexión de Google Drive (sin red)', () => {
+  const keys = `k1:${Buffer.alloc(32, 1).toString('base64')}`;
+  const noNetwork: ProbeFetch = async () => {
+    throw new TypeError('sin red');
+  };
+
+  it('con todo configurado dice que el cliente se comprueba al conectar, sin llamar a nadie', async () => {
+    const env = {
+      SUPABASE_URL: 'https://proyecto.supabase.co',
+      SOCIAL_TOKEN_KEYS: keys,
+      GOOGLE_DRIVE_CLIENT_ID: '123-abc.apps.googleusercontent.com',
+      GOOGLE_DRIVE_CLIENT_SECRET: 'secreto-de-cliente-0123',
+      DRIVE_APP_URL: 'https://app.test',
+    };
+    const r = await probeIntegration('google_drive', env, { fetch: noNetwork });
+    expect(r.ok).toBe(true);
+    expect(r.checks.find((c) => c.ok === null)?.message).toMatch(/se comprueba al conectar/);
+    expect(JSON.stringify(r)).not.toContain('secreto-de-cliente');
+  });
+
+  it('sin cliente ni claves dice qué falta (solo nombres)', async () => {
+    const r = await probeIntegration(
+      'google_drive',
+      { SUPABASE_URL: 'https://proyecto.supabase.co' },
+      { fetch: noNetwork },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/GOOGLE_DRIVE_CLIENT_ID/);
+    expect(r.message).toMatch(/SOCIAL_TOKEN_KEYS/);
+  });
+
+  it('valida el ID de cliente', () => {
+    expect(validateSetting('GOOGLE_DRIVE_CLIENT_ID', '123-abc.apps.googleusercontent.com')).toBeNull();
+    expect(validateSetting('GOOGLE_DRIVE_CLIENT_ID', 'otra-cosa')).toMatch(/googleusercontent/);
   });
 });
 

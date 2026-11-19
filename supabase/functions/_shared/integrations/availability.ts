@@ -15,6 +15,7 @@ import { loadAiTextConfig } from '../ai/text/config.ts';
 import { loadLocalTestTextConfig } from '../ai/text/local-test.ts';
 import { TEXT_UNITS } from '../ai/text/prompt.ts';
 import { normalizeAppUrl } from '../billing/handlers.ts';
+import { loadDriveConfig } from '../drive/config.ts';
 import { loadSocialConfig } from '../social/config.ts';
 import type { Env } from './settings.ts';
 
@@ -28,6 +29,8 @@ export interface IntegrationAvailability {
   aiText: boolean;
   aiImage: boolean;
   billing: boolean;
+  /** Biblioteca con Google Drive: cliente OAuth, direcciones y claves de cifrado. */
+  drive: boolean;
 }
 
 export const NOTHING_AVAILABLE: IntegrationAvailability = {
@@ -37,6 +40,7 @@ export const NOTHING_AVAILABLE: IntegrationAvailability = {
   aiText: false,
   aiImage: false,
   billing: false,
+  drive: false,
 };
 
 const unused = () => {
@@ -55,6 +59,11 @@ function aiTextReady(env: Env): boolean {
   });
 }
 
+/** Lo mismo que necesita drive-media para conectar y servir imágenes. */
+export function driveReady(config: ReturnType<typeof loadDriveConfig>): boolean {
+  return config.client !== null && config.keyRing !== null && config.callbackUrl !== null && config.appUrl !== null;
+}
+
 /** Lanza solo si la configuración de una prueba local está mal puesta (la función tampoco arrancaría). */
 export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): IntegrationAvailability {
   const social = loadSocialConfig(env, async () => {
@@ -71,6 +80,8 @@ export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): 
     modelRows: imageModelRows,
   });
 
+  const drive = loadDriveConfig(env, async () => unused());
+
   const webhook = (env.STRIPE_WEBHOOK_SECRET ?? '').split(',').some((s) => s.trim());
   return {
     publishing,
@@ -79,5 +90,6 @@ export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): 
     aiText: aiTextReady(env),
     aiImage: runtime.imageChoices.length > 0,
     billing: Boolean(env.STRIPE_SECRET_KEY?.trim()) && webhook && normalizeAppUrl(env.BILLING_APP_URL) !== null,
+    drive: driveReady(drive),
   };
 }

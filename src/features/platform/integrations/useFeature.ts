@@ -1,4 +1,4 @@
-import { aiImageEnabled, aiTextEnabled, socialPublishingEnabled } from '@/config/app';
+import { aiImageEnabled, aiTextEnabled, driveLibraryEnabled, socialPublishingEnabled } from '@/config/app';
 import { billingEnabled } from '@/features/billing/labels';
 import { useIntegrationAvailability, type IntegrationAvailability } from './api';
 
@@ -12,13 +12,14 @@ import { useIntegrationAvailability, type IntegrationAvailability } from './api'
 // despliegue) y el servidor decide si de verdad funcionan. Mientras no hay
 // respuesta del servidor, o si falla, no se enseña.
 
-export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing';
+export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing' | 'drive';
 
 const BUILD_FLAGS: Record<Feature, () => boolean> = {
   aiText: aiTextEnabled,
   aiImage: aiImageEnabled,
   publishing: socialPublishingEnabled,
   billing: billingEnabled,
+  drive: driveLibraryEnabled,
 };
 
 export function useFeature(feature: Feature): boolean {

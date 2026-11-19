@@ -2,10 +2,11 @@ import { Clapperboard, FileText, Film, HardDrive, Images, Music, Search, Upload 
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from '@/components/ui';
-import { driveLibraryEnabled, mediaWorkerEnabled } from '@/config/app';
+import { mediaWorkerEnabled } from '@/config/app';
 import { isDriveAsset, useDriveConnections } from '@/features/drive/api';
 import { DriveImportDialog } from '@/features/drive/DriveImportDialog';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
 import { useAssetFacets, useAssets, useAssetsByIds, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
@@ -35,10 +36,11 @@ export function LibraryPage() {
   const canEdit = can('edit');
   useStorageCleanup(brand.id, canEdit);
   const [uploading, setUploading] = useState(false);
-  // Google Drive: solo si el entorno lo tiene y la organización tiene una conexión activa.
-  const driveConnections = useDriveConnections(org.id, driveLibraryEnabled() && canEdit);
-  const canUseDrive =
-    driveLibraryEnabled() && canEdit && (driveConnections.data ?? []).some((c) => c.status === 'active');
+  // Google Drive: solo si el entorno lo tiene, el servidor está configurado y la
+  // organización tiene una conexión activa.
+  const driveConfigured = useFeature('drive');
+  const driveConnections = useDriveConnections(org.id, driveConfigured && canEdit);
+  const canUseDrive = driveConfigured && canEdit && (driveConnections.data ?? []).some((c) => c.status === 'active');
   const [drivePicking, setDrivePicking] = useState(false);
   const [kind, setKind] = useState<AssetKind | ''>('');
   const [tag, setTag] = useState('');

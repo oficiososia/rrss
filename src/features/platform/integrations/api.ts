@@ -15,6 +15,8 @@ export interface IntegrationAvailability {
   aiText: boolean;
   aiImage: boolean;
   billing: boolean;
+  /** Biblioteca con Google Drive (cliente OAuth y claves de cifrado). */
+  drive: boolean;
 }
 
 export interface IntegrationStatus {

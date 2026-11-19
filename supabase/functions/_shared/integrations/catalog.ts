@@ -3,14 +3,15 @@
 // Cada ajuste se llama igual que la variable de entorno que sustituye: las
 // funciones leen primero lo guardado en la base de datos y, si no está, la
 // variable (settings.ts). El mismo catálogo vive en la migración
-// 20261120010000 (`private.integration_setting_keys`, que es la que manda: no
+// 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
+// (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
 // tres coinciden.
 //
 // Sin dependencias de Deno ni de Node: lo usan las funciones y las pruebas.
 
-export const INTEGRATION_IDS = ['meta', 'comfyui', 'ai_text', 'ai_image', 'stripe'] as const;
+export const INTEGRATION_IDS = ['meta', 'comfyui', 'ai_text', 'ai_image', 'stripe', 'google_drive'] as const;
 export type IntegrationId = (typeof INTEGRATION_IDS)[number];
 
 export interface IntegrationSettingSpec {
@@ -72,6 +73,7 @@ export const TEXT_TASK_PREFIXES = [
   'AI_TEXT_BRAND_CHECK',
   'AI_TEXT_CAMPAIGN_PLAN',
   'AI_TEXT_ANALYTICS_SUMMARY',
+  'AI_TEXT_EDITOR_COPILOT',
 ] as const;
 
 export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
@@ -197,6 +199,15 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     ),
   },
   { key: 'BILLING_APP_URL', integration: 'stripe', secret: false, validate: url(true) },
+  // Google Drive (biblioteca): cliente OAuth «Aplicación web» del producto.
+  {
+    key: 'GOOGLE_DRIVE_CLIENT_ID',
+    integration: 'google_drive',
+    secret: false,
+    validate: pattern(/^[A-Za-z0-9-]{5,100}\.apps\.googleusercontent\.com$/, 'Termina en .apps.googleusercontent.com.'),
+  },
+  { key: 'GOOGLE_DRIVE_CLIENT_SECRET', integration: 'google_drive', secret: true },
+  { key: 'DRIVE_APP_URL', integration: 'google_drive', secret: false, validate: url(true) },
 ];
 
 export const INTEGRATION_SETTING_KEYS: ReadonlySet<string> = new Set(INTEGRATION_SETTINGS.map((s) => s.key));

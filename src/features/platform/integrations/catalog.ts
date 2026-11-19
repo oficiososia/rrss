@@ -1,12 +1,13 @@
 // Lo que se enseña en «Plataforma → Integraciones»: cada integración, sus
 // apartados y sus campos, con el nombre de la variable de entorno que sustituye.
-// El catálogo que manda es el de la base de datos (migración 20261120010000);
+// El catálogo que manda es el de la base de datos (migraciones 20261120010000
+// y 20261123010000);
 // el del servidor está en supabase/functions/_shared/integrations/catalog.ts y
 // una prueba (tests/db/integraciones.test.ts) comprueba que los tres coinciden.
 //
 // Sin importaciones con «@/»: lo usan también las pruebas de base de datos.
 
-export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe';
+export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive';
 
 export interface UiField {
   key: string;
@@ -51,6 +52,7 @@ const TEXT_TASKS: Array<{ prefix: string; label: string }> = [
   { prefix: 'AI_TEXT_BRAND_CHECK', label: 'Verificador de marca' },
   { prefix: 'AI_TEXT_CAMPAIGN_PLAN', label: 'Plan de campaña' },
   { prefix: 'AI_TEXT_ANALYTICS_SUMMARY', label: 'Interpretación de la analítica' },
+  { prefix: 'AI_TEXT_EDITOR_COPILOT', label: 'Copiloto por voz del editor' },
 ];
 
 export const UI_INTEGRATIONS: UiIntegration[] = [
@@ -309,6 +311,37 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             secret: false,
             placeholder: 'https://…',
             help: 'A dónde vuelve la persona tras pagar.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'google_drive',
+    title: 'Google Drive',
+    description:
+      'El cliente OAuth de Google del producto, con el que cada organización conecta su Drive (solo lectura) para usar sus fotos en la biblioteca sin copiarlas. Los tokens se cifran con las mismas claves que los de Meta.',
+    testDescription:
+      'Comprueba que la configuración está completa. Google no tiene una llamada gratuita para validar el cliente: se comprueba al conectar Google Drive.',
+    groups: [
+      {
+        title: 'Cliente OAuth («Aplicación web»)',
+        description:
+          'En Google Cloud, con la API de Google Drive activada y como dirección de vuelta autorizada …/functions/v1/drive-media/callback.',
+        fields: [
+          {
+            key: 'GOOGLE_DRIVE_CLIENT_ID',
+            label: 'ID de cliente',
+            secret: false,
+            placeholder: '…apps.googleusercontent.com',
+          },
+          { key: 'GOOGLE_DRIVE_CLIENT_SECRET', label: 'Secreto del cliente', secret: true },
+          {
+            key: 'DRIVE_APP_URL',
+            label: 'Dirección de la aplicación',
+            secret: false,
+            placeholder: 'https://…',
+            help: 'A dónde vuelve la persona tras conectar Drive. Si no se pone, la de Meta (SOCIAL_APP_URL).',
           },
         ],
       },

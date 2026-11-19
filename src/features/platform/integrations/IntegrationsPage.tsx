@@ -22,7 +22,13 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
-import { aiImageEnabled, aiTextEnabled, socialPublishingEnabled } from '@/config/app';
+import {
+  aiImageEnabled,
+  aiTextEnabled,
+  aiVoiceCopilotEnabled,
+  driveLibraryEnabled,
+  socialPublishingEnabled,
+} from '@/config/app';
 import { useUser } from '@/features/auth/AuthProvider';
 import { billingEnabled } from '@/features/billing/labels';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
@@ -138,6 +144,18 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       build: billingEnabled(),
       live: status.availability.billing,
       flag: 'VITE_BILLING_ENABLED',
+    },
+    {
+      label: 'Copiloto por voz (con la IA de texto)',
+      build: aiVoiceCopilotEnabled(),
+      live: status.availability.aiText,
+      flag: 'VITE_AI_VOICE_COPILOT_ENABLED',
+    },
+    {
+      label: 'Fotos de Google Drive',
+      build: driveLibraryEnabled(),
+      live: status.availability.drive,
+      flag: 'VITE_DRIVE_LIBRARY_ENABLED',
     },
   ];
   return (

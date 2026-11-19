@@ -41,6 +41,7 @@ export const ALL_AVAILABLE = {
   aiText: true,
   aiImage: true,
   billing: true,
+  drive: true,
 };
 type Op = 'select' | 'insert' | 'update' | 'delete';
 

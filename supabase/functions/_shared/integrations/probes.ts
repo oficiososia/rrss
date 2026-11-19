@@ -14,6 +14,10 @@
 //             se dice así, sin gastar.
 //   stripe    GET /v1/account con la clave secreta. El secreto del webhook no
 //             se puede comprobar desde aquí: lo comprueba el primer aviso.
+//   google_drive  Google no tiene una llamada gratuita que valide un cliente
+//             OAuth sin una persona que lo autorice: se comprueba que la
+//             configuración está completa y se dice que el cliente se
+//             comprueba al conectar (como Ideogram, sin gastar nada).
 //
 // ⚠ Escrito contra la documentación de cada servicio y probado solo con
 // servicios simulados (tests/db/integraciones-funciones.test.ts).
@@ -27,6 +31,8 @@ import { isComfyUiBaseUrl } from '../ai/media/comfyui-image.ts';
 import { MEDIA_ENV } from '../ai/media/config.ts';
 import { DEFAULT_GRAPH_API_VERSION, META_GRAPH_HOST } from '../social/meta-graph.ts';
 import { loadSocialConfig } from '../social/config.ts';
+import { loadDriveConfig } from '../drive/config.ts';
+import { DRIVE_LOCAL_TEST_FLAG } from '../drive/local-test.ts';
 import type { IntegrationId } from './catalog.ts';
 import type { Env } from './settings.ts';
 
@@ -403,6 +409,39 @@ async function probeStripe(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   return summarize(checks, '');
 }
 
+// ─────────────────────────────── Google Drive ───────────────────────────────
+
+function probeGoogleDrive(env: Env): ProbeResult {
+  const checks: ProbeCheck[] = [];
+  const config = loadDriveConfig(env, async () => {
+    throw new Error('Sin red al comprobar la configuración de Drive');
+  });
+  // Los problemas solo nombran variables, nunca valores.
+  const missing = config.problems.filter((p) => !p.startsWith(DRIVE_LOCAL_TEST_FLAG));
+  if (missing.length > 0) {
+    checks.push({
+      name: 'Configuración',
+      ok: false,
+      message: missing.map((p) => (p.endsWith('.') ? p : `${p}.`)).join(' '),
+    });
+  } else {
+    checks.push({
+      name: 'Configuración',
+      ok: true,
+      message: config.simulated
+        ? 'Google Drive simulado de las pruebas locales: configuración completa.'
+        : 'La configuración está completa (cliente, dirección de vuelta y claves de cifrado).',
+    });
+  }
+  checks.push({
+    name: 'Cliente OAuth de Google',
+    ok: null,
+    message:
+      'Google no tiene una llamada gratuita para comprobar el cliente OAuth: se comprueba al conectar Google Drive.',
+  });
+  return summarize(checks, '');
+}
+
 export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   switch (id) {
     case 'meta':
@@ -415,6 +454,8 @@ export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeD
       return probeAiImage(env, deps);
     case 'stripe':
       return probeStripe(env, deps);
+    case 'google_drive':
+      return probeGoogleDrive(env);
   }
 }
 
