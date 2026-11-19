@@ -61,6 +61,44 @@ export async function startSocialConnect(brandId: string, network: 'instagram'):
   return url;
 }
 
+export interface TokenConnectResult {
+  accountId: string;
+  username: string;
+  expiresAt: string | null;
+  dataAccessExpiresAt: string | null;
+  tokenType: string | null;
+  warnings: string[];
+}
+
+/**
+ * Conecta la cuenta pegando un token de página de larga duración (en lugar de
+ * OAuth). El servidor lo valida con Meta y lo guarda cifrado; no vuelve nunca.
+ */
+export function useConnectWithToken(brandId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { igUserId: string; accessToken: string }): Promise<TokenConnectResult> => {
+      const { data, error } = await supabase.functions.invoke('social-connect/token', {
+        body: { brandId, network: 'instagram', igUserId: input.igUserId, accessToken: input.accessToken },
+      });
+      if (error) {
+        let message = 'No se pudo conectar la cuenta. Inténtalo de nuevo.';
+        const context = (error as { context?: Response }).context;
+        if (context && typeof context.json === 'function') {
+          const body = (await context.json().catch(() => null)) as { error?: { message?: string } } | null;
+          if (body?.error?.message) message = body.error.message;
+        }
+        throw new Error(message);
+      }
+      return data as TokenConnectResult;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: socialKeys.accounts(brandId) });
+      void qc.invalidateQueries({ queryKey: socialKeys.calendar(brandId) });
+    },
+  });
+}
+
 export function useDisconnectAccount(brandId: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -26,7 +26,7 @@ import type { ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@/components/ui';
-import { aiTextEnabled, APP_NAME } from '@/config/app';
+import { APP_NAME } from '@/config/app';
 import { campaignsAvailable } from '@/features/campaigns/labels';
 import { useUser } from '@/features/auth/AuthProvider';
 import { LegalFooter } from '@/features/legal/LegalFooter';
@@ -38,6 +38,7 @@ import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { cn, initials } from '@/lib/utils';
 import { useTheme, type ThemeChoice } from './theme';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 interface NavItem {
   to: string;
@@ -56,7 +57,7 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 0): NavItem[] {
+function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 0, aiText = false): NavItem[] {
   const base = `/o/${org.id}`;
   const settings: NavItem = { to: `${base}/ajustes`, label: 'Configuración', icon: Settings };
   if (!brand) return [{ to: base, label: 'Marcas', icon: LayoutGrid, end: true }, settings];
@@ -70,9 +71,7 @@ function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 
       : []),
     { to: `${b}/calendario`, label: 'Calendario', icon: CalendarDays },
     // Campañas: con IA de texto conectada o con la marca en modo agencia (docs/03, área «Campañas»).
-    ...(campaignsAvailable(brand, aiTextEnabled())
-      ? [{ to: `${b}/campanas`, label: 'Campañas', icon: Megaphone }]
-      : []),
+    ...(campaignsAvailable(brand, aiText) ? [{ to: `${b}/campanas`, label: 'Campañas', icon: Megaphone }] : []),
     { to: `${b}/analitica`, label: 'Analítica', icon: BarChart3 },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
@@ -251,7 +250,8 @@ function NavBadge({ count, compact = false }: { count: number | undefined; compa
 
 export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) {
   const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
-  const items = navItems(org, brand, unread.data?.length ?? 0);
+  const aiText = useFeature('aiText');
+  const items = navItems(org, brand, unread.data?.length ?? 0, aiText);
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
       <a

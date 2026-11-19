@@ -20,7 +20,6 @@ import {
 } from '@/components/ui';
 import { assetKeys, deleteAssets } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
-import { aiTextEnabled } from '@/config/app';
 import type { BrandProfileRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { downloadText } from '@/lib/utils';
@@ -56,6 +55,7 @@ import {
 import { ProfileProposalFromSources } from './ProfileProposalFromSources';
 import { BrandFontsCard } from './BrandFontsCard';
 import { SourcesCard } from './SourcesCard';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 const TABS = [
   { value: 'negocio', label: 'Negocio' },
@@ -207,6 +207,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const canManage = can('manage');
+  const aiText = useFeature('aiText');
   const save = useSaveProfile(brand.id);
   const [params, setParams] = useSearchParams();
 
@@ -355,7 +356,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
           </TabsContent>
           <TabsContent value="fuentes" className="space-y-6">
             {/* En modo agencia el servidor rechaza la IA de texto (`agency_mode`): no se ofrece. */}
-            {canManage && aiTextEnabled() && brand.ai_mode !== 'agency' && (
+            {canManage && aiText && brand.ai_mode !== 'agency' && (
               <ProfileProposalFromSources
                 brandId={brand.id}
                 currentProfile={active ? saved : null}

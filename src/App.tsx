@@ -55,6 +55,9 @@ const AnalyticsPage = lazy(() =>
 const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const ReelsPage = lazy(() => import('@/features/reels/ReelsPage').then((m) => ({ default: m.ReelsPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
+const IntegrationsPage = lazy(() =>
+  import('@/features/platform/integrations/IntegrationsPage').then((m) => ({ default: m.IntegrationsPage })),
+);
 const BrandTeamPage = lazy(() => import('@/features/team/BrandTeamPage').then((m) => ({ default: m.BrandTeamPage })));
 // RGPD: páginas legales públicas, «Mi cuenta» y los datos de la organización.
 const LegalPage = lazy(() => import('@/features/legal/LegalPage').then((m) => ({ default: m.LegalPage })));
@@ -125,6 +128,7 @@ export function App() {
                   <Route path="/" element={<RootRedirect />} />
                   <Route path="/bienvenida" element={<WelcomePage />} />
                   <Route path="/plataforma" element={<PlatformPage />} />
+                  <Route path="/plataforma/integraciones" element={<IntegrationsPage />} />
                   <Route path="/cuenta" element={<AccountPage />} />
                   <Route path="/o/:orgId" element={<OrgLayout />}>
                     <Route index element={<OrgHomePage />} />
