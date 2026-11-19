@@ -256,8 +256,17 @@ gratuito lo admite).
    select id from auth.users where email = 'TU_CORREO';
    ```
 
-2. SMTP propio si se quiere probar con más cuentas o a más ritmo.
-3. Proyecto de producción (y decidir si sigue en el plan gratuito).
+2. Con el superadministrador dado de alta, las claves de los servicios (Meta,
+   ComfyUI, IA de texto e imagen, Stripe) se meten en **Plataforma →
+   Integraciones** en vez de con `supabase secrets set`: se guardan cifradas en
+   Supabase Vault (migración `20261120010000`, función `platform-integrations`),
+   no se vuelven a ver (la pantalla enseña «configurado · pista · fecha ·
+   quién»), mandan sobre las variables de entorno y cada una tiene «Probar
+   conexión». Lo que sigue siendo variable: la clave de servicio y la URL de
+   Supabase (las pone Supabase), los orígenes CORS, los interruptores de las
+   pruebas locales y el vídeo con IA.
+3. SMTP propio si se quiere probar con más cuentas o a más ritmo.
+4. Proyecto de producción (y decidir si sigue en el plan gratuito).
 
 ### 2. Vercel
 
@@ -278,6 +287,13 @@ No hay ninguna `VITE_AI_*` ni `VITE_MEDIA_WORKER_ENABLED`.
    en el entorno que tenga desplegado el trabajador de medios (`worker/`) contra
    su Supabase: sin ella no aparece «Montar un reel» en la biblioteca (un reel
    encargado sin trabajador se quedaría en cola para siempre).
+   Desde la migración `20261120010000`, `VITE_AI_TEXT_ENABLED`,
+   `VITE_AI_IMAGE_ENABLED`, `VITE_SOCIAL_PUBLISHING_ENABLED` y
+   `VITE_BILLING_ENABLED` dicen qué módulos **permite** ese despliegue; la
+   interfaz los enseña solo si además el servidor dice que su integración está
+   configurada (`platform-integrations`, solo booleanos). Se pueden poner a
+   `true` una vez por despliegue y configurar después cada servicio desde
+   Plataforma → Integraciones; lo que no esté configurado sigue sin salir.
 3. Rama de producción `main`; `staging` como entorno de validación.
 4. Dominio propio.
 

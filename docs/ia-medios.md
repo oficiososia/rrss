@@ -123,7 +123,21 @@ De fal.ai no se siembra nada: no se ha contrastado ningún par modelo–precio.
 
 ## 5. Configuración del servidor
 
-Variables de las funciones del servidor (nunca `VITE_`). Las de este bloque
+**Desde la interfaz:** un superadministrador puede meter las credenciales en
+**Plataforma → Integraciones**: «IA de imagen» (modelo fijo, criterio de datos,
+cuenta de servicio de Vertex en JSON, claves de Black Forest Labs e Ideogram) y
+«ComfyUI propio» (URL base, token de acceso y región de los datos). Se guardan
+cifradas en Supabase Vault (migración `20261120010000`), no se vuelven a ver y
+mandan sobre las variables de abajo; `ai-media`, `ai-media-poll` y
+`ai-media-webhook` las leen sin redesplegar (caché de 30 s). «Probar conexión»
+pide un token a Google (Vertex), el saldo a Black Forest Labs (`/v1/credits`) o
+el estado a ComfyUI (`/system_stats`); Ideogram no documenta ninguna llamada
+gratuita y se dice así. Nada de eso genera imágenes. El vídeo (Higgsfield,
+fal.ai) sigue apagado y solo por variables. La interfaz enseña la imagen con IA
+si `VITE_AI_IMAGE_ENABLED=true` **y** hay algún modelo de imagen activo con su
+adaptador configurado.
+
+**O como variables** de las funciones del servidor (nunca `VITE_`). Las de este bloque
 (ComfyUI, pruebas locales) están documentadas aquí y todavía NO en
 `.env.example`. Sin su clave un adaptador no se carga, y el error dice qué
 variable falta.
@@ -257,6 +271,11 @@ imagen entra como capa (se deshace con Ctrl+Z) y queda en la biblioteca. Cupo
 agotado y «no configurado», con los mensajes de siempre.
 
 ## 11. ComfyUI propio (modelos abiertos)
+
+> La dirección del túnel, el token y la región se pueden meter en Plataforma →
+> Integraciones → ComfyUI propio, y «Probar conexión» comprueba que responde
+> (`/system_stats`) sin generar nada. Útil con el cuaderno de Colab, cuya
+> dirección cambia en cada sesión.
 
 Adaptador `comfyui` contra la API HTTP documentada de ComfyUI (`/prompt`,
 `/history/{id}`, `/view`, `/upload/image`; `/queue` e `/interrupt` para

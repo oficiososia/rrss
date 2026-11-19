@@ -123,6 +123,16 @@ Avisos que hay que suscribir en Stripe: `checkout.session.completed`,
 
 ### Variables (secretos de las funciones; no van a `.env` del navegador)
 
+**Desde la interfaz:** la clave secreta, el secreto del webhook y la dirección
+de la aplicación se pueden meter en **Plataforma → Integraciones → Stripe**. Se
+guardan cifradas en Supabase Vault (migración `20261120010000`), no se vuelven a
+ver y mandan sobre las variables de abajo; las tres funciones las leen sin
+redesplegar (caché de 30 s). «Probar conexión» lee la cuenta
+(`GET /v1/account`: no crea clientes ni cobros); el secreto del webhook solo se
+puede comprobar con el primer aviso de Stripe. «Contratar» y el portal salen si
+`VITE_BILLING_ENABLED=true` **y** el servidor tiene clave, secreto del webhook y
+dirección de la aplicación.
+
 | Variable | Dónde | Qué es |
 |---|---|---|
 | `STRIPE_SECRET_KEY` | las tres funciones | Clave secreta de Stripe (`sk_test_…` en pruebas). Mejor una clave restringida con permisos de escritura en Checkout Sessions y Customer Portal y de lectura en Subscriptions |
@@ -139,7 +149,7 @@ Avisos que hay que suscribir en Stripe: `checkout.session.completed`,
 3. Configurar el portal de cliente en el panel de Stripe (qué planes se pueden
    cambiar, cancelación al final del periodo…).
 4. Desplegar `billing-checkout`, `billing-portal` y `billing-webhook` en staging
-   con los secretos de arriba; dar de alta el punto de conexión
+   con los secretos de arriba (o metiéndolos en Plataforma → Integraciones → Stripe); dar de alta el punto de conexión
    `https://<proyecto>.supabase.co/functions/v1/billing-webhook` con los avisos
    listados.
 5. Probar de punta a punta con tarjetas de prueba de Stripe (alta, impago con la
