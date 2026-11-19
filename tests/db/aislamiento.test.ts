@@ -212,6 +212,8 @@ const TENANT_TABLES = [
   'media_metrics_daily',
   'analytics_capture_runs',
   'analytics_reports',
+  // Biblioteca con Google Drive.
+  'drive_connections',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -2209,5 +2211,111 @@ describe('Plataforma → Integraciones (20261120010000)', () => {
 
   it('cómo se conectó una cuenta lo ve quien ve la marca, y no se cambia desde el cliente', async () => {
     await denied(db, ana, `update public.social_accounts set connection_method = 'token'`, [], /permission denied/);
+  });
+});
+
+describe('biblioteca con Google Drive', () => {
+  let conexionA: string, conexionB: string;
+  const cifrado = Buffer.alloc(40, 1).toString('base64');
+  const conectar = async (user: TestUser, orgId: string, email: string): Promise<string> => {
+    const [estado] = await as<{ s: string }>(db, user, `select public.drive_oauth_begin($1) as s`, [orgId]);
+    const [ctx] = await asService<{ c: { user_id: string } }>(db, `select public.drive_oauth_consume($1) as c`, [
+      estado!.s,
+    ]);
+    const [fila] = await asService<{ id: string }>(
+      db,
+      `select (public.drive_connection_save($1, $2, $3, '', '{}', 'k1', $4)).id as id`,
+      [ctx!.c.user_id, orgId, email, cifrado],
+    );
+    return fila!.id;
+  };
+
+  beforeAll(async () => {
+    conexionA = await conectar(ana, orgA, 'drive-a@a.test');
+    conexionB = await conectar(berta, orgB, 'drive-b@b.test');
+  });
+
+  it('cada organización ve solo sus conexiones; los secretos y estados no los ve nadie del cliente', async () => {
+    expect((await as(db, ana, `select id from public.drive_connections`)).map((r) => r.id)).toEqual([conexionA]);
+    expect((await as(db, berta, `select id from public.drive_connections`)).map((r) => r.id)).toEqual([conexionB]);
+    expect(await as(db, ajeno, `select id from public.drive_connections`)).toEqual([]);
+    expect(await as(db, superadmin, `select id from public.drive_connections`)).toEqual([]);
+    for (const table of ['drive_connection_secrets', 'drive_oauth_states']) {
+      await denied(db, ana, `select * from private.${table}`, [], /permission denied/);
+    }
+  });
+
+  it('nadie escribe las conexiones desde el cliente', async () => {
+    await denied(
+      db,
+      ana,
+      `insert into public.drive_connections (organization_id, account_email) values ($1, 'x@x.test')`,
+      [orgA],
+      /permission denied/,
+    );
+    await denied(db, ana, `update public.drive_connections set status = 'active'`, [], /permission denied/);
+    await denied(db, ana, `delete from public.drive_connections`, [], /permission denied/);
+  });
+
+  it('solo administra la conexión quien administra la organización, y nunca la de otra', async () => {
+    await denied(db, editorA, `select public.drive_oauth_begin($1)`, [orgA], /administra/);
+    await denied(db, ana, `select public.drive_oauth_begin($1)`, [orgB], /administra/);
+    await denied(db, ana, `select public.disconnect_drive($1)`, [conexionB], /administra/);
+    // Solo la clave de servicio guarda, lee el token cifrado o da de alta recursos.
+    await denied(db, ana, `select public.drive_connection_token($1)`, [conexionA], /permission denied/);
+    await denied(
+      db,
+      ana,
+      `select public.drive_connection_save($1, $2, 'x@x.test', '', '{}', 'k1', 'aaaaaaaaaaaaaaaaaaaa')`,
+      [ana.id, orgA],
+      /permission denied/,
+    );
+  });
+
+  it('para añadir fotos hace falta editar una marca de la organización de la conexión', async () => {
+    const [ok] = await as<{ c: { id: string } }>(db, editorA, `select public.drive_connection_for_brand($1) as c`, [
+      marcaA1,
+    ]);
+    expect(ok!.c.id).toBe(conexionA);
+    await denied(db, clienteA, `select public.drive_connection_for_brand($1)`, [marcaA1], /edita la marca/);
+    await denied(db, editorA, `select public.drive_connection_for_brand($1)`, [marcaA2], /edita la marca/);
+    await denied(db, ana, `select public.drive_connection_for_brand($1, $2)`, [marcaB1, conexionB], /edita la marca/);
+    // Con una conexión de otra organización no se encuentra ninguna.
+    await denied(
+      db,
+      ana,
+      `select public.drive_connection_for_brand($1, $2)`,
+      [marcaA1, conexionB],
+      /no tiene Google Drive/,
+    );
+  });
+
+  it('un recurso de Drive se aísla como cualquier otro y el servidor no lo cruza de organización', async () => {
+    const archivos = JSON.stringify([
+      { id: 'driveFileAislamiento01', name: 'a.jpg', mime_type: 'image/jpeg', bytes: 10 },
+    ]);
+    const [recurso] = await asService<{ id: string }>(
+      db,
+      `select id from public.drive_assets_import($1, $2, $3, $4::jsonb)`,
+      [ana.id, marcaA1, conexionA, archivos],
+    );
+    expect(await as(db, berta, `select 1 from public.media_assets where id = $1`, [recurso!.id])).toEqual([]);
+    await expect(
+      asService(db, `select * from public.drive_assets_import($1, $2, $3, $4::jsonb)`, [
+        ana.id,
+        marcaA1,
+        conexionB,
+        archivos,
+      ]),
+    ).rejects.toThrow(/no es de la organización/);
+    await expect(
+      asService(db, `select * from public.drive_assets_import($1, $2, $3, $4::jsonb)`, [
+        berta.id,
+        marcaA1,
+        conexionA,
+        archivos,
+      ]),
+    ).rejects.toThrow(/edita la marca/);
+    await as(db, ana, `delete from public.media_assets where id = $1`, [recurso!.id]);
   });
 });
