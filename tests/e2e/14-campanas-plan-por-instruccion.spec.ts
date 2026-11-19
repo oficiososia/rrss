@@ -98,7 +98,7 @@ test('la sección Campañas está en el menú de la marca (IA de texto activa)',
   await s.page.goto(`${marca()}/inicio`);
   await s.page.getByRole('link', { name: 'Campañas' }).first().click();
   await expect(s.page).toHaveURL(/\/campanas$/);
-  await expect(s.page.getByRole('heading', { name: 'Campañas' })).toBeVisible();
+  await expect(s.page.getByRole('heading', { level: 1, name: 'Campañas' })).toBeVisible();
   sinErrores(s);
   await s.context.close();
 });

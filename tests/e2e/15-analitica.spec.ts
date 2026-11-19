@@ -133,15 +133,15 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   await page.getByRole('link', { name: 'Analítica' }).first().click();
   await expect(page).toHaveURL(new RegExp(`${marca()}/analitica`));
 
+  // Por defecto, «Últimos 28 días»: días completos, sin hoy. Ahí están las
+  // cifras diarias (de ayer hacia atrás), no lo capturado o publicado hoy.
   const kpis = page.getByTestId('analytics-kpis');
   await expect(kpis.getByTestId('kpi-instagram.account.reach')).toContainText('Estimación de Meta');
-  await expect(kpis.getByTestId('kpi-instagram.account.followers')).toBeVisible();
   await expect(page.getByTestId('analytics-chart')).toBeVisible();
   await expect(page.getByTestId('analytics-facts')).toContainText('Dato');
   await expect(page.getByTestId('analytics-facts')).toContainText('Alcance:');
   await expect(page.getByTestId('analytics-hypotheses')).toBeVisible();
   await expect(page.getByTestId('analytics-caveats')).toContainText('UTC');
-  await expect(page.getByTestId('analytics-best-posts')).toContainText(PUBLICADA);
   const noMedible = page.getByTestId('analytics-unmeasurable');
   await expect(noMedible).toContainText('Impresiones');
   await expect(noMedible).toContainText('Facebook');
@@ -153,6 +153,12 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   await expect(ia).toContainText('Hipótesis (IA)');
   await expect(ia).toContainText('[simulado] Podría merecer la pena fijarse en esto');
   await expect(ia).toContainText('Se apoya en:');
+
+  // Los seguidores (una foto del día de la captura, hoy) y la pieza publicada
+  // hoy en 13-publicacion-calendario están en «Este mes», que incluye hoy.
+  await page.getByRole('combobox', { name: 'Periodo' }).selectOption({ label: 'Este mes' });
+  await expect(kpis.getByTestId('kpi-instagram.account.followers')).toBeVisible();
+  await expect(page.getByTestId('analytics-best-posts')).toContainText(PUBLICADA);
   sinErrores(s);
   await s.context.close();
 });
