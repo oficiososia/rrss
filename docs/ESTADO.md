@@ -10,10 +10,10 @@ Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en
 local con proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas
 de verdad son cuentas y decisiones del dueño, no desarrollo: aplicación de Meta,
 proveedor de IA, Stripe, correo y revisión legal. Staging (Supabase gratuito, UE)
-tiene las 31 migraciones y todas las funciones desplegadas sin proveedores, y la
-aplicación está publicada contra staging en https://rrss-omega.vercel.app. Lo de
-`f4/integracion` (4 migraciones y 2 funciones nuevas) está probado en local y
-**sin llevar a staging** (ver «Para llevar a staging»).
+tiene las 35 migraciones y todas las funciones desplegadas sin proveedores, y la
+aplicación está publicada contra staging en https://rrss-omega.vercel.app,
+incluido lo de `f4/integracion` (Integraciones, copiloto por voz y fotos de
+Drive), desde el 20/11/2026.
 
 ## Pruebas
 
@@ -130,31 +130,26 @@ Detalle en `docs/biblioteca-drive.md`.
 ## En staging
 
 Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
-- 31 migraciones aplicadas; 39 tablas, todas con RLS. Organizaciones existentes en el plan «Heredado».
-- Funciones desplegadas sin proveedores: `ai-generate`, `ai-media`, `ai-media-poll`, `ai-media-webhook`, `social-connect`, `social-publish`, `social-insights`, `billing-checkout`, `billing-portal`, `billing-webhook`, `delete-account`, `delete-organization`.
+- 35 migraciones aplicadas (la última, `20261123010000_integrations_drive_copilot`, el 20/11/2026); todas las tablas de `public` con RLS. Organizaciones existentes en el plan «Heredado».
+- Funciones desplegadas sin proveedores: `platform-integrations`, `drive-media`, `ai-generate`, `ai-media`, `ai-media-poll`, `ai-media-webhook`, `social-connect`, `social-publish`, `social-insights`, `billing-checkout`, `billing-portal`, `billing-webhook`, `delete-account`, `delete-organization`.
+- Plataforma → Integraciones disponible para el superadministrador; ninguna integración configurada todavía.
 - pg_cron: `rrss-ai-media-poll` (30 s), `rrss-social-publish` (cada minuto), `rrss-analytics` y `rrss-purge-provisional-assets` (cada hora). Faltan a propósito los secretos de Vault (`rrss_project_url`, `rrss_service_role_key`): sin ellos las llamadas programadas solo dejan un aviso.
 - Inicio de sesión con retorno a https://rrss-omega.vercel.app y `localhost:5173`.
 - Cuentas: la del dueño (superadministrador), una de prueba y la de la agencia (Gestora de Casa Tomás). Casa Tomás está dada de alta en Oficiosos, en modo agencia, con perfil, logotipos y 25 fotos.
-- Interruptores de la interfaz apagados: IA de texto e imagen, reels y recortes, publicación y facturación.
+- Interruptores de Vercel encendidos: `VITE_AI_TEXT_ENABLED`, `VITE_AI_IMAGE_ENABLED`, `VITE_SOCIAL_PUBLISHING_ENABLED`, `VITE_AI_VOICE_COPILOT_ENABLED` y `VITE_DRIVE_LIBRARY_ENABLED`; cada módulo sale solo cuando su integración está configurada. Apagados: reels y recortes (sin trabajador alojado) y facturación (sin precios decididos).
 
-## Para llevar a staging (`f4/integracion`)
+## Para usar en staging lo desplegado
 
-1. Migraciones, en orden: `20261120010000_platform_integrations`,
-   `20261121010000_reel_media_blur`, `20261122010000_drive_library`,
-   `20261123010000_integrations_drive_copilot` (todas con vuelta atrás).
-2. Funciones nuevas: `platform-integrations` y `drive-media` (esta con
-   `verify_jwt = false`, como en `supabase/config.toml`). Cambiadas, a
-   redesplegar: `ai-generate`, `ai-media`, `ai-media-poll`, `ai-media-webhook`,
-   `social-connect`, `social-publish`, `social-insights`, `billing-checkout`,
-   `billing-portal` y `billing-webhook`.
-3. En Vercel, las `VITE_*` de los módulos que staging deba ofrecer; nuevas:
-   `VITE_AI_VOICE_COPILOT_ENABLED` y `VITE_DRIVE_LIBRARY_ENABLED`. Lo que no esté
-   configurado en Integraciones sigue sin salir.
-4. Para usar Drive de verdad: cliente OAuth de Google (Drive API, dirección de
-   vuelta `…/functions/v1/drive-media/callback`) metido en Plataforma →
-   Integraciones → Google Drive, y `SOCIAL_TOKEN_KEYS` («Generar clave» en Meta).
-5. El trabajador de medios, cuando se aloje, con la versión de esta rama
-   (desenfoque y fotos de Drive).
+1. Drive: cliente OAuth de Google (Drive API, dirección de vuelta
+   `…/functions/v1/drive-media/callback`) metido en Plataforma → Integraciones →
+   Google Drive, y `SOCIAL_TOKEN_KEYS` («Generar clave» en Meta).
+2. Instagram: «Generar clave» en Meta y conectar la cuenta pegando un token, o
+   la aplicación de Meta para OAuth.
+3. El trabajador de medios, cuando se aloje, con esta versión (desenfoque y
+   fotos de Drive).
+4. Fotos de Drive: 371 HEIC convertidas a JPEG; 126 subidas junto a su HEIC el
+   20/11/2026, el resto pendiente (copia local en
+   `codigo-restaurante/drive-jpeg-pendientes`).
 
 ## Bloqueado por algo externo
 
@@ -165,7 +160,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 | Cobrar | Cuenta de Stripe, moneda, precios por plan y portal configurado |
 | Correo para cualquiera (registro, recuperación, invitaciones) | SMTP propio (Resend u otro); hoy solo llega al equipo de Supabase, 2 por hora |
 | Reels y recortes en staging | Encender el trabajador contra staging o alojarlo (recomendado: Fly.io en Fráncfort) |
-| Fotos de Drive en staging | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar); convertir las HEIC a JPEG |
+| Fotos de Drive en staging | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar) |
 | Clientes reales | Supabase de producción en Pro (copias de seguridad, sin pausas), dominio propio, páginas legales completadas y revisadas por un abogado, contrato de encargo con cada cliente |
 
 ## Decisiones del dueño pendientes
