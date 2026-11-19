@@ -128,6 +128,29 @@ export interface MetaLoginApi {
   debugToken(p: { appId: string; appSecret: string; token: string }): Promise<TokenInfo>;
 }
 
+/** Lo que da Meta de un token inspeccionado consigo mismo (sin la aplicación del producto). */
+export interface SelfTokenInfo extends TokenInfo {
+  /** USER, PAGE… según Meta. */
+  type: string | null;
+  appId: string | null;
+}
+
+/**
+ * Conectar con un token pegado (cuentas que ya tienen su aplicación de Meta y
+ * su token de página de larga duración): validarlo y saber a qué cuenta da acceso.
+ */
+export interface TokenConnectApi {
+  /** GET /debug_token con el propio token como access_token: vale aunque sea de otra aplicación. */
+  inspectToken(token: string): Promise<SelfTokenInfo>;
+  /** GET /me: la página (o el usuario) del token. */
+  tokenOwner(token: string): Promise<{ id: string; name: string | null }>;
+  /** GET /{ig-user-id}?fields=id,username,name con el token. */
+  instagramAccount(
+    igUserId: string,
+    token: string,
+  ): Promise<{ id: string; username: string | null; name: string | null }>;
+}
+
 /** Trabajo reclamado de la cola (lo que devuelve claim_jobs). */
 export interface ClaimedSocialJob {
   id: string;

@@ -177,6 +177,17 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
       });
     }
 
+    // Token de aplicación («App ID|App Secret»): «Probar conexión» de Meta. Vale
+    // con cualquier App ID numérico salvo que el secreto empiece por «mal».
+    const appToken = query.get('access_token') ?? '';
+    if (method === 'GET' && parts.length === 2 && appToken.includes('|')) {
+      const [appId, appSecret] = appToken.split('|');
+      if (appId !== parts[1] || !appSecret || appSecret.startsWith('mal')) {
+        return graphError(400, 190, 'Invalid OAuth access token signature.');
+      }
+      return json(200, { id: appId, name: 'Aplicación simulada' });
+    }
+
     const token = tokenOf({ headers, query });
     if (!tokenOk(token)) {
       return graphError(401, 190, 'Error validating access token: Session has expired (simulado).', 463);
@@ -193,6 +204,17 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
             : {}),
         })),
       });
+    }
+
+    // GET /me con un token de página: la página (conectar con un token pegado).
+    if (method === 'GET' && path === '/me') {
+      const page = pages.find((p) => token.startsWith(`sim-page-${p.id}`)) ?? pages[0];
+      return page ? json(200, { id: page.id, name: page.name }) : graphError(400, 100, 'Sin página');
+    }
+    // GET /{ig-user-id}?fields=id,username,name (conectar con un token pegado).
+    if (method === 'GET' && parts.length === 2 && (query.get('fields') ?? '').includes('username')) {
+      const ig = pages.find((p) => p.instagram?.id === parts[1])?.instagram;
+      if (ig) return json(200, { id: ig.id, username: ig.username, name: `Cuenta ${ig.username}` });
     }
 
     // /{ig-user-id}/content_publishing_limit

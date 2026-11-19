@@ -1,0 +1,317 @@
+// Lo que se enseña en «Plataforma → Integraciones»: cada integración, sus
+// apartados y sus campos, con el nombre de la variable de entorno que sustituye.
+// El catálogo que manda es el de la base de datos (migración 20261120010000);
+// el del servidor está en supabase/functions/_shared/integrations/catalog.ts y
+// una prueba (tests/db/integraciones.test.ts) comprueba que los tres coinciden.
+//
+// Sin importaciones con «@/»: lo usan también las pruebas de base de datos.
+
+export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe';
+
+export interface UiField {
+  key: string;
+  label: string;
+  /** Secreto: se escribe pero nunca se vuelve a ver. */
+  secret: boolean;
+  input?: 'text' | 'textarea' | 'select';
+  options?: Array<{ value: string; label: string }>;
+  placeholder?: string;
+  help?: string;
+}
+
+export interface UiGroup {
+  title: string;
+  description?: string;
+  fields: UiField[];
+}
+
+export interface UiIntegration {
+  id: IntegrationId;
+  title: string;
+  description: string;
+  /** Qué hace «Probar conexión» (para que se sepa que no gasta). */
+  testDescription: string;
+  groups: UiGroup[];
+}
+
+const TEXT_PROVIDERS = [
+  { value: 'anthropic-vertex', label: 'Claude en Google Vertex AI (UE)' },
+  { value: 'anthropic-bedrock', label: 'Claude en Amazon Bedrock (UE)' },
+  { value: 'mistral', label: 'Mistral (UE)' },
+  { value: 'anthropic', label: 'Anthropic directo (fuera de la UE)' },
+];
+const YES_NO = [
+  { value: 'false', label: 'No' },
+  { value: 'true', label: 'Sí' },
+];
+
+const TEXT_TASKS: Array<{ prefix: string; label: string }> = [
+  { prefix: 'AI_TEXT_POST_CAPTION', label: 'Textos de las piezas' },
+  { prefix: 'AI_TEXT_PROFILE_PROPOSAL', label: 'Propuesta de perfil de marca' },
+  { prefix: 'AI_TEXT_BRAND_CHECK', label: 'Verificador de marca' },
+  { prefix: 'AI_TEXT_CAMPAIGN_PLAN', label: 'Plan de campaña' },
+  { prefix: 'AI_TEXT_ANALYTICS_SUMMARY', label: 'Interpretación de la analítica' },
+];
+
+export const UI_INTEGRATIONS: UiIntegration[] = [
+  {
+    id: 'meta',
+    title: 'Meta (Instagram)',
+    description:
+      'La aplicación de Meta del producto, con la que las marcas conectan su cuenta de Instagram por OAuth, y las claves con las que se cifran los tokens de las cuentas.',
+    testDescription: 'Pregunta a Meta si reconoce la aplicación (sin publicar nada) y comprueba las claves de cifrado.',
+    groups: [
+      {
+        title: 'Aplicación de Meta',
+        fields: [
+          { key: 'META_APP_ID', label: 'App ID', secret: false, placeholder: '1234567890123456' },
+          { key: 'META_APP_SECRET', label: 'App Secret', secret: true },
+          {
+            key: 'META_LOGIN_CONFIG_ID',
+            label: 'config_id de Facebook Login for Business',
+            secret: false,
+            help: 'La configuración de inicio de sesión que fija los permisos. Recomendado.',
+          },
+          {
+            key: 'META_GRAPH_API_VERSION',
+            label: 'Versión de la Graph API',
+            secret: false,
+            placeholder: 'v27.0',
+            help: 'Si no se pone, v27.0.',
+          },
+          {
+            key: 'SOCIAL_APP_URL',
+            label: 'Dirección de la aplicación',
+            secret: false,
+            placeholder: 'https://…',
+            help: 'A dónde vuelve la persona tras conectar su cuenta.',
+          },
+        ],
+      },
+      {
+        title: 'Cifrado de los tokens',
+        description:
+          'Los tokens de las cuentas se guardan cifrados con estas claves. Se generan aquí y no se ven nunca; una clave con la que hay tokens guardados no se puede quitar.',
+        fields: [
+          { key: 'SOCIAL_TOKEN_KEYS', label: 'Claves de cifrado', secret: true },
+          { key: 'SOCIAL_TOKEN_KEY_ID', label: 'Clave con la que se cifra lo nuevo', secret: false },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'comfyui',
+    title: 'ComfyUI propio',
+    description:
+      'Generar imágenes con modelos abiertos en un ComfyUI propio (por ejemplo, el cuaderno de Colab con su túnel).',
+    testDescription: 'Pide a ComfyUI su estado (/system_stats): no genera ninguna imagen.',
+    groups: [
+      {
+        title: 'Servidor',
+        fields: [
+          {
+            key: 'COMFYUI_BASE_URL',
+            label: 'Dirección (URL base)',
+            secret: false,
+            placeholder: 'https://…',
+            help: 'https; http solo en la propia máquina.',
+          },
+          {
+            key: 'COMFYUI_API_TOKEN',
+            label: 'Token de acceso',
+            secret: true,
+            help: 'El que pide el proxy o el túnel delante de ComfyUI (Authorization: Bearer).',
+          },
+          {
+            key: 'COMFYUI_DATA_REGION',
+            label: 'Región de los datos',
+            secret: false,
+            input: 'select',
+            options: [
+              { value: 'eu', label: 'Unión Europea' },
+              { value: 'us', label: 'Estados Unidos' },
+              { value: 'global', label: 'Global' },
+              { value: 'unknown', label: 'No se sabe (se trata como fuera de la UE)' },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'ai_text',
+    title: 'IA de texto',
+    description:
+      'Qué proveedor y qué modelo redacta cada tarea, las credenciales de cada proveedor y la tabla de precios. Sin precio completo, el modelo no genera.',
+    testDescription:
+      'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, Bedrock) o pide un token de acceso (Vertex). No genera texto ni gasta cupo.',
+    groups: [
+      {
+        title: 'Proveedor y modelo',
+        description: 'El de todas las tareas, salvo las que tengan uno propio más abajo.',
+        fields: [
+          { key: 'AI_TEXT_PROVIDER', label: 'Proveedor', secret: false, input: 'select', options: TEXT_PROVIDERS },
+          { key: 'AI_TEXT_MODEL', label: 'Modelo', secret: false },
+        ],
+      },
+      {
+        title: 'Por tarea (opcional)',
+        fields: TEXT_TASKS.flatMap((t) => [
+          {
+            key: `${t.prefix}_PROVIDER`,
+            label: `${t.label} · proveedor`,
+            secret: false,
+            input: 'select' as const,
+            options: TEXT_PROVIDERS,
+          },
+          { key: `${t.prefix}_MODEL`, label: `${t.label} · modelo`, secret: false },
+        ]),
+      },
+      {
+        title: 'Google Vertex AI',
+        fields: [
+          { key: 'AI_VERTEX_PROJECT_ID', label: 'Proyecto', secret: false },
+          { key: 'AI_VERTEX_LOCATION', label: 'Región', secret: false, placeholder: 'europe-west1' },
+          {
+            key: 'AI_VERTEX_SERVICE_ACCOUNT_JSON',
+            label: 'Cuenta de servicio (JSON)',
+            secret: true,
+            input: 'textarea',
+          },
+        ],
+      },
+      {
+        title: 'Anthropic y Mistral',
+        fields: [
+          {
+            key: 'ANTHROPIC_API_KEY',
+            label: 'Clave de Anthropic',
+            secret: true,
+            help: 'La API directa no procesa en la UE: solo se usa si se admite expresamente.',
+          },
+          { key: 'MISTRAL_API_KEY', label: 'Clave de Mistral', secret: true },
+        ],
+      },
+      {
+        title: 'Amazon Bedrock',
+        fields: [
+          { key: 'AI_BEDROCK_REGION', label: 'Región', secret: false, placeholder: 'eu-central-1' },
+          { key: 'AI_BEDROCK_ACCESS_KEY_ID', label: 'Access key ID', secret: true },
+          { key: 'AI_BEDROCK_SECRET_ACCESS_KEY', label: 'Secret access key', secret: true },
+          {
+            key: 'AI_BEDROCK_BEARER_TOKEN',
+            label: 'Clave de API de Bedrock (en lugar de las dos anteriores)',
+            secret: true,
+          },
+        ],
+      },
+      {
+        title: 'Precios y criterio de datos',
+        fields: [
+          {
+            key: 'AI_PRICES',
+            label: 'Tabla de precios (JSON)',
+            secret: false,
+            input: 'textarea',
+            help: '{ "proveedor/modelo": { "input_tokens": micros, "output_tokens": …, "cache_read_input_tokens": …, "cache_write_input_tokens": … } }',
+          },
+          {
+            key: 'AI_ALLOW_NON_EU_PROCESSING',
+            label: 'Admitir proveedores que no procesan en la UE',
+            secret: false,
+            input: 'select',
+            options: YES_NO,
+          },
+          { key: 'AI_TIMEOUT_MS', label: 'Tiempo máximo por llamada (ms)', secret: false, placeholder: '60000' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'ai_image',
+    title: 'IA de imagen',
+    description:
+      'Las credenciales de cada proveedor de imagen y, si se quiere, el modelo fijo. Qué modelos se ofrecen lo decide el registro de modelos; ComfyUI tiene su propio apartado.',
+    testDescription:
+      'Pide un token a Google (Vertex) o el saldo a Black Forest Labs. Ideogram no tiene una llamada gratuita. No genera imágenes.',
+    groups: [
+      {
+        title: 'Modelo',
+        fields: [
+          {
+            key: 'AI_MEDIA_IMAGE_MODEL',
+            label: 'Modelo fijo (proveedor:modelo)',
+            secret: false,
+            help: 'Si no se pone, el de más prioridad del registro de modelos.',
+          },
+          {
+            key: 'AI_MEDIA_ALLOW_NON_EU',
+            label: 'Admitir modelos que no procesan en la UE',
+            secret: false,
+            input: 'select',
+            options: YES_NO,
+          },
+        ],
+      },
+      {
+        title: 'Google Vertex AI (Gemini)',
+        fields: [
+          { key: 'GOOGLE_VERTEX_PROJECT_ID', label: 'Proyecto', secret: false },
+          { key: 'GOOGLE_VERTEX_LOCATION', label: 'Región', secret: false, placeholder: 'eu' },
+          {
+            key: 'GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON',
+            label: 'Cuenta de servicio (JSON)',
+            secret: true,
+            input: 'textarea',
+          },
+        ],
+      },
+      {
+        title: 'Black Forest Labs (FLUX.2) e Ideogram',
+        fields: [
+          { key: 'BFL_API_KEY', label: 'Clave de Black Forest Labs', secret: true },
+          {
+            key: 'BFL_API_BASE_URL',
+            label: 'Servidor de Black Forest Labs',
+            secret: false,
+            input: 'select',
+            options: [
+              { value: 'https://api.eu.bfl.ai', label: 'UE (api.eu.bfl.ai)' },
+              { value: 'https://api.us.bfl.ai', label: 'EE. UU. (api.us.bfl.ai)' },
+              { value: 'https://api.bfl.ai', label: 'Global (api.bfl.ai)' },
+            ],
+          },
+          { key: 'IDEOGRAM_API_KEY', label: 'Clave de Ideogram', secret: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'stripe',
+    title: 'Stripe',
+    description: 'Cobrar los planes: la clave secreta de la cuenta y el secreto del punto de conexión de los avisos.',
+    testDescription: 'Lee los datos de la cuenta (/v1/account): no crea clientes ni cobros.',
+    groups: [
+      {
+        title: 'Cuenta',
+        fields: [
+          { key: 'STRIPE_SECRET_KEY', label: 'Clave secreta', secret: true, placeholder: 'sk_test_… o sk_live_…' },
+          {
+            key: 'STRIPE_WEBHOOK_SECRET',
+            label: 'Secreto del webhook',
+            secret: true,
+            placeholder: 'whsec_…',
+            help: 'Del punto de conexión …/functions/v1/billing-webhook.',
+          },
+          {
+            key: 'BILLING_APP_URL',
+            label: 'Dirección de la aplicación',
+            secret: false,
+            placeholder: 'https://…',
+            help: 'A dónde vuelve la persona tras pagar.',
+          },
+        ],
+      },
+    ],
+  },
+];

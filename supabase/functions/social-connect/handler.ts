@@ -2,12 +2,15 @@
 //   POST …/social-connect/start     con la sesión del usuario → { url } del diálogo de Meta
 //   GET  …/social-connect/callback  vuelta de Meta (sin sesión: la autentica el
 //                                   estado anti-CSRF) → 302 a la aplicación
+//   POST …/social-connect/token     con la sesión del usuario: conectar pegando un
+//                                   token de página (../_shared/social/token-connect.ts)
 // En config.toml lleva `verify_jwt = false`: Meta vuelve sin JWT de Supabase. El
 // inicio comprueba la sesión con `social_oauth_begin`, que se ejecuta con el
 // token del usuario (sin sesión válida, la base de datos lo rechaza).
 import type { RpcClient } from '../_shared/ai/contract.ts';
 import type { SocialConfig } from '../_shared/social/config.ts';
 import { ConnectError, finishConnect, startConnect } from '../_shared/social/oauth.ts';
+import { connectWithToken } from '../_shared/social/token-connect.ts';
 
 export interface SocialConnectDeps {
   config: SocialConfig;
@@ -46,6 +49,37 @@ export function createSocialConnectHandler(deps: SocialConnectDeps): (request: R
         location = `${deps.config.appUrl ?? ''}/?social=failed`;
       }
       return new Response(null, { status: 302, headers: { location, 'cache-control': 'no-store' } });
+    }
+
+    if (url.pathname.endsWith('/token')) {
+      if (request.method !== 'POST') return json(405, { error: { code: 'method_not_allowed' } });
+      const token = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1]?.trim();
+      if (!token) return json(401, { error: { code: 'unauthorized', message: 'Hace falta iniciar sesión.' } });
+      let body: { brandId?: unknown; network?: unknown; igUserId?: unknown; accessToken?: unknown };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return json(400, { error: { code: 'bad_request', message: 'Cuerpo no válido.' } });
+      }
+      try {
+        const result = await connectWithToken(
+          deps.config,
+          deps.rpc,
+          deps.userRpc(token),
+          {
+            brandId: body?.brandId,
+            network: body?.network,
+            igUserId: body?.igUserId,
+            accessToken: body?.accessToken,
+          },
+          deps.log,
+        );
+        return json(200, result);
+      } catch (e) {
+        if (e instanceof ConnectError) return json(e.status, { error: { code: e.code, message: e.message } });
+        deps.log?.('token_connect_failed', {});
+        return json(500, { error: { code: 'internal', message: 'No se pudo conectar la cuenta.' } });
+      }
     }
 
     if (url.pathname.endsWith('/start')) {

@@ -2,8 +2,9 @@
 // `ai-media-poll` y `ai-media-webhook` (solo Deno; la lógica está probada en
 // Node a través de runtime.ts, supabase-storage.ts y los handler.ts).
 //
-// Secretos: la clave de servicio y las de los proveedores solo existen aquí,
-// en las variables de entorno de la función (docs/ia-medios.md, §5). Nada de
+// Secretos: la clave de servicio y las de los proveedores solo existen en el
+// servidor: las de los proveedores, en «Plataforma → Integraciones» (cifradas en
+// Vault) o en las variables de entorno de la función (docs/ia-medios.md, §5). Nada de
 // esto llega al navegador. `SUPABASE_URL`, `SUPABASE_ANON_KEY` y
 // `SUPABASE_SERVICE_ROLE_KEY` las pone Supabase en todas las funciones.
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -12,6 +13,7 @@ import type { MediaReader } from '../_shared/ai/media/contract.ts';
 import type { MediaModelRow } from '../_shared/ai/media/models.ts';
 import { createMediaRuntime, type MediaRuntime } from '../_shared/ai/media/runtime.ts';
 import { createSupabaseMediaStorage, supabaseMediaStorageBackend } from '../_shared/ai/media/supabase-storage.ts';
+import { createRpcSettingsLoader } from '../_shared/integrations/settings.ts';
 
 export const env = Deno.env.toObject();
 export const supabaseUrl = env.SUPABASE_URL ?? '';
@@ -45,7 +47,12 @@ const reader: MediaReader = {
 
 const storage = createSupabaseMediaStorage(supabaseMediaStorageBackend(admin as never));
 
-let cached: { at: number; runtime: MediaRuntime } | null = null;
+/** Configuración efectiva: «Plataforma → Integraciones» y, si no, las variables. */
+export const settings = createRpcSettingsLoader(rpc, env, (event, data) =>
+  console.error(`[ai-media] ${event}`, JSON.stringify(data)),
+);
+
+let cached: { at: number; env: Record<string, string | undefined>; runtime: MediaRuntime } | null = null;
 const CACHE_MS = 60_000;
 
 /**
@@ -54,7 +61,8 @@ const CACHE_MS = 60_000;
  * se pide fuera de un Supabase local (la función no debe atender así).
  */
 export async function loadRuntime(): Promise<MediaRuntime> {
-  if (cached && Date.now() - cached.at < CACHE_MS) return cached.runtime;
+  const effective = await settings.get();
+  if (cached && cached.env === effective && Date.now() - cached.at < CACHE_MS) return cached.runtime;
   const { data, error } = await admin
     .from('ai_media_models')
     .select(
@@ -63,19 +71,20 @@ export async function loadRuntime(): Promise<MediaRuntime> {
     .eq('active', true);
   if (error) throw new Error('No se ha podido leer el registro de modelos');
   const runtime = createMediaRuntime({
-    env,
+    env: effective,
     fetch: (input, init) => fetch(input, init),
     rpc,
     reader,
     storage,
     modelRows: (data ?? []) as MediaModelRow[],
   });
-  cached = { at: Date.now(), runtime };
+  cached = { at: Date.now(), env: effective, runtime };
   return runtime;
 }
 
 // Arranque: comprobar la guarda de la imagen simulada y dejar en el registro
-// lo que falta configurar (solo nombres de variables).
+// lo que falta configurar en las variables (solo nombres; lo de «Plataforma →
+// Integraciones» se lee en cada petición).
 export function checkConfiguration(name: string): void {
   const runtime = createMediaRuntime({ env, fetch, rpc, reader, storage, modelRows: [] });
   for (const problem of runtime.problems) console.warn(`[${name}] configuración: ${problem}`);

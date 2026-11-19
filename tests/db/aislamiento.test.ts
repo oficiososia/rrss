@@ -2091,7 +2091,11 @@ describe('analítica: métricas, capturas e informes (Fase 5)', () => {
     expect((await as(db, clienteA, `select 1 from public.account_metrics_daily`)).length).toBeGreaterThan(0);
     // El catálogo de métricas es de la plataforma: lo leen todos igual.
     const [a] = await as<{ n: string }>(db, ana, `select count(*)::text as n from public.analytics_metric_definitions`);
-    const [b] = await as<{ n: string }>(db, ajeno, `select count(*)::text as n from public.analytics_metric_definitions`);
+    const [b] = await as<{ n: string }>(
+      db,
+      ajeno,
+      `select count(*)::text as n from public.analytics_metric_definitions`,
+    );
     expect(a).toEqual(b);
   });
 
@@ -2136,5 +2140,74 @@ describe('analítica: métricas, capturas e informes (Fase 5)', () => {
     }
     // El reloj tampoco lo ejecuta la clave de servicio: solo pg_cron.
     await expect(asService(db, `select private.analytics_dispatch()`)).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe('Plataforma → Integraciones (20261120010000)', () => {
+  const ADMIN_CALLS: Array<[string, unknown[]]> = [
+    [`select * from public.admin_integration_settings()`, []],
+    [`select * from public.admin_integration_tests()`, []],
+    [`select * from public.admin_integration_audit(10)`, []],
+    [`select public.admin_set_integration_setting('META_APP_ID', '123456')`, []],
+    [`select public.admin_delete_integration_setting('META_APP_ID')`, []],
+  ];
+  const SERVER_CALLS: Array<[string, unknown[]]> = [
+    [`select public.integration_settings_for_service()`, []],
+    [`select public.integration_record_test(gen_random_uuid(), 'meta', true, 'x')`, []],
+    [
+      `select public.social_account_connect_token(gen_random_uuid(), gen_random_uuid(), 'instagram', '1', '', '', null,
+                                                  '{}', null, 'k1', 'cifrado-xxxxxxxxxxxx')`,
+      [],
+    ],
+  ];
+  const TABLES = ['integration_setting_keys', 'integration_settings', 'integration_tests', 'integration_audit'];
+
+  it('ni propietarios, ni administradores, ni miembros, ni anónimos leen o escriben las integraciones', async () => {
+    await as(
+      db,
+      superadmin,
+      `select public.admin_set_integration_setting('META_APP_SECRET', 'secreto-aislamiento-0001')`,
+    );
+    for (const user of [ana, berta, adminA, gema, ajeno, null]) {
+      for (const [sql, params] of ADMIN_CALLS) {
+        await denied(db, user, sql, params, /permission denied|Solo para superadministradores/);
+      }
+      for (const [sql, params] of SERVER_CALLS) await denied(db, user, sql, params, /permission denied/);
+      for (const table of TABLES) {
+        await denied(db, user, `select * from private.${table}`, [], /permission denied/);
+        await denied(db, user, `delete from private.${table}`, [], /permission denied/);
+      }
+    }
+  });
+
+  it('el superadministrador gestiona por las funciones, pero no toca las tablas ni lee los secretos en claro', async () => {
+    const rows = await as<{ setting_key: string; value: string | null }>(
+      db,
+      superadmin,
+      `select * from public.admin_integration_settings()`,
+    );
+    expect(rows.find((r) => r.setting_key === 'META_APP_SECRET')?.value).toBeNull();
+    for (const table of TABLES) {
+      await denied(db, superadmin, `select * from private.${table}`, [], /permission denied/);
+    }
+    await denied(db, superadmin, `select public.integration_settings_for_service()`, [], /permission denied/);
+    // Ser superadministrador no abre los datos de los clientes.
+    expect(await as(db, superadmin, `select 1 from public.social_accounts`)).toEqual([]);
+  });
+
+  it('la clave de servicio solo obtiene los valores por su función, no por las tablas', async () => {
+    const [row] = await asService<{ data: Record<string, string> }>(
+      db,
+      `select public.integration_settings_for_service() as data`,
+    );
+    expect(row!.data.META_APP_SECRET).toBe('secreto-aislamiento-0001');
+    for (const table of TABLES) {
+      await expect(asService(db, `select * from private.${table}`)).rejects.toThrow(/permission denied/);
+    }
+    await as(db, superadmin, `select public.admin_delete_integration_setting('META_APP_SECRET')`);
+  });
+
+  it('cómo se conectó una cuenta lo ve quien ve la marca, y no se cambia desde el cliente', async () => {
+    await denied(db, ana, `update public.social_accounts set connection_method = 'token'`, [], /permission denied/);
   });
 });
