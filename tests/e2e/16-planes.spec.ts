@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, asignarPlan, aviso, dato, ORG_B, sinErrores, sql } from './apoyo';
+import { abrir, asignarPlan, aviso, dato, sinErrores, sql } from './apoyo';
 
 // Fase 6 · Planes. Ana es superadministradora desde el escenario 08; Bruno es
 // propietario de la agencia (organización B), que tiene una marca (escenario 02).
@@ -18,7 +18,9 @@ test('la superadministradora ve el margen por organización y asigna un plan a m
 
   const margen = page.getByTestId('billing-overview');
   await expect(margen).toBeVisible();
-  const fila = margen.getByRole('row').filter({ hasText: ORG_B });
+  // Por su botón (con el id), no por el nombre: en una base local con tandas
+  // anteriores hay varias «Agencia Faro».
+  const fila = margen.getByRole('row').filter({ has: page.getByTestId(`assign-plan-${dato('orgB')}`) });
   await expect(fila).toContainText('Heredado');
   await expect(page.getByTestId('plans-table')).toContainText('Profesional');
 

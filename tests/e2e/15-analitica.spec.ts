@@ -194,14 +194,17 @@ test('el informe mensual se genera sin intervención y se abre desde el panel', 
   await page.goto(`${marca()}/analitica`);
   const lista = page.getByTestId('analytics-reports');
   await expect(lista).toContainText('Listo');
-  const [popup] = await Promise.all([
-    page.waitForEvent('popup'),
+  // La descarga abre una pestaña con la dirección firmada (`download`): esa
+  // pestaña se queda en blanco y el navegador baja el archivo, así que la
+  // dirección se toma de la petición y se descarga aparte para mirar el PDF.
+  const [peticion] = await Promise.all([
+    page.context().waitForEvent('request', (r) => /\/storage\/v1\/object\/sign\/.+\.pdf\?token=/.test(r.url())),
     lista.getByTestId('analytics-download').first().click(),
   ]);
-  const respuesta = await popup.request.get(popup.url());
+  const respuesta = await page.request.get(peticion.url());
+  expect(respuesta.status()).toBe(200);
   expect(respuesta.headers()['content-type']).toContain('application/pdf');
   expect((await respuesta.body()).subarray(0, 5).toString('latin1')).toBe('%PDF-');
-  await popup.close();
 
   // Y está en la biblioteca, carpeta «Informes».
   await page.goto(`${marca()}/biblioteca`);
