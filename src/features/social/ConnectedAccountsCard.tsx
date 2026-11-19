@@ -105,7 +105,7 @@ export function ConnectedAccountsCard() {
             No hay ninguna cuenta de Instagram conectada.
           </p>
         )}
-        {canManage && (!instagram || instagram.status === 'needs_reauth') && (
+        {canManage && accounts.isSuccess && (!instagram || instagram.status === 'needs_reauth') && (
           <div className="flex flex-wrap gap-2">
             {modes.socialOAuth && (
               <Button onClick={() => void connect()} loading={connecting} data-testid="social-connect-instagram">
@@ -125,7 +125,7 @@ export function ConnectedAccountsCard() {
             )}
           </div>
         )}
-        {canManage && !instagram && (
+        {canManage && accounts.isSuccess && !instagram && (
           <p className="text-xs text-muted">
             Hace falta una cuenta profesional de Instagram (de empresa o de creador) unida a una página de Facebook.
           </p>
