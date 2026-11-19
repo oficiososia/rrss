@@ -14,7 +14,7 @@ Estado a 19/11/2026:
 | Adaptador real de Google (`_shared/drive/google-drive.ts`) | Escrito contra la documentación, **sin probar contra Google**: falta el cliente OAuth |
 | Interfaz: «Configuración → Google Drive» y «Biblioteca → Desde Google Drive» | Implementada; solo sale con Drive configurado en Plataforma → Integraciones; la recorre la prueba e2e |
 | Editor, exportación y trabajador de medios leyendo de Drive | Editor y exportación por `useSignedUrls`; trabajador por `drive-media/sign` (probado con servidor simulado) |
-| Prueba e2e `tests/e2e/20-biblioteca-drive.spec.ts` | Escrita, **sin ejecutar** (Docker no estaba en marcha) |
+| Prueba e2e `tests/e2e/20-biblioteca-drive.spec.ts` | Pasa en local (19/11/2026, rama `f4/integracion`) |
 | Fotos HEIC del iPhone | **No se pueden usar**: el navegador no las pinta y Drive no les hace miniatura. Hay que convertirlas a JPEG antes |
 | Desplegado en staging | **No** (ni migración ni función) |
 

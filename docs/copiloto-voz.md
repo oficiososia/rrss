@@ -15,7 +15,7 @@ textos van exactamente como se dictan.
 |---|---|
 | Desenfoque de imágenes en el documento (versión 3), lienzo, exportación y reels del trabajador | Implementado y probado (unitarias, base de datos y FFmpeg en el trabajador) |
 | Tarea `editor.copilot` en `ai-generate` (esquema estricto, saneado, cupo y coste) | Implementada y probada con la base de datos real y el proveedor simulado |
-| Interfaz (botón «Dictar», transcripción en vivo, órdenes, foto «esta», deshacer) | Implementada; prueba de extremo a extremo escrita (`tests/e2e/19-copiloto-voz.spec.ts`) |
+| Interfaz (botón «Dictar», transcripción en vivo, órdenes, foto «esta», deshacer) | Implementada; prueba de extremo a extremo (`tests/e2e/19-copiloto-voz.spec.ts`) en verde en local (19/11/2026) |
 | Dictado real del navegador y calidad con un modelo real | **Sin probar** |
 
 ## 1. Cómo funciona

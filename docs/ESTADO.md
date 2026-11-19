@@ -2,23 +2,28 @@
 
 Última actualización: 19/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`,
 con PR abierto a `staging`. Las ramas `main` y `staging` existen desde el 16/11/2026.
+Rama de integración `f4/integracion` (sin subir): une sobre la rama de trabajo
+`f4/integraciones` (Plataforma → Integraciones), `f4/copiloto-voz` (copiloto por
+voz y desenfoque) y `f4/biblioteca-drive` (fotos de Google Drive).
 
 Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en
 local con proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas
 de verdad son cuentas y decisiones del dueño, no desarrollo: aplicación de Meta,
 proveedor de IA, Stripe, correo y revisión legal. Staging (Supabase gratuito, UE)
 tiene las 31 migraciones y todas las funciones desplegadas sin proveedores, y la
-aplicación está publicada contra staging en https://rrss-omega.vercel.app.
+aplicación está publicada contra staging en https://rrss-omega.vercel.app. Lo de
+`f4/integracion` (4 migraciones y 2 funciones nuevas) está probado en local y
+**sin llevar a staging** (ver «Para llevar a staging»).
 
 ## Pruebas
 
 | Tanda | Resultado | Qué cubre |
 |---|---|---|
-| `npm test` | 673 pasan | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db` | 628 pasan, 2 omitidas | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación, campañas, analítica, RGPD y servicios con proveedores simulados, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
-| `worker/` | 73 pasan | Trabajador de medios con FFmpeg real: reels, recortes, extracción de texto de fuentes, informe PDF |
+| `npm test` | 697 pasan | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db` | 699 pasan, 2 omitidas | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación, campañas, analítica, RGPD, integraciones (Vault, catálogo, disponibilidad, «Probar conexión»), copiloto y biblioteca con Drive, y servicios con proveedores simulados, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `worker/` | 76 pasan | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto de fuentes, informe PDF, imágenes de Drive por dirección firmada |
 | `agency/` | 37 pasan | Herramienta de la agencia contra un Supabase simulado |
-| `npm run test:e2e` | 71 de 71 (local, 19/11/2026) | Navegador (Playwright) contra un Supabase local con las funciones servidas en local, el trabajador real y los proveedores simulados de pruebas: Fases 1 a 6 en 17 archivos |
+| `npm run test:e2e` | 79 de 79 (local, 19/11/2026, rama `f4/integracion`) | Navegador (Playwright) contra un Supabase local con las funciones servidas en local, el trabajador real y los proveedores simulados de pruebas (IA, Graph API, Drive y dictado): Fases 1 a 6, integraciones, copiloto por voz y Drive en 20 archivos |
 | CI de GitHub | `comprobar`, `trabajador`, `agencia` y `e2e` | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable |
 
 ## Hecho
@@ -37,18 +42,6 @@ aislamiento entre organizaciones, ajustes, actividad y panel de plataforma.
 - **Reels con plantillas** y **recortes** desde la biblioteca (trabajador con FFmpeg), con cancelar y aviso de peso.
 - **Fuentes de marca**: extracción de texto de PDF, Word y webs (con protección SSRF y `robots.txt`) para la propuesta de perfil; **tipografías de marca** en editor, exportación y reels.
 - **Modo agencia**: encargos con avisos, entrega desde la herramienta `agency/` o desde la interfaz; el servidor impide la IA de texto en marcas en modo agencia.
-
-### Copiloto por voz del editor (rama `f4/copiloto-voz`, 19/11/2026)
-Botón «Dictar» en el editor: cada frase dictada (Web Speech API, es-ES) se
-convierte con la IA de texto (tarea `editor.copilot`, esquema estricto y
-saneado) en operaciones de capas —foto de fondo difuminada, logotipo, textos
-literales con tipografías y colores del perfil— que se aplican al momento y se
-deshacen con un solo Ctrl+Z por orden. El documento pasa a la **versión 3**
-(desenfoque de imágenes, también en la exportación y en los reels del
-trabajador; migración `20261121010000_reel_media_blur.sql`). Interruptor
-`VITE_AI_VOICE_COPILOT_ENABLED` además de `VITE_AI_TEXT_ENABLED`. Probado con
-el proveedor simulado y una Web Speech API simulada; **sin probar** con un
-proveedor real ni con el dictado real. Detalle en `docs/copiloto-voz.md`.
 
 ### Fase 3 · Calendario y publicación
 Cuentas de Instagram por OAuth (tokens cifrados fuera de `public`), calendario
@@ -72,17 +65,55 @@ en PDF generado sin intervención. Detalle en `docs/analitica.md`.
 - **Planes como datos** (Prueba, Básico, Profesional, Agencia, Enterprise, Heredado) con límites que impone la base de datos, panel de **margen por cliente**, «Configuración → Plan». Stripe (Checkout, portal y webhook) escrito y probado con Stripe simulado. Detalle en `docs/facturacion.md`.
 - **RGPD**: páginas legales como plantillas, consentimiento en el registro, descargar mis datos, exportar la organización, borrar cuenta y organización, registro de tratamientos (`docs/rgpd.md`) y etiqueta «Generado con IA» por pieza.
 
-### Biblioteca con Google Drive (rama `f4/biblioteca-drive`, 19/11/2026)
+### Plataforma → Integraciones (rama `f4/integraciones`)
+Las claves de los servicios se meten desde `/plataforma/integraciones` (solo
+superadministradores): Meta (y «Generar clave» de cifrado de los tokens),
+ComfyUI propio, IA de texto (proveedor y modelo por tarea, también el del
+copiloto), IA de imagen, Stripe y Google Drive.
+- Los secretos van a Supabase Vault (migración `20261120010000`); en la tabla
+  queda su identificador y una pista. El navegador nunca los recibe; cambios y
+  pruebas quedan en la actividad, sin valores.
+- Las funciones leen primero lo guardado y, si no está, las variables de entorno
+  (`_shared/integrations/settings.ts`, caché de 30 s, sin redesplegar). Lo
+  hacen todas las que usan proveedores, incluidas `ai-generate` (también la
+  tarea del copiloto) y `drive-media`. Una clave de cifrado con tokens guardados
+  no se puede quitar.
+- «Probar conexión» con una llamada gratuita por servicio. Ideogram, el secreto
+  del webhook de Stripe y el cliente OAuth de Google no se pueden comprobar
+  gratis: se dice así (se comprueban con la primera imagen, el primer aviso o
+  al conectar).
+- Instagram también se conecta pegando un token de página de larga duración
+  (Marca → Datos → Cuentas conectadas): se valida con la Graph API y la cuenta
+  queda «Con token».
+- Interruptores: IA, copiloto, publicación, pago y Drive salen si la variable
+  `VITE_*` del despliegue lo permite **y** el servidor dice que la integración
+  está configurada (`platform-integrations`, solo booleanos).
+
+### Copiloto por voz del editor (rama `f4/copiloto-voz`)
+Botón «Dictar» en el editor: cada frase dictada (Web Speech API, es-ES) se
+convierte con la IA de texto (tarea `editor.copilot`, esquema estricto y
+saneado) en operaciones de capas (foto de fondo difuminada, logotipo, textos
+literales con tipografías y colores del perfil) que se aplican al momento y se
+deshacen con un solo Ctrl+Z por orden. El documento pasa a la **versión 3**
+(desenfoque de imágenes, también en la exportación y en los reels del
+trabajador; migración `20261121010000_reel_media_blur.sql`). Sale con
+`VITE_AI_VOICE_COPILOT_ENABLED` + `VITE_AI_TEXT_ENABLED` y la IA de texto
+configurada en el servidor. Probado con el proveedor simulado y una Web Speech
+API simulada; **sin probar** con un proveedor real ni con el dictado real.
+Detalle en `docs/copiloto-voz.md`.
+
+### Biblioteca con Google Drive (rama `f4/biblioteca-drive`)
 La organización conecta su Google Drive (OAuth, solo lectura, token de refresco
 cifrado como los de Meta) y sus marcas añaden a la biblioteca fotos de Drive **sin
 copiarlas a Storage**: el recurso guarda el id del archivo y la imagen la sirve la
-función `drive-media` con direcciones firmadas, tras comprobar por RLS que quien la pide
-ve la marca. Editor, exportación y trabajador de medios la leen por ahí. No ocupa plan.
-Migración `20261122010000` (con vuelta atrás), interruptor `VITE_DRIVE_LIBRARY_ENABLED`.
-Probado contra Drive simulado (base de datos y función); la prueba e2e
-`19-biblioteca-drive.spec.ts` está escrita y **sin ejecutar**; las fotos HEIC del
-iPhone no se pueden usar todavía. Sin desplegar en staging. Detalle en
-`docs/biblioteca-drive.md`.
+función `drive-media` con direcciones firmadas, tras comprobar por RLS que quien la
+pide ve la marca. Editor, exportación y trabajador de medios la leen por ahí. No
+ocupa plan. Migración `20261122010000`; el cliente de Google se configura en
+Plataforma → Integraciones → Google Drive (migración `20261123010000`). Sale con
+`VITE_DRIVE_LIBRARY_ENABLED` y Drive configurado en el servidor; «Desde Google
+Drive», además, con una conexión activa. Probado contra Drive simulado (base de
+datos, función y e2e); las fotos HEIC del iPhone no se pueden usar todavía.
+Detalle en `docs/biblioteca-drive.md`.
 
 ## Sin probar contra el servicio real
 
@@ -93,6 +124,8 @@ iPhone no se pueden usar todavía. Sin desplegar en staging. Detalle en
 | Meta (OAuth, publicación, métricas) | Adaptador escrito; sin aplicación de Meta | `docs/publicacion.md`, `docs/analitica.md` |
 | Stripe | Funciones escritas; sin cuenta | `docs/facturacion.md` |
 | Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
+| Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
+| «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
 
 ## En staging
 
@@ -104,6 +137,25 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Cuentas: la del dueño (superadministrador), una de prueba y la de la agencia (Gestora de Casa Tomás). Casa Tomás está dada de alta en Oficiosos, en modo agencia, con perfil, logotipos y 25 fotos.
 - Interruptores de la interfaz apagados: IA de texto e imagen, reels y recortes, publicación y facturación.
 
+## Para llevar a staging (`f4/integracion`)
+
+1. Migraciones, en orden: `20261120010000_platform_integrations`,
+   `20261121010000_reel_media_blur`, `20261122010000_drive_library`,
+   `20261123010000_integrations_drive_copilot` (todas con vuelta atrás).
+2. Funciones nuevas: `platform-integrations` y `drive-media` (esta con
+   `verify_jwt = false`, como en `supabase/config.toml`). Cambiadas, a
+   redesplegar: `ai-generate`, `ai-media`, `ai-media-poll`, `ai-media-webhook`,
+   `social-connect`, `social-publish`, `social-insights`, `billing-checkout`,
+   `billing-portal` y `billing-webhook`.
+3. En Vercel, las `VITE_*` de los módulos que staging deba ofrecer; nuevas:
+   `VITE_AI_VOICE_COPILOT_ENABLED` y `VITE_DRIVE_LIBRARY_ENABLED`. Lo que no esté
+   configurado en Integraciones sigue sin salir.
+4. Para usar Drive de verdad: cliente OAuth de Google (Drive API, dirección de
+   vuelta `…/functions/v1/drive-media/callback`) metido en Plataforma →
+   Integraciones → Google Drive, y `SOCIAL_TOKEN_KEYS` («Generar clave» en Meta).
+5. El trabajador de medios, cuando se aloje, con la versión de esta rama
+   (desenfoque y fotos de Drive).
+
 ## Bloqueado por algo externo
 
 | Qué | Qué hace falta |
@@ -113,7 +165,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 | Cobrar | Cuenta de Stripe, moneda, precios por plan y portal configurado |
 | Correo para cualquiera (registro, recuperación, invitaciones) | SMTP propio (Resend u otro); hoy solo llega al equipo de Supabase, 2 por hora |
 | Reels y recortes en staging | Encender el trabajador contra staging o alojarlo (recomendado: Fly.io en Fráncfort) |
-| Fotos de Drive en staging | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar), aplicar la migración `20261122010000` y desplegar `drive-media`; convertir las HEIC a JPEG |
+| Fotos de Drive en staging | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar); convertir las HEIC a JPEG |
 | Clientes reales | Supabase de producción en Pro (copias de seguridad, sin pausas), dominio propio, páginas legales completadas y revisadas por un abogado, contrato de encargo con cada cliente |
 
 ## Decisiones del dueño pendientes
@@ -139,8 +191,9 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Fase 4: lotes, coordinador y automatizaciones.
 - Avisos de encargos por sondeo (60 s), sin tiempo real ni correo.
 - El trabajador usa la clave de servicio; falta un rol de Postgres limitado.
-- Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED` y `AI_TEXT_EDITOR_COPILOT_*`.
-- Copiloto por voz: el dictado de Chrome envía el audio a Google (falta en el registro de tratamientos); la pantalla de reels no ofrece todavía el desenfoque que el plan ya admite.
+- Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `AI_TEXT_EDITOR_COPILOT_*` y las de Drive.
+- Copiloto por voz: el dictado de Chrome envía el audio a Google (ya en `docs/rgpd.md`; falta en la política de privacidad y un aviso antes del primer dictado); la pantalla de reels no ofrece todavía el desenfoque que el plan ya admite.
+- Integraciones: tokens de «inicio de sesión de Instagram» (IG…) no admitidos; el vídeo con IA sigue solo por variables.
 
 ## Siguiente paso
 

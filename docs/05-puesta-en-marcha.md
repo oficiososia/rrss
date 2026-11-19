@@ -294,6 +294,9 @@ No hay ninguna `VITE_AI_*` ni `VITE_MEDIA_WORKER_ENABLED`.
    configurada (`platform-integrations`, solo booleanos). Se pueden poner a
    `true` una vez por despliegue y configurar después cada servicio desde
    Plataforma → Integraciones; lo que no esté configurado sigue sin salir.
+   Igual, desde `20261123010000`: `VITE_AI_VOICE_COPILOT_ENABLED` (copiloto por
+   voz; necesita además la IA de texto) y `VITE_DRIVE_LIBRARY_ENABLED` (fotos de
+   Google Drive en la biblioteca; necesita la integración Google Drive).
 3. Rama de producción `main`; `staging` como entorno de validación.
 4. Dominio propio.
 
