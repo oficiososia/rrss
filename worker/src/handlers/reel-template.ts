@@ -96,6 +96,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             orientation,
             focalPoint: item.focalPoint,
             seconds: item.seconds,
+            blur: item.blur,
           });
         } else {
           if (info.durationSeconds <= 0) throw new PermanentError(`La pieza ${index + 1} no es un vídeo`);
@@ -105,6 +106,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             focalPoint: item.focalPoint,
             startAt: item.startAt,
             seconds: item.seconds,
+            blur: item.blur,
             durationSeconds: info.durationSeconds,
             hasAudio: Boolean(info.audio),
           });

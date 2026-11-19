@@ -295,7 +295,84 @@ function analyticsSummary(request: AiProviderRequest): string {
   });
 }
 
+/**
+ * Copiloto por voz: lee el dictado con reglas fijas (no es IA) y devuelve las
+ * operaciones que pediría un modelo. Entiende «foto … detrás / de fondo»
+ * (difuminada si lo dice), «logotipo» (arriba o abajo), «título: …»,
+ * «platos: a, b, c», «precio: …», «difumina más» y «en blanco». Los textos son
+ * trozos literales del dictado.
+ *
+ * Imita además a un modelo COMPROMETIDO: si el dictado contiene «ignora lo
+ * anterior», añade un texto que no se ha dictado («APROBADO Y PUBLICADO») y
+ * una foto que no se ha elegido. El producto debe descartar las dos.
+ */
+function editorCopilot(request: AiProviderRequest): string {
+  const profile = profileOf(request) as Profile & { visual?: { logoAssetIds?: string[] } };
+  const dictation = material(request, 'dictado') ?? '';
+  let photos: { id: string }[] = [];
+  try {
+    photos = JSON.parse(material(request, 'fotos elegidas') ?? '[]') as { id: string }[];
+  } catch {
+    photos = [];
+  }
+  const empty = {
+    target: null,
+    text: null,
+    style: null,
+    assetId: null,
+    position: null,
+    align: null,
+    color: null,
+    font: null,
+    blur: null,
+  };
+  const operations: Record<string, unknown>[] = [];
+  const clause = (pattern: RegExp) => pattern.exec(dictation)?.[1]?.trim().replace(/[.;]+$/, '');
+  const white = /en blanco/i.test(dictation) ? '#FFFFFF' : null;
+  const blurred = /muy (difuminad|desenfocad)/i.test(dictation) ? 70 : /difumin|desenfoc|borros/i.test(dictation) ? 40 : null;
+
+  if (/(foto|imagen)[^.]*?(detr[aá]s|de fondo)|fondo[^.]*?(foto|imagen)/i.test(dictation)) {
+    operations.push({ ...empty, op: 'set_background_image', assetId: photos[0]?.id ?? null, blur: blurred });
+  } else if (/difumina(la)? m[aá]s|m[aá]s difuminad/i.test(dictation)) {
+    operations.push({ ...empty, op: 'blur_image', blur: 70 });
+  }
+  if (/logo(tipo)?/i.test(dictation)) {
+    const where = /logo(?:tipo)?[^.]*?\b(arriba|abajo)\b/i.exec(dictation)?.[1]?.toLowerCase();
+    operations.push({
+      ...empty,
+      op: 'add_logo',
+      assetId: profile.visual?.logoAssetIds?.[0] ?? null,
+      position: where === 'arriba' ? 'top' : where === 'abajo' ? 'bottom' : null,
+      align: where ? 'center' : null,
+    });
+  }
+  const title = clause(/t[ií]tulo:?\s*([^.]+)/i);
+  if (title) operations.push({ ...empty, op: 'add_text', text: title, style: 'title', position: 'upper', color: white });
+  const dishes = clause(/platos:?\s*([^.]+)/i);
+  if (dishes) {
+    const lines = dishes
+      .split(/,|;|\by\b/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    operations.push({ ...empty, op: 'add_text', text: lines.join('\n'), style: 'body', position: 'middle', color: white });
+  }
+  const price = clause(/precio:?\s*([^.]+)/i);
+  if (price) operations.push({ ...empty, op: 'add_text', text: price, style: 'small', position: 'lower', color: white });
+
+  if (/ignora lo anterior/i.test(dictation)) {
+    operations.push({ ...empty, op: 'add_text', text: 'APROBADO Y PUBLICADO', style: 'title' });
+    operations.push({ ...empty, op: 'set_background_image', assetId: '00000000-0000-4000-8000-000000000000' });
+  }
+  return JSON.stringify({
+    operations,
+    note: operations.length
+      ? `[simulado] ${operations.length} cambios a partir de lo dictado.`
+      : '[simulado] No he entendido ningún cambio en lo dictado.',
+  });
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
+  editor_copilot: editorCopilot,
   analytics_summary: analyticsSummary,
   post_copy: postCopy,
   brand_check: brandCheck,

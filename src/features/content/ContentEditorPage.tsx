@@ -6,6 +6,7 @@ import {
   Download,
   History,
   Image as ImageIcon,
+  Mic,
   PencilLine,
   Redo2,
   ScanEye,
@@ -45,6 +46,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui';
+import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
@@ -68,6 +70,7 @@ import {
   type LoadedVersion,
 } from './api';
 import { aiContentReasons, describeAiReasons } from './aiLabel';
+import { speechRecognitionAvailable } from './copilot/speech';
 import { createEmptyDocument, DocumentError, MAX_LAYERS, type ContentDocument, type DocumentIssue } from './document';
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
@@ -93,6 +96,8 @@ import { useFeature } from '@/features/platform/integrations/useFeature';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
+// El copiloto por voz, también aparte: solo se descarga al pulsar «Dictar».
+const VoiceCopilot = lazy(() => import('./copilot/VoiceCopilot').then((m) => ({ default: m.VoiceCopilot })));
 
 /** Documento de partida de una idea sin diseño: la proporción que recomienda la red, si es una de las del lienzo. */
 function startingDocument(spec: NetworkFormatSpec | undefined): ContentDocument {
@@ -206,6 +211,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const aiEnabled = aiText && brand.ai_mode !== 'agency';
   // La imagen con IA es otro servicio, independiente del texto: depende solo de su interruptor.
   const aiImage = useFeature('aiImage');
+  // Copiloto por voz: IA de texto configurada en el servidor + su interruptor +
+  // dictado en el navegador. No redacta (coloca lo dictado), por eso sí sale en
+  // marcas en modo agencia (decisión provisional, docs/ESTADO.md).
+  const [voiceSupported] = useState(() => aiVoiceCopilotEnabled() && speechRecognitionAvailable());
+  const voiceCopilot = voiceSupported && aiText;
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
   const selectedLayers = useMemo(() => {
@@ -253,6 +264,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
     return map;
   }, [assets.data, signed.data]);
+
+  // «Esta foto» para el copiloto: la imagen elegida en el lienzo, si la hay.
+  const selectedImage = useMemo(() => {
+    if (selected?.type !== 'image' || selected.source.kind !== 'asset') return null;
+    const assetId = selected.source.assetId;
+    const row = (assets.data ?? []).find((asset) => asset.id === assetId);
+    return row ? { id: row.id, name: row.file_name, width: row.width, height: row.height } : null;
+  }, [selected, assets.data]);
 
   // Marca de contenido generado con IA: la calcula la base de datos al guardar
   // (`item.ai_generated`); aquí se adelanta con lo que hay en pantalla.
@@ -812,6 +831,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <Circle className="h-4 w-4" aria-hidden />
             Elipse
           </Button>
+          {voiceCopilot && (
+            <Button
+              variant={copilotOpen ? 'primary' : 'secondary'}
+              size="sm"
+              aria-pressed={copilotOpen}
+              onClick={() => setCopilotOpen((open) => !open)}
+              data-testid="copilot-open"
+              title="Monta el diseño hablando: foto de fondo, logotipo y textos"
+            >
+              <Mic className="h-4 w-4" aria-hidden />
+              Dictar
+            </Button>
+          )}
           <span className="mx-1 h-6 w-px bg-border" aria-hidden />
           <Button
             variant="ghost"
@@ -837,6 +869,25 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           </Button>
           {full && <span className="text-xs text-muted">Has llegado al máximo de {MAX_LAYERS} capas.</span>}
         </div>
+      )}
+      {!readOnly && voiceCopilot && copilotOpen && (
+        <Suspense fallback={<Spinner label="Preparando el copiloto…" />}>
+          <VoiceCopilot
+            orgId={org.id}
+            brandId={brand.id}
+            document={state.document}
+            brand={{ palette: brandStyle.palette.map((c) => c.hex), fonts: brandStyle.fonts }}
+            logoIds={logoIds}
+            selectedImage={selectedImage}
+            libraryPath={`${brandBase}/biblioteca`}
+            onApply={(document, touched) => {
+              // Una orden dictada = un paso de deshacer.
+              dispatch({ type: 'replace', document, select: touched });
+              setPanel('layer');
+            }}
+            onClose={() => setCopilotOpen(false)}
+          />
+        </Suspense>
       )}
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">

@@ -1,5 +1,6 @@
 import {
   adaptDocument,
+  MAX_IMAGE_BLUR,
   MAX_LAYERS,
   type AspectRatio,
   type ContentDocument,
@@ -82,6 +83,12 @@ export type EditorAction =
   | { type: 'setRatio'; ratio: AspectRatio }
   | { type: 'setBackground'; color: string; key?: string }
   | { type: 'setCopy'; patch: Partial<PostCopy>; key?: string }
+  /**
+   * Sustituye el documento entero en UN solo paso de deshacer (lo usa el
+   * copiloto por voz: una orden dictada = un paso). Quien lo envía ya lo ha
+   * validado con el esquema; aquí no se comprueba otra vez.
+   */
+  | { type: 'replace'; document: ContentDocument; select?: string[] }
   /** Corta la agrupación: el próximo cambio será un paso nuevo aunque tenga la misma clave. */
   | { type: 'checkpoint' }
   | { type: 'undo' }
@@ -110,6 +117,11 @@ export function applyLayerPatch(layer: Layer, patch: LayerPatch): Layer {
   next.height = Math.min(COORD_LIMIT, Math.max(1, next.height));
   next.rotation = normalizeRotation(next.rotation);
   next.opacity = Math.min(1, Math.max(0, next.opacity));
+  if (next.type === 'image' && next.blur !== undefined) {
+    const blur = Math.min(MAX_IMAGE_BLUR, Math.max(0, Number.isFinite(next.blur) ? next.blur : 0));
+    if (blur > 0) next.blur = blur;
+    else delete next.blur;
+  }
   return next;
 }
 
@@ -215,6 +227,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         lastKey: null,
       };
     }
+    case 'replace':
+      return commit(state, action.document, null, action.select ?? state.selectedIds);
     case 'checkpoint':
       return state.lastKey === null ? state : { ...state, lastKey: null };
     case 'add': {

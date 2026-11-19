@@ -118,6 +118,7 @@ función; nunca `VITE_`.
 | `AI_TEXT_PROFILE_PROPOSAL_PROVIDER` / `_MODEL` | Solo para proponer el perfil |
 | `AI_TEXT_BRAND_CHECK_PROVIDER` / `_MODEL` | Solo para la comprobación de marca |
 | `AI_TEXT_CAMPAIGN_PLAN_PROVIDER` / `_MODEL` | Solo para el plan de campaña (`campaign.plan`) |
+| `AI_TEXT_EDITOR_COPILOT_PROVIDER` / `_MODEL` | Solo para el copiloto por voz del editor (`editor.copilot`, `docs/copiloto-voz.md`) |
 | `AI_PRICES` | Tabla de precios en JSON |
 | `AI_TIMEOUT_MS` | Tiempo máximo de la llamada (por defecto, 60 s) |
 | `AI_ALLOW_NON_EU_PROCESSING` | `true` acepta procesar fuera de la UE |
@@ -158,6 +159,7 @@ delimitado y se trata como dato.
 | `profile.proposal` | Texto ya extraído de las fuentes (hasta 20 fuentes y 400.000 caracteres) y, si existe, el perfil actual | Una **propuesta** con la forma del perfil y notas para quien revisa. No guarda nada |
 | `brand.check` | Perfil de marca y el texto | Veredicto por criterio (`tone`, `banned_topics`): `pass`, `fail` o `uncertain`, con explicación y citas. Global: `pass`, `fail` o `review` |
 | `campaign.plan` | Perfil de marca, instrucción («prepara la semana que viene»), fechas (1–63 días), destinos (red/formato del catálogo), descripción de hasta 60 recursos de la biblioteca y hasta 5 fuentes de texto (60.000 caracteres) | Una **propuesta** de plan: objetivo, resumen, razonamiento (observado / respaldado por datos / hipótesis, con nota sobre los datos) y piezas (red, formato, fecha, idea, pie de borrador, etiquetas, recursos sugeridos, por qué). No guarda nada |
+| `editor.copilot` | Perfil de marca, lo dictado (hasta 2000 caracteres), resumen del documento (lienzo y capas) y hasta 10 fotos elegidas | Operaciones de editor de una lista cerrada, saneadas (textos solo dictados, fotos y logotipos permitidos, colores y tipografías de la marca) y lo descartado con su motivo. Se admite en modo agencia (provisional). Detalle en `docs/copiloto-voz.md` |
 
 **Unidad de los límites de texto.** Todo el producto cuenta en unidades UTF-16:
 el contador del editor, la ventana «Redactar con IA», el verificador de marca y

@@ -13,6 +13,17 @@ export function aiTextEnabled(): boolean {
 }
 
 /**
+ * ¿Hay copiloto por voz en el editor? Necesita la IA de texto (la tarea
+ * `editor.copilot` de `ai-generate`, con proveedor en el servidor) y su propio
+ * interruptor, `VITE_AI_VOICE_COPILOT_ENABLED=true`. Sin cualquiera de los dos,
+ * el botón «Dictar» no sale. Tampoco sale si el navegador no tiene dictado
+ * (Web Speech API): eso lo decide el editor (docs/copiloto-voz.md).
+ */
+export function aiVoiceCopilotEnabled(): boolean {
+  return aiTextEnabled() && import.meta.env.VITE_AI_VOICE_COPILOT_ENABLED === 'true';
+}
+
+/**
  * ¿Hay generación de imágenes con IA en este entorno? Igual que el texto: la
  * función `ai-media` solo genera con un modelo de imagen configurado en el
  * servidor; sin él, el botón «Con IA» del editor no se enseña. Se activa con

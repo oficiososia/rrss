@@ -5,6 +5,7 @@ import {
   ANCHORS_X,
   ANCHORS_Y,
   ASPECT_RATIOS,
+  MAX_IMAGE_BLUR,
   type AspectRatio,
   type Canvas,
   type Layer,
@@ -161,6 +162,15 @@ export function PropertiesPanel({
             max={100}
             disabled={readOnly}
             onChange={(v) => update({ focus: { ...layer.focus, y: v / 100 } }, 'focus')}
+            onCommit={checkpoint}
+          />
+          <NumberInput
+            label="Desenfoque (%)"
+            value={layer.blur ?? 0}
+            min={0}
+            max={MAX_IMAGE_BLUR}
+            disabled={readOnly}
+            onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
             onCommit={checkpoint}
           />
         </div>

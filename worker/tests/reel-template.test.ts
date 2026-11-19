@@ -7,8 +7,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PermanentError } from '../src/errors.ts';
 import { createReelTemplateHandler } from '../src/handlers/reel-template.ts';
-import { buildReel, wrapText } from '../src/reel/build.ts';
-import { reelPayloadSchema, reelTemplateSchema, type ReelPayload } from '../src/reel/schema.ts';
+import { blurSigma, buildReel, wrapText } from '../src/reel/build.ts';
+import { reelPayloadSchema, reelPlanSchema, reelTemplateSchema, type ReelPayload } from '../src/reel/schema.ts';
 import { loadTemplates, TEMPLATES_DIR } from '../src/reel/templates.ts';
 import { renderSchemas, SCHEMAS_DIR } from '../scripts/write-schemas.ts';
 import {
@@ -105,6 +105,31 @@ describe('motor (cálculo de la línea de tiempo)', () => {
     ]);
     expect(build.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=1.5');
     expect(build.filterGraph).toContain('xfade=transition=fade:duration=0.5:offset=3');
+  });
+
+  it('desenfoca las piezas con desenfoque, con el mismo radio relativo que el editor', () => {
+    expect(blurSigma(undefined, 1080, 1920)).toBe(0);
+    expect(blurSigma(100, 1080, 1920)).toBeCloseTo(54);
+    const build = buildReel({
+      template,
+      media: [{ ...photo(2), blur: 40 }, photo(2)],
+      texts: [],
+      outputFile: 'reel.mp4',
+      outputWidth: 270,
+    });
+    // Fotos al doble del lienzo (540 × 960): 40 % del 5 % de 540 = 10,8.
+    expect(build.filterGraph.match(/gblur=sigma=[0-9.]+/g)).toEqual(['gblur=sigma=10.8']);
+    expect(build.filterGraph.split(';\n')[0]).toMatch(/crop=.*gblur=sigma=10\.8,zoompan/);
+    const clip = { type: 'video' as const, file: 'c.mp4', startAt: 0, durationSeconds: 3, hasAudio: false, blur: 100 };
+    const video = buildReel({ template, media: [clip], texts: [], outputFile: 'r.mp4', outputWidth: 270 });
+    expect(video.filterGraph).toContain('gblur=sigma=13.5');
+  });
+
+  it('el plan admite el desenfoque de 0 a 100 y nada fuera de ese rango', () => {
+    const plan = (blur: number) => ({ media: [{ type: 'photo', path: 'o/m/a.jpg', blur }] });
+    expect(reelPlanSchema.safeParse(plan(40)).success).toBe(true);
+    expect(reelPlanSchema.safeParse(plan(101)).success).toBe(false);
+    expect(reelPlanSchema.safeParse(plan(-1)).success).toBe(false);
   });
 
   it('rechaza un plan que supera la duración máxima de la plantilla o un clip demasiado corto', () => {
