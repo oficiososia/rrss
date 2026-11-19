@@ -116,16 +116,29 @@ test('generar una imagen asíncrona: queda en curso y la cierra ai-media-poll', 
   const sinClave = await fetch(`${LOCAL.api}/functions/v1/ai-media-poll`, { method: 'POST', body: '{}' });
   expect(sinClave.status).toBe(401);
 
-  // El simulado asíncrono «termina» a los 2 s; entonces se sondea como lo haría pg_cron.
-  await page.waitForTimeout(2500);
+  // Se sondea como lo haría pg_cron, una y otra vez: el trabajo de la cola no
+  // se puede reclamar hasta pasado el intervalo de sondeo (5 s desde que se
+  // encoló) y el simulado asíncrono «termina» a los 2 s. Con una sola llamada a
+  // los 2,5 s la prueba dependía de lo lenta que fuera la máquina (en el CI,
+  // más rápida que en local, el trabajo aún no tocaba y no se cerraba nada).
   const clave = claveDeServicioLocal();
-  const sondeo = await fetch(`${LOCAL.api}/functions/v1/ai-media-poll`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', apikey: clave, authorization: `Bearer ${clave}` },
-    body: '{}',
-  });
-  expect(sondeo.status).toBe(200);
-  expect(await sondeo.json()).toMatchObject({ results: [expect.objectContaining({ status: 'completed' })] });
+  const vistos: string[] = [];
+  await expect
+    .poll(
+      async () => {
+        const sondeo = await fetch(`${LOCAL.api}/functions/v1/ai-media-poll`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', apikey: clave, authorization: `Bearer ${clave}` },
+          body: '{}',
+        });
+        expect(sondeo.status).toBe(200);
+        const { results } = (await sondeo.json()) as { results: Array<{ status: string }> };
+        vistos.push(...results.map((r) => r.status));
+        return vistos.find((estado) => estado !== 'pending') ?? null;
+      },
+      { timeout: 30_000, intervals: [1_000] },
+    )
+    .toBe('completed');
 
   // La interfaz lo ve sola (consulta cada 3 s) y añade la capa.
   await expect(page.getByText('Imagen generada y añadida al diseño')).toBeVisible({ timeout: 30_000 });
