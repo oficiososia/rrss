@@ -16,6 +16,7 @@
 //
 // Una petición = una llamada al proveedor. Aquí no hay bucles ni reintentos.
 import { AiError, type AiErrorCode, type AiService, type Json } from '../_shared/ai/contract.ts';
+import { summarizeAnalytics, type AnalyticsFactInput } from '../_shared/ai/text/tasks/analytics-summary.ts';
 import { checkBrandCompliance } from '../_shared/ai/text/tasks/brand-check.ts';
 import {
   planCampaign,
@@ -27,7 +28,13 @@ import { generatePostCopy, type NetworkLimits } from '../_shared/ai/text/tasks/p
 import { proposeBrandProfile, type ProfileSource } from '../_shared/ai/text/tasks/profile-proposal.ts';
 import { AiTaskInputError, type TaskMeta } from '../_shared/ai/text/tasks/shared.ts';
 
-export const AI_GENERATE_ACTIONS = ['post.caption', 'profile.proposal', 'brand.check', 'campaign.plan'] as const;
+export const AI_GENERATE_ACTIONS = [
+  'post.caption',
+  'profile.proposal',
+  'brand.check',
+  'campaign.plan',
+  'analytics.summary',
+] as const;
 export type AiGenerateAction = (typeof AI_GENERATE_ACTIONS)[number];
 
 export interface BrandProfileLookup {
@@ -45,6 +52,16 @@ export interface AiGenerateDeps {
   /** Lee la marca y su perfil activo con la identidad del usuario (RLS). */
   loadBrandProfile(accessToken: string, brandId: string): Promise<BrandProfileLookup>;
   service: AiService;
+  /**
+   * Analítica (Fase 5): cifras medidas de la marca en el periodo, leídas CON LA
+   * IDENTIDAD DEL USUARIO y redactadas por el analista sin IA, y el modo de IA
+   * de la marca. Sin esta dependencia, la acción no está disponible.
+   */
+  loadAnalyticsFacts?(
+    accessToken: string,
+    brandId: string,
+    period: { from: string; to: string },
+  ): Promise<{ aiMode: string; periodLabel: string; facts: AnalyticsFactInput[] }>;
   /** Registro del servidor. Nunca recibe claves ni el contenido de la petición. */
   log?: (event: string, data: Record<string, unknown>) => void;
   /** Origen permitido para CORS (por defecto, cualquiera: la sesión va en cabecera, no en cookie). */
@@ -140,10 +157,13 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
           'agency_mode',
           action === 'campaign.plan'
             ? 'Esta marca trabaja por encargo a la agencia: pide el plan de campaña desde «Campañas».'
-            : 'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
+            : action === 'analytics.summary'
+              ? 'Esta marca trabaja en modo agencia: la interpretación con IA no está disponible.'
+              : 'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
         );
       }
-      if (action !== 'profile.proposal' && lookup.profile === null) {
+      // La interpretación de la analítica no necesita perfil: solo cita cifras medidas.
+      if (action !== 'profile.proposal' && action !== 'analytics.summary' && lookup.profile === null) {
         return fail(
           409,
           'brand_profile_missing',
@@ -160,6 +180,35 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
             brief: data.brief as string,
             network: data.network as NetworkLimits,
             variants: data.variants === undefined ? 3 : (data.variants as number),
+          }),
+        );
+      } else if (action === 'analytics.summary') {
+        const day = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+        if (
+          typeof data.from !== 'string' ||
+          typeof data.to !== 'string' ||
+          !day.test(data.from) ||
+          !day.test(data.to) ||
+          data.from >= data.to
+        ) {
+          return fail(400, 'invalid_request', 'Indica el periodo (from y to, AAAA-MM-DD).');
+        }
+        if (!deps.loadAnalyticsFacts)
+          return fail(503, 'not_configured', 'La interpretación de la analítica no está disponible.');
+        const figures = await deps.loadAnalyticsFacts(accessToken, brandId, { from: data.from, to: data.to });
+        // En modo agencia la marca no usa el servicio de IA: tampoco para interpretar cifras.
+        if (figures.aiMode === 'agency') {
+          return fail(
+            409,
+            'agency_mode',
+            'Esta marca trabaja en modo agencia: la interpretación con IA no está disponible.',
+          );
+        }
+        result = strip(
+          await summarizeAnalytics(deps.service, actor, {
+            brandProfile: lookup.profile,
+            periodLabel: figures.periodLabel,
+            facts: figures.facts,
           }),
         );
       } else if (action === 'brand.check') {

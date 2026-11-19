@@ -49,6 +49,9 @@ const CampaignListPage = lazy(() =>
 const CampaignDetailPage = lazy(() =>
   import('@/features/campaigns/CampaignDetailPage').then((m) => ({ default: m.CampaignDetailPage })),
 );
+const AnalyticsPage = lazy(() =>
+  import('@/features/analytics/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })),
+);
 const LibraryPage = lazy(() => import('@/features/library/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const ReelsPage = lazy(() => import('@/features/reels/ReelsPage').then((m) => ({ default: m.ReelsPage })));
 const PlatformPage = lazy(() => import('@/features/platform/PlatformPage').then((m) => ({ default: m.PlatformPage })));
@@ -146,6 +149,7 @@ export function App() {
                       {/* Sin IA de texto y fuera del modo agencia, la lista vuelve al inicio. */}
                       <Route path="campanas" element={<CampaignListPage />} />
                       <Route path="campanas/:campaignId" element={<CampaignDetailPage />} />
+                      <Route path="analitica" element={<AnalyticsPage />} />
                       <Route path="biblioteca" element={<LibraryPage />} />
                       {/* Sin trabajador de medios desplegado, la pantalla vuelve a la biblioteca. */}
                       <Route path="biblioteca/reels" element={<ReelsPage />} />

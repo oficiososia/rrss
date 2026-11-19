@@ -71,7 +71,7 @@ Pruebas: `tests/db/aislamiento.test.ts` (bloque «RGPD»: nadie exporta ni borra
 datos de otra persona u organización), `tests/db/rgpd.test.ts` (contenido de
 las exportaciones y Edge Functions contra las migraciones reales),
 `src/features/privacy/privacidad.test.tsx` (interfaz) y
-`tests/e2e/16-rgpd.spec.ts` (de punta a punta, **sin ejecutar todavía**).
+`tests/e2e/17-rgpd.spec.ts` (de punta a punta, **sin ejecutar todavía**).
 
 Decisiones tomadas por defecto (a revisar):
 

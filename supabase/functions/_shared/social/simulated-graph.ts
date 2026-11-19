@@ -9,13 +9,22 @@
 // dominio `.invalid` (reservado: no existe) para que nadie los confunda con
 // una publicación real.
 import type { FetchLike } from './meta-graph.ts';
+import { handleSimulatedInsights, type SimulatedInsightsOptions } from '../analytics/simulated-insights.ts';
 
 export const SIMULATED_IG_USER_ID = '17841400000000001';
 export const SIMULATED_IG_USERNAME = 'cuenta_simulada';
 export const SIMULATED_PAGE_ID = '100000000000001';
 export const SIMULATED_PERMALINK_HOST = 'https://instagram.simulado.invalid';
 
-export type SimulatedOperation = 'container' | 'status' | 'media_publish' | 'limit' | 'media_list' | 'any';
+export type SimulatedOperation =
+  | 'container'
+  | 'status'
+  | 'media_publish'
+  | 'limit'
+  | 'media_list'
+  // Métricas (analítica, Fase 5): insights de cuenta y de publicación, y seguidores.
+  | 'insights'
+  | 'any';
 
 export interface SimulatedFailure {
   op: SimulatedOperation;
@@ -62,6 +71,8 @@ export interface SimulatedGraphOptions {
   reelPolls?: number;
   /** Páginas que devuelve /me/accounts. Por defecto, una con una cuenta de Instagram. */
   pages?: Array<{ id: string; name: string; instagram: { id: string; username: string } | null }>;
+  /** Métricas (analítica, Fase 5): ver ../analytics/simulated-insights.ts. */
+  insights?: SimulatedInsightsOptions;
 }
 
 export interface SimulatedGraph {
@@ -76,6 +87,8 @@ export interface SimulatedGraph {
   /** Marca un token como caducado: desde ahora responde con el error 190. */
   expireToken(token: string): void;
   setQuotaUsage(usage: number): void;
+  /** Cambia desde ahora cómo responden las métricas (analítica). */
+  setInsights(options: SimulatedInsightsOptions): void;
 }
 
 class SimulatedTimeout extends Error {
@@ -97,6 +110,7 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
   const failures: SimulatedFailure[] = [];
   const expired = new Set<string>();
   let baseUsage = options.quotaUsage ?? 0;
+  let insights: SimulatedInsightsOptions = { ...(options.insights ?? {}) };
   const pages = options.pages ?? [
     {
       id: SIMULATED_PAGE_ID,
@@ -152,7 +166,13 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
           is_valid: tokenOk(t),
           expires_at: 0,
           data_access_expires_at: Math.floor(now() / 1000) + 90 * 86_400,
-          scopes: ['instagram_basic', 'instagram_content_publish', 'pages_show_list', 'pages_read_engagement'],
+          scopes: [
+            'instagram_basic',
+            'instagram_content_publish',
+            'pages_show_list',
+            'pages_read_engagement',
+            'instagram_manage_insights',
+          ],
         },
       });
     }
@@ -269,6 +289,26 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
       });
     }
 
+    // Métricas (analítica, Fase 5): ../analytics/simulated-insights.ts.
+    const insightsResponse = handleSimulatedInsights({
+      method,
+      parts: parts.slice(1),
+      query,
+      now: now(),
+      options: insights,
+      igUserIds: new Set([
+        ...pages.flatMap((p) => (p.instagram ? [p.instagram.id] : [])),
+        ...published.map((m) => m.igUserId),
+      ]),
+      published,
+      takeFailure: () => {
+        const failure = takeFailure('insights');
+        return failure ? failureResponse(failure) : null;
+      },
+      graphError,
+    });
+    if (insightsResponse) return insightsResponse;
+
     // GET /{id}?fields=…  (contenedor o publicación)
     if (method === 'GET' && parts.length === 2) {
       const id = parts[1]!;
@@ -318,6 +358,9 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
     expireToken: (token) => expired.add(token),
     setQuotaUsage: (usage) => {
       baseUsage = usage;
+    },
+    setInsights: (next) => {
+      insights = { ...next };
     },
   };
 }

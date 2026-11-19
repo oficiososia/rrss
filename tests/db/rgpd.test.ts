@@ -610,12 +610,39 @@ describe('protección de datos con publicación, campañas, tipografías y aviso
       [brand, org, fontPath],
     );
     await storeFile(fontPath);
-    return { ...base, campaign: campaign!.id, account: account.id, item: item!.id, publication: pub!.id, fontPath };
+    // Analítica: una captura de la cuenta conectada y un informe que pide la editora.
+    const today = new Date().toISOString().slice(0, 10);
+    await serviceRpc(db, 'analytics_record_capture', {
+      p_account_id: account.id,
+      p_job_id: null,
+      p_status: 'partial',
+      p_started_at: new Date().toISOString(),
+      p_window_from: today,
+      p_window_to: today,
+      p_account_rows: [{ metric_id: 'instagram.account.followers', date: today, value: 120 }],
+      p_media_rows: [],
+      p_unavailable: [{ metric_id: 'instagram.account.views', reason: 'no_data', message: 'Sin cifras' }],
+    });
+    const [report] = await as<{ id: string }>(
+      db,
+      editora,
+      `select (public.request_analytics_report($1, (date_trunc('month', now()) - interval '1 month')::date)).id`,
+      [brand],
+    );
+    return {
+      ...base,
+      campaign: campaign!.id,
+      account: account.id,
+      item: item!.id,
+      publication: pub!.id,
+      fontPath,
+      report: report!.id,
+    };
   }
 
   const count = async (sql: string, params: unknown[]) => (await db.query(sql, params)).length;
 
-  it('las exportaciones traen campañas, calendario, cuentas sin tokens, comentarios, tipografías y avisos', async () => {
+  it('las exportaciones traen campañas, calendario, cuentas sin tokens, comentarios, tipografías, avisos y analítica', async () => {
     const owner = await user('exporta-todo');
     const editora = await user('autora');
     const t = await fullOrg(owner, editora, 'Con todo');
@@ -633,11 +660,18 @@ describe('protección de datos con publicación, campañas, tipografías y aviso
     expect(pub!.attempts as Json[]).toHaveLength(1);
     expect((marca!.content_comments as Json[]).map((c) => c.body)).toEqual(['Me gusta']);
     expect((marca!.campaigns as Json[]).map((c) => c.id)).toEqual([t.campaign]);
+    const analitica = marca!.analytics as Record<string, Json[]>;
+    expect(analitica.account_metrics!.map((m) => [m.metric_id, Number(m.value)])).toEqual([
+      ['instagram.account.followers', 120],
+    ]);
+    expect(analitica.captures!.map((c) => c.status)).toEqual(['partial']);
+    expect(analitica.reports!.map((r) => [r.id, r.requested_by])).toEqual([[t.report, editora.id]]);
 
     const [mia] = await as<{ data: Json }>(db, editora, `select public.export_my_data() as data`);
     expect((mia!.data.content_comments as Json[]).map((c) => c.body)).toEqual(['Me gusta']);
     expect((mia!.data.publications_scheduled as Json[]).map((p) => p.id)).toEqual([t.publication]);
     expect((mia!.data.request_notifications as Json[]).length).toBeGreaterThan(0);
+    expect((mia!.data.analytics_reports_requested as Json[]).map((r) => r.id)).toEqual([t.report]);
     const [suya] = await as<{ data: Json }>(db, owner, `select public.export_my_data() as data`);
     expect((suya!.data.campaigns_created as Json[]).map((c) => c.id)).toEqual([t.campaign]);
     expect((suya!.data.brand_fonts_uploaded as Json[]).map((f) => f.family)).toEqual(['Marca Sans']);
@@ -665,6 +699,10 @@ describe('protección de datos con publicación, campañas, tipografías y aviso
       'public.request_notifications',
       'public.brand_fonts',
       'private.social_oauth_states',
+      'public.account_metrics_daily',
+      'public.media_metrics_daily',
+      'public.analytics_capture_runs',
+      'public.analytics_reports',
     ]) {
       expect(await count(`select 1 from ${table} where organization_id = $1`, [t.org]), table).toBe(0);
     }
@@ -689,6 +727,11 @@ describe('protección de datos con publicación, campañas, tipografías y aviso
     expect(
       await db.query(`select created_by from public.scheduled_publications where id = $1`, [t.publication]),
     ).toEqual([{ created_by: null }]);
+    // El informe que pidió sigue, sin su nombre, con las cifras de la marca.
+    expect(await db.query(`select requested_by from public.analytics_reports where id = $1`, [t.report])).toEqual([
+      { requested_by: null },
+    ]);
+    expect(await count(`select 1 from public.account_metrics_daily where organization_id = $1`, [t.org])).toBe(1);
     // La cuenta conectada, la tipografía y la campaña (de la propietaria) siguen.
     expect(await count(`select 1 from public.brand_fonts where organization_id = $1`, [t.org])).toBe(1);
     expect(await count(`select 1 from public.social_accounts where id = $1`, [t.account])).toBe(1);

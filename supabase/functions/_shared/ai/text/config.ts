@@ -27,7 +27,13 @@ import { createVertexProvider, VERTEX_PROVIDER_ID, vertexEuProblem } from './ver
 export type Env = Record<string, string | undefined>;
 
 /** Propósitos de las tareas de texto (`AiGenerateParams.purpose`). */
-export const TEXT_PURPOSES = ['post.caption', 'profile.proposal', 'brand.check', 'campaign.plan'] as const;
+export const TEXT_PURPOSES = [
+  'post.caption',
+  'profile.proposal',
+  'brand.check',
+  'campaign.plan',
+  'analytics.summary',
+] as const;
 export type TextPurpose = (typeof TEXT_PURPOSES)[number];
 
 /** Variables con las que se elige adaptador y modelo de un propósito concreto. */
@@ -36,6 +42,8 @@ const PURPOSE_ENV: Record<TextPurpose, string> = {
   'profile.proposal': 'AI_TEXT_PROFILE_PROPOSAL',
   'brand.check': 'AI_TEXT_BRAND_CHECK',
   'campaign.plan': 'AI_TEXT_CAMPAIGN_PLAN',
+  // Analítica (Fase 5): interpretación de las cifras, siempre como hipótesis.
+  'analytics.summary': 'AI_TEXT_ANALYTICS_SUMMARY',
 };
 
 export const TEXT_PROVIDER_IDS = [

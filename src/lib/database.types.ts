@@ -1224,6 +1224,141 @@ type RgpdFunctions = {
 
 // ─────────────────────────── fin del bloque de RGPD ───────────────────────────
 
+// ─────────────────────── Analítica (Fase 5) ───────────────────────
+// Migraciones 20261119610000 a 20261119630000. Cifras capturadas por el
+// servidor (`social-insights`); el navegador solo las lee.
+
+export type AnalyticsMetricScope = 'account' | 'media';
+export type AnalyticsMetricStatus = 'captured' | 'not_captured' | 'retired';
+
+export type AnalyticsMetricDefinitionRow = {
+  id: string;
+  network: 'instagram' | 'facebook';
+  scope: AnalyticsMetricScope;
+  api_name: string | null;
+  api_source: 'insights' | 'field' | null;
+  label: string;
+  description: string;
+  unit: 'count' | 'milliseconds';
+  aggregation: 'daily' | 'snapshot' | 'lifetime';
+  media_types: string[];
+  estimated: boolean;
+  in_development: boolean;
+  status: AnalyticsMetricStatus;
+  status_note: string;
+  delay_hours: number;
+  source_url: string;
+  verified_on: string;
+  sort: number;
+};
+
+export type AccountMetricDailyRow = {
+  id: string;
+  social_account_id: string;
+  brand_id: string;
+  organization_id: string;
+  metric_id: string;
+  metric_date: string;
+  /** numeric de Postgres: llega como número o como texto según el cliente. */
+  value: number | string;
+  first_captured_at: string;
+  captured_at: string;
+  capture_count: number;
+  provisional: boolean;
+};
+
+export type MediaMetricDailyRow = {
+  id: string;
+  social_account_id: string;
+  brand_id: string;
+  organization_id: string;
+  publication_id: string | null;
+  external_media_id: string;
+  media_product_type: 'FEED' | 'REELS';
+  published_at: string | null;
+  metric_id: string;
+  metric_date: string;
+  value: number | string;
+  first_captured_at: string;
+  captured_at: string;
+  capture_count: number;
+  provisional: boolean;
+};
+
+export type AnalyticsCaptureRunRow = {
+  id: string;
+  social_account_id: string;
+  brand_id: string;
+  organization_id: string;
+  job_id: string | null;
+  status: 'succeeded' | 'partial' | 'failed' | 'skipped';
+  window_from: string | null;
+  window_to: string | null;
+  api_calls: number;
+  account_rows: number;
+  media_rows: number;
+  unavailable: Array<{ metric_id: string; reason: string; message: string }>;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string;
+};
+
+export type AnalyticsReportStatus = 'queued' | 'rendering' | 'ready' | 'failed';
+
+export type AnalyticsReportRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  /** Primer día del mes (AAAA-MM-01). */
+  period_start: string;
+  status: AnalyticsReportStatus;
+  source: 'schedule' | 'manual';
+  revision: number;
+  data_job_id: string | null;
+  render_job_id: string | null;
+  media_asset_id: string | null;
+  summary: Json;
+  error: string | null;
+  requested_by: string | null;
+  generated_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnalyticsMediaSummaryRow = {
+  publication_id: string | null;
+  content_id: string | null;
+  title: string;
+  format: string;
+  network: string;
+  media_product_type: 'FEED' | 'REELS';
+  external_media_id: string;
+  external_url: string | null;
+  published_at: string;
+  last_captured_at: string;
+  provisional: boolean;
+  metrics: Record<string, number | string>;
+};
+
+type AnalyticsTables = {
+  analytics_metric_definitions: Table<AnalyticsMetricDefinitionRow>;
+  account_metrics_daily: Table<AccountMetricDailyRow>;
+  media_metrics_daily: Table<MediaMetricDailyRow>;
+  analytics_capture_runs: Table<AnalyticsCaptureRunRow>;
+  analytics_reports: Table<AnalyticsReportRow>;
+};
+
+type AnalyticsFunctions = {
+  analytics_media_summary: {
+    Args: { p_brand_id: string; p_from: string; p_to: string };
+    Returns: AnalyticsMediaSummaryRow[];
+  };
+  request_analytics_report: { Args: { p_brand_id: string; p_period_start: string }; Returns: AnalyticsReportRow };
+};
+
+// ─────────────────────── fin del bloque de analítica ───────────────────────
+
 type Table<Row, Insert = never, Update = never> = {
   Row: Row;
   Insert: Insert;
@@ -1311,7 +1446,8 @@ export type Database = {
       PublicationTables &
       BillingTables &
       CampaignTables &
-      RgpdTables;
+      RgpdTables &
+      AnalyticsTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1345,7 +1481,8 @@ export type Database = {
       PublicationFunctions &
       BillingFunctions &
       CampaignFunctions &
-      RgpdFunctions;
+      RgpdFunctions &
+      AnalyticsFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

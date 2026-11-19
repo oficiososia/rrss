@@ -2,6 +2,7 @@
 import type { Handler } from '../handler.ts';
 import { createImageProcessHandler } from './image-process.ts';
 import { createReelTemplateHandler } from './reel-template.ts';
+import { createReportPdfHandler } from './report-pdf.ts';
 import type { MediaDeps } from './shared.ts';
 import { createSourceExtractHandler } from './source-extract.ts';
 import { createVideoDerivativesHandler } from './video-derivatives.ts';
@@ -18,5 +19,7 @@ export function createMediaHandlers(deps: MediaDeps): Handler[] {
     createVideoDerivativesHandler(deps),
     // Texto de las fuentes de la marca (PDF, Word, web): no usa FFmpeg.
     createSourceExtractHandler(),
+    // Informe mensual de analítica (Fase 5).
+    createReportPdfHandler(),
   ];
 }

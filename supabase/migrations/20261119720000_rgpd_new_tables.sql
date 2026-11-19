@@ -3,17 +3,21 @@
 --
 -- * «Descargar mis datos» (`export_my_data`) añade lo que escribió o hizo la
 --   persona: comentarios de aprobación, campañas que creó, publicaciones que
---   programó, cuentas que conectó (sin tokens), tipografías que subió y sus
---   avisos de encargos.
+--   programó, cuentas que conectó (sin tokens), tipografías que subió, sus
+--   avisos de encargos y los informes de analítica que pidió.
 -- * Exportar la organización (`export_organization_data`) añade el plan
 --   contratado y, por marca, tipografías, cuentas conectadas (sin tokens),
---   calendario con sus intentos, comentarios y campañas con sus planes.
+--   calendario con sus intentos, comentarios, campañas con sus planes y la
+--   analítica (cifras diarias de cuenta y de publicación, capturas e informes;
+--   el PDF de cada informe es un recurso de la biblioteca, ya en `assets`).
 -- * Las rutas de Storage de la organización incluyen las tipografías.
 --
 -- El borrado no necesita más: todas las tablas nuevas cuelgan de la marca o de
 -- la organización con `on delete cascade` (los tokens cifrados, de su cuenta),
 -- las autorías son `on delete set null` y los avisos de una persona, `on
--- delete cascade`. Lo comprueba tests/db/rgpd.test.ts. Se conservan a
+-- delete cascade`; la analítica cuelga de la cuenta conectada o de la marca
+-- (`on delete cascade`) y quien pidió un informe queda en `set null`. Lo
+-- comprueba tests/db/rgpd.test.ts. Se conservan a
 -- propósito, como el libro de consumo de IA, los avisos de Stripe
 -- (`billing_events`, sin datos personales): son la base de la facturación.
 
@@ -174,7 +178,14 @@ begin
       select jsonb_agg(jsonb_build_object('request_id', rn.request_id, 'brand_id', rn.brand_id,
                                           'kind', rn.kind, 'created_at', rn.created_at, 'read_at', rn.read_at)
                        order by rn.created_at)
-      from public.request_notifications rn where rn.user_id = v_uid), '[]'::jsonb)
+      from public.request_notifications rn where rn.user_id = v_uid), '[]'::jsonb),
+    -- Analítica (Fase 5): los informes que pidió a mano.
+    'analytics_reports_requested', coalesce((
+      select jsonb_agg(jsonb_build_object('id', ar.id, 'brand_id', ar.brand_id,
+                                          'period_start', ar.period_start, 'status', ar.status,
+                                          'created_at', ar.created_at)
+                       order by ar.created_at)
+      from public.analytics_reports ar where ar.requested_by = v_uid), '[]'::jsonb)
   );
 end $$;
 
@@ -323,7 +334,43 @@ begin
                                                   order by ct.plan_version, ct.piece_index)
                                  from public.campaign_contents ct where ct.campaign_id = c.id), '[]'::jsonb))
                              order by c.created_at)
-            from public.campaigns c where c.brand_id = b.id), '[]'::jsonb)
+            from public.campaigns c where c.brand_id = b.id), '[]'::jsonb),
+          -- Analítica (Fase 5): cifras medidas, capturas e informes.
+          'analytics', jsonb_build_object(
+            'account_metrics', coalesce((
+              select jsonb_agg(jsonb_build_object('social_account_id', m.social_account_id,
+                                                  'metric_id', m.metric_id, 'date', m.metric_date,
+                                                  'value', m.value, 'provisional', m.provisional,
+                                                  'captured_at', m.captured_at)
+                               order by m.metric_date, m.metric_id, m.social_account_id)
+              from public.account_metrics_daily m where m.brand_id = b.id), '[]'::jsonb),
+            'media_metrics', coalesce((
+              select jsonb_agg(jsonb_build_object('social_account_id', m.social_account_id,
+                                                  'publication_id', m.publication_id,
+                                                  'external_media_id', m.external_media_id,
+                                                  'media_product_type', m.media_product_type,
+                                                  'published_at', m.published_at, 'metric_id', m.metric_id,
+                                                  'date', m.metric_date, 'value', m.value,
+                                                  'provisional', m.provisional, 'captured_at', m.captured_at)
+                               order by m.metric_date, m.external_media_id, m.metric_id)
+              from public.media_metrics_daily m where m.brand_id = b.id), '[]'::jsonb),
+            'captures', coalesce((
+              select jsonb_agg(jsonb_build_object('social_account_id', cr.social_account_id,
+                                                  'status', cr.status, 'window_from', cr.window_from,
+                                                  'window_to', cr.window_to, 'unavailable', cr.unavailable,
+                                                  'error_code', cr.error_code, 'started_at', cr.started_at,
+                                                  'finished_at', cr.finished_at)
+                               order by cr.started_at, cr.id)
+              from public.analytics_capture_runs cr where cr.brand_id = b.id), '[]'::jsonb),
+            'reports', coalesce((
+              select jsonb_agg(jsonb_build_object('id', ar.id, 'period_start', ar.period_start,
+                                                  'status', ar.status, 'source', ar.source,
+                                                  'revision', ar.revision, 'media_asset_id', ar.media_asset_id,
+                                                  'summary', ar.summary, 'requested_by', ar.requested_by,
+                                                  'generated_at', ar.generated_at, 'created_at', ar.created_at)
+                               order by ar.period_start)
+              from public.analytics_reports ar where ar.brand_id = b.id), '[]'::jsonb)
+          )
         )
         order by b.created_at)
       from public.brands b where b.organization_id = p_organization_id), '[]'::jsonb)

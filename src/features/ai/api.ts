@@ -11,7 +11,16 @@ import { supabase } from '@/lib/supabase';
 
 // ── Tipos del contrato ────────────────────────────────────────────────────
 
-export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal';
+export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal' | 'analytics.summary';
+
+/** Interpretación de la analítica (Fase 5): solo hipótesis, cada una con los datos en que se apoya. */
+export interface AnalyticsSummaryResult {
+  action: 'analytics.summary';
+  generationId: string;
+  hypotheses: { id: string; kind: 'hypothesis'; source: 'ai'; text: string; basedOn: string[] }[];
+  /** Propuestas de la IA descartadas por no apoyarse en ningún dato medido. */
+  discarded: number;
+}
 
 /** Límites de la red tal como los espera la tarea `post.caption`. */
 export interface AiNetworkLimits {
@@ -261,6 +270,14 @@ export function checkBrandWithAi(brandId: string, text: string): Promise<BrandCh
 
 export function proposeProfile(brandId: string, sources: ProfileSourceText[]): Promise<ProfileProposalResult> {
   return invokeAiGenerate<ProfileProposalResult>('profile.proposal', brandId, { sources });
+}
+
+/** Interpreta las cifras medidas de un periodo (AAAA-MM-DD, `to` excluido). Solo devuelve hipótesis. */
+export function summarizeAnalytics(
+  brandId: string,
+  period: { from: string; to: string },
+): Promise<AnalyticsSummaryResult> {
+  return invokeAiGenerate<AnalyticsSummaryResult>('analytics.summary', brandId, period);
 }
 
 /** Mutación sin `mutate`: solo `mutateAsync`. */

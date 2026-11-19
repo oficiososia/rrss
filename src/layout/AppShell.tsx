@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   CalendarDays,
   Building2,
   ClipboardList,
@@ -72,6 +73,7 @@ function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 
     ...(campaignsAvailable(brand, aiTextEnabled())
       ? [{ to: `${b}/campanas`, label: 'Campañas', icon: Megaphone }]
       : []),
+    { to: `${b}/analitica`, label: 'Analítica', icon: BarChart3 },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
     { to: `${b}/marca`, label: 'Marca', icon: Palette },
     { to: `${b}/equipo`, label: 'Equipo', icon: Users },

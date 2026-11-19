@@ -207,11 +207,16 @@ const TENANT_TABLES = [
   'campaign_plans',
   'campaign_contents',
   'legal_acceptances',
+  // Analítica (Fase 5).
+  'account_metrics_daily',
+  'media_metrics_daily',
+  'analytics_capture_runs',
+  'analytics_reports',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
 // usuario con sesión y solo los escribe un superadministrador.
-const PLATFORM_TABLES = ['ai_media_models', 'plans'];
+const PLATFORM_TABLES = ['ai_media_models', 'plans', 'analytics_metric_definitions'];
 
 describe('catálogo: nada queda abierto por olvido', () => {
   it('todas las tablas de public tienen RLS activado', async () => {
@@ -2010,5 +2015,126 @@ describe('RGPD: aceptaciones, exportar y borrar', () => {
     // Ni siquiera borrando la cuenta de Auth a mano: la organización no se queda sin propietario.
     await expect(db.query(`delete from auth.users where id = $1`, [ana.id])).rejects.toThrow(/propietario/);
     expect(await db.query(`select 1 from public.organizations where id = $1`, [orgA])).toHaveLength(1);
+  });
+});
+
+describe('analítica: métricas, capturas e informes (Fase 5)', () => {
+  let cuentaA1: string, cuentaB1: string;
+  const today = new Date().toISOString().slice(0, 10);
+
+  const connect = async (user: TestUser, brand: string, externalId: string) =>
+    (
+      await serviceRpc<{ id: string }>(db, 'social_account_connect', {
+        p_user_id: user.id,
+        p_brand_id: brand,
+        p_network: 'instagram',
+        p_external_id: externalId,
+        p_username: 'cuenta',
+        p_display_name: 'Cuenta',
+        p_page_id: '1',
+        p_scopes: ['instagram_basic', 'instagram_manage_insights'],
+        p_token_expires_at: null,
+        p_key_id: 'k1',
+        p_access_token_ciphertext: 'c'.repeat(40),
+        p_refresh_token_ciphertext: null,
+      })
+    ).id;
+
+  beforeAll(async () => {
+    // Las mismas cuentas que en la publicación (volver a conectarlas solo renueva el token).
+    cuentaA1 = await connect(ana, marcaA1, '1001');
+    cuentaB1 = await connect(berta, marcaB1, '2001');
+    for (const cuenta of [cuentaA1, cuentaB1]) {
+      await serviceRpc(db, 'analytics_record_capture', {
+        p_account_id: cuenta,
+        p_job_id: null,
+        p_status: 'partial',
+        p_started_at: new Date().toISOString(),
+        p_window_from: today,
+        p_window_to: today,
+        p_account_rows: [{ metric_id: 'instagram.account.followers', date: today, value: 100 }],
+        p_media_rows: [],
+        p_unavailable: [{ metric_id: 'instagram.account.views', reason: 'no_data', message: 'Sin cifras' }],
+      });
+    }
+    for (const brand of [marcaA1, marcaB1]) {
+      await db.query(`select private.analytics_report_enqueue($1, '2026-10-01', 'manual', null)`, [brand]);
+    }
+  });
+
+  it('una organización no ve las cifras, las capturas ni los informes de otra; el superadministrador tampoco', async () => {
+    for (const table of ['account_metrics_daily', 'analytics_capture_runs', 'analytics_reports']) {
+      const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deB.map((r) => r.org),
+        table,
+      ).toEqual([orgB]);
+      const deA = await as(db, ana, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deA.map((r) => r.org),
+        table,
+      ).toEqual([orgA]);
+      expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
+      expect(await as(db, ajeno, `select 1 from public.${table}`), table).toEqual([]);
+    }
+    expect(await as(db, ana, `select 1 from public.media_metrics_daily where brand_id = $1`, [marcaB1])).toEqual([]);
+    expect(
+      await as(
+        db,
+        ana,
+        `select * from public.analytics_media_summary($1, now() - interval '1 year', now() + interval '1 day')`,
+        [marcaB1],
+      ),
+    ).toEqual([]);
+    // Dentro de la organización: quien no ve la marca no ve sus cifras; el cliente de la marca, sí.
+    expect(await as(db, sinMarcaA, `select 1 from public.account_metrics_daily`)).toEqual([]);
+    expect((await as(db, clienteA, `select 1 from public.account_metrics_daily`)).length).toBeGreaterThan(0);
+    // El catálogo de métricas es de la plataforma: lo leen todos igual.
+    const [a] = await as<{ n: string }>(db, ana, `select count(*)::text as n from public.analytics_metric_definitions`);
+    const [b] = await as<{ n: string }>(db, ajeno, `select count(*)::text as n from public.analytics_metric_definitions`);
+    expect(a).toEqual(b);
+  });
+
+  it('nadie escribe cifras, capturas, informes ni el catálogo desde la API', async () => {
+    for (const table of [
+      'account_metrics_daily',
+      'media_metrics_daily',
+      'analytics_capture_runs',
+      'analytics_reports',
+      'analytics_metric_definitions',
+    ]) {
+      await denied(db, ana, `delete from public.${table}`, [], /permission denied/);
+      await denied(db, ana, `update public.${table} set id = id`, [], /permission denied/);
+    }
+    await denied(
+      db,
+      ana,
+      `insert into public.analytics_reports (brand_id, organization_id, period_start, source)
+       values ($1, $2, '2026-09-01', 'manual')`,
+      [marcaA1, orgA],
+      /permission denied/,
+    );
+  });
+
+  it('no se piden informes de la marca ajena, y las funciones del servidor no se ejecutan desde la API', async () => {
+    await denied(db, ana, `select public.request_analytics_report($1, '2026-09-01')`, [marcaB1], /edita/);
+    await denied(db, clienteA, `select public.request_analytics_report($1, '2026-09-01')`, [marcaA1], /edita/);
+    const calls: Array<[string, unknown[]]> = [
+      [`select public.analytics_enqueue_captures()`, []],
+      [`select public.analytics_capture_begin($1)`, [cuentaA1]],
+      [`select public.analytics_record_capture($1, null, 'succeeded', now(), null, null, '[]', '[]')`, [cuentaA1]],
+      [`select public.analytics_defer_job(gen_random_uuid(), 'w', 60)`, []],
+      [`select public.analytics_enqueue_monthly_reports()`, []],
+      [`select public.analytics_report_source(gen_random_uuid())`, []],
+      [`select public.analytics_report_render(gen_random_uuid(), gen_random_uuid(), '{}', '{}')`, []],
+      [`select private.analytics_report_enqueue($1, '2026-09-01', 'manual', null)`, [marcaA1]],
+      [`select private.analytics_dispatch()`, []],
+    ];
+    for (const [sql, params] of calls) {
+      await denied(db, ana, sql, params, /permission denied/);
+      await denied(db, null, sql, params, /permission denied/);
+    }
+    // El reloj tampoco lo ejecuta la clave de servicio: solo pg_cron.
+    await expect(asService(db, `select private.analytics_dispatch()`)).rejects.toThrow(/permission denied/);
   });
 });
