@@ -87,7 +87,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   await page.getByTestId('add-image').click();
   await page.getByTestId('image-picker').getByTestId('picker-asset').filter({ hasText: FOTO }).click();
   await servida;
-  await expect(page.getByTestId('layer-item')).toHaveCount(1);
+  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
 
   await page.getByTestId('editor-save').click();
   await page.getByTestId('save-confirm').click();
