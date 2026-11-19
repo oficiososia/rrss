@@ -146,8 +146,13 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   await expect(noMedible).toContainText('Impresiones');
   await expect(noMedible).toContainText('Facebook');
   await expect(page.getByTestId('analytics-networks')).toContainText('Las páginas de Facebook todavía no se conectan.');
-  // Sin VITE_AI_TEXT_ENABLED en la tanda, no hay botón de IA.
-  await expect(page.getByTestId('analytics-ai')).toHaveCount(0);
+  // La tanda tiene la IA de texto (VITE_AI_TEXT_ENABLED, proveedor simulado) y
+  // La Espiga no está en modo agencia: la IA interpreta, solo con los datos medidos.
+  await page.getByTestId('analytics-ai').click();
+  const ia = page.getByTestId('analytics-ai-hypotheses');
+  await expect(ia).toContainText('Hipótesis (IA)');
+  await expect(ia).toContainText('[simulado] Podría merecer la pena fijarse en esto');
+  await expect(ia).toContainText('Se apoya en:');
   sinErrores(s);
   await s.context.close();
 });
