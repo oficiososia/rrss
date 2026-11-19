@@ -47,6 +47,7 @@ describe('guarda del proveedor simulado de pruebas locales', () => {
         ['brand.check'],
         ['campaign.plan'],
         ['analytics.summary'],
+        ['editor.copilot'],
       ]);
       expect(config.problems.join(' ')).toMatch(/SIMULADO para pruebas locales/);
     }

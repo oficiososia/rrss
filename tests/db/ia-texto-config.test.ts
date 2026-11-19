@@ -45,6 +45,7 @@ describe('qué adaptador y qué modelo sirve cada tarea', () => {
       [['brand.check'], 'mistral', 'modelo-m'],
       [['campaign.plan'], 'mistral', 'modelo-m'],
       [['analytics.summary'], 'mistral', 'modelo-m'],
+      [['editor.copilot'], 'mistral', 'modelo-m'],
     ]);
     expect(config.models[0]).toMatchObject({
       task: 'text',
@@ -71,6 +72,7 @@ describe('qué adaptador y qué modelo sirve cada tarea', () => {
       'brand.check': 'mistral/modelo-m',
       'campaign.plan': 'anthropic-vertex/modelo-v',
       'analytics.summary': 'anthropic-vertex/modelo-v',
+      'editor.copilot': 'anthropic-vertex/modelo-v',
     });
     expect(config.problems).toEqual([]);
   });

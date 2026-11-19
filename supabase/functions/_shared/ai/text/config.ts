@@ -33,6 +33,7 @@ export const TEXT_PURPOSES = [
   'brand.check',
   'campaign.plan',
   'analytics.summary',
+  'editor.copilot',
 ] as const;
 export type TextPurpose = (typeof TEXT_PURPOSES)[number];
 
@@ -44,6 +45,8 @@ const PURPOSE_ENV: Record<TextPurpose, string> = {
   'campaign.plan': 'AI_TEXT_CAMPAIGN_PLAN',
   // Analítica (Fase 5): interpretación de las cifras, siempre como hipótesis.
   'analytics.summary': 'AI_TEXT_ANALYTICS_SUMMARY',
+  // Copiloto por voz del editor: convierte lo dictado en operaciones de capas.
+  'editor.copilot': 'AI_TEXT_EDITOR_COPILOT',
 };
 
 export const TEXT_PROVIDER_IDS = [

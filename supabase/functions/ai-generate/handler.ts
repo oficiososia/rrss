@@ -7,7 +7,9 @@
 //   2. valida la petición;
 //   3. lee el perfil de marca CON LA IDENTIDAD DEL USUARIO (la RLS decide si lo ve);
 //      si la marca redacta «por encargo a la agencia» (`brands.ai_mode = 'agency'`),
-//      rechaza la petición (409 `agency_mode`) antes de tocar el cupo;
+//      rechaza la petición (409 `agency_mode`) antes de tocar el cupo. Única
+//      excepción: el copiloto por voz del editor (`editor.copilot`), que no
+//      redacta texto (decisión provisional, docs/ESTADO.md);
 //   4. llama a la tarea, que pasa por el servicio: reservar cupo → generar → registrar.
 //
 // El permiso de «crear contenido en la marca» lo impone la base de datos al
@@ -18,6 +20,11 @@
 import { AiError, type AiErrorCode, type AiService, type Json } from '../_shared/ai/contract.ts';
 import { summarizeAnalytics, type AnalyticsFactInput } from '../_shared/ai/text/tasks/analytics-summary.ts';
 import { checkBrandCompliance } from '../_shared/ai/text/tasks/brand-check.ts';
+import {
+  runEditorCopilot,
+  type CopilotAssetRef,
+  type CopilotDocumentSummary,
+} from '../_shared/ai/text/tasks/editor-copilot.ts';
 import {
   planCampaign,
   type CampaignAssetRef,
@@ -34,6 +41,7 @@ export const AI_GENERATE_ACTIONS = [
   'brand.check',
   'campaign.plan',
   'analytics.summary',
+  'editor.copilot',
 ] as const;
 export type AiGenerateAction = (typeof AI_GENERATE_ACTIONS)[number];
 
@@ -62,11 +70,24 @@ export interface AiGenerateDeps {
     brandId: string,
     period: { from: string; to: string },
   ): Promise<{ aiMode: string; periodLabel: string; facts: AnalyticsFactInput[] }>;
+  /**
+   * Copiloto por voz: de las fotos que manda el editor, las que el usuario ve
+   * en la marca (RLS) y son imágenes. Sin esta dependencia se aceptan tal cual
+   * llegan (el documento solo se dibuja con lo que la RLS deja ver).
+   */
+  filterVisibleImages?(accessToken: string, brandId: string, ids: string[]): Promise<string[]>;
   /** Registro del servidor. Nunca recibe claves ni el contenido de la petición. */
   log?: (event: string, data: Record<string, unknown>) => void;
   /** Origen permitido para CORS (por defecto, cualquiera: la sesión va en cabecera, no en cookie). */
   allowedOrigin?: string;
 }
+
+/**
+ * Acciones que se admiten en marcas en modo agencia. Solo el copiloto por voz:
+ * coloca lo que la persona dicta, literalmente, y no redacta texto. Decisión
+ * PROVISIONAL del producto (docs/ESTADO.md, «Decisiones del dueño pendientes»).
+ */
+export const AGENCY_MODE_ALLOWED_ACTIONS: readonly AiGenerateAction[] = ['editor.copilot'];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_BODY_BYTES = 1_500_000;
@@ -151,7 +172,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
       if (!lookup.brandVisible) return fail(404, 'brand_not_found', 'No existe esa marca o no tienes acceso a ella.');
       // Modo agencia: la marca ha decidido que redacta la agencia por encargo.
       // Se impone aquí (no solo ocultando botones) y antes de reservar cupo.
-      if (lookup.aiMode === 'agency') {
+      if (lookup.aiMode === 'agency' && !AGENCY_MODE_ALLOWED_ACTIONS.includes(action as AiGenerateAction)) {
         return fail(
           409,
           'agency_mode',
@@ -209,6 +230,26 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
             brandProfile: lookup.profile,
             periodLabel: figures.periodLabel,
             facts: figures.facts,
+          }),
+        );
+      } else if (action === 'editor.copilot') {
+        // Solo devuelve operaciones validadas; las aplica (y las valida otra vez) el editor.
+        let assets = Array.isArray(data.assets) ? (data.assets as CopilotAssetRef[]) : undefined;
+        if (assets && deps.filterVisibleImages) {
+          const ids = assets.map((asset) => (typeof asset?.id === 'string' ? asset.id.toLowerCase() : ''));
+          const visible = new Set(
+            (await deps.filterVisibleImages(accessToken, brandId, ids.filter((id) => UUID.test(id)))).map((id) =>
+              id.toLowerCase(),
+            ),
+          );
+          assets = assets.filter((_, index) => visible.has(ids[index]!));
+        }
+        result = strip(
+          await runEditorCopilot(deps.service, actor, {
+            brandProfile: lookup.profile,
+            transcript: data.transcript as string,
+            document: data.document as CopilotDocumentSummary,
+            assets,
           }),
         );
       } else if (action === 'brand.check') {

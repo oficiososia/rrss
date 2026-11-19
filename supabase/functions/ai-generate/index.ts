@@ -69,6 +69,18 @@ const handler = createAiGenerateHandler({
     return { brandVisible: true, profile: (profile.data?.data as Json | undefined) ?? null, aiMode };
   },
 
+  // Copiloto por voz: solo las fotos de la marca que el usuario ve (RLS).
+  async filterVisibleImages(accessToken, brandId, ids) {
+    if (ids.length === 0) return [];
+    const asUser = createClient(supabaseUrl, env.SUPABASE_ANON_KEY ?? '', {
+      ...options,
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    });
+    const rows = await asUser.from('media_assets').select('id').eq('brand_id', brandId).eq('kind', 'image').in('id', ids);
+    if (rows.error) throw new Error('No se han podido leer las fotos');
+    return (rows.data ?? []).map((row: { id: string }) => row.id);
+  },
+
   // Analítica (Fase 5): las cifras se leen con la identidad del usuario (RLS) y
   // las redacta el analista sin IA; a la IA solo le llegan esos datos.
   async loadAnalyticsFacts(accessToken, brandId, period) {
