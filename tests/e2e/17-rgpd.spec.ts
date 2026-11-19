@@ -34,7 +34,8 @@ test('el registro exige aceptar las condiciones y la política de privacidad, y 
   // Los documentos se abren y se pueden leer sin sesión, con el aviso de borrador.
   const [politica] = await Promise.all([
     page.context().waitForEvent('page'),
-    page.getByRole('link', { name: 'política de privacidad' }).click(),
+    // El del formulario (el pie de página tiene otro enlace igual).
+    page.getByTestId('register-legal').getByRole('link', { name: 'política de privacidad' }).click(),
   ]);
   await expect(politica.getByRole('heading', { level: 1, name: 'Política de privacidad' })).toBeVisible();
   await expect(politica.getByTestId('legal-draft-warning')).toContainText('abogado');

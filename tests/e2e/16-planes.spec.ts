@@ -45,8 +45,11 @@ test('el propietario ve su plan y su uso, y no puede pasarse del límite de marc
   await page.goto(`/o/${dato('orgB')}/ajustes/plan`);
   await expect(page.getByTestId('plan-name')).toHaveText('Prueba');
   await expect(page.getByTestId('plan-usage-brands')).toHaveText('1 de 1');
-  // Sin VITE_BILLING_ENABLED no aparece nada de pago.
-  await expect(page.getByText('Cambiar de plan')).toHaveCount(0);
+  // Sin VITE_BILLING_ENABLED no aparece nada de pago: ni la tarjeta «Cambiar de
+  // plan» ni el botón de contratar. (Por texto suelto no vale: la explicación de
+  // los límites dice «…hasta liberar sitio o cambiar de plan».)
+  await expect(page.getByRole('heading', { name: 'Cambiar de plan' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Contratar|Stripe/ })).toHaveCount(0);
 
   // El asistente de alta llega al final, pero la base de datos no deja crear la segunda marca.
   await page.goto(`/o/${dato('orgB')}/marcas/nueva`);
