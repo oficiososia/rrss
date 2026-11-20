@@ -218,8 +218,6 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 
 - Bajar a un plan sin publicación no detiene lo ya programado.
 - Publicación: sin historias de Instagram, sin Facebook, el calendario usa la hora del dispositivo, renovar el token es volver a conectar.
-- Si la conexión con Meta falla sin saber la marca, no sale aviso.
-- El plan «Prueba» dice «sin IA» pero muestra «Texto con IA (incluido)» (su cupo es 0).
 - Exportar en el servidor (el editor exporta en el navegador).
 - Sin reconocimiento de texto en escaneos ni imágenes; los reels no usan tipografías .woff.
 - Editor: sin ajuste a guías al mover varias capas; zonas seguras solo para 9:16 y orientativas.
@@ -227,8 +225,17 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Avisos de encargos por sondeo (60 s), sin tiempo real ni correo.
 - El trabajador usa la clave de servicio; falta un rol de Postgres limitado.
 - Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `AI_TEXT_EDITOR_COPILOT_*` y las de Drive.
-- Copiloto por voz: el dictado de Chrome envía el audio a Google (ya en `docs/rgpd.md`; falta en la política de privacidad y un aviso antes del primer dictado); la pantalla de reels no ofrece todavía el desenfoque que el plan ya admite.
+- Copiloto por voz: falta un aviso en el propio copiloto antes del primer dictado (el audio va a Google o Microsoft; la política de privacidad ya lo dice).
 - Integraciones: tokens de «inicio de sesión de Instagram» (IG…) no admitidos; el vídeo con IA sigue solo por variables.
+
+## Pulido (rama `f6/pulido`, 20/11/2026)
+
+- Política de privacidad (versión `2026-11-20`, sigue siendo plantilla pendiente de revisión legal): añadidos el dictado por voz del navegador, Google Drive y Cloudflare R2 como encargados.
+- Reels: deslizador de desenfoque (0 a 100) por foto; viaja en el plan (`blur`).
+- Huérfanos en R2: `uploadAsset` pide `media-storage/discard` si falla el alta, y la tarea `rrss-media-orphans` (cada hora, necesita los secretos de Vault) barre lo apuntado sin recurso tras 24 h. Migración `20261129010000` con vuelta atrás. Probado con la función simulada; contra R2 real, sin probar.
+- Plan «Prueba»: las funciones de IA salen como no incluidas si el cupo de IA es 0.
+- Conexión con Meta sin marca conocida: aviso en la pantalla de entrada.
+- Sin ejecutar la e2e (Supabase local ocupado por el integrador).
 
 ## Siguiente paso
 

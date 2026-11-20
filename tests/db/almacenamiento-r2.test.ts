@@ -379,6 +379,61 @@ describe('Edge Function media-storage', () => {
     expect((await post(h, '/delete', SERVICE, { paths: [enR2] })).status).toBe(403);
   });
 
+  it('huérfanos: descartar borra de R2 lo subido sin recurso (solo lo propio); la tarea del servidor barre lo viejo', async () => {
+    const r2 = memoryStorage('r2');
+    const h = handler(r2, memoryStorage('supabase'));
+    const up = async (token: string, path: string) => {
+      expect((await post(h, '/upload', token, { path, contentType: 'image/jpeg', bytes: 10 })).status).toBe(200);
+      r2.objects.set(path, 10);
+    };
+    const fallida = assetPath(org, marca); // el alta de la fila falló
+    const conRecurso = assetPath(org, marca);
+    const deOtro = assetPath(org, marca);
+    const vieja = assetPath(org, marca);
+    const reciente = assetPath(org, marca);
+    await up(tokenOf(editor), fallida);
+    await up(tokenOf(editor), conRecurso);
+    await addAssetAt(editor, org, marca, conRecurso);
+    await up(tokenOf(ana), deOtro);
+    await up(tokenOf(editor), vieja);
+    await up(tokenOf(editor), reciente);
+    await db.query(
+      `update private.media_object_locations set created_at = now() - interval '2 days' where storage_path = $1`,
+      [vieja],
+    );
+
+    // Con recurso o de otra persona: no se toca. Quien solo ve o es ajeno, tampoco.
+    const noTocar = await post(h, '/discard', tokenOf(editor), { paths: [conRecurso, deOtro] });
+    expect(noTocar.json.removed).toEqual([]);
+    expect((await post(h, '/discard', tokenOf(berta), { paths: [fallida] })).json.removed).toEqual([]);
+    expect((await post(h, '/discard', SERVICE, { paths: [fallida] })).status).toBe(403);
+    expect(r2.objects.has(fallida)).toBe(true);
+
+    const ok = await post(h, '/discard', tokenOf(editor), { paths: [fallida] });
+    expect(ok.json.removed).toEqual([fallida]);
+    expect(r2.objects.has(fallida)).toBe(false);
+    const rest = await db.query<{ n: number }>(
+      `select count(*)::int as n from private.media_object_locations where storage_path = $1`,
+      [fallida],
+    );
+    expect(rest[0]!.n).toBe(0);
+
+    // La tarea programada: solo el servidor, solo lo de más de 24 h y sin recurso.
+    expect((await post(h, '/purge-orphans', tokenOf(editor), {})).status).toBe(403);
+    const sweep = await post(h, '/purge-orphans', SERVICE, {});
+    expect(sweep.json.removed).toContain(vieja);
+    expect(sweep.json.removed).not.toContain(reciente);
+    expect(sweep.json.removed).not.toContain(conRecurso);
+    expect(r2.objects.has(vieja)).toBe(false);
+    expect(r2.objects.has(reciente)).toBe(true);
+    expect(r2.objects.has(conRecurso)).toBe(true);
+  });
+
+  it('huérfanos: la función no la puede llamar el cliente', async () => {
+    await denied(db, editor, `select * from public.media_storage_orphans(null)`);
+    await denied(db, editor, `select private.media_storage_orphans_dispatch()`);
+  });
+
   it('si un archivo está en R2 y R2 ya no está configurado, lo dice (503) en vez de inventar una URL', async () => {
     const path = assetPath(org, marca);
     await asService(db, `select public.media_storage_register_upload(null, $1)`, [path]);

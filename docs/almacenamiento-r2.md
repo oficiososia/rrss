@@ -257,3 +257,19 @@ Hasta el paso 6 las subidas siguen yendo a Supabase y nada cambia.
 - La exportación RGPD de la organización no incluye los archivos de R2 (tampoco los
   de Drive).
 - Borrar de Supabase lo ya copiado cuando R2 se haya comprobado.
+
+## Archivos huérfanos (migración `20261129010000`)
+
+Si el navegador sube a R2 con la URL firmada y después falla el alta del recurso
+(o se cierra la pestaña), el objeto queda sin recurso. Dos defensas:
+
+- **Borrado compensatorio:** al fallar el alta, `uploadAsset` llama a
+  `media-storage/discard`; el servidor borra de R2 lo que esa persona subió y no
+  tiene recurso (`media_storage_orphans`).
+- **Tarea programada** `rrss-media-orphans` (cada hora, `media-storage/purge-orphans`,
+  solo clave de servicio): borra lo apuntado en `private.media_object_locations`
+  sin recurso pasadas 24 h. Necesita los secretos de Vault `rrss_project_url` y
+  `rrss_service_role_key`, como el resto de tareas.
+
+Los provisionales caducados los borra `purge_provisional_assets`, que anota el
+archivo en la cola de limpieza; no se solapa con esto.

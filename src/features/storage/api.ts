@@ -33,7 +33,7 @@ export function resetMediaStorageAvailability(): void {
 
 const FAILED = 'No se ha podido hablar con el almacenamiento. Inténtalo de nuevo en un momento.';
 
-async function invoke<T>(route: 'sign' | 'upload' | 'delete', body: object): Promise<T> {
+async function invoke<T>(route: 'sign' | 'upload' | 'delete' | 'discard', body: object): Promise<T> {
   const { data, error } = await supabase.functions.invoke(`media-storage/${route}`, { body });
   if (error) {
     const context = (error as { context?: unknown }).context;
@@ -117,4 +117,18 @@ export async function deleteStoredMedia(paths: string[]): Promise<string[]> {
     removed.push(...(result?.removed ?? []));
   }
   return removed;
+}
+
+/**
+ * Borrado compensatorio: quita de R2 un archivo subido cuyo recurso no se pudo
+ * crear. El servidor solo borra lo que esa persona subió y no tiene recurso.
+ * Nunca lanza: si falla, lo recoge la tarea programada pasadas 24 horas.
+ */
+export async function discardUploadedMedia(path: string): Promise<void> {
+  try {
+    if (!(await mediaStorageEnabled())) return;
+    await invoke('discard', { paths: [path] });
+  } catch {
+    /* lo limpia la tarea programada */
+  }
 }

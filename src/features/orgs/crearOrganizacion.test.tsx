@@ -1,5 +1,11 @@
 import { screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock('sonner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('sonner')>()),
+  toast: Object.assign(vi.fn(), { error: toastError, success: vi.fn() }),
+}));
 import { fake, makeUser } from '@/test/fakeSupabase';
 import { ORG_ID, renderApp } from '@/test/fixtures';
 
@@ -103,5 +109,12 @@ describe('Crear organización', () => {
     expect(await screen.findByRole('heading', { name: 'Crear otra organización' })).toBeInTheDocument();
     const form = screen.getByTestId('create-org-form');
     expect(within(form).getByRole('link', { name: 'Volver' })).toHaveAttribute('href', '/');
+  });
+
+  it('si la conexión con Meta falla sin saber la marca (/?social=failed), avisa en vez de callarse', async () => {
+    toastError.mockClear();
+    renderApp('/?social=failed');
+    await screen.findByRole('heading', { name: /Te damos la bienvenida/ });
+    expect(toastError).toHaveBeenCalledWith('No se pudo conectar la cuenta. Inténtalo de nuevo más tarde.');
   });
 });

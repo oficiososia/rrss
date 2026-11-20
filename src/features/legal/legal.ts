@@ -9,7 +9,7 @@
 
 export const LEGAL_VERSIONS = {
   terms: '2026-11-19',
-  privacy: '2026-11-19',
+  privacy: '2026-11-20',
 } as const;
 
 export type LegalDocumentId = 'privacy' | 'terms' | 'legal-notice' | 'cookies';
@@ -149,6 +149,31 @@ export const PROCESSORS: Processor[] = [
     region: 'Sin región de la UE documentada.',
     transfer: 'Apagado por defecto: ninguno tiene región de la UE verificada.',
     status: 'off',
+  },
+  {
+    name: 'Cloudflare R2 (Cloudflare, Inc.)',
+    purpose: 'Almacenamiento privado de fotos, vídeos y exportaciones de la biblioteca, si la plataforma lo activa (si no, se usa Supabase).',
+    region: 'Unión Europea (jurisdicción UE del cubo, que no se puede cambiar después). El cubo es privado y se accede con enlaces que caducan.',
+    transfer:
+      'Empresa con sede en EE. UU. que actúa como encargada del tratamiento. [CONFIRMAR EL DPA DE CLOUDFLARE Y SU ADHESIÓN AL EU-U.S. DATA PRIVACY FRAMEWORK]',
+    status: 'optional',
+  },
+  {
+    name: 'Google Drive (Google LLC)',
+    purpose:
+      'Biblioteca con fotos de Drive: la organización conecta su cuenta de Google con permiso de solo lectura y las imágenes se piden a Drive cada vez que se ven. El token de acceso se guarda cifrado.',
+    region: 'La de la cuenta de Google de la organización.',
+    transfer: 'Empresa con sede en EE. UU. [CONFIRMAR EL DPA DE GOOGLE]',
+    status: 'optional',
+  },
+  {
+    name: 'Dictado por voz del navegador (Google en Chrome, Microsoft en Edge)',
+    purpose:
+      'Copiloto por voz del editor: al pulsar «Dictar», el navegador envía el audio a los servidores de su fabricante (Google en Chrome, Microsoft en Edge) para pasarlo a texto. Nosotros solo recibimos el texto.',
+    region: 'La decide el navegador de la persona; no se puede pedir región de la UE.',
+    transfer:
+      'Posible transferencia a EE. UU. por el proveedor del navegador, que no contratamos nosotros. [CONFIRMAR CON EL ABOGADO CÓMO INFORMARLO]',
+    status: 'optional',
   },
   {
     name: '[ALOJAMIENTO DEL TRABAJADOR DE MEDIOS]',

@@ -15,6 +15,8 @@ export interface ReelPiece {
   type: 'photo' | 'video';
   /** Segundos en pantalla. Vacío = los de la plantilla. */
   seconds: number | null;
+  /** Desenfoque de la foto, de 0 (nítida) a 100. Vacío o 0 = sin desenfoque. Solo fotos. */
+  blur?: number;
   /** Duración del clip en la biblioteca, si se conoce. */
   clipSeconds: number | null;
 }
@@ -104,6 +106,7 @@ export function buildReelInput(
         type: piece.type,
         path: piece.path,
         ...(piece.seconds !== null ? { seconds: piece.seconds } : {}),
+        ...(piece.type === 'photo' && piece.blur && piece.blur > 0 ? { blur: Math.min(100, Math.round(piece.blur)) } : {}),
       })),
       texts: texts.map((text) => ({
         text: text.text.trim(),

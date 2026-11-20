@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace, renderApp } from '@/test/fixtures';
@@ -134,6 +134,30 @@ describe('Reels en la biblioteca', () => {
     });
     expect(String((call!.payload as { p_idempotency_key: string }).p_idempotency_key)).toMatch(/^[0-9a-f-]{36}$/);
     expect(await screen.findByTestId('reel-job-status')).toHaveTextContent('En cola');
+  });
+
+  it('las fotos tienen control de desenfoque (los clips no) y viaja en el plan', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
+    seedLibrary();
+    fake.rpc('request_media_job', (args) => {
+      const created = job('nuevo', 'queued', { payload: args.p_input });
+      fake.rows('jobs').push(created);
+      return created;
+    });
+    const { user } = renderApp(`${BRAND_BASE}/biblioteca`);
+    await user.click(await screen.findByTestId('library-reels'));
+    await user.click(await screen.findByRole('button', { name: 'Añadir «plato.jpg»' }));
+    await user.click(screen.getByRole('button', { name: 'Añadir «cocina.mp4»' }));
+    expect(screen.queryByLabelText('Desenfoque de la pieza 2')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Desenfoque de la pieza 1'), { target: { value: '60' } });
+    expect(screen.getByTestId('reel-blur-value-1')).toHaveTextContent('60');
+    await user.click(screen.getByTestId('reel-submit'));
+    await screen.findByText(/Reel encargado/);
+    const [call] = fake.callsTo('request_media_job', 'rpc');
+    expect(call!.payload).toMatchObject({
+      p_input: { plan: { media: [{ type: 'photo', blur: 60 }, { type: 'video' }] } },
+    });
   });
 
   it('pasarse del máximo de la plantilla se ve antes de encargar', async () => {

@@ -98,6 +98,8 @@ function Privacy() {
           'Lo que escribes o subes en una organización: contenidos y sus versiones, encargos, comentarios, archivos de la biblioteca y perfiles de marca. Pueden incluir datos de otras personas (por ejemplo, fotos de empleados o clientes); la organización debe tener una base legal para usarlos.',
           'Uso de la IA: qué se pidió, con qué proveedor y modelo, y su coste. Si tu organización usa la IA, el texto y las imágenes de la petición se envían al proveedor elegido (apartado 6).',
           'Aceptación de estas condiciones y de esta política: versión y fecha.',
+          'Dictado por voz (solo si lo pulsas): el navegador envía el audio a Google (Chrome) o Microsoft (Edge) para convertirlo en texto; nosotros solo recibimos el texto.',
+          'Google Drive (solo si tu organización lo conecta): leemos, con permiso de solo lectura, las imágenes de las carpetas elegidas.',
           'Datos técnicos: dirección IP y datos del navegador en los registros de los proveedores de infraestructura; lo que la aplicación guarda en tu navegador está en la política de cookies.',
         ]}
       />
@@ -159,7 +161,7 @@ function Privacy() {
       <H2>8. Seguridad</H2>
       <p>
         Cada organización solo ve sus datos: el aislamiento lo impone la base de datos, no solo la aplicación. Los
-        archivos se guardan en un almacenamiento privado y se comparten con enlaces que caducan. [MEDIDAS ADICIONALES A
+        archivos se guardan en un almacenamiento privado (Supabase o Cloudflare R2, en la UE) y se comparten con enlaces que caducan. [MEDIDAS ADICIONALES A
         DESCRIBIR]
       </p>
 

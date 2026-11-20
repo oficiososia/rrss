@@ -58,6 +58,8 @@ export function PlanSettingsPage({ billingEnabled: forced }: { billingEnabled?: 
   );
 }
 
+const AI_FEATURES: string[] = ['ai_text', 'ai_image', 'ai_video'];
+
 function CurrentPlan({ data, billingEnabled }: { data: OrganizationPlanUsage; billingEnabled: boolean }) {
   const { plan, subscription } = data;
   const lapsed = subscription.assigned_plan_code !== null && subscription.assigned_plan_code !== plan.code;
@@ -105,7 +107,9 @@ function CurrentPlan({ data, billingEnabled }: { data: OrganizationPlanUsage; bi
         )}
         <ul className="grid gap-1.5 text-sm sm:grid-cols-2" aria-label="Funciones del plan">
           {PLAN_FEATURES.map((feature) => {
-            const included = plan.features.includes(feature);
+            // Sin cupo de IA este mes (límite 0, p. ej. el plan Prueba) las funciones de IA no se pueden usar.
+            const included =
+              plan.features.includes(feature) && (!AI_FEATURES.includes(feature) || data.ai_limit_micros > 0);
             return (
               <li key={feature} className={cn('flex items-center gap-2', !included && 'text-muted')}>
                 {included ? (

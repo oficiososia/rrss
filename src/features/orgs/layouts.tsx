@@ -1,8 +1,10 @@
 import { Building2, SearchX } from 'lucide-react';
 import { Suspense, useEffect, useMemo } from 'react';
-import { Link, Navigate, Outlet, useParams } from 'react-router-dom';
+import { Link, Navigate, Outlet, useParams, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button, EmptyState, ErrorState, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
+import { connectResultNotice } from '@/features/social/connectResult';
 import { PENDING_INVITE_KEY } from '@/features/invitations/pending';
 import { AppShell } from '@/layout/AppShell';
 import { readLocal, writeLocal } from '@/lib/localStore';
@@ -14,6 +16,16 @@ export function RootRedirect() {
   const user = useUser();
   const orgs = useMyOrganizations(user.id);
   const pendingInvite = readLocal<string | null>(PENDING_INVITE_KEY, null);
+  const [params] = useSearchParams();
+  const social = params.get('social');
+
+  // La conexión con Meta vuelve a «/» cuando no sabe la marca: sin esto, el fallo no se vería.
+  useEffect(() => {
+    const info = connectResultNotice(social);
+    if (!info) return;
+    if (info.ok) toast.success(info.text);
+    else toast.error(info.text);
+  }, [social]);
 
   if (pendingInvite) return <Navigate to={`/invitacion/${pendingInvite}`} replace />;
   if (orgs.isPending) return <Spinner className="min-h-dvh" />;
