@@ -11,21 +11,31 @@ import {
 import { dropLoneGroups } from '../editor/arrange';
 import { applyLayerPatch, type LayerPatch } from '../editor/history';
 import { FALLBACK_FONTS, newImageLayer, newLayerId, newLogoLayer } from '../editor/layers';
-import type { CopilotAlign, CopilotOperation, CopilotPosition, CopilotTextStyle } from './operations';
+import { backdropAt, contrastOf, legibleTextColor, type CopilotBrandColor } from './legibility';
+import {
+  COPILOT_MOVE_STEP,
+  type CopilotAlign,
+  type CopilotOperation,
+  type CopilotPosition,
+  type CopilotTextStyle,
+} from './operations';
 
 // Aplica las operaciones del copiloto por voz al documento, de forma pura y
 // determinista: la IA dice QUÉ (un texto de título arriba, la foto de fondo
 // difuminada), y aquí se decide DÓNDE y CÓMO con las tipografías y colores del
-// perfil de marca. El resultado se valida con el esquema del documento; si no
+// perfil de marca (el color de un texto, por el uso de cada color y legible
+// sobre lo que tiene debajo: ver legibility.ts). El resultado se valida con el esquema del documento; si no
 // cumple, no se aplica nada. El editor lo mete en el historial como UN paso de
 // deshacer (acción `replace`).
 
 /** Desenfoque cuando se pide difuminar sin decir cuánto. */
 export const DEFAULT_BLUR = 40;
 
+export type { CopilotBrandColor } from './legibility';
+
 export interface CopilotBrandStyle {
-  /** Colores del perfil (#RRGGBB), en su orden. */
-  palette: string[];
+  /** Colores del perfil, en su orden, con su uso («Principal», «fondo», «texto»…). */
+  palette: CopilotBrandColor[];
   /** Tipografías del perfil, en su orden (la primera, para títulos). */
   fonts: string[];
 }
@@ -43,6 +53,11 @@ export interface CopilotApplyContext {
   assets: ReadonlyMap<string, CopilotAssetInfo>;
   /** Logotipos del perfil, en su orden. */
   logoIds: readonly string[];
+  /**
+   * Tono medio (#RRGGBB) de las fotos ya analizadas, por id de recurso. Una
+   * foto sin tono conocido se supone media oscura (ver legibility.ts).
+   */
+  imageTones?: ReadonlyMap<string, string>;
 }
 
 export type CopilotApplyResult =
@@ -127,12 +142,14 @@ function placeY(document: ContentDocument, height: number, position: CopilotPosi
   return Math.max(0, Math.min(y, canvas.height - height - gap));
 }
 
-function textStyle(brand: CopilotBrandStyle, style: CopilotTextStyle) {
-  const heading = style === 'title' || style === 'subtitle';
-  const font = (heading ? brand.fonts[0] : (brand.fonts[1] ?? brand.fonts[0])) ?? FALLBACK_FONTS[0]!;
-  const color = (heading ? brand.palette[0] : (brand.palette[1] ?? brand.palette[0])) ?? '#111111';
-  return { font, color };
+const isHeading = (style: CopilotTextStyle) => style === 'title' || style === 'subtitle';
+
+function fontFor(brand: CopilotBrandStyle, style: CopilotTextStyle) {
+  return (isHeading(style) ? brand.fonts[0] : (brand.fonts[1] ?? brand.fonts[0])) ?? FALLBACK_FONTS[0]!;
 }
+
+/** Un texto ya puesto «es de título» si va en negrita (los títulos y subtítulos del copiloto van a 600 o más). */
+const looksHeading = (layer: TextLayer) => layer.fontWeight >= 600;
 
 const layerName = (layer: Layer) =>
   layer.type === 'text' ? `«${layer.text.split('\n')[0]!.slice(0, 40)}»` : layer.name || 'la capa';
@@ -148,6 +165,8 @@ export function applyCopilotOperations(
   const skipped: string[] = [];
   const touched = new Set<string>();
   let lastText: Layer | null = null;
+  /** Textos con el color dictado en esta orden: ese color se respeta. */
+  const dictatedColor = new Set<string>();
 
   const find = (id: string | null) => (id ? (document.layers.find((layer) => layer.id === id) ?? null) : null);
   const replaceLayer = (next: Layer) => {
@@ -165,6 +184,23 @@ export function applyCopilotOperations(
     return true;
   };
   const { canvas } = document;
+
+  /**
+   * Tras cambiar el fondo, los textos sin color dictado en esta orden que ya no
+   * se leen pasan a un color legible (el de la marca por su uso, el más legible
+   * de la marca, o blanco o negro). Los bloqueados no se tocan.
+   */
+  const keepTextsReadable = () => {
+    document.layers.forEach((layer, index) => {
+      if (layer.type !== 'text' || layer.locked || dictatedColor.has(layer.id)) return;
+      const backdrop = backdropAt(document.canvas, document.layers.slice(0, index), layer, context.imageTones);
+      if (contrastOf(layer.color, backdrop.hex) >= backdrop.required) return;
+      const color = legibleTextColor(context.brand.palette, looksHeading(layer), backdrop);
+      if (color === layer.color.toUpperCase()) return;
+      patch(layer, { color });
+      changes.push(`Texto ${layerName(layer)} en ${color} para que se lea sobre el fondo`);
+    });
+  };
 
   for (const op of operations) {
     switch (op.op) {
@@ -188,6 +224,7 @@ export function applyCopilotOperations(
           if (!add(blur ? { ...layer, blur } : layer, true)) break;
         }
         changes.push(op.blur ? `Foto de fondo «${name}», difuminada (${op.blur} %)` : `Foto de fondo «${name}»`);
+        keepTextsReadable();
         break;
       }
       case 'blur_image': {
@@ -225,23 +262,56 @@ export function applyCopilotOperations(
                 ? Math.round((canvas.height - base.height) / 2)
                 : canvas.height - base.height - margin;
         }
+        // Que no pise un texto: si choca, se reduce (hasta la mitad, sin deformar)
+        // hacia su borde para caber en el hueco; si ni así, se pone y se avisa.
+        let { width, height } = base;
+        const clashWith = () =>
+          document.layers.find(
+            (l) => l.type === 'text' && l.visible && x < l.x + l.width && l.x < x + width && y < l.y + l.height && l.y < y + height,
+          );
+        let clash = clashWith();
+        if (clash) {
+          const gap = Math.round(canvas.height * 0.02);
+          const onTop = y + height / 2 < clash.y + clash.height / 2;
+          const room = onTop ? clash.y - gap - y : y + height - (clash.y + clash.height + gap);
+          if (room >= height / 2) {
+            const scale = room / height;
+            const centerX = x + width / 2;
+            if (!onTop) y += height - Math.round(height * scale);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+            if (op.align === 'right') x += base.width - width;
+            else if (op.align !== 'left') x = Math.round(centerX - width / 2);
+            clash = clashWith();
+          }
+        }
         const anchorY = y < canvas.height / 3 ? 'top' : y > (canvas.height * 2) / 3 ? 'bottom' : 'center';
         const anchorX = op.align === 'left' ? 'left' : op.align === 'right' ? 'right' : op.position ? 'center' : 'right';
-        if (add({ ...base, x, y, anchor: { x: anchorX, y: anchorY } })) changes.push('Logotipo de la marca');
+        if (add({ ...base, x, y, width, height, anchor: { x: anchorX, y: anchorY } })) {
+          changes.push(width < base.width ? 'Logotipo de la marca (más pequeño, para no pisar el texto)' : 'Logotipo de la marca');
+          if (clash) skipped.push(`El logotipo pisa ${layerName(clash)}: muévelo o quita ese texto.`);
+        }
         break;
       }
       case 'add_text': {
         if (!op.text) break;
         const style = op.style ?? 'body';
         const fontSize = Math.round(Math.min(canvas.width, canvas.height) * TEXT_SIZE[style].size);
-        const defaults = textStyle(context.brand, style);
         const box = textBox(canvas, op.text, fontSize);
         const y = placeY(document, box.height, op.position, lastText);
+        const x = xFor(canvas, box.width, null);
+        const color =
+          op.color ??
+          legibleTextColor(
+            context.brand.palette,
+            isHeading(style),
+            backdropAt(document.canvas, document.layers, { x, y, width: box.width, height: box.height }, context.imageTones),
+          );
         const layer: TextLayer = {
           id: newLayerId(document.layers),
           type: 'text',
           name: '',
-          x: xFor(canvas, box.width, null),
+          x,
           y,
           width: box.width,
           height: box.height,
@@ -251,16 +321,17 @@ export function applyCopilotOperations(
           locked: false,
           anchor: { x: 'center', y: y < canvas.height / 3 ? 'top' : y > (canvas.height * 2) / 3 ? 'bottom' : 'center' },
           text: op.text,
-          fontFamily: op.font ?? defaults.font,
+          fontFamily: op.font ?? fontFor(context.brand, style),
           fontSize,
           fontWeight: TEXT_SIZE[style].weight,
           italic: false,
-          color: op.color ?? defaults.color,
+          color,
           align: op.align ?? 'center',
           lineHeight: LINE_HEIGHT,
         };
         if (add(layer)) {
           lastText = layer;
+          if (op.color) dictatedColor.add(layer.id);
           changes.push(`Texto ${layerName(layer)}`);
         }
         break;
@@ -284,7 +355,10 @@ export function applyCopilotOperations(
           change.fontSize = Math.round(Math.min(canvas.width, canvas.height) * TEXT_SIZE[op.style].size);
           change.fontWeight = TEXT_SIZE[op.style].weight;
         }
-        if (op.color) change.color = op.color;
+        if (op.color) {
+          change.color = op.color;
+          dictatedColor.add(layer.id);
+        }
         if (op.font) change.fontFamily = op.font;
         if (op.align) change.align = op.align;
         patch(layer, change);
@@ -297,11 +371,20 @@ export function applyCopilotOperations(
           skipped.push(layer ? `${layerName(layer)} está bloqueada.` : 'No se encuentra la capa que hay que mover.');
           break;
         }
+        // En cada eje: a un sitio concreto o, si no, unos pasos (5 % del lienzo cada uno), sin salirse.
+        const clampY = (y: number) => Math.round(Math.min(Math.max(y, 0), Math.max(0, canvas.height - layer.height)));
+        const clampX = (x: number) => Math.round(Math.min(Math.max(x, 0), Math.max(0, canvas.width - layer.width)));
         const change: LayerPatch = {};
-        if (op.position) {
-          change.y = Math.max(0, Math.min(Math.round(canvas.height * SLOT[op.position]), canvas.height - layer.height));
-        }
+        if (op.position) change.y = clampY(canvas.height * SLOT[op.position]);
+        else if (op.dy) change.y = clampY(layer.y + op.dy * COPILOT_MOVE_STEP * canvas.height);
         if (op.align) change.x = xFor(canvas, layer.width, op.align);
+        else if (op.dx) change.x = clampX(layer.x + op.dx * COPILOT_MOVE_STEP * canvas.width);
+        if ((change.y === undefined || change.y === layer.y) && (change.x === undefined || change.x === layer.x)) {
+          skipped.push(
+            op.dx || op.dy ? `${layerName(layer)} ya está en el borde.` : `${layerName(layer)} ya está ahí.`,
+          );
+          break;
+        }
         patch(layer, change);
         changes.push(`Movida ${layerName(layer)}`);
         break;
@@ -321,6 +404,7 @@ export function applyCopilotOperations(
         if (!op.color) break;
         document = { ...document, canvas: { ...document.canvas, backgroundColor: op.color.toUpperCase() } };
         changes.push(`Color de fondo ${op.color.toUpperCase()}`);
+        keepTextsReadable();
         break;
       }
     }
