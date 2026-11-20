@@ -244,6 +244,85 @@ describe('Editar foto desde la biblioteca', () => {
     expect(await dialog.findByTestId('photo-edit-backgrounds')).toBeInTheDocument();
   });
 
+  it('con IA: cambiar el fondo pide el texto, avisa de que no hay recorte del plato y crea un recurso nuevo', async () => {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    const original = asset('foto-1', 'plato.jpg');
+    const calls: Array<{ action: string; input?: unknown }> = [];
+    fake.fn('ai-media', (body) => {
+      const { action, input } = body as { action: string; input?: Record<string, unknown> };
+      calls.push({ action, input });
+      if (action === 'photo.options') {
+        return {
+          status: 200,
+          body: {
+            action,
+            edits: [
+              {
+                operation: 'replace_background',
+                model: 'openai:gpt-image-2.5-sunburst',
+                delivery: 'sync',
+                dataRegion: 'global',
+                euProcessing: false,
+                trainsOnInputs: 'no',
+                untestedAdapter: true,
+                usesSubjectMask: true,
+              },
+            ],
+          },
+        };
+      }
+      if (action === 'photo.estimate') {
+        return { status: 200, body: { action, costMicros: 200_000, model: 'openai:gpt-image-2.5-sunburst' } };
+      }
+      fake
+        .rows('media_assets')
+        .push(asset('fondo-ia', 'Fondo nuevo · plato.png', { mime_type: 'image/png', origin: 'generated' }));
+      return {
+        status: 200,
+        body: {
+          action,
+          status: 'completed',
+          generationId: 'gen-2',
+          costMicros: 200_000,
+          asset: { id: 'fondo-ia', path: `${ORG_ID}/${BRAND_ID}/ia/gen-2-0.png` },
+        },
+      };
+    });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
+    const dialog = await openEditDialog(user);
+    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    // Sin recorte del plato se avisa; sin texto no se puede lanzar.
+    expect(ai.getByText(/No hay recorte del plato/)).toBeInTheDocument();
+    expect(ai.getByText(/fuera de la UE/)).toBeInTheDocument();
+    const run = ai.getByTestId('photo-edit-ai-run-replace_background');
+    expect(run).toBeDisabled();
+    expect(await ai.findByTestId('photo-edit-ai-cost')).toHaveTextContent(/Coste máximo: 0,20/);
+    // Sugerencias de la marca a un clic.
+    const ideas = ai.getAllByTestId('photo-edit-ai-background-idea').map((b) => b.textContent);
+    expect(ideas).toEqual(expect.arrayContaining(['mesa de mármol blanco con luz cálida', 'pizarra oscura']));
+    await user.click(ai.getByRole('button', { name: 'mantel de lino beige' }));
+    expect(ai.getByTestId('photo-edit-ai-background-text')).toHaveValue('mantel de lino beige');
+    expect(run).toBeEnabled();
+    await user.click(run);
+
+    expect(await dialog.findByTestId('photo-edit-result')).toHaveTextContent('Fondo nuevo · plato.png');
+    expect(calls.find((c) => c.action === 'photo.edit')).toEqual({
+      action: 'photo.edit',
+      input: { assetId: 'foto-1', operation: 'replace_background', prompt: 'mantel de lino beige' },
+    });
+    expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
+  });
+
+  it('con IA: si no hay modelo de cambiar el fondo, no sale la pestaña', async () => {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    fake.fn('ai-media', (body) => ({ status: 200, body: { action: (body as { action: string }).action, edits: [] } }));
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await waitFor(() => expect(fake.calls.some((c) => c.kind === 'function' && c.name === 'ai-media')).toBe(true));
+    expect(dialog.queryByRole('tab', { name: 'Fondo con IA' })).not.toBeInTheDocument();
+  });
+
   it('con IA activada pero sin modelo en el servidor, no sale nada de IA', async () => {
     vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
     fake.fn('ai-media', (body) => ({ status: 200, body: { action: (body as { action: string }).action, edits: [] } }));

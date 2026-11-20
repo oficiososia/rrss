@@ -24,6 +24,8 @@ import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import {
   AI_OPERATION_LABEL,
+  BACKGROUND_SUGGESTIONS,
+  blobToBase64,
   canEditWithAi,
   fetchAsset,
   signedUrlFor,
@@ -33,6 +35,7 @@ import {
   useAiEditOptions,
   useSaveEdit,
   type AiEditChoice,
+  type AiEditInput,
   type AiPhotoOperation,
 } from './api';
 import { encodePixels, loadCoverPixels, loadPixels, paint, PhotoLoadError } from './canvas';
@@ -58,7 +61,7 @@ import {
 } from './pixels';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
 
-type Tab = 'enhance' | 'crops' | 'background' | 'upscale';
+type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
 
 interface PhotoEditDialogProps {
   asset: MediaAssetRow;
@@ -69,6 +72,14 @@ interface PhotoEditDialogProps {
   /** Qué hacer con un resultado: abrirlo en la biblioteca o usarlo en el diseño. */
   onResult?: (asset: MediaAssetRow) => void;
   resultLabel?: string;
+  /**
+   * Máscara del sujeto (el plato), OPCIONAL: devuelve un PNG con las MISMAS
+   * medidas que la foto original, donde lo opaco es el plato y lo transparente
+   * el fondo. La da quien tenga un recorte (en el navegador o en el servidor).
+   * Si está, «Cambiar el fondo con IA» la envía para proteger el plato; si no,
+   * avisa de que la IA puede retocarlo.
+   */
+  getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
 }
 
 const PREVIEW_SIDE = 480;
@@ -110,6 +121,7 @@ export function PhotoEditDialog({
   onOpenChange,
   onResult,
   resultLabel,
+  getSubjectMask,
 }: PhotoEditDialogProps) {
   // Se puede pasar a editar un resultado (p. ej., la foto sin fondo para ponerle otro).
   const [asset, setAsset] = useState(initial);
@@ -207,6 +219,9 @@ export function PhotoEditDialog({
                 <TabsTrigger value="enhance">Mejorar</TabsTrigger>
                 <TabsTrigger value="crops">Recortes</TabsTrigger>
                 <TabsTrigger value="background">Fondo</TabsTrigger>
+                {(aiChoice('replace_background') || aiChoice('enhance')) && (
+                  <TabsTrigger value="ai">Fondo con IA</TabsTrigger>
+                )}
                 {aiChoice('upscale') && <TabsTrigger value="upscale">Ampliar</TabsTrigger>}
               </TabsList>
               <TabsContent value="enhance" className="pt-4">
@@ -236,6 +251,22 @@ export function PhotoEditDialog({
                   }}
                 />
               </TabsContent>
+              {(aiChoice('replace_background') || aiChoice('enhance')) && (
+                <TabsContent value="ai" className="space-y-6 pt-4">
+                  {aiChoice('replace_background') && (
+                    <AiAction
+                      asset={asset}
+                      operation="replace_background"
+                      choice={aiChoice('replace_background')!}
+                      onDone={addResult}
+                      getSubjectMask={getSubjectMask}
+                    />
+                  )}
+                  {aiChoice('enhance') && (
+                    <AiAction asset={asset} operation="enhance" choice={aiChoice('enhance')!} onDone={addResult} />
+                  )}
+                </TabsContent>
+              )}
               {aiChoice('upscale') && (
                 <TabsContent value="upscale" className="pt-4">
                   <AiAction asset={asset} operation="upscale" choice={aiChoice('upscale')!} onDone={addResult} />
@@ -690,17 +721,28 @@ function AiAction({
   operation,
   choice,
   onDone,
+  getSubjectMask,
 }: {
   asset: MediaAssetRow;
   operation: AiPhotoOperation;
   choice: AiEditChoice;
   onDone: (row: MediaAssetRow) => void;
+  getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
 }) {
   const factors = operation === 'upscale' ? upscaleFactors(asset.width, asset.height) : [];
   const [scale, setScale] = useState<2 | 4>(factors[0] ?? 2);
-  const input = useMemo(
-    () => ({ assetId: asset.id, operation, ...(operation === 'upscale' ? { scale } : {}) }),
-    [asset.id, operation, scale],
+  const [background, setBackground] = useState('');
+  const isBackground = operation === 'replace_background';
+  const withMask = isBackground && Boolean(getSubjectMask) && choice.usesSubjectMask !== false;
+  // Para estimar basta un texto cualquiera: el coste no depende de lo que se pida.
+  const input = useMemo<AiEditInput>(
+    () => ({
+      assetId: asset.id,
+      operation,
+      ...(operation === 'upscale' ? { scale } : {}),
+      ...(isBackground ? { prompt: 'fondo', ...(withMask ? { maskPresent: true } : {}) } : {}),
+    }),
+    [asset.id, operation, scale, isBackground, withMask],
   );
   const possible = operation !== 'upscale' || factors.length > 0;
   const estimate = useAiEditEstimate(asset.brand_id, input, possible);
@@ -719,9 +761,22 @@ function AiAction({
     edit.isPending ||
     (pendingId !== null && progress.data?.status !== 'completed' && progress.data?.status !== 'failed');
 
-  function run() {
+  async function run() {
     setPendingId(null);
-    edit.mutateAsync(input).then(
+    let request: AiEditInput = input;
+    if (isBackground) {
+      request = { assetId: asset.id, operation, prompt: background.trim() };
+      if (withMask) {
+        try {
+          const mask = await getSubjectMask!(asset);
+          if (mask) request = { ...request, subjectMask: await blobToBase64(mask) };
+        } catch {
+          toast.error('No se ha podido preparar la máscara del plato. Inténtalo de nuevo.');
+          return;
+        }
+      }
+    }
+    edit.mutateAsync(request).then(
       async (result) => {
         if (result.status === 'pending') {
           setPendingId(result.generationId);
@@ -739,7 +794,7 @@ function AiAction({
     );
   }
 
-  const Icon = operation === 'upscale' ? Maximize2 : Eraser;
+  const Icon = operation === 'upscale' ? Maximize2 : isBackground || operation === 'enhance' ? Sparkles : Eraser;
   return (
     <div className="space-y-3" data-testid={`photo-edit-ai-${operation}`}>
       {operation === 'upscale' && (
@@ -756,6 +811,52 @@ function AiAction({
           )}
         </div>
       )}
+      {isBackground && (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium" htmlFor={`photo-edit-ai-bg-${asset.id}`}>
+            ¿Qué fondo quieres?
+          </label>
+          <input
+            id={`photo-edit-ai-bg-${asset.id}`}
+            type="text"
+            maxLength={500}
+            value={background}
+            onChange={(e) => setBackground(e.target.value)}
+            placeholder="Por ejemplo: mesa de mármol blanco con luz cálida"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            data-testid="photo-edit-ai-background-text"
+          />
+          <div className="flex flex-wrap gap-2" aria-label="Sugerencias de fondo">
+            {BACKGROUND_SUGGESTIONS.map((idea) => (
+              <button
+                key={idea}
+                type="button"
+                className="rounded-full border border-border px-3 py-1 text-xs hover:bg-subtle"
+                onClick={() => setBackground(idea)}
+                data-testid="photo-edit-ai-background-idea"
+              >
+                {idea}
+              </button>
+            ))}
+          </div>
+          {withMask ? (
+            <Notice tone="info">
+              Se protege el plato con su recorte. La IA lo trata como orientación: revisa el resultado antes de usarlo.
+            </Notice>
+          ) : (
+            <Notice tone="warning">
+              No hay recorte del plato: la IA puede retocar también el plato (forma, colores, guarnición). Revisa el
+              resultado; la original no cambia.
+            </Notice>
+          )}
+        </div>
+      )}
+      {operation === 'enhance' && (
+        <p className="text-sm">
+          Mejora la luz y el color con IA. Puede cambiar detalles del plato: revisa el resultado. Si solo quieres
+          ajustar luz y color, la pestaña «Mejorar» lo hace sin IA y sin tocar el plato.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 text-xs">
         <Badge tone="neutral">Con IA</Badge>
         {!choice.euProcessing && <Badge tone="warning">Se procesa fuera de la UE o en región desconocida</Badge>}
@@ -771,19 +872,25 @@ function AiAction({
         </p>
       )}
       {estimate.isError && <AiErrorNotice error={estimate.error} />}
-      {edit.isError && <AiErrorNotice error={edit.error} onRetry={run} />}
+      {edit.isError && <AiErrorNotice error={edit.error} onRetry={() => void run()} />}
       {progress.data?.status === 'failed' && <Notice tone="warning">{progress.data.message}</Notice>}
       {pendingId && running && (
         <Spinner label="La IA está trabajando. Puedes cerrar: el resultado llegará igualmente a la biblioteca." />
       )}
       <Button
-        onClick={run}
-        disabled={!possible || running}
+        onClick={() => void run()}
+        disabled={!possible || running || (isBackground && background.trim() === '')}
         loading={edit.isPending}
         data-testid={`photo-edit-ai-run-${operation}`}
       >
         <Icon className="h-4 w-4" aria-hidden />
-        {operation === 'upscale' ? `Ampliar ×${scale}` : 'Quitar el fondo'}
+        {operation === 'upscale'
+          ? `Ampliar ×${scale}`
+          : isBackground
+            ? 'Cambiar el fondo'
+            : operation === 'enhance'
+              ? 'Mejorar con IA'
+              : 'Quitar el fondo'}
       </Button>
     </div>
   );

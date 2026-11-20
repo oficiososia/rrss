@@ -12,12 +12,22 @@ import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { EDIT_TAG, EDITS_FOLDER } from './provenance';
 
-export type AiPhotoOperation = 'remove_background' | 'upscale';
+export type AiPhotoOperation = 'remove_background' | 'upscale' | 'replace_background' | 'enhance';
 
 export const AI_OPERATION_LABEL: Record<AiPhotoOperation, string> = {
   remove_background: 'Quitar el fondo',
   upscale: 'Ampliar la resolución',
+  replace_background: 'Cambiar el fondo con IA',
+  enhance: 'Mejorar luz y color con IA',
 };
+
+/** Ideas de fondo para el plato, a un clic (el texto es libre). */
+export const BACKGROUND_SUGGESTIONS = [
+  'mesa de mármol blanco con luz cálida',
+  'mantel de lino beige',
+  'mesa de madera rústica',
+  'pizarra oscura',
+] as const;
 
 /** Una edición con IA que el servidor puede hacer ahora mismo. */
 export interface AiEditChoice {
@@ -28,12 +38,28 @@ export interface AiEditChoice {
   euProcessing: boolean;
   trainsOnInputs: 'no' | 'yes' | 'unknown';
   untestedAdapter: boolean;
+  /** El modelo usa la máscara del sujeto para proteger el plato. */
+  usesSubjectMask?: boolean;
 }
 
 export interface AiEditInput {
   assetId: string;
   operation: AiPhotoOperation;
   scale?: 2 | 4;
+  /** Solo «cambiar el fondo»: cómo debe quedar. */
+  prompt?: string;
+  /** Máscara del sujeto (PNG en base64, con las medidas de la foto; lo opaco es el plato). */
+  subjectMask?: string;
+  /** Solo al estimar: habrá máscara (no se manda). */
+  maskPresent?: boolean;
+}
+
+/** Pasa una máscara PNG a base64 para mandarla a `ai-media`. */
+export async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
 }
 
 export type AiEditResult =
