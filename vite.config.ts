@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: { port: 5173, strictPort: true },
+  // Recorte de fotos en el navegador (onnxruntime-web en un Worker): módulo ES y
+  // sin pre-empaquetar, para que encuentre su .wasm (docs/edicion-fotos.md, §7).
+  worker: { format: 'es' as const },
+  optimizeDeps: { exclude: ['onnxruntime-web'] },
   build: {
     rollupOptions: {
       output: {

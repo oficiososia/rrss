@@ -15,7 +15,13 @@ const MAX_PROVENANCE_BYTES = 2048;
 export type PhotoEditStep =
   | { kind: 'adjust'; adjustments: Adjustments; auto: boolean }
   | { kind: 'crop'; aspect: NetworkAspect | null; box: Box; smart: boolean }
-  | { kind: 'background'; background: { type: 'color'; hex: string } | { type: 'asset'; assetId: string } };
+  | { kind: 'remove_background'; engine: 'browser'; model: string }
+  | {
+      kind: 'background';
+      background: { type: 'color'; hex: string } | { type: 'asset'; assetId: string };
+      /** Sombra suave bajo el sujeto. */
+      shadow?: boolean;
+    };
 
 const round = (value: number, digits = 3) => Math.round(value * 10 ** digits) / 10 ** digits;
 
@@ -47,8 +53,10 @@ function stepJson(step: PhotoEditStep): Json {
       },
     };
   }
+  if (step.kind === 'remove_background') return { kind: 'remove_background', engine: step.engine, model: step.model };
   return {
     kind: 'background',
+    ...(step.shadow ? { shadow: true } : {}),
     ...(step.background.type === 'color'
       ? { color: step.background.hex.toUpperCase() }
       : { asset_id: step.background.assetId }),
@@ -82,6 +90,7 @@ const STEP_NAME: Record<PhotoEditStep['kind'], string> = {
   adjust: 'Mejorada',
   crop: 'Recorte',
   background: 'Fondo nuevo',
+  remove_background: 'Sin fondo',
 };
 
 /** Nombre legible: «Mejorada · Chuletón.jpg», «Recorte 4:5 · Chuletón.jpg», «Fondo nuevo · Chuletón.png». */
@@ -96,6 +105,7 @@ export function editedFileName(sourceName: string, steps: PhotoEditStep[], exten
   const crop = steps.find((s): s is Extract<PhotoEditStep, { kind: 'crop' }> => s.kind === 'crop');
   const main =
     steps.find((s) => s.kind === 'background') ??
+    steps.find((s) => s.kind === 'remove_background') ??
     (steps.some((s) => s.kind === 'adjust') ? steps.find((s) => s.kind === 'adjust') : crop);
   let label = main ? STEP_NAME[main.kind] : 'Editada';
   if (main?.kind === 'crop' && crop?.aspect) label = `Recorte ${crop.aspect}`;

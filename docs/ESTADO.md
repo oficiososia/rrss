@@ -187,6 +187,14 @@ escribir él; el original tiene que ser de la misma marca).
   fondo con el nodo BiRefNet de ComfyUI-RMBG; filas sembradas **inactivas** y
   sin precio verificado. Migración `20261128010000` (con vuelta atrás), sin
   tablas nuevas.
+- **Quitar el fondo en el navegador, gratis** (rama `f7/recorte-navegador`): IS-Net
+  (float16, 84 MiB, MIT/Apache-2.0) en un Web Worker con `onnxruntime-web`,
+  descargado en ejecución desde Hugging Face (o desde `VITE_CUTOUT_MODEL_URL`) y
+  guardado en Cache Storage; sin proveedor ni coste. Encima, fondo liso, de color
+  de la marca o de la biblioteca, con sombra suave opcional; resultado `photo_edit`
+  con sus pasos. Sin COOP/COEP (romperían las fotos de otros orígenes). Detalle en
+  `docs/edicion-fotos.md` §7. Probado: unitarias y componentes; e2e escrita y sin
+  ejecutar; **sin probar el modelo real en un navegador**.
 - Quitar el fondo en el trabajador sin GPU (BiRefNet o IS-Net con
   `onnxruntime-node`): valorado y documentado como alternativa, **sin descargar
   pesos** (falta el «sí»).
@@ -224,6 +232,7 @@ ejemplos). Detalle, decisiones y lo no probado en `docs/importar-publicaciones.m
 | Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
 | Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
 | Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
+| Quitar el fondo en el navegador (IS-Net, onnxruntime-web) | Lógica y flujo probados con el worker simulado; modelo real solo comprobado en CPU de Node; sin probar en un navegador (WebGPU/WASM, tiempos, calidad) | `docs/edicion-fotos.md` §7 |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |
 | «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
 

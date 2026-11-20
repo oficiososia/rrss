@@ -16,13 +16,18 @@ procedencia en `media_assets.provenance`, igual que «Exportar imagen».
 | Mejorar: luz, contraste, color, temperatura, nitidez («Mejorar automáticamente» o a mano) | No | Navegador (`src/features/photo-edit/pixels.ts`) | `photo_edit`, paso `adjust` con los valores |
 | Mejorar: encuadre a 1:1, 4:5 o 9:16 | No | Navegador (`framing.ts`) | `photo_edit`, paso `crop` con la caja |
 | Recortes por red 1:1, 4:5 y 9:16 con encuadre inteligente (uno por formato) | No | Navegador (`framing.ts`) | `photo_edit`, paso `crop` |
-| Poner fondo liso, de un color de la marca o una imagen de la biblioteca (a una foto que ya tiene transparencia) | No | Navegador (`compositeOver`) | `photo_edit`, paso `background` |
-| Quitar el fondo | **Sí** | `ai-media` (`photo.edit`) → adaptador de IA de medios | `ai_edit`, `operation: remove_background` |
+| Poner fondo liso, de un color de la marca o una imagen de la biblioteca, con sombra suave opcional (a una foto que ya tiene transparencia o recién recortada) | No | Navegador (`cutout/composition.ts`) | `photo_edit`, paso `background` (con `shadow: true` si lleva sombra) |
+| Quitar el fondo, **en el navegador** (por defecto) | No (modelo propio en el navegador, gratis) | Navegador (`cutout/`, §7) | `photo_edit`, paso `remove_background` (`engine: browser`) |
+| Quitar el fondo, con IA (si el servidor tiene proveedor) | **Sí** | `ai-media` (`photo.edit`) → adaptador de IA de medios | `ai_edit`, `operation: remove_background` |
 | Ampliar la resolución ×2 o ×4 (hasta 4096 px por lado) | **Sí** | `ai-media` (`photo.edit`) → adaptador | `ai_edit`, `operation: upscale`, `scale` |
 
-«Cambiar el fondo» de una foto normal son dos pasos: quitarlo (IA) y poner
-otro (sin IA). Al terminar de quitarlo, el diálogo pasa a editar la foto sin
-fondo para elegir el nuevo.
+«Cambiar el fondo» de una foto normal son dos pasos: quitarlo (en el navegador
+o con IA) y poner otro (sin IA). Con el navegador, el recorte se queda en el
+diálogo (sin guardar) y se elige el fondo encima, con vista previa; se guarda
+UN recurso con los dos pasos en su procedencia (o solo el PNG transparente).
+Con IA, al terminar de quitarlo el diálogo pasa a editar la foto sin fondo.
+Si el servidor tiene IA además del navegador, salen las dos opciones y está
+marcada la del navegador.
 
 Se editan fotos y logotipos JPEG, PNG o WebP. Con IA, además, tienen que estar
 en nuestro almacenamiento (Supabase o R2; las de Google Drive no se mandan a
@@ -51,8 +56,8 @@ mayor se reduce y se avisa.
 
 - Salen solo con **`VITE_AI_PHOTO_EDIT_ENABLED=true`** en el despliegue **y**
   si el servidor tiene un modelo para esa acción (`ai-media`,
-  `photo.options`). Sin proveedor, «Quitar el fondo» y la pestaña «Ampliar» no
-  aparecen y el diálogo lo dice («no está disponible en este entorno»).
+  `photo.options`). Sin proveedor, la pestaña «Ampliar» y la opción de quitar el
+  fondo con IA no aparecen; quitar el fondo sigue disponible en el navegador (§7).
 - Mismo camino que la imagen con IA (`docs/ia-medios.md`): se estima el coste
   máximo **antes** (`photo.estimate`, no reserva nada) y se enseña; al editar,
   `ai_reserve_generation` aparta el cupo de la **organización** (tarea
@@ -207,6 +212,69 @@ IA, pero sí de almacenamiento). Encaja con el alojamiento propuesto (Fly.io en
 Fráncfort, datos en la UE). Pendiente: el «sí» a descargar los pesos, medir
 tiempo y calidad con 20–30 fotos reales de la marca, y el tamaño de máquina.
 
+## 7. Quitar el fondo en el navegador (sin IA, sin coste)
+
+Rama `f7/recorte-navegador`. Mismo enfoque que el panel del restaurante
+(IS-Net en un Web Worker con `onnxruntime-web`, WebGPU si hay y WASM si no),
+genérico y sin nada de ningún cliente. Código en `src/features/photo-edit/cutout/`.
+
+- **Modelo:** IS-Net «general use» (DIS), ONNX con pesos en float16 y entrada y
+  salida en float32, de `imgly/isnet-general-onnx` en Hugging Face
+  (`onnx/model_fp16.onnx`). **88 152 708 bytes (≈ 84 MiB)**. Licencia: el
+  modelo declara **MIT** (ficha de Hugging Face) y la arquitectura y los pesos
+  originales de IS-Net/DIS son **Apache-2.0** (permiten uso comercial y
+  redistribución). `onnxruntime-web` es MIT. Cautelas: la ficha de ese
+  repositorio es de una línea (sin detalle de los datos de entrenamiento, DIS5K)
+  y existe otra conversión (`onnx-community/ISNet-ONNX`) etiquetada AGPL-3.0, que
+  **no se usa**; antes de un contrato con un cliente grande conviene que lo
+  revise quien lleve lo legal. `@imgly/background-removal` (AGPL) y RMBG de BRIA
+  (no comercial) siguen descartados (§5).
+- **De dónde se descarga:** en tiempo de ejecución, desde el navegador de quien
+  edita, a la URL de `VITE_CUTOUT_MODEL_URL` o, si no está definida, a la de
+  Hugging Face (CORS abierto, sin clave). **No está en el repositorio** ni lo
+  sirve nuestro despliegue. Para alojarlo en el propio despliegue (más fiable y
+  sin depender de Hugging Face): copiar el `.onnx` a `public/models/` y poner
+  `VITE_CUTOUT_MODEL_URL=/models/<archivo>.onnx` (sirve también la versión
+  cuantizada a uint8 de 46,7 MB del panel, mismas entradas y salidas). Cambiar
+  de modelo = cambiar `CUTOUT_MODEL_CACHE` en `cutout/model.ts`.
+- **Caché:** la primera vez se baja entero (con progreso) y se guarda en Cache
+  Storage (`rrss-cutout-model-v1`); después se lee de ahí sin red. Si el
+  navegador no deja guardar, funciona igual y vuelve a descargar. El motor de
+  onnxruntime (WASM, ≈ 27 MB) se carga dentro del worker solo al usarlo: no
+  entra en el paquete inicial. El worker se termina tras 60 s sin uso.
+- **Flujo:** Editar foto → Fondo → «Quitar el fondo» (progreso: descargando el
+  modelo con MB, preparando, quitando el fondo) → fondo liso, color de la marca
+  o imagen de la biblioteca (mármol, mantel…), sombra suave opcional (la
+  silueta desplazada abajo y desenfocada, opacidad máxima 35 %), vista previa →
+  guardar. La foto no sale del navegador. Resultado: recurso nuevo con
+  `photo_edit` y pasos `remove_background` (`engine`, `model`) y `background`
+  (`color` o `asset_id`, `shadow`); el original no se toca. Sin migración ni
+  cambios en el servidor.
+- **Cuando el navegador no puede:** sin `Worker` o `WebAssembly`, o con menos de
+  2 GB de memoria (`navigator.deviceMemory`), el diálogo lo dice y no ofrece el
+  botón (si hay IA en el servidor, queda esa). Fallos al recortar (sin red,
+  memoria, sin WebGPU ni WASM, nada que recortar) se explican en claro y se puede
+  reintentar. WebGPU que falle o dé una máscara vacía se repite en WASM.
+- **Calidad de la máscara:** el alfa sale de la máscara del modelo escalada con
+  interpolación bilineal y una curva suave; **no** lleva el filtro guiado del
+  panel (que conserva mejor antenas, patas y cristal fino). Para platos y
+  productos basta; si hiciera falta más, es el siguiente paso.
+- **Rendimiento (medido solo en CPU de Node, no en un navegador):** el modelo
+  float16 se carga y ejecuta bien con `onnxruntime-node` (entrada y salida
+  float32 de 1×3×1024×1024 y 1×1×1024×1024; ≈ 1,4 s en CPU de escritorio).
+  En navegador con WASM de 1 hilo se espera bastante más (el panel midió
+  13–19 s con el modelo uint8); con WebGPU, 1–2 s. **Sin medir en navegador.**
+- **Cabeceras COOP/COEP: no se activan, a propósito.** Solo darían hilos en
+  WASM (`SharedArrayBuffer`). `Cross-Origin-Embedder-Policy: require-corp`
+  bloquearía las fotos de Storage, R2, Drive y las miniaturas de redes (no
+  mandan `Cross-Origin-Resource-Policy`), el modelo alojado fuera y las ventanas
+  de OAuth (COOP). `vercel.json` queda como estaba y el worker usa 1 hilo
+  (`numThreads = 1` salvo que la página ya esté aislada).
+- **Para las pruebas e2e:** `VITE_CUTOUT_SIMULATED=true` (solo en
+  `playwright.config.ts`) cambia únicamente lo que devuelve el worker por una
+  máscara elíptica; el resto del camino es real. Sin esa variable no existe esa
+  rama en el paquete de producción.
+
 ## 6. Pruebas
 
 - Unitarias (`src/features/photo-edit/edicion.test.ts`): ajustes (sin cambio
@@ -232,3 +300,16 @@ tiempo y calidad con 20–30 fotos reales de la marca, y el tamaño de máquina.
 **Sin probar:** contra un ComfyUI real (los dos flujos), el dibujo real en un
 navegador (lectura de píxeles, codificación PNG/JPEG, CORS de R2 y de Drive) y
 la prueba e2e.
+
+Quitar el fondo en el navegador (§7):
+- Unitarias (`cutout/cutout.test.ts`): entrada y máscara del modelo, composición
+  (color, imagen, tamaño, sombra debajo del sujeto y suave, opacidad), descarga
+  con progreso y caché, errores de descarga y procedencia.
+- Componentes (`editarFoto.test.tsx`): se ofrece sin IA; navegador sin soporte;
+  progreso de descarga; guarda un recurso nuevo con sus dos pasos y el original
+  no cambia; guardar solo el PNG transparente; error y reintento; con IA y
+  navegador, el del navegador va por defecto. El recorte está simulado.
+- e2e `tests/e2e/25-recorte-navegador.spec.ts` (máscara del worker simulada, lo
+  demás real; comprueba que el original no cambia). **Escrita y sin ejecutar**
+  (el Supabase local de esta máquina lo ocupaba otro proyecto). **Sin probar:**
+  el modelo real en un navegador real (descarga, WebGPU, WASM, tiempos, calidad).

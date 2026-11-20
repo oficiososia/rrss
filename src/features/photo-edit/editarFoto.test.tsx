@@ -8,6 +8,7 @@ import type { ContentVersionRow, MediaAssetRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import * as canvasModule from './canvas';
+import * as cutoutEngine from './cutout/engine';
 import type { Pixels } from './pixels';
 
 // «Editar foto» desde la biblioteca y desde el editor. jsdom no dibuja: la
@@ -82,6 +83,8 @@ beforeEach(() => {
   vi.spyOn(canvasModule, 'loadPixels').mockImplementation(mocks.loadPixels);
   vi.spyOn(canvasModule, 'encodePixels').mockImplementation(mocks.encodePixels);
   vi.spyOn(canvasModule, 'loadCoverPixels').mockImplementation(mocks.loadCoverPixels);
+  // El navegador de las pruebas puede recortar; el modelo de verdad no se carga nunca aquí.
+  vi.spyOn(cutoutEngine, 'cutoutSupport').mockReturnValue({ ok: true });
   vi.spyOn(canvasModule, 'paint').mockImplementation(() => undefined);
   // Direcciones firmadas: una por ruta (el almacenamiento simulado no las da).
   vi.spyOn(storageApi, 'signStoragePaths').mockImplementation(
@@ -166,12 +169,102 @@ describe('Editar foto desde la biblioteca', () => {
     expect(uploaded[0]!.dimensions).toEqual({ width: 90, height: 90, durationMs: null });
   });
 
-  it('sin IA, una foto con fondo no ofrece quitarlo y lo dice', async () => {
+  it('sin IA, quitar el fondo se ofrece en el navegador (gratis) y no se llama a ningún servidor', async () => {
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
-    expect(await dialog.findByText(/no está disponible en este entorno/)).toBeInTheDocument();
+    expect(await dialog.findByTestId('photo-edit-cutout-run')).toBeInTheDocument();
+    expect(dialog.getByText(/Gratis y sin IA externa/)).toBeInTheDocument();
     expect(dialog.queryByTestId('photo-edit-ai-remove_background')).not.toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-engine-ai')).not.toBeInTheDocument();
+  });
+
+  it('si el navegador no puede recortar, lo dice con claridad y no ofrece el botón', async () => {
+    vi.spyOn(cutoutEngine, 'cutoutSupport').mockReturnValue({
+      ok: false,
+      reason: 'Este navegador no puede quitar el fondo (le falta WebAssembly).',
+    });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    expect(await dialog.findByTestId('photo-edit-cutout-unsupported')).toHaveTextContent(/le falta WebAssembly/);
+    expect(dialog.queryByTestId('photo-edit-cutout-run')).not.toBeInTheDocument();
+  });
+
+  it('quitar el fondo en el navegador: enseña la descarga y el recorte, y guarda un recurso nuevo con su procedencia', async () => {
+    const original = asset('foto-1', 'plato.jpg');
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => (finish = resolve));
+    const cut = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (_image, onProgress) => {
+      onProgress?.({ phase: 'downloading', received: 42_000_000, total: 84_000_000 });
+      await gate;
+      onProgress?.({ phase: 'running' });
+      return { pixels: pixels(120, 90, 0), model: 'isnet-general-use', provider: 'wasm', fromCache: false };
+    });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    const progress = await dialog.findByTestId('photo-edit-cutout-progress');
+    expect(progress).toHaveTextContent('Descargando el modelo (solo la primera vez): 42 de 84 MB');
+    expect(within(progress).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+    finish();
+
+    // Con el recorte hecho aparecen los fondos y no se ha guardado nada todavía.
+    await dialog.findByTestId('photo-edit-backgrounds');
+    expect(cut).toHaveBeenCalledTimes(1);
+    expect(uploaded).toHaveLength(0);
+    await user.click(dialog.getByTestId('photo-edit-shadow'));
+    await user.click(dialog.getByTestId('photo-edit-color-apply'));
+
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    expect(uploaded[0]!.file.name).toBe('Fondo nuevo · plato.jpg');
+    expect(uploaded[0]!.file.type).toBe('image/jpeg');
+    expect(uploaded[0]).toMatchObject({ folder: 'Ediciones', tags: ['edición'] });
+    expect(uploaded[0]!.provenance).toMatchObject({
+      type: 'photo_edit',
+      source_asset_id: 'foto-1',
+      steps: [
+        { kind: 'remove_background', engine: 'browser', model: 'isnet-general-use' },
+        { kind: 'background', color: '#FFFFFF', shadow: true },
+      ],
+    });
+    expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
+    expect(fake.calls.filter((c) => c.kind === 'function' && c.name === 'ai-media')).toEqual([]);
+  });
+
+  it('se puede guardar solo el recorte (PNG transparente) sin elegir fondo', async () => {
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValue({
+      pixels: pixels(120, 90, 0),
+      model: 'isnet-general-use',
+      provider: 'webgpu',
+      fromCache: true,
+    });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    expect(uploaded[0]!.file.name).toBe('Sin fondo · plato.png');
+    expect((uploaded[0]!.provenance as { steps: unknown[] }).steps).toEqual([
+      { kind: 'remove_background', engine: 'browser', model: 'isnet-general-use' },
+    ]);
+  });
+
+  it('si el recorte falla, lo explica y se puede reintentar', async () => {
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockRejectedValue(
+      Object.assign(new Error('No se ha podido descargar el modelo: revisa la conexión a internet.'), {
+        name: 'ModelDownloadError',
+      }),
+    );
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    expect(await dialog.findByText(/revisa la conexión a internet/)).toBeInTheDocument();
+    expect(dialog.getByTestId('photo-edit-cutout-run')).toBeEnabled();
+    expect(uploaded).toHaveLength(0);
   });
 
   it('una foto sin fondo recibe uno de color (sin IA) en un PNG nuevo', async () => {
@@ -230,6 +323,10 @@ describe('Editar foto desde la biblioteca', () => {
     const dialog = await openEditDialog(user);
     expect(await dialog.findByRole('tab', { name: 'Ampliar' })).toBeInTheDocument();
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    // Con las dos opciones, la del navegador viene marcada por defecto.
+    expect(await dialog.findByTestId('photo-edit-engine-browser')).toBeChecked();
+    expect(dialog.queryByTestId('photo-edit-ai-remove_background')).not.toBeInTheDocument();
+    await user.click(dialog.getByTestId('photo-edit-engine-ai'));
     const ai = within(await dialog.findByTestId('photo-edit-ai-remove_background'));
     expect(await ai.findByTestId('photo-edit-ai-cost')).toHaveTextContent(/Coste máximo: 0,01/);
     await user.click(ai.getByTestId('photo-edit-ai-run-remove_background'));
@@ -252,7 +349,9 @@ describe('Editar foto desde la biblioteca', () => {
     await waitFor(() => expect(fake.calls.some((c) => c.kind === 'function' && c.name === 'ai-media')).toBe(true));
     expect(dialog.queryByRole('tab', { name: 'Ampliar' })).not.toBeInTheDocument();
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
-    expect(await dialog.findByText(/no está disponible en este entorno/)).toBeInTheDocument();
+    // Sin modelo de IA queda el del navegador, sin elegir.
+    expect(await dialog.findByTestId('photo-edit-cutout-run')).toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-engine-ai')).not.toBeInTheDocument();
   });
 });
 

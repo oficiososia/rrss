@@ -2,8 +2,9 @@
 // editor (docs/edicion-fotos.md). Cuatro pestañas:
 //   · Mejorar   luz, color y nitidez (automático o a mano) y encuadre, SIN IA;
 //   · Recortes  1:1, 4:5 y 9:16 con encuadre inteligente, SIN IA;
-//   · Fondo     quitar el fondo (IA) y poner uno liso, de la marca o de la
-//               biblioteca (sin IA, sobre una foto que ya tiene transparencia);
+//   · Fondo     quitar el fondo (en el navegador, gratis; o con IA si el
+//               servidor la tiene) y poner uno liso, de la marca o de la
+//               biblioteca, con sombra suave opcional (sin IA);
 //   · Ampliar   ×2 o ×4 (IA).
 // Lo de IA solo sale con `VITE_AI_PHOTO_EDIT_ENABLED` y si el servidor tiene
 // modelo para esa acción. Cada resultado es un recurso NUEVO de la biblioteca,
@@ -48,7 +49,6 @@ import {
   analyzeImage,
   applyAdjustments,
   autoAdjustments,
-  compositeOver,
   cropPixels,
   downscale,
   isNeutral,
@@ -56,6 +56,8 @@ import {
   type Adjustments,
   type Pixels,
 } from './pixels';
+import { composeCutout } from './cutout/composition';
+import { cutoutSupport, describeCutoutError, removeBackgroundInBrowser, type CutoutProgress } from './cutout/engine';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale';
@@ -224,6 +226,7 @@ export function PhotoEditDialog({
               </TabsContent>
               <TabsContent value="background" className="pt-4">
                 <BackgroundTab
+                  key={asset.id}
                   asset={asset}
                   pixels={loaded.pixels}
                   transparent={stats.transparent}
@@ -544,27 +547,65 @@ function BackgroundTab({
       })),
     [profile.data],
   );
+  const support = useMemo(() => cutoutSupport(), []);
+  const [engine, setEngine] = useState<'browser' | 'ai'>(support.ok || !ai ? 'browser' : 'ai');
+  // El recorte hecho en el navegador (todavía sin guardar).
+  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string } | null>(null);
+  const [progress, setProgress] = useState<CutoutProgress | null>(null);
+  const [cutting, setCutting] = useState(false);
+  const [cutError, setCutError] = useState<string | null>(null);
+  const [shadow, setShadow] = useState(false);
   const [color, setColor] = useState('#FFFFFF');
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // La foto con la que se trabaja: la que ya no tiene fondo, o el recorte hecho aquí.
+  const subject = transparent ? pixels : (cutout?.pixels ?? null);
+  const prefix: PhotoEditStep[] =
+    !transparent && cutout ? [{ kind: 'remove_background', engine: 'browser', model: cutout.model }] : [];
+  const preview = useMemo(
+    () => (subject ? composeCutout(downscale(subject, 360), { kind: 'color', hex: color }, { shadow }) : null),
+    [subject, color, shadow],
+  );
+
+  async function cut() {
+    setCutting(true);
+    setCutError(null);
+    setProgress(null);
+    try {
+      const result = await removeBackgroundInBrowser(pixels, setProgress);
+      setCutout({ pixels: result.pixels, model: result.model });
+    } catch (error) {
+      setCutError(describeCutoutError(error));
+    } finally {
+      setCutting(false);
+      setProgress(null);
+    }
+  }
+
   async function apply(
     background: { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; url: string },
   ) {
+    if (!subject) return;
     setBusy(true);
     try {
       const backdrop =
         background.type === 'color'
           ? ({ kind: 'color', hex: background.hex } as const)
-          : ({ kind: 'image', pixels: await loadCoverPixels(background.url, pixels.width, pixels.height) } as const);
-      const result = compositeOver(pixels, backdrop);
+          : ({
+              kind: 'image',
+              pixels: await loadCoverPixels(background.url, subject.width, subject.height),
+            } as const);
+      const result = composeCutout(subject, backdrop, { shadow });
       await onSave(result, [
+        ...prefix,
         {
           kind: 'background',
           background:
             background.type === 'color'
               ? { type: 'color', hex: background.hex }
               : { type: 'asset', assetId: background.asset.id },
+          ...(shadow ? { shadow: true } : {}),
         },
       ]);
       toast.success('Foto con fondo nuevo guardada en la biblioteca. La original no ha cambiado.');
@@ -575,64 +616,154 @@ function BackgroundTab({
     }
   }
 
+  async function saveCutout() {
+    if (!subject) return;
+    setBusy(true);
+    try {
+      await onSave(subject, prefix);
+      toast.success('Foto sin fondo guardada en la biblioteca (PNG transparente). La original no ha cambiado.');
+    } catch (error) {
+      toast.error(translateError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      {!transparent && (
-        <div className="space-y-2">
-          <p className="text-sm">
-            Para cambiar el fondo, primero hay que quitarlo. Eso necesita IA
-            {ai ? '.' : ', y no está disponible en este entorno.'}
-          </p>
-          {ai && <AiAction asset={asset} operation="remove_background" choice={ai} onDone={onAiResult} />}
-        </div>
-      )}
-      {transparent && (
-        <div className="space-y-3" data-testid="photo-edit-backgrounds">
-          <p className="text-sm">Esta foto ya no tiene fondo. Elige uno nuevo (sin IA):</p>
-          {brandColors.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {brandColors.map((c) => (
-                <button
-                  key={c.hex}
-                  type="button"
-                  className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-subtle"
-                  onClick={() => void apply({ type: 'color', hex: c.hex })}
-                  disabled={busy || saving}
-                  data-testid="photo-edit-brand-color"
-                >
-                  <span
-                    className="h-4 w-4 rounded border border-border"
-                    style={{ backgroundColor: c.hex }}
-                    aria-hidden
-                  />
-                  {c.name || c.hex}
-                </button>
-              ))}
+      {!subject && (
+        <div className="space-y-3" data-testid="photo-edit-cutout">
+          <p className="text-sm">Para cambiar el fondo, primero hay que quitarlo.</p>
+          {ai && (
+            <fieldset className="space-y-1 text-sm">
+              <legend className="sr-only">Cómo quitar el fondo</legend>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="cutout-engine"
+                  checked={engine === 'browser'}
+                  onChange={() => setEngine('browser')}
+                  data-testid="photo-edit-engine-browser"
+                />
+                En este navegador (gratis, sin IA)
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="cutout-engine"
+                  checked={engine === 'ai'}
+                  onChange={() => setEngine('ai')}
+                  data-testid="photo-edit-engine-ai"
+                />
+                Con IA (tiene coste)
+              </label>
+            </fieldset>
+          )}
+          {engine === 'browser' && (
+            <div className="space-y-2" data-testid="photo-edit-cutout-browser">
+              {support.ok ? (
+                <>
+                  <p className="text-xs text-muted">
+                    Gratis y sin IA externa: la foto no sale de tu navegador. La primera vez descarga un modelo de unos
+                    85 MB (queda guardado); después tarda unos segundos.
+                  </p>
+                  {cutError && <Notice tone="warning">{cutError}</Notice>}
+                  {cutting && <CutoutProgressBar progress={progress} />}
+                  <Button onClick={() => void cut()} loading={cutting} data-testid="photo-edit-cutout-run">
+                    <Eraser className="h-4 w-4" aria-hidden />
+                    Quitar el fondo
+                  </Button>
+                </>
+              ) : (
+                <Notice tone="warning">
+                  <span data-testid="photo-edit-cutout-unsupported">{support.reason}</span>
+                </Notice>
+              )}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-xs">
-              Color liso
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value.toUpperCase())}
-                data-testid="photo-edit-color"
-              />
-            </label>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void apply({ type: 'color', hex: color })}
-              loading={busy || saving}
-              data-testid="photo-edit-color-apply"
-            >
-              Poner este color
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy || saving}>
-              <ImagePlus className="h-4 w-4" aria-hidden />
-              Imagen de la biblioteca
-            </Button>
+          {engine === 'ai' && ai && (
+            <AiAction asset={asset} operation="remove_background" choice={ai} onDone={onAiResult} />
+          )}
+        </div>
+      )}
+      {subject && (
+        <div className="space-y-3" data-testid="photo-edit-backgrounds">
+          <p className="text-sm">
+            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA):
+          </p>
+          <div className="grid gap-3 md:grid-cols-[14rem_1fr]">
+            <PixelsCanvas
+              pixels={preview}
+              className="rounded-lg border border-border"
+              testId="photo-edit-cutout-preview"
+            />
+            <div className="space-y-3">
+              {brandColors.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {brandColors.map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-subtle"
+                      onClick={() => void apply({ type: 'color', hex: c.hex })}
+                      disabled={busy || saving}
+                      data-testid="photo-edit-brand-color"
+                    >
+                      <span
+                        className="h-4 w-4 rounded border border-border"
+                        style={{ backgroundColor: c.hex }}
+                        aria-hidden
+                      />
+                      {c.name || c.hex}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-xs">
+                  Color liso
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value.toUpperCase())}
+                    data-testid="photo-edit-color"
+                  />
+                </label>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void apply({ type: 'color', hex: color })}
+                  loading={busy || saving}
+                  data-testid="photo-edit-color-apply"
+                >
+                  Poner este color
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy || saving}>
+                  <ImagePlus className="h-4 w-4" aria-hidden />
+                  Imagen de la biblioteca
+                </Button>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={shadow}
+                  onChange={(e) => setShadow(e.target.checked)}
+                  data-testid="photo-edit-shadow"
+                />
+                Sombra suave (para que no parezca flotar)
+              </label>
+              {cutout && !transparent && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void saveCutout()}
+                  disabled={busy || saving}
+                  data-testid="photo-edit-cutout-save"
+                >
+                  Guardar solo sin fondo (PNG transparente)
+                </Button>
+              )}
+            </div>
           </div>
           <BackgroundPicker
             brandId={asset.brand_id}
@@ -646,6 +777,37 @@ function BackgroundTab({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0);
+
+/** Progreso del recorte en el navegador: descarga del modelo (la 1ª vez), preparación y recorte. */
+function CutoutProgressBar({ progress }: { progress: CutoutProgress | null }) {
+  const downloading = progress?.phase === 'downloading';
+  const pct = downloading ? Math.min(100, Math.round((progress.received / Math.max(1, progress.total)) * 100)) : null;
+  const label = downloading
+    ? `Descargando el modelo (solo la primera vez): ${megabytes(progress.received)} de ${megabytes(progress.total)} MB`
+    : progress?.phase === 'running'
+      ? 'Quitando el fondo…'
+      : 'Preparando el modelo…';
+  return (
+    <div className="space-y-1" data-testid="photo-edit-cutout-progress">
+      <div
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct ?? undefined}
+        className="h-2 overflow-hidden rounded bg-subtle"
+      >
+        <div
+          className={cn('h-full bg-primary', pct === null && 'w-1/3 animate-pulse')}
+          style={pct === null ? undefined : { width: `${pct}%` }}
+        />
+      </div>
+      <p className="text-xs text-muted">{label}</p>
     </div>
   );
 }
