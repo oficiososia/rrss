@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { STORAGE_BUCKET } from '@/config/app';
 import { LEGAL_VERSIONS } from '@/features/legal/legal';
+import { signStoragePaths } from '@/features/storage/api';
 import type { AccountDeletionCheck, LegalAcceptanceRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { removeLocal } from '@/lib/localStore';
@@ -111,11 +111,8 @@ export function useExportOrganization(orgId: string, orgName: string) {
       const files: { path: string; url: string | null }[] = [];
       for (let i = 0; i < paths.length; i += 500) {
         const batch = paths.slice(i, i + 500);
-        const { data: signed, error } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .createSignedUrls(batch, EXPORT_LINK_SECONDS);
-        if (error) throw error;
-        const byPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+        // Cada archivo en su almacén (Supabase Storage o Cloudflare R2).
+        const byPath = await signStoragePaths(batch, EXPORT_LINK_SECONDS);
         for (const path of batch) files.push({ path, url: byPath.get(path) ?? null });
       }
 

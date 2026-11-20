@@ -9,11 +9,13 @@
 // `SUPABASE_SERVICE_ROLE_KEY` las pone Supabase en todas las funciones.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { RpcClient } from '../_shared/ai/contract.ts';
-import type { MediaReader } from '../_shared/ai/media/contract.ts';
+import { MediaProviderFailure, type MediaReader } from '../_shared/ai/media/contract.ts';
 import type { MediaModelRow } from '../_shared/ai/media/models.ts';
 import { createMediaRuntime, type MediaRuntime } from '../_shared/ai/media/runtime.ts';
 import { createSupabaseMediaStorage, supabaseMediaStorageBackend } from '../_shared/ai/media/supabase-storage.ts';
 import { createRpcSettingsLoader } from '../_shared/integrations/settings.ts';
+import { mediaStoresFor, uploadStoreFor, type MediaStores } from '../_shared/storage/resolve.ts';
+import { createSupabaseObjectStorage } from '../_shared/storage/supabase.ts';
 
 export const env = Deno.env.toObject();
 export const supabaseUrl = env.SUPABASE_URL ?? '';
@@ -45,12 +47,48 @@ const reader: MediaReader = {
   },
 };
 
-const storage = createSupabaseMediaStorage(supabaseMediaStorageBackend(admin as never));
-
 /** Configuración efectiva: «Plataforma → Integraciones» y, si no, las variables. */
 export const settings = createRpcSettingsLoader(rpc, env, (event, data) =>
   console.error(`[ai-media] ${event}`, JSON.stringify(data)),
 );
+
+const supabaseStorage = createSupabaseObjectStorage({
+  url: supabaseUrl,
+  serviceKey: env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+});
+let stores: { env: Record<string, string | undefined>; value: MediaStores } | null = null;
+
+/** Supabase Storage y, si está configurado, Cloudflare R2 (docs/almacenamiento-r2.md). */
+export async function mediaStores(): Promise<MediaStores> {
+  const effective = await settings.get();
+  if (stores?.env !== effective) {
+    stores = {
+      env: effective,
+      value: mediaStoresFor(effective, supabaseStorage, (event, data) =>
+        console.error(`[ai-media] ${event}`, JSON.stringify(data)),
+      ),
+    };
+  }
+  return stores.value;
+}
+
+// Lo generado se guarda donde vayan las subidas nuevas (R2 o Supabase Storage).
+const baseBackend = supabaseMediaStorageBackend(admin as never);
+const storage = createSupabaseMediaStorage({
+  async upload(path, bytes, contentType) {
+    let target;
+    try {
+      target = await uploadStoreFor(await mediaStores(), rpc, path);
+      if (target.backend === 'r2') await target.put(path, bytes, contentType, bytes.byteLength);
+    } catch {
+      throw new MediaProviderFailure('storage_failed', 'No se ha podido guardar el archivo en el almacenamiento', {
+        retryable: true,
+      });
+    }
+    if (target.backend === 'supabase') await baseBackend.upload(path, bytes, contentType);
+  },
+  saveAsset: (row) => baseBackend.saveAsset(row),
+});
 
 let cached: { at: number; env: Record<string, string | undefined>; runtime: MediaRuntime } | null = null;
 const CACHE_MS = 60_000;

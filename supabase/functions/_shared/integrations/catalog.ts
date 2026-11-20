@@ -4,6 +4,7 @@
 // funciones leen primero lo guardado en la base de datos y, si no está, la
 // variable (settings.ts). El mismo catálogo vive en la migración
 // 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
+// y en 20261124010000 con Cloudflare R2
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -11,7 +12,7 @@
 //
 // Sin dependencias de Deno ni de Node: lo usan las funciones y las pruebas.
 
-export const INTEGRATION_IDS = ['meta', 'comfyui', 'ai_text', 'ai_image', 'stripe', 'google_drive'] as const;
+export const INTEGRATION_IDS = ['meta', 'comfyui', 'ai_text', 'ai_image', 'stripe', 'google_drive', 'r2'] as const;
 export type IntegrationId = (typeof INTEGRATION_IDS)[number];
 
 export interface IntegrationSettingSpec {
@@ -208,6 +209,33 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   },
   { key: 'GOOGLE_DRIVE_CLIENT_SECRET', integration: 'google_drive', secret: true },
   { key: 'DRIVE_APP_URL', integration: 'google_drive', secret: false, validate: url(true) },
+  // Cloudflare R2 (almacenamiento de medios, docs/almacenamiento-r2.md).
+  {
+    key: 'R2_ACCOUNT_ID',
+    integration: 'r2',
+    secret: false,
+    validate: pattern(/^[0-9a-f]{32}$/, 'El Account ID son 32 caracteres hexadecimales.'),
+  },
+  {
+    key: 'R2_ACCESS_KEY_ID',
+    integration: 'r2',
+    secret: true,
+    validate: pattern(/^[A-Za-z0-9]{16,128}$/, 'El Access Key ID son letras y cifras.'),
+  },
+  {
+    key: 'R2_SECRET_ACCESS_KEY',
+    integration: 'r2',
+    secret: true,
+    validate: pattern(/^[A-Za-z0-9+/=]{16,256}$/, 'El Secret Access Key son letras y cifras.'),
+  },
+  {
+    key: 'R2_BUCKET',
+    integration: 'r2',
+    secret: false,
+    validate: pattern(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, 'Minúsculas, cifras y guiones (3 a 63).'),
+  },
+  { key: 'R2_JURISDICTION', integration: 'r2', secret: false, validate: oneOf(['eu', 'default']) },
+  { key: 'MEDIA_UPLOAD_BACKEND', integration: 'r2', secret: false, validate: oneOf(['r2', 'supabase']) },
 ];
 
 export const INTEGRATION_SETTING_KEYS: ReadonlySet<string> = new Set(INTEGRATION_SETTINGS.map((s) => s.key));

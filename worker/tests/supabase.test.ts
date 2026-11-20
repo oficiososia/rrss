@@ -25,6 +25,9 @@ let dir: string;
 const seen: Seen[] = [];
 const objects = new Map<string, Buffer>();
 let rpcReply: { status: number; body: unknown } = { status: 200, body: [] };
+/** Cubo «R2» del servidor de prueba (URL firmadas sin cabeceras) y si `media-storage` existe. */
+const r2Objects = new Map<string, Buffer>();
+let mediaStorageDeployed = true;
 
 beforeAll(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), 'rrss-worker-http-'));
@@ -45,8 +48,43 @@ beforeAll(async () => {
       response.writeHead(200, { 'Content-Type': 'image/jpeg' });
       return response.end(Buffer.from('jpeg-de-drive'));
     }
+    // «R2»: las URL firmadas llevan la firma en la dirección, nunca la clave de servicio.
+    if (request.url!.startsWith('/r2/')) {
+      if (request.headers.authorization || request.headers.apikey) return json(400, { message: 'sin credenciales' });
+      const key = decodeURIComponent(request.url!.slice('/r2/'.length).split('?')[0]!);
+      if (request.method === 'PUT') {
+        if (request.headers['content-length'] !== String(body.length)) return json(403, { message: 'tamaño' });
+        r2Objects.set(key, body);
+        return json(200, {});
+      }
+      const stored = r2Objects.get(key);
+      if (!stored) return json(404, {});
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      return response.end(stored);
+    }
     if (request.headers.apikey !== KEY || request.headers.authorization !== `Bearer ${KEY}`) {
       return json(401, { message: 'Invalid API key' });
+    }
+    if (request.url!.startsWith('/functions/v1/media-storage/')) {
+      if (!mediaStorageDeployed) return json(404, { message: 'Function not found' });
+      const input = JSON.parse(body.toString()) as { paths?: string[]; path?: string; bytes?: number };
+      if (request.url!.endsWith('/sign')) {
+        const urls = Object.fromEntries(
+          (input.paths ?? []).map((p) =>
+            r2Objects.has(p)
+              ? [p, { backend: 'r2', url: `${url}/r2/${encodeURIComponent(p)}?X-Amz-Signature=x` }]
+              : [p, { backend: 'supabase', url: `${url}/storage/v1/object/sign/brand-media/${p}` }],
+          ),
+        );
+        return json(200, { urls });
+      }
+      if (input.path?.includes('/prohibido/')) return json(403, { error: { message: 'Solo quien edita la marca' } });
+      return json(200, {
+        backend: 'r2',
+        url: `${url}/r2/${encodeURIComponent(input.path!)}?X-Amz-Signature=x`,
+        method: 'PUT',
+        headers: { 'Content-Type': 'video/mp4' },
+      });
     }
     if (request.url!.startsWith('/rest/v1/rpc/')) return json(rpcReply.status, rpcReply.body);
     if (request.url === '/functions/v1/drive-media/sign') {
@@ -78,6 +116,7 @@ afterAll(async () => {
 beforeEach(() => {
   seen.length = 0;
   rpcReply = { status: 200, body: [] };
+  mediaStorageDeployed = true;
 });
 
 describe('cola por PostgREST', () => {
@@ -190,5 +229,85 @@ describe('almacenamiento por la API de Storage', () => {
     ]);
     // Uno que ya no existe (o de otra organización): fallo sin remedio.
     await expect(storage.download(`${org}/${marca}/drive/otroArchivo0001`, target)).rejects.toThrow(PermanentError);
+  });
+});
+
+describe('almacenamiento con la función media-storage (Cloudflare R2)', () => {
+  const org = '11111111-1111-4111-8111-111111111111';
+  const marca = '22222222-2222-4222-8222-222222222222';
+
+  it('sube el resultado a R2 con la URL firmada (sin clave de servicio) y lo vuelve a bajar por ella', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });
+    const source = path.join(dir, 'r2.bin');
+    const content = Buffer.alloc(70 * 1024, 3);
+    await writeFile(source, content);
+    const objectPath = `${org}/${marca}/reels/reel.mp4`;
+
+    await storage.upload(source, objectPath, { contentType: 'video/mp4' });
+    expect(seen.map((s) => `${s.method} ${s.url.split('?')[0]}`)).toEqual([
+      'POST /functions/v1/media-storage/upload',
+      `PUT /r2/${encodeURIComponent(objectPath)}`,
+    ]);
+    expect(JSON.parse(seen[0]!.body.toString())).toEqual({ path: objectPath, contentType: 'video/mp4', bytes: 71_680 });
+    expect(r2Objects.get(objectPath)?.equals(content)).toBe(true);
+
+    seen.length = 0;
+    const target = path.join(dir, 'r2-bajada.bin');
+    await storage.download(objectPath, target);
+    expect((await readFile(target)).equals(content)).toBe(true);
+    expect(seen.map((s) => s.url.split('?')[0])).toEqual([
+      '/functions/v1/media-storage/sign',
+      `/r2/${encodeURIComponent(objectPath)}`,
+    ]);
+  });
+
+  it('en R2 el tope es el de R2, no el del cubo gratuito de Supabase', async () => {
+    const storage = createSupabaseStorage({
+      url,
+      serviceKey: KEY,
+      bucket: 'brand-media',
+      maxObjectBytes: 1024 * 1024,
+      mediaStorage: true,
+    });
+    const source = path.join(dir, 'r2-grande.bin');
+    await writeFile(source, Buffer.alloc(1.5 * 1024 * 1024, 2));
+    await storage.upload(source, `${org}/${marca}/reels/grande.mp4`, { contentType: 'video/mp4' });
+    expect(r2Objects.has(`${org}/${marca}/reels/grande.mp4`)).toBe(true);
+  });
+
+  it('lo que la función dice que está en Supabase se baja de Storage con la clave, no por su URL', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });
+    const objectPath = `${org}/${marca}/media/en-supabase.jpg`;
+    objects.set(`brand-media/${objectPath}`, Buffer.from('de-supabase'));
+    const target = path.join(dir, 'supabase-bajada.bin');
+    await storage.download(objectPath, target);
+    expect((await readFile(target)).toString()).toBe('de-supabase');
+    expect(seen.map((s) => s.url)).toEqual([
+      '/functions/v1/media-storage/sign',
+      `/storage/v1/object/brand-media/${objectPath}`,
+    ]);
+  });
+
+  it('si la función no está desplegada, usa Supabase Storage y no vuelve a preguntar enseguida', async () => {
+    mediaStorageDeployed = false;
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });
+    const source = path.join(dir, 'sin-funcion.bin');
+    await writeFile(source, Buffer.from('hola'));
+    await storage.upload(source, `${org}/${marca}/reels/a.mp4`, { contentType: 'video/mp4' });
+    await storage.upload(source, `${org}/${marca}/reels/b.mp4`, { contentType: 'video/mp4' });
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
+      'POST /functions/v1/media-storage/upload',
+      `POST /storage/v1/object/brand-media/${org}/${marca}/reels/a.mp4`,
+      `POST /storage/v1/object/brand-media/${org}/${marca}/reels/b.mp4`,
+    ]);
+  });
+
+  it('si la base de datos no deja subir a esa marca, es un fallo sin remedio', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });
+    const source = path.join(dir, 'prohibido.bin');
+    await writeFile(source, Buffer.from('x'));
+    await expect(
+      storage.upload(source, `${org}/${marca}/prohibido/x.mp4`, { contentType: 'video/mp4' }),
+    ).rejects.toThrow(PermanentError);
   });
 });

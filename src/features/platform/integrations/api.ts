@@ -17,6 +17,8 @@ export interface IntegrationAvailability {
   billing: boolean;
   /** Biblioteca con Google Drive (cliente OAuth y claves de cifrado). */
   drive: boolean;
+  /** Archivos de la biblioteca en Cloudflare R2 (docs/almacenamiento-r2.md). */
+  mediaStorage: boolean;
 }
 
 export interface IntegrationStatus {

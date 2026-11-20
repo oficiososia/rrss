@@ -21,6 +21,12 @@ export const configSchema = z.object({
   WORKER_FONTS_DIR: z.string().min(1).optional(),
   /** Tope de cada archivo subido: el del cubo (50 MB en el plan gratuito de Supabase). */
   WORKER_MAX_UPLOAD_BYTES: int(50 * 1024 * 1024, 1024 * 1024, 5 * 1024 * 1024 * 1024),
+  /**
+   * auto: pregunta a la función `media-storage` dónde está cada archivo (R2 o
+   * Supabase) y dónde subir; si no está desplegada, Supabase. supabase: solo
+   * Supabase Storage (docs/almacenamiento-r2.md).
+   */
+  WORKER_MEDIA_STORAGE: z.enum(['auto', 'supabase']).default('auto'),
 });
 export type WorkerConfig = z.infer<typeof configSchema>;
 

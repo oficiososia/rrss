@@ -49,8 +49,10 @@ Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
 window.scrollTo = (() => {}) as typeof window.scrollTo;
 
-beforeEach(() => {
+beforeEach(async () => {
   fake.reset();
+  // Lo que se recuerda de si el servidor tiene R2 (se importa aquí: el módulo usa el cliente simulado).
+  (await import('@/features/storage/api')).resetMediaStorageAvailability();
   window.localStorage.clear();
 });
 

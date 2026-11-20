@@ -18,6 +18,9 @@
 //             OAuth sin una persona que lo autorice: se comprueba que la
 //             configuración está completa y se dice que el cliente se
 //             comprueba al conectar (como Ideogram, sin gastar nada).
+//   r2        HeadBucket sobre el cubo con la clave (una operación de clase B,
+//             dentro de las 10 M gratuitas al mes): dice si el cubo existe y
+//             si la clave puede usarlo. No sube ni baja nada.
 //
 // ⚠ Escrito contra la documentación de cada servicio y probado solo con
 // servicios simulados (tests/db/integraciones-funciones.test.ts).
@@ -33,6 +36,8 @@ import { DEFAULT_GRAPH_API_VERSION, META_GRAPH_HOST } from '../social/meta-graph
 import { loadSocialConfig } from '../social/config.ts';
 import { loadDriveConfig } from '../drive/config.ts';
 import { DRIVE_LOCAL_TEST_FLAG } from '../drive/local-test.ts';
+import { loadMediaStorageConfig } from '../storage/config.ts';
+import { createS3Storage } from '../storage/s3.ts';
 import type { IntegrationId } from './catalog.ts';
 import type { Env } from './settings.ts';
 
@@ -442,6 +447,71 @@ function probeGoogleDrive(env: Env): ProbeResult {
   return summarize(checks, '');
 }
 
+// ─────────────────────────────── Cloudflare R2 ───────────────────────────────
+
+async function probeR2(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  let config: ReturnType<typeof loadMediaStorageConfig>;
+  try {
+    config = loadMediaStorageConfig(env);
+  } catch (e) {
+    return summarize([{ name: 'Configuración', ok: false, message: (e as Error).message }], '');
+  }
+  if (!config.s3) {
+    const missing = config.problems.filter((p) => !p.startsWith('MEDIA_STORAGE_E2E_SIMULATED'));
+    checks.push({
+      name: 'Configuración',
+      ok: false,
+      message: missing.length
+        ? missing.map((p) => (p.endsWith('.') ? p : `${p}.`)).join(' ')
+        : 'Faltan la cuenta, la clave y el cubo de R2.',
+    });
+    return summarize(checks, '');
+  }
+  const storage = createS3Storage(config.s3, (input, init) =>
+    deps.fetch(input, { ...init, signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000) }),
+  );
+  let status: number | null = null;
+  try {
+    status = (await storage.headBucket()).status;
+  } catch {
+    status = null;
+  }
+  const service = config.simulated ? 'El S3 local' : 'Cloudflare R2';
+  if (status === null) {
+    checks.push({ name: 'Cubo', ok: false, message: `No se pudo llegar a ${service} (red o dirección).` });
+  } else if (status === 200) {
+    checks.push({
+      name: 'Cubo',
+      ok: true,
+      message: `${service} responde: el cubo existe y la clave puede usarlo.`,
+    });
+  } else if (status === 404) {
+    checks.push({
+      name: 'Cubo',
+      ok: false,
+      message: 'El cubo no existe con ese nombre (o es de otra jurisdicción: revisa «eu»).',
+    });
+  } else {
+    checks.push({ name: 'Cubo', ok: false, message: rejected(service, status) });
+  }
+  if (config.s3.jurisdiction === 'default') {
+    checks.push({
+      name: 'Jurisdicción',
+      ok: null,
+      message: 'El cubo no está en la jurisdicción UE: los archivos pueden guardarse fuera de la UE.',
+    });
+  }
+  if (config.uploadBackend === 'supabase') {
+    checks.push({
+      name: 'Subidas nuevas',
+      ok: null,
+      message: 'Las subidas nuevas siguen yendo a Supabase Storage (MEDIA_UPLOAD_BACKEND=supabase).',
+    });
+  }
+  return summarize(checks, '');
+}
+
 export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   switch (id) {
     case 'meta':
@@ -456,6 +526,8 @@ export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeD
       return probeStripe(env, deps);
     case 'google_drive':
       return probeGoogleDrive(env);
+    case 'r2':
+      return probeR2(env, deps);
   }
 }
 

@@ -117,6 +117,8 @@ export function uploadPercent(loaded: number, total: number): number {
 
 export interface XhrUploadOptions {
   url: string;
+  /** POST (API de Supabase Storage, por defecto) o PUT (URL firmada de R2). */
+  method?: 'POST' | 'PUT';
   headers: Record<string, string>;
   body: Blob;
   /** Se llama con el porcentaje real de bytes enviados (0-100). */
@@ -133,10 +135,10 @@ export interface XhrUploadError {
  * Sube un cuerpo con XMLHttpRequest para poder medir el progreso real
  * (`fetch` no lo permite). Rechaza con `XhrUploadError`.
  */
-export function xhrUpload({ url, headers, body, onProgress }: XhrUploadOptions): Promise<void> {
+export function xhrUpload({ url, method = 'POST', headers, body, onProgress }: XhrUploadOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
+    xhr.open(method, url);
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(uploadPercent(event.loaded, event.total));

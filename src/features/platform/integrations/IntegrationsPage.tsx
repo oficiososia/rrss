@@ -157,6 +157,13 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       live: status.availability.drive,
       flag: 'VITE_DRIVE_LIBRARY_ENABLED',
     },
+    // Sin variable de compilación: si el servidor guarda en R2, la aplicación tiene que saber leerlo.
+    {
+      label: 'Archivos en Cloudflare R2',
+      build: true,
+      live: status.availability.mediaStorage,
+      flag: '',
+    },
   ];
   return (
     <Card>

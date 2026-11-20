@@ -14,6 +14,7 @@ import {
 } from '@/lib/files';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';
+import { deleteStoredMedia, mediaStorageEnabled, signStoragePaths, uploadTarget } from '@/features/storage/api';
 
 export const ASSET_PAGE_SIZE = 48;
 
@@ -101,7 +102,8 @@ export function useAssetsByIds(brandId: string, ids: string[]) {
 }
 
 /**
- * URL firmadas (1 h) para previsualizar archivos del cubo privado. Los recursos
+ * URL firmadas (1 h) para previsualizar archivos del cubo privado (Supabase
+ * Storage o, si el recurso está allí, Cloudflare R2). Los recursos
  * que viven en Google Drive (ruta `…/drive/<id>`) se piden a la función
  * `drive-media`, que comprueba que se ven y firma su dirección; `variant`
  * 'thumb' pide la miniatura de Drive (para cuadrículas).
@@ -117,11 +119,7 @@ export function useSignedUrls(paths: string[], options: { variant?: DriveVariant
       const drivePaths = paths.filter(isDrivePath);
       const storagePaths = paths.filter((p) => !isDrivePath(p));
       if (storagePaths.length > 0) {
-        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrls(storagePaths, 3600);
-        if (error) throw error;
-        for (const item of data ?? []) {
-          if (item.path && item.signedUrl) map.set(item.path, item.signedUrl);
-        }
+        for (const [path, url] of await signStoragePaths(storagePaths, 3600)) map.set(path, url);
       }
       if (drivePaths.length > 0) {
         for (const [path, url] of await signDrivePaths(drivePaths, variant)) map.set(path, url);
@@ -161,11 +159,22 @@ export interface UploadInput {
 }
 
 /**
- * Sube el objeto a Storage. Con `onProgress` se usa XMLHttpRequest contra la
- * misma API REST que usa supabase-js (es lo único que mide bytes reales);
- * sin él, el cliente normal.
+ * Sube el objeto. Si el servidor tiene Cloudflare R2, él decide el almacén y,
+ * para R2, da una URL de subida firmada (PUT). Si no, a Supabase Storage. Con
+ * `onProgress` se usa XMLHttpRequest (es lo único que mide bytes reales); sin
+ * él, el cliente normal.
  */
 async function uploadObject(path: string, file: File, onProgress?: (percent: number) => void): Promise<void> {
+  const target = supabaseConfigured ? await uploadTarget(path, file.type, file.size) : { backend: 'supabase' as const };
+  if (target.backend === 'r2') {
+    if (onProgress) {
+      await xhrUpload({ url: target.url, method: 'PUT', headers: target.headers, body: file, onProgress });
+      return;
+    }
+    const response = await fetch(target.url, { method: 'PUT', headers: target.headers, body: file });
+    if (!response.ok) throw { message: `Error ${response.status}`, statusCode: response.status };
+    return;
+  }
   if (!onProgress || !supabaseConfigured) {
     const upload = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { contentType: file.type });
     if (upload.error) throw upload.error;
@@ -231,6 +240,8 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
     .single();
 
   if (inserted.error) {
+    // Sin fila no hay anotación en la cola: lo subido a R2 se queda (sin recurso
+    // que lo nombre); lo de Supabase se borra como siempre.
     await supabase.storage.from(STORAGE_BUCKET).remove([path]);
     throw inserted.error;
   }
@@ -244,6 +255,11 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
 async function removeStoredFiles(paths: string[]): Promise<boolean> {
   if (paths.length === 0) return true;
   try {
+    // Con R2 en el servidor, la función borra cada archivo en su almacén (y su anotación).
+    if (await mediaStorageEnabled()) {
+      const removed = await deleteStoredMedia(paths);
+      return removed.length === paths.length;
+    }
     const { error } = await supabase.storage.from(STORAGE_BUCKET).remove(paths);
     if (error) return false;
     const cleared = await supabase.from('storage_cleanup_queue').delete().in('storage_path', paths);

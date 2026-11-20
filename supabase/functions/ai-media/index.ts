@@ -6,12 +6,12 @@
 // configurado arranca y responde que la IA «no está disponible».
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { MediaInput } from '../_shared/ai/media/contract.ts';
+import { signStoredPath } from '../_shared/storage/resolve.ts';
 import { createAiMediaHandler } from './handler.ts';
-import { admin, checkConfiguration, clientOptions, env, loadRuntime, supabaseUrl } from './setup.ts';
+import { admin, checkConfiguration, clientOptions, env, loadRuntime, mediaStores, supabaseUrl } from './setup.ts';
 
 checkConfiguration('ai-media');
 
-const BUCKET = 'brand-media';
 /** Las URL firmadas de las referencias duran lo justo para que el proveedor las descargue. */
 const REFERENCE_URL_SECONDS = 15 * 60;
 
@@ -40,20 +40,31 @@ const handler = createAiMediaHandler({
     const client = asUser(accessToken);
     const { data, error } = await client
       .from('media_assets')
-      .select('id, storage_path, mime_type, width, height, kind')
+      .select('id, storage_path, storage_backend, mime_type, width, height, kind')
       .eq('brand_id', brandId)
       .in('id', assetIds);
     if (error) throw new Error('No se han podido leer las referencias');
     const rows = data ?? [];
     if (rows.length !== assetIds.length || rows.some((r) => r.kind !== 'image' && r.kind !== 'logo')) return null;
     const inputs: MediaInput[] = [];
+    // Las filas ya salen de la RLS de quien pide: se firman en su almacén.
+    const stores = await mediaStores();
     for (const id of assetIds) {
       const row = rows.find((r) => r.id === id)!;
-      const signed = await client.storage.from(BUCKET).createSignedUrl(row.storage_path, REFERENCE_URL_SECONDS);
-      if (signed.error || !signed.data?.signedUrl) return null;
+      let url: string;
+      try {
+        url = await signStoredPath(
+          stores,
+          async () => (row.storage_backend === 'r2' ? 'r2' : 'supabase'),
+          row.storage_path,
+          REFERENCE_URL_SECONDS,
+        );
+      } catch {
+        return null;
+      }
       inputs.push({
         mimeType: row.mime_type,
-        url: signed.data.signedUrl,
+        url,
         ...(row.width ? { width: row.width } : {}),
         ...(row.height ? { height: row.height } : {}),
       });

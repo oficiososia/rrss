@@ -41,6 +41,7 @@ async function main(): Promise<number> {
       ...supabase,
       bucket: config.WORKER_BUCKET,
       maxObjectBytes: config.WORKER_MAX_UPLOAD_BYTES,
+      mediaStorage: config.WORKER_MEDIA_STORAGE === 'auto',
     }),
     handlers: createMediaHandlers({ tools, defaultFontFile, fontsDir: config.WORKER_FONTS_DIR }),
     logger,
