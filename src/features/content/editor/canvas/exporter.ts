@@ -2,6 +2,7 @@ import Konva from 'konva/lib/Core';
 import type { Shape } from 'konva/lib/Shape';
 import { Rect } from 'konva/lib/shapes/Rect';
 import { Text } from 'konva/lib/shapes/Text';
+import { fetchImageObjectUrl } from '../../../../lib/corsImage';
 import type { ContentDocument } from '../../document';
 import { EXPORT_FORMATS, exportErrors, exportSize, layerLabel, type ExportOptions } from '../../export/options';
 import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
@@ -53,16 +54,22 @@ export async function ensureFontsLoaded(specs: NodeSpec[]): Promise<void> {
   }
 }
 
-/** Carga cada imagen con `crossOrigin` anónimo (sin él, el lienzo quedaría «manchado»). Devuelve las que han fallado. */
+/**
+ * Carga cada imagen de forma que el lienzo no quede «manchado». Se descarga con
+ * `fetch` sin caché (lib/corsImage): la miniatura de la biblioteca deja en caché
+ * la misma URL sin cabeceras CORS. Si `fetch` falla, se intenta con
+ * `crossOrigin` como antes. Devuelve las que han fallado.
+ */
 async function loadImages(urls: string[]): Promise<{ images: Map<string, HTMLImageElement>; failed: Set<string> }> {
   const images = new Map<string, HTMLImageElement>();
   const failed = new Set<string>();
   await Promise.all(
     urls.map(
-      (url) =>
-        new Promise<void>((resolve) => {
+      async (url) => {
+        const objectUrl = await fetchImageObjectUrl(url).catch(() => null);
+        await new Promise<void>((resolve) => {
           const image = new window.Image();
-          image.crossOrigin = 'anonymous';
+          if (!objectUrl) image.crossOrigin = 'anonymous';
           // No se usa `decode()`: en una pestaña en segundo plano puede no resolverse nunca, y `drawImage` ya descodifica.
           const timer = setTimeout(() => {
             failed.add(url);
@@ -79,8 +86,11 @@ async function loadImages(urls: string[]): Promise<{ images: Map<string, HTMLIma
             failed.add(url);
             resolve();
           };
-          image.src = url;
-        }),
+          image.src = objectUrl ?? url;
+        });
+        // La imagen ya está descodificada (o ha fallado): la URL intermedia sobra.
+        if (objectUrl && objectUrl !== url) URL.revokeObjectURL(objectUrl);
+      },
     ),
   );
   return { images, failed };

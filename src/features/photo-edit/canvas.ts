@@ -2,6 +2,7 @@
 // parte de la edición de fotos que necesita un navegador de verdad (jsdom no
 // dibuja): las pruebas de componentes la sustituyen, y la lógica de verdad
 // (pixels.ts, framing.ts) se prueba aparte.
+import { loadCorsImage } from '../../lib/corsImage';
 import type { Pixels } from './pixels';
 
 /** Tope de lo que se edita en el navegador: 24 MP (6000 × 4000). Lo mayor se reduce y se avisa. */
@@ -17,22 +18,17 @@ export class PhotoLoadError extends Error {
   }
 }
 
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    // Sin esto, el lienzo queda «manchado» y no se pueden leer sus píxeles.
-    image.crossOrigin = 'anonymous';
-    image.decoding = 'async';
-    image.onload = () => resolve(image);
-    image.onerror = () =>
-      reject(
-        new PhotoLoadError(
-          'No se ha podido cargar la foto. Cierra y vuelve a abrirla (el enlace caduca en 1 h).',
-          'load',
-        ),
-      );
-    image.src = url;
-  });
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  // Con `fetch` sin caché y no con `crossOrigin` directo: la miniatura de la
+  // biblioteca deja en caché la misma URL sin cabeceras CORS (ver lib/corsImage).
+  try {
+    return await loadCorsImage(url);
+  } catch {
+    throw new PhotoLoadError(
+      'No se ha podido cargar la foto. Cierra y vuelve a abrirla (el enlace caduca en 1 h).',
+      'load',
+    );
+  }
 }
 
 function context(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
