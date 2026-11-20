@@ -1,32 +1,32 @@
 # Estado del proyecto
 
-Última actualización: 20/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`,
-con PR abierto a `staging`. Las ramas `main` y `staging` existen desde el 16/11/2026.
-Lo de `f4/integracion` (Integraciones, copiloto por voz y Drive) ya está en la rama
-de trabajo y en staging. Rama de integración `f5/integracion` (sin subir): une sobre
-la rama de trabajo `f5/almacenamiento-r2` (archivos de la biblioteca en Cloudflare
-R2) y `f5/copiloto-arreglos` (arreglos del copiloto por voz); **sin desplegar**.
-Rama `f6/edicion-fotos` (sobre `f5/integracion`, sin subir ni integrar): edición
-de fotos bajo demanda (`docs/edicion-fotos.md`).
+Última actualización: 20/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`
+(PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
-Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en
-local con proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas
-de verdad son cuentas y decisiones del dueño, no desarrollo: aplicación de Meta,
-proveedor de IA, Stripe, correo y revisión legal. Staging (Supabase gratuito, UE)
-tiene las 35 migraciones y todas las funciones desplegadas sin proveedores, y la
-aplicación está publicada contra staging en https://rrss-omega.vercel.app,
-incluido lo de `f4/integracion` (Integraciones, copiloto por voz y fotos de
-Drive), desde el 20/11/2026.
+**En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
+a 6, Integraciones, copiloto por voz y fotos de Drive (`f4/integracion`).
+
+**Unido en `f6/integracion`, pendiente de subir y de desplegar** (todo probado en
+local; ver «Para llevar a staging»): almacenamiento en Cloudflare R2, arreglos del
+copiloto, OpenAI como proveedor de texto, pulido (privacidad, desenfoque en reels,
+huérfanos en R2, plan Prueba), alta de la biblioteca desde Drive, edición de fotos y
+«Publicar ahora».
+
+Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en local con
+proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas de verdad son
+cuentas y decisiones del dueño, no desarrollo: aplicación de Meta, proveedor de IA,
+Stripe, correo y revisión legal. Staging (Supabase gratuito, UE) tiene 35 migraciones
+y las funciones desplegadas sin proveedores.
 
 ## Pruebas
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 712 pasan (20/11/2026, rama `f5/integracion`)                                                                                                                                                                                                                                              | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes)                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `npm run test:db`  | 730 pasan, 2 omitidas (20/11/2026, rama `f5/integracion`)                                                                                                                                                                                                                                  | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación, campañas, analítica, RGPD, integraciones (Vault, catálogo, disponibilidad, «Probar conexión»), copiloto, biblioteca con Drive, almacenamiento en R2 (firma SigV4 con los ejemplos de Amazon S3, `media-storage` con un cubo en memoria, script de migración), y servicios con proveedores simulados, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
-| `worker/`          | 81 pasan                                                                                                                                                                                                                                                                                   | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto de fuentes, informe PDF, imágenes de Drive por dirección firmada, entradas y resultados en R2 por `media-storage`                                                                                                                                                                                                                                                                                                                         |
-| `agency/`          | 37 pasan                                                                                                                                                                                                                                                                                   | Herramienta de la agencia contra un Supabase simulado                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `npm run test:e2e` | 83 de 83 en dos tandas completas seguidas (local, 20/11/2026, rama `f5/integracion`, cada una desde cero tras `supabase db reset`). La prueba 21 fallaba en las tandas completas por la imagen de MinIO de Bitnami, que se reinicia al terminar de prepararse; ya se espera a ese reinicio | Navegador (Playwright) contra un Supabase local con las funciones servidas en local, el trabajador real y los proveedores simulados de pruebas (IA, Graph API, Drive, dictado y MinIO como R2): Fases 1 a 6, integraciones, copiloto por voz, Drive y almacenamiento en R2 en 21 archivos                                                                                                                                                                                                                                             |
+| `npm test`         | 750 pasan (20/11/2026, rama `f6/integracion`) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db`  | 796 pasan, 2 omitidas (20/11/2026, rama `f6/integracion`) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `worker/`          | 81 pasan (20/11/2026) | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
+| `agency/`          | 37 pasan (20/11/2026) | Herramienta de la agencia contra un Supabase simulado |
+| `npm run test:e2e` | 85 de 85 en una tanda completa desde cero (`supabase db reset` + `npm run test:e2e`, 4,5 min, 20/11/2026, rama `f6/integracion`); las e2e 22 y 23 pasaron a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
 | CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Hecho
@@ -57,15 +57,14 @@ con cerrojo, idempotencia y reintentos: imagen, carrusel y reel. La base de
 datos impide publicar lo no aprobado, incluso con la clave de servicio, y que el
 plan no incluya publicación. Detalle en `docs/publicacion.md`.
 
-**Publicar ahora** (rama `f7/publicar-ahora`, sin subir): botón en el editor de
+**Publicar ahora** (rama `f7/publicar-ahora`, en `f6/integracion`): botón en el editor de
 una pieza aprobada, opción «Ahora» al programar y botón en la ficha del
 calendario; confirma en un paso, exporta la imagen si falta (en el editor), pone
 la publicación con la hora actual por las mismas garantías, procesa la cola al
 momento (`social-publish/now`, con la sesión de la persona) y enseña el progreso
 y el enlace. Migración `20261130010000` (dos RPC, sin tablas) con su vuelta
 atrás; hay que desplegar la migración y `social-publish`. Probado en base de
-datos y componentes; el escenario e2e `22-publicar-ahora.spec.ts` está escrito y
-**sin ejecutar** (el Supabase local lo usaba otro proceso).
+datos, componentes y e2e (`23-publicar-ahora.spec.ts`).
 
 ### Fase 4 · Campañas (primera parte)
 
@@ -129,7 +128,7 @@ legible sobre lo que hay debajo (`copilot/legibility.ts`), órdenes relativas
 órdenes de terceros y logotipo que no pisa textos; cambia la tarea
 `editor.copilot` de `ai-generate`. Detalle en `docs/copiloto-voz.md`.
 
-### Almacenamiento en Cloudflare R2 (rama `f5/almacenamiento-r2`, en `f5/integracion`)
+### Almacenamiento en Cloudflare R2 (rama `f5/almacenamiento-r2`, en `f6/integracion`)
 
 Valoración: **sí, con condiciones** (cubo en la UE, DPA de Cloudflare, token solo
 para ese cubo, Supabase de respaldo). Con ≈ 3,2 GB a llevar, R2 cuesta 0 $ (10 GB
@@ -170,7 +169,7 @@ Drive», además, con una conexión activa. Probado contra Drive simulado (base 
 datos, función y e2e); las fotos HEIC del iPhone no se pueden usar todavía.
 Detalle en `docs/biblioteca-drive.md`.
 
-### Edición de fotos bajo demanda (rama `f6/edicion-fotos`, sin integrar)
+### Edición de fotos bajo demanda (rama `f6/edicion-fotos`, en `f6/integracion`)
 «Editar foto» desde la ficha de la biblioteca y desde una capa de imagen del
 editor (la capa pasa a usar la editada; Ctrl+Z la devuelve). **El original no se
 toca nunca**: cada resultado es un recurso nuevo en «Ediciones» con su
@@ -191,8 +190,7 @@ escribir él; el original tiene que ser de la misma marca).
 - Quitar el fondo en el trabajador sin GPU (BiRefNet o IS-Net con
   `onnxruntime-node`): valorado y documentado como alternativa, **sin descargar
   pesos** (falta el «sí»).
-- Pruebas: unitarias, componentes y base de datos en verde; e2e
-  `22-edicion-fotos.spec.ts` **escrita y sin ejecutar**. Sin probar contra un
+- Pruebas: unitarias, componentes, base de datos y e2e `22-edicion-fotos.spec.ts` en verde. Sin probar contra un
   ComfyUI real ni el dibujo real en un navegador.
 - Para llevarla a staging: migración `20261128010000_photo_editing.sql`;
   redesplegar `ai-media`, `ai-media-poll` y `ai-media-webhook` (código común de
@@ -238,20 +236,23 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 4. Fotos de Drive: 371 HEIC convertidas a JPEG; 126 subidas junto a su HEIC el
    20/11/2026, el resto pendiente (copia local en
    `codigo-restaurante/drive-jpeg-pendientes`).
-5. Para llevar `f5/integracion` a staging (sin variables `VITE_` nuevas):
-   - Migración `20261124010000_media_storage_r2.sql` (vuelta atrás en
-     `supabase/rollbacks/`).
-   - Función nueva `media-storage` (`verify_jwt = false`, ya en `supabase/config.toml`).
-   - Volver a desplegar `ai-generate` (copiloto), `platform-integrations`,
-     `social-publish`, `ai-media`, `ai-media-poll`, `ai-media-webhook`,
-     `delete-account` y `delete-organization` (usan R2). Las demás
-     (`billing-checkout`, `billing-portal`, `billing-webhook`, `drive-media`,
-     `social-connect`, `social-insights`) solo cambian por el catálogo común de
-     integraciones (entrada de R2): conviene redesplegarlas para que todas lleven
-     el mismo.
-   - Después, la cuenta y el cubo de Cloudflare (`docs/almacenamiento-r2.md` §5)
-     y, con el «sí» al recuento, la migración de archivos (560 archivos, ≈ 3,0 GB:
-     34 de brand-media, 109 fotos y 46 vídeos de Drive, 371 JPEG convertidos).
+5. Para llevar `f6/integracion` a staging (una sola pasada; solo hay una variable `VITE_` nueva):
+   - Migraciones, en este orden (cada una con su vuelta atrás en `supabase/rollbacks/`):
+     `20261124010000_media_storage_r2`, `20261126010000_integrations_openai`,
+     `20261128010000_photo_editing`, `20261129010000_media_storage_orphans`,
+     `20261130010000_publish_now`.
+   - Función nueva: `media-storage` (`verify_jwt = false`, ya en `supabase/config.toml`).
+   - Volver a desplegar `ai-generate`, `ai-media`, `ai-media-poll`, `ai-media-webhook`,
+     `platform-integrations`, `social-publish`, `delete-account` y `delete-organization`;
+     conviene redesplegar también `billing-checkout`, `billing-portal`, `billing-webhook`,
+     `drive-media`, `social-connect` y `social-insights` para que todas lleven el mismo
+     catálogo común de integraciones.
+   - pg_cron: la migración `20261129010000` crea `rrss-media-orphans` (cada hora, minuto 41);
+     necesita los secretos de Vault `rrss_project_url` y `rrss_service_role_key`, como las demás.
+   - Vercel: `VITE_AI_PHOTO_EDIT_ENABLED` (dejarla apagada hasta tener un modelo de edición).
+   - Después, la cuenta y el cubo de Cloudflare (`docs/almacenamiento-r2.md` §5) y, con el
+     «sí» al recuento, la migración de archivos (560 archivos, ≈ 3,0 GB) y
+     `scripts/alta-biblioteca.ts`.
    - El trabajador, cuando se aloje, con esta versión (`WORKER_MEDIA_STORAGE=auto`).
 
 ## Bloqueado por algo externo
@@ -295,14 +296,14 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Copiloto por voz: falta un aviso en el propio copiloto antes del primer dictado (el audio va a Google o Microsoft; la política de privacidad ya lo dice).
 - Integraciones: tokens de «inicio de sesión de Instagram» (IG…) no admitidos; el vídeo con IA sigue solo por variables.
 
-## Pulido (rama `f6/pulido`, 20/11/2026)
+## Pulido (rama `f6/pulido`, en `f6/integracion`, 20/11/2026)
 
 - Política de privacidad (versión `2026-11-20`, sigue siendo plantilla pendiente de revisión legal): añadidos el dictado por voz del navegador, Google Drive y Cloudflare R2 como encargados.
 - Reels: deslizador de desenfoque (0 a 100) por foto; viaja en el plan (`blur`).
 - Huérfanos en R2: `uploadAsset` pide `media-storage/discard` si falla el alta, y la tarea `rrss-media-orphans` (cada hora, necesita los secretos de Vault) barre lo apuntado sin recurso tras 24 h. Migración `20261129010000` con vuelta atrás. Probado con la función simulada; contra R2 real, sin probar.
+- OpenAI como proveedor de texto (`f6/openai`, migración `20261126010000`): claves `OPENAI_API_KEY`, `OPENAI_BASE_URL` (UE: `https://eu.api.openai.com`), `OPENAI_ORGANIZATION` y `OPENAI_PROJECT` en Plataforma → Integraciones → IA de texto; sin clave no se carga. Sin probar contra OpenAI real.
 - Plan «Prueba»: las funciones de IA salen como no incluidas si el cupo de IA es 0.
 - Conexión con Meta sin marca conocida: aviso en la pantalla de entrada.
-- Sin ejecutar la e2e (Supabase local ocupado por el integrador).
 
 ## Siguiente paso
 

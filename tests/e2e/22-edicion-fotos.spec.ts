@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
 
 // Edición de fotos con IA de punta a punta (docs/edicion-fotos.md): quitar el
@@ -12,7 +12,6 @@ import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
 // Necesita `VITE_AI_PHOTO_EDIT_ENABLED=true` en el servidor de Vite de
 // playwright.config.ts (ya está).
 //
-// ESCRITA Y SIN EJECUTAR (20/11/2026): el Supabase local lo usa el integrador.
 
 test.describe.configure({ mode: 'serial' });
 
@@ -20,6 +19,20 @@ const marcaA = () => `/o/${dato('orgA')}/m/${dato('marcaA')}`;
 /** Precio inventado de la edición simulada (LOCAL_TEST_EDIT_PRICE_MICROS): 0,01 unidades de cuenta. */
 const COSTE = '0,01 unidades de cuenta';
 const FOTO = png(640, 480, [180, 120, 60]);
+
+/** La tarjeta de un recurso en la cuadrícula de la biblioteca. */
+function tarjeta(page: Page, nombre: string) {
+  return page.getByTestId('library-asset').filter({ hasText: nombre });
+}
+
+test.beforeAll(async () => {
+  // Al relanzar solo este archivo (E2E_CONTINUAR=1), la foto de la pasada anterior
+  // haría que la subida se tomara por un duplicado: se quitan sus filas y las ediciones.
+  await sql(
+    `delete from public.media_assets where brand_id = $1 and file_name in ($2, $3)`,
+    [dato('marcaA'), 'pan-para-recortar.png', 'Sin fondo · pan-para-recortar.png'],
+  );
+});
 
 interface Fila extends Record<string, unknown> {
   id: string;
@@ -31,8 +44,10 @@ test('quitar el fondo con IA crea un recurso nuevo y la foto original no cambia'
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marcaA()}/biblioteca`);
+  await page.getByTestId('library-upload-toggle').click();
   await page.getByTestId('library-file-input').setInputFiles(archivoPng('pan-para-recortar.png', FOTO));
-  await expect(page.getByText('pan-para-recortar.png')).toBeVisible();
+  await expect(page.getByTestId('upload-item-done')).toContainText('pan-para-recortar.png');
+  await expect(tarjeta(page, 'pan-para-recortar.png')).toBeVisible();
 
   const [original] = await sql<Fila>(
     `select * from public.media_assets where brand_id = $1 and file_name = 'pan-para-recortar.png'`,
@@ -46,7 +61,7 @@ test('quitar el fondo con IA crea un recurso nuevo y la foto original no cambia'
   );
 
   // Ficha → Editar foto → Fondo: el coste se ve antes, sin reservar nada.
-  await page.getByText('pan-para-recortar.png').click();
+  await tarjeta(page, 'pan-para-recortar.png').click();
   await page.getByTestId('asset-edit-photo').click();
   const editor = page.getByTestId('photo-edit');
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
@@ -99,9 +114,10 @@ test('quitar el fondo con IA crea un recurso nuevo y la foto original no cambia'
   // Y en la biblioteca se ven las dos.
   // Cierra «Editar foto» y la ficha.
   await page.keyboard.press('Escape');
-  await page.keyboard.press('Escape');
+  await expect(editor).toHaveCount(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'Cerrar' }).first().click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByText('Sin fondo · pan-para-recortar.png')).toBeVisible();
-  await expect(page.getByText('pan-para-recortar.png', { exact: true })).toBeVisible();
+  await expect(tarjeta(page, 'Sin fondo · pan-para-recortar.png')).toBeVisible();
+  await expect(page.getByTestId('library-asset').filter({ hasText: /^pan-para-recortar\.png/ })).toBeVisible();
   sinErrores(s);
 });

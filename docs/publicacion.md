@@ -13,7 +13,7 @@ Instagram. Estado a 19/11/2026:
 | Adaptador real de Meta (`_shared/social/meta-graph.ts`) | Escrito contra la documentación oficial, **sin probar contra el servicio real**: no hay aplicación de Meta |
 | Facebook (páginas) | Modelo preparado (`social_accounts.network = 'facebook'`); no se conecta ni se publica |
 | Stories de Instagram | No se publican (el formato queda «Detenida: formato no admitido») |
-| «Publicar ahora» (migración `20261130010000`, ruta `social-publish/now`) | Probado en base de datos (PGlite) y en componentes; escenario e2e `tests/e2e/22-publicar-ahora.spec.ts` **escrito, sin ejecutar** |
+| «Publicar ahora» (migración `20261130010000`, ruta `social-publish/now`) | Probado en base de datos (PGlite) y en componentes; escenario e2e `tests/e2e/23-publicar-ahora.spec.ts` **escrito, sin ejecutar** |
 
 ## 1. Qué hace
 

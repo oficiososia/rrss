@@ -45,6 +45,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await quitarR2();
   pararMinio();
+  // Las funciones guardan la configuración leída 30 s (_shared/integrations/settings.ts):
+  // hasta que caduca, `media-storage` seguiría firmando subidas a MinIO, ya parado, y la
+  // primera subida del archivo siguiente fallaría («No hay conexión con el servidor»).
+  await new Promise((resolve) => setTimeout(resolve, 35_000));
 });
 
 test('la superadministradora configura Cloudflare R2 (aquí, MinIO) y «Probar conexión» funciona', async ({
