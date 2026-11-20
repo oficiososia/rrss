@@ -213,6 +213,21 @@ ejemplos). Detalle, decisiones y lo no probado en `docs/importar-publicaciones.m
 - Para llevarla a staging: migración `20261201010000_social_import.sql` y desplegar la función nueva `social-import`.
 - Pendiente: interfaz para usar las plantillas (crear una pieza desde una), exportación RGPD de lo importado, probar contra Meta y R2 reales.
 
+### Editar fotos con OpenAI: cambiar el fondo con IA (rama `f7/openai-imagen`)
+
+OpenAI (GPT Image) como proveedor de imagen de `ai-media` con la misma
+`OPENAI_API_KEY` de Integraciones: generar, **cambiar el fondo** (texto libre y
+sugerencias; con máscara del plato si la hay), **mejorar luz y color** y quitar
+el fondo (PNG transparente). Pestaña «Fondo con IA» en «Editar foto» (biblioteca
+y editor); resultado = recurso nuevo con procedencia `ai_edit` y el encargo. «Probar
+conexión» comprueba también que la clave vea un modelo `gpt-image…`. Detalle,
+fuentes, precio y límites en `docs/ia-medios.md` §13 y `docs/edicion-fotos.md` §7.
+- Precio: OpenAI cobra por tokens; el registro lleva una **cota por megapíxel** (70.000 micros de salida, 14.000 de entrada). Los modelos nacen inactivos y sin precio verificado: hay que activarlos en Plataforma.
+- Fuera de la UE: `AI_MEDIA_ALLOW_NON_EU=true` (o proyecto europeo con `OPENAI_BASE_URL=https://eu.api.openai.com`).
+- Interfaz para el integrador: `PhotoEditDialog` acepta `getSubjectMask` (PNG con las medidas de la foto, plato opaco). Nadie la pasa todavía: sin ella se avisa de que la IA puede retocar el plato. La máscara de OpenAI es orientativa: no garantiza el plato intacto.
+- Pruebas: `tests/db/ia-openai-imagen.test.ts`, casos nuevos en `edicion-fotos.test.ts` y `editarFoto.test.tsx`; e2e `25-cambiar-fondo-ia.spec.ts` escrita **sin ejecutar** (el Supabase local lo usaba otro proyecto).
+- Para llevarla a staging: migración `20261202010000_openai_image.sql` (vuelta atrás en `supabase/rollbacks/`) y redesplegar `ai-media`, `ai-media-poll`, `ai-media-webhook` y `platform-integrations` (código compartido). Sin probar contra OpenAI real.
+
 ## Sin probar contra el servicio real
 
 | Servicio | Estado | Detalle |
@@ -224,6 +239,7 @@ ejemplos). Detalle, decisiones y lo no probado en `docs/importar-publicaciones.m
 | Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
 | Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
 | Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
+| IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar | `docs/ia-medios.md` §13 |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |
 | «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
 

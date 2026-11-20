@@ -35,8 +35,10 @@ páginas de documentación oficial contra las que se escribieron (consultadas el
 | `simulated-image`, `simulated-video` | `simulated.ts`                         | Ambos           | Síncrona / asíncrona                                    | —                                  | Solo pruebas. La imagen es un PNG determinista; el vídeo, un archivo de prueba no reproducible                |
 | `simulated-image-async`              | `simulated.ts`                         | Imagen          | Asíncrona, sin estado                                   | —                                  | Solo pruebas locales: el trabajo «termina» a los 2 s; prueba el sondeo de punta a punta                       |
 
+| `openai` | `openai-image.ts` | Imagen (GPT Image) y ediciones de foto | Síncrona | Global; UE con `eu.api.openai.com` | §13. Misma clave que el texto. Sin probar con OpenAI real |
+
 Fuera de este bloque: Runway (se eligió fal.ai como segundo de vídeo porque su
-cola y sus webhooks están documentados con detalle), OpenAI, Recraft,
+cola y sus webhooks están documentados con detalle), Recraft,
 Stability, Replicate y voz. La edición de fotos (quitar el fondo y ampliar con
 IA; recortes y ajustes sin IA) está en `docs/edicion-fotos.md`.
 Los reels montados con plantillas son del trabajador de medios, no de aquí.
@@ -353,3 +355,74 @@ cuenta por imagen (precio inventado). Con la variable y otro Supabase, la
 función no arranca. Escenario: `tests/e2e/10-fase2-imagen-con-ia.spec.ts`
 (pasa en la tanda completa desde el 18/11/2026; `playwright.config.ts` pasa
 `VITE_AI_IMAGE_ENABLED=true`).
+
+## 13. OpenAI como proveedor de imagen (GPT Image)
+
+Adaptador `openai` (`openai-image.ts`), con la **misma** clave que el texto:
+`OPENAI_API_KEY` de «Plataforma → Integraciones» (y `OPENAI_BASE_URL`,
+`OPENAI_ORGANIZATION`, `OPENAI_PROJECT`, que ya existen para el texto). Sin
+clave no se carga y «Probar conexión» lo dice con el nombre de la variable.
+
+**Fuentes (consultadas el 20/11/2026):**
+`https://developers.openai.com/api/docs/guides/image-generation`,
+`https://developers.openai.com/api/reference/resources/images/methods/edit` y
+`https://developers.openai.com/api/docs/pricing`.
+
+| Dato | Lo que dice la documentación |
+|---|---|
+| Modelos vigentes | Familia GPT Image 2.5 y 2.6: `gpt-image-2.5-sunburst` («mayor precisión de edición») y `gpt-image-2.5-flare` («generación rápida de uso diario»); también `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1` y `gpt-image-1-mini`. |
+| Generar | `POST /v1/images/generations` (JSON). |
+| Editar | `POST /v1/images/edits`: `image` (o `image[]`), `mask`, `prompt`, `size`, `quality`, `background`, `output_format`, `n`. Respuesta en `data[].b64_json` (los modelos GPT Image no devuelven URL). |
+| Máscara | Mismo formato y tamaño que la imagen, con canal alfa; se edita lo transparente. **«Enmascarar con GPT Image se hace por indicación (prompt)»**: el modelo puede no respetar la forma exacta. Menos de 50 MB. |
+| Fondo transparente | `background: "transparent"` con `output_format` `png` o `webp`; lo admiten `gpt-image-2.5-*` (y `gpt-image-2` en vista previa). |
+| Tamaños | `1024x1024`, `1536x1024`, `1024x1536` y `auto` en todos; en la familia 2/2.5, cualquier `AnchoxAlto` con lados múltiplos de 16, proporción hasta 3:1, lados ≤ 3840 y entre 655.360 y 8.294.400 píxeles. |
+| `input_fidelity` | Se omite en `gpt-image-2` (siempre alta fidelidad). El adaptador solo la envía si el modelo la pide en sus ajustes. |
+| Precio | **Por tokens**, no por imagen: imagen 8 USD entrada y 30 USD salida por millón de tokens (texto 5 USD entrada), igual en 2, 2.5 y 2.6. Las tarifas por imagen de la guía (p. ej. `gpt-image-2` media 1024² = 0,053 USD, alta = 0,211 USD) son «históricas, para comparar»; para 2.5/2.6 no hay tabla por imagen. |
+| Residencia | `eu.api.openai.com` (proyecto con región Europa) procesa en la UE; con la dirección normal, no. |
+
+**Operaciones (registro `ai_media_models`, proveedor `openai`, migración
+`20261202010000`):**
+
+| Operación | Modelo | Qué hace | Prioridad |
+|---|---|---|---|
+| `generate` | `gpt-image-2.5-flare` | Generar imagen (con referencias va por `/edits`) | 0 |
+| `replace_background` | `gpt-image-2.5-sunburst` | Cambiar el fondo por el descrito; con máscara del sujeto, solo el fondo | 0 |
+| `enhance` | `gpt-image-2.5-sunburst` | Mejorar luz y color con IA | 0 |
+| `remove_background` | `gpt-image-2.5-sunburst` | Quitar el fondo (PNG transparente) | -10 (gana un modelo propio) |
+
+- **Precio sembrado = cota, no tarifa.** Como OpenAI cobra por tokens, el
+  registro lo aproxima por megapíxel con calidad `medium`:
+  `price_micros` 70.000 por megapíxel de salida (73.000 el primero) y
+  `input_megapixel_micros` 14.000 por megapíxel de entrada (la foto y, si hay,
+  la máscara; cada una cuenta como mucho `max_input_megapixels` = 4). El
+  resultado de una edición sale a ~1,5 MP (`size_mode: custom`, múltiplos de
+  16 y la proporción de la foto; `preset` fija uno de los tres tamaños). El
+  consumo real en tokens **no** se convierte en dinero: se cobra la cota
+  reservada. Ejemplo: cambiar el fondo de una foto de 12 MP con máscara reserva
+  unos 0,26 USD, aunque lo normal en OpenAI sea bastante menos. El gasto real
+  está en el panel de OpenAI.
+- **Nacen inactivos y sin precio verificado** (como todo el registro). No hay
+  pantalla de modelos: quien administra la plataforma los activa con
+  `update public.ai_media_models set price_verified = true, active = true
+  where provider = 'openai' and operation = '…'` tras contrastar la cota con su
+  panel de OpenAI (y ajustar `price_micros` si quiere), como en §6.
+- **Residencia.** Fuera de la UE por decisión del dueño: hay que permitirlo
+  con la variable de siempre, `AI_MEDIA_ALLOW_NON_EU=true` (o fijar el modelo),
+  o usar `OPENAI_BASE_URL=https://eu.api.openai.com` con un proyecto europeo.
+  Sin eso, el adaptador está cargado pero no se ofrece ninguna operación. La
+  interfaz enseña «Se procesa fuera de la UE» en cada edición.
+- **Coste máximo antes de llamar, cupo y coste por organización:** el mismo
+  camino que el resto (`estimate`, `ai_reserve_generation`, `ai_generations`).
+- `trains_on_inputs` está en `no` (OpenAI dice que no entrena con datos de la
+  API por defecto): **confirmar en la cuenta**.
+- **Sin probar contra OpenAI real** (no hay clave): probado con HTTP simulado
+  (`tests/db/ia-openai-imagen.test.ts`). Dudas que solo una llamada real
+  resuelve: que la máscara con nuestro convenio (opaco = plato) proteja el
+  plato; que la máscara a resolución de la foto se acepte con un `size` de
+  salida distinto; el consumo real en tokens (para afinar la cota); y si la
+  clave del dueño necesita «verificar la organización» para usar GPT Image.
+
+**«Probar conexión».** Además de listar modelos (`GET /v1/models`, gratis),
+comprueba que la lista incluya algún `gpt-image…`; si no, avisa (sin darlo por
+fallo: la clave sirve para texto) de que puede hacer falta verificar la
+organización o dar acceso al proyecto.
