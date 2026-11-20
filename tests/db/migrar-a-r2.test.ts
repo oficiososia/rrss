@@ -50,11 +50,11 @@ describe('migrar a R2: recuento en seco', () => {
     const keys = plan.items.map((i) => `${i.source} ${i.key}`);
     expect(keys).toEqual([
       `brand-media ${ORG}/${BRAND}/media/a.jpg`,
-      `local ${ORG}/${BRAND}/import/drive/heicConJpegLocal01-IMG_1.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/heicSoloEnDrive001-IMG_2.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/fotoJpegDeDrive001-Plato-con-punto-y-coma.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/videoDeDrive00001-Video-bar.mov`,
-      `local ${ORG}/${BRAND}/import/drive/extraSinInventario-Extra.jpg`,
+      `local ${ORG}/${BRAND}/import/google-drive/heicConJpegLocal01-IMG_1.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/heicSoloEnDrive001-IMG_2.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/fotoJpegDeDrive001-Plato-con-punto-y-coma.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/videoDeDrive00001-Video-bar.mov`,
+      `local ${ORG}/${BRAND}/import/google-drive/extraSinInventario-Extra.jpg`,
     ]);
     expect(plan.items.find((i) => i.from === 'jpegEnDrive000002')).toMatchObject({ mime: 'image/jpeg', bytes: 0 });
     expect(plan.skipped).toMatchObject({
