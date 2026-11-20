@@ -65,7 +65,9 @@ test('quitar el fondo con IA crea un recurso nuevo y la foto original no cambia'
   await page.getByTestId('asset-edit-photo').click();
   const editor = page.getByTestId('photo-edit');
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
-  await editor.getByRole('tab', { name: 'Fondo' }).click();
+  await editor.getByRole('tab', { name: 'Fondo', exact: true }).click();
+  // Con IA y navegador, está marcado el navegador (docs/edicion-fotos.md §1): se elige la IA.
+  await editor.getByTestId('photo-edit-engine-ai').check();
   const quitar = editor.getByTestId('photo-edit-ai-remove_background');
   await expect(quitar.getByTestId('photo-edit-ai-cost')).toContainText(`Coste máximo: ${COSTE}`);
   const generacionesAntes = await sql(`select id from public.ai_generations where purpose = 'photo.remove_background'`);
