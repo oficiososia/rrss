@@ -9,6 +9,11 @@
 //      región y si el adaptador está sin probar. Máximo 2048 bytes (lo exige la
 //      tabla); solo el servidor puede escribir ese tipo (migración 20261118210000).
 //
+// Ediciones de una foto con IA (quitar el fondo, ampliar): mismo camino, pero
+// la procedencia es `type: 'ai_edit'` con la operación y el recurso original
+// (`source_asset_id`), carpeta «Ediciones» y nombre «Sin fondo · <original>».
+// El original no se toca nunca: el resultado es siempre un recurso nuevo.
+//
 // Idempotente: la misma generación e índice van siempre a la misma ruta; subir
 // otra vez sobrescribe el mismo objeto y la fila se reutiliza (la ruta es
 // única). Así el sondeo y el webhook pueden llegar a la vez sin duplicar nada.
@@ -29,6 +34,10 @@ export const GENERATED_FOLDER = 'IA';
 /** Tope de `media_assets.provenance` (migración 20261118120000). */
 export const MAX_PROVENANCE_BYTES = 2048;
 export const AI_PROVENANCE_TYPE = 'ai_generation';
+/** Procedencia de una foto editada con IA (solo la escribe el servidor, migración 20261128010000). */
+export const AI_EDIT_PROVENANCE_TYPE = 'ai_edit';
+/** Carpeta de la biblioteca de las fotos editadas (con IA o en el navegador). */
+export const EDITS_FOLDER = 'Ediciones';
 
 /** Tipos que admite el cubo y su extensión. */
 const EXTENSIONS: Record<string, string> = {
@@ -132,6 +141,22 @@ export function imageDimensions(bytes: Uint8Array): { width: number; height: num
  * no pase de 2048 bytes (se mide en UTF-8, como la restricción de la tabla).
  */
 export function provenanceJson(generationId: string, provenance: MediaProvenance | undefined): Record<string, unknown> {
+  if (provenance?.edit) {
+    const edit = provenance.edit;
+    return {
+      type: AI_EDIT_PROVENANCE_TYPE,
+      operation: edit.operation,
+      source_asset_id: edit.sourceAssetId,
+      ...(edit.scale ? { scale: edit.scale } : {}),
+      generation_id: generationId,
+      provider: provenance.provider,
+      model: provenance.model,
+      purpose: provenance.purpose ?? null,
+      data_region: provenance.dataRegion,
+      trains_on_inputs: provenance.trainsOnInputs,
+      untested_adapter: provenance.untestedAdapter,
+    };
+  }
   const build = (prompt: string | null) => ({
     type: AI_PROVENANCE_TYPE,
     generation_id: generationId,
@@ -155,8 +180,25 @@ export function provenanceJson(generationId: string, provenance: MediaProvenance
   return build(prompt.length ? prompt.join('') : null);
 }
 
-/** Nombre legible en la biblioteca: «IA · <encargo recortado>.png». */
-function fileNameFor(prompt: string | undefined, generationId: string, index: number, extension: string): string {
+const EDIT_NAME: Record<string, (scale?: number) => string> = {
+  remove_background: () => 'Sin fondo',
+  upscale: (scale) => `Ampliada ×${scale ?? 2}`,
+};
+
+/** Nombre legible en la biblioteca: «IA · <encargo recortado>.png» o «Sin fondo · <original>.png». */
+function fileNameFor(provenance: MediaProvenance | undefined, generationId: string, index: number, extension: string) {
+  const edit = provenance?.edit;
+  if (edit) {
+    const original = (edit.sourceName ?? '')
+      .replace(/\.[a-z0-9]{2,5}$/i, '')
+      .replace(/[\\/:*?"<>|\s]+/g, ' ')
+      .trim()
+      .slice(0, 80)
+      .trim();
+    const label = (EDIT_NAME[edit.operation] ?? (() => 'Editada'))(edit.scale);
+    return `${label} · ${original || generationId.slice(0, 8)}${index > 0 ? ` (${index + 1})` : ''}.${extension}`;
+  }
+  const prompt = provenance?.prompt;
   const words = (prompt ?? '')
     .replace(/[\\/:*?"<>|\s]+/g, ' ')
     .trim()
@@ -204,13 +246,13 @@ export function createSupabaseMediaStorage(
         kind: object.kind,
         origin: 'generated',
         storage_path: path,
-        file_name: fileNameFor(object.provenance?.prompt, object.generationId, object.index, extension),
+        file_name: fileNameFor(object.provenance, object.generationId, object.index, extension),
         mime_type: mimeType,
         bytes: object.bytes.byteLength,
         width: size && size.width > 0 ? size.width : null,
         height: size && size.height > 0 ? size.height : null,
-        folder: GENERATED_FOLDER,
-        tags: ['ia'],
+        folder: object.provenance?.edit ? EDITS_FOLDER : GENERATED_FOLDER,
+        tags: object.provenance?.edit ? ['ia', 'edición'] : ['ia'],
         provenance: provenanceJson(object.generationId, object.provenance),
         created_by: object.provenance?.requestedBy ?? null,
       });

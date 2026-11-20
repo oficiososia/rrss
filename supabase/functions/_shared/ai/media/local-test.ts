@@ -11,11 +11,13 @@
 // uno síncrono y otro asíncrono (sin estado, para probar el sondeo). Su precio
 // es inventado, para que el cupo y la estimación se vean con cifras distintas
 // de cero. No es el precio de nadie.
-import type { MediaModel, MediaProvider } from './contract.ts';
+import type { ImageEditOperation, MediaModel, MediaProvider } from './contract.ts';
 import {
   createSimulatedAsyncImageProvider,
+  createSimulatedImageEditProvider,
   createSimulatedImageProvider,
   SIMULATED_IMAGE_ASYNC_PROVIDER_ID,
+  SIMULATED_IMAGE_EDIT_PROVIDER_ID,
   SIMULATED_IMAGE_PROVIDER_ID,
 } from './simulated.ts';
 import { isLocalSupabaseUrl, LOCAL_TEST_FLAG, LocalTestConfigError } from '../text/local-test.ts';
@@ -24,10 +26,20 @@ export const LOCAL_TEST_IMAGE_MODEL = 'simulado-e2e';
 export const LOCAL_TEST_IMAGE_ASYNC_MODEL = 'simulado-e2e-asincrono';
 /** Precio inventado por imagen (micros): 0,02 unidades de cuenta. */
 export const LOCAL_TEST_IMAGE_PRICE_MICROS = 20_000;
+/** Ediciones de foto simuladas (quitar el fondo, ampliar), también solo en memoria. */
+export const LOCAL_TEST_EDIT_MODELS: Record<ImageEditOperation, string> = {
+  remove_background: 'simulado-e2e-quitar-fondo',
+  upscale: 'simulado-e2e-ampliar',
+};
+/** Precio inventado por edición (micros): 0,01 unidades de cuenta. */
+export const LOCAL_TEST_EDIT_PRICE_MICROS = 10_000;
 
 export interface LocalTestMediaConfig {
   providers: MediaProvider[];
+  /** Modelos de generar imágenes. */
   models: MediaModel[];
+  /** Modelos de edición de fotos (quitar el fondo, ampliar). */
+  editModels: MediaModel[];
   problems: string[];
 }
 
@@ -67,7 +79,11 @@ export function loadLocalTestMediaConfig(env: Record<string, string | undefined>
     );
   }
   return {
-    providers: [createSimulatedImageProvider(), createSimulatedAsyncImageProvider()],
+    providers: [
+      createSimulatedImageProvider(),
+      createSimulatedAsyncImageProvider(),
+      createSimulatedImageEditProvider(),
+    ],
     models: [
       simulatedModel(SIMULATED_IMAGE_PROVIDER_ID, LOCAL_TEST_IMAGE_MODEL, 'Imagen simulada (pruebas locales)', 'sync'),
       simulatedModel(
@@ -77,6 +93,13 @@ export function loadLocalTestMediaConfig(env: Record<string, string | undefined>
         'async',
       ),
     ],
+    editModels: (Object.entries(LOCAL_TEST_EDIT_MODELS) as [ImageEditOperation, string][]).map(
+      ([operation, model]): MediaModel => ({
+        ...simulatedModel(SIMULATED_IMAGE_EDIT_PROVIDER_ID, model, `Edición simulada: ${operation}`, 'sync'),
+        operation,
+        priceMicros: LOCAL_TEST_EDIT_PRICE_MICROS,
+      }),
+    ),
     problems: [`${LOCAL_TEST_FLAG}=true: imagen SIMULADA para pruebas locales. Nunca en un entorno con clientes.`],
   };
 }

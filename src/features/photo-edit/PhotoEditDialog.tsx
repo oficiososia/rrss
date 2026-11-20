@@ -1,0 +1,790 @@
+// «Editar foto», desde la ficha de la biblioteca o desde una capa de imagen del
+// editor (docs/edicion-fotos.md). Cuatro pestañas:
+//   · Mejorar   luz, color y nitidez (automático o a mano) y encuadre, SIN IA;
+//   · Recortes  1:1, 4:5 y 9:16 con encuadre inteligente, SIN IA;
+//   · Fondo     quitar el fondo (IA) y poner uno liso, de la marca o de la
+//               biblioteca (sin IA, sobre una foto que ya tiene transparencia);
+//   · Ampliar   ×2 o ×4 (IA).
+// Lo de IA solo sale con `VITE_AI_PHOTO_EDIT_ENABLED` y si el servidor tiene
+// modelo para esa acción. Cada resultado es un recurso NUEVO de la biblioteca,
+// con su procedencia; la foto original no se toca nunca.
+import { Crop, Eraser, ImagePlus, Maximize2, Sparkles, Wand2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { Badge, Button, Dialog, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
+import { useGenerationProgress } from '@/features/ai/imageApi';
+import { formatMicros } from '@/features/ai/money';
+import { useActiveProfile } from '@/features/brand/api';
+import { parseProfile } from '@/features/brand/profile';
+import { ImagePickerDialog } from '@/features/content/editor/AssetPickerDialog';
+import { useSignedUrls } from '@/features/library/api';
+import type { MediaAssetRow } from '@/lib/database.types';
+import { translateError } from '@/lib/errors';
+import { cn } from '@/lib/utils';
+import {
+  AI_OPERATION_LABEL,
+  canEditWithAi,
+  fetchAsset,
+  signedUrlFor,
+  upscaleFactors,
+  useAiEdit,
+  useAiEditEstimate,
+  useAiEditOptions,
+  useSaveEdit,
+  type AiEditChoice,
+  type AiPhotoOperation,
+} from './api';
+import { encodePixels, loadCoverPixels, loadPixels, paint, PhotoLoadError } from './canvas';
+import {
+  centeredCrop,
+  interestMap,
+  NETWORK_ASPECT_LABEL,
+  NETWORK_ASPECTS,
+  smartCrop,
+  type NetworkAspect,
+} from './framing';
+import {
+  analyzeImage,
+  applyAdjustments,
+  autoAdjustments,
+  compositeOver,
+  cropPixels,
+  downscale,
+  isNeutral,
+  NEUTRAL_ADJUSTMENTS,
+  type Adjustments,
+  type Pixels,
+} from './pixels';
+import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
+
+type Tab = 'enhance' | 'crops' | 'background' | 'upscale';
+
+interface PhotoEditDialogProps {
+  asset: MediaAssetRow;
+  /** Dirección firmada de la foto (si ya se tiene). */
+  url?: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Qué hacer con un resultado: abrirlo en la biblioteca o usarlo en el diseño. */
+  onResult?: (asset: MediaAssetRow) => void;
+  resultLabel?: string;
+}
+
+const PREVIEW_SIDE = 480;
+const SLIDERS: Array<{
+  key: 'exposure' | 'contrast' | 'saturation' | 'warmth' | 'sharpness';
+  label: string;
+  min: number;
+}> = [
+  { key: 'exposure', label: 'Luz', min: -100 },
+  { key: 'contrast', label: 'Contraste', min: -100 },
+  { key: 'saturation', label: 'Color (saturación)', min: -100 },
+  { key: 'warmth', label: 'Temperatura (fría ↔ cálida)', min: -100 },
+  { key: 'sharpness', label: 'Nitidez', min: 0 },
+];
+
+/** Lienzo que pinta unos píxeles (vista previa). */
+function PixelsCanvas({ pixels, className, testId }: { pixels: Pixels | null; className?: string; testId?: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (ref.current && pixels) paint(ref.current, pixels);
+  }, [pixels]);
+  return <canvas ref={ref} className={cn('block h-auto max-w-full', className)} data-testid={testId} />;
+}
+
+/** Formato del resultado: PNG si hay transparencia o el original lo era; si no, JPEG. */
+function outputFormat(
+  transparent: boolean,
+  sourceMime: string,
+): { mime: 'image/png' | 'image/jpeg'; ext: 'png' | 'jpg' } {
+  return transparent || sourceMime === 'image/png'
+    ? { mime: 'image/png', ext: 'png' }
+    : { mime: 'image/jpeg', ext: 'jpg' };
+}
+
+export function PhotoEditDialog({
+  asset: initial,
+  url: initialUrl,
+  open,
+  onOpenChange,
+  onResult,
+  resultLabel,
+}: PhotoEditDialogProps) {
+  // Se puede pasar a editar un resultado (p. ej., la foto sin fondo para ponerle otro).
+  const [asset, setAsset] = useState(initial);
+  const signed = useSignedUrls(initialUrl && asset.id === initial.id ? [] : [asset.storage_path]);
+  const url = asset.id === initial.id && initialUrl ? initialUrl : signed.data?.get(asset.storage_path);
+
+  // Lo cargado va con su dirección: al cambiar de foto, lo anterior deja de valer sin tocar el estado.
+  const [load, setLoad] = useState<{
+    url: string;
+    result?: { pixels: Pixels; reduced: boolean };
+    error?: string;
+  } | null>(null);
+  const loaded = load && load.url === url ? (load.result ?? null) : null;
+  const loadError = load && load.url === url ? (load.error ?? null) : null;
+  const [tab, setTab] = useState<Tab>('enhance');
+  const [results, setResults] = useState<MediaAssetRow[]>([]);
+  const save = useSaveEdit(asset.brand_id);
+  const aiOptions = useAiEditOptions(asset.brand_id, open && canEditWithAi(asset));
+  const aiChoice = (operation: AiPhotoOperation) => aiOptions.data?.find((c) => c.operation === operation);
+
+  useEffect(() => {
+    if (!open || !url) return;
+    let alive = true;
+    loadPixels(url).then(
+      (result) => alive && setLoad({ url, result: { pixels: result.pixels, reduced: result.reduced } }),
+      (error: unknown) =>
+        alive &&
+        setLoad({
+          url,
+          error: error instanceof PhotoLoadError ? error.message : 'No se ha podido abrir la foto para editarla.',
+        }),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [open, url]);
+
+  const stats = useMemo(() => (loaded ? analyzeImage(loaded.pixels) : null), [loaded]);
+  const preview = useMemo(() => (loaded ? downscale(loaded.pixels, PREVIEW_SIDE) : null), [loaded]);
+  const map = useMemo(() => (loaded ? interestMap(loaded.pixels) : null), [loaded]);
+
+  const addResult = (row: MediaAssetRow) => {
+    setResults((current) => [row, ...current.filter((r) => r.id !== row.id)]);
+  };
+
+  /** Codifica y guarda en la biblioteca un resultado hecho en el navegador. */
+  async function store(pixels: Pixels, steps: PhotoEditStep[]) {
+    const transparent = analyzeImage(pixels).transparent;
+    const format = outputFormat(transparent, asset.mime_type);
+    const blob = await encodePixels(pixels, format.mime);
+    const row = await save.mutateAsync({
+      source: asset,
+      blob,
+      fileName: editedFileName(asset.file_name, steps, format.ext),
+      width: pixels.width,
+      height: pixels.height,
+      provenance: photoEditProvenance({ sourceAssetId: asset.id, steps, width: pixels.width, height: pixels.height }),
+    });
+    addResult(row);
+    return row;
+  }
+
+  const switchTo = (row: MediaAssetRow) => {
+    setAsset(row);
+    setTab('background');
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Editar foto"
+      description={`${asset.file_name}. La foto original no cambia: cada resultado se guarda aparte en la carpeta «Ediciones».`}
+      size="lg"
+      footer={
+        <Button variant="secondary" onClick={() => onOpenChange(false)}>
+          Cerrar
+        </Button>
+      }
+    >
+      <div className="space-y-4" data-testid="photo-edit">
+        {loadError ? (
+          <Notice tone="warning">{loadError}</Notice>
+        ) : !loaded || !stats || !preview || !map ? (
+          <Spinner label="Abriendo la foto…" />
+        ) : (
+          <>
+            {loaded.reduced && (
+              <Notice tone="warning">
+                La foto es muy grande: se edita reducida a {loaded.pixels.width} × {loaded.pixels.height} px.
+              </Notice>
+            )}
+            <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+              <TabsList label="Ediciones">
+                <TabsTrigger value="enhance">Mejorar</TabsTrigger>
+                <TabsTrigger value="crops">Recortes</TabsTrigger>
+                <TabsTrigger value="background">Fondo</TabsTrigger>
+                {aiChoice('upscale') && <TabsTrigger value="upscale">Ampliar</TabsTrigger>}
+              </TabsList>
+              <TabsContent value="enhance" className="pt-4">
+                <EnhanceTab
+                  pixels={loaded.pixels}
+                  preview={preview}
+                  stats={stats}
+                  map={map}
+                  saving={save.isPending}
+                  onSave={(pixels, steps) => store(pixels, steps)}
+                />
+              </TabsContent>
+              <TabsContent value="crops" className="pt-4">
+                <CropsTab pixels={loaded.pixels} preview={preview} map={map} saving={save.isPending} onSave={store} />
+              </TabsContent>
+              <TabsContent value="background" className="pt-4">
+                <BackgroundTab
+                  asset={asset}
+                  pixels={loaded.pixels}
+                  transparent={stats.transparent}
+                  saving={save.isPending}
+                  onSave={store}
+                  ai={aiChoice('remove_background')}
+                  onAiResult={(row) => {
+                    addResult(row);
+                    switchTo(row);
+                  }}
+                />
+              </TabsContent>
+              {aiChoice('upscale') && (
+                <TabsContent value="upscale" className="pt-4">
+                  <AiAction asset={asset} operation="upscale" choice={aiChoice('upscale')!} onDone={addResult} />
+                </TabsContent>
+              )}
+            </Tabs>
+          </>
+        )}
+
+        {results.length > 0 && (
+          <section
+            className="space-y-2 rounded-lg border border-border p-3"
+            aria-label="Resultados"
+            data-testid="photo-edit-results"
+          >
+            <h3 className="text-sm font-medium">Guardado en la biblioteca</h3>
+            <ul className="space-y-1">
+              {results.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                  data-testid="photo-edit-result"
+                >
+                  <span className="min-w-0 truncate">{row.file_name}</span>
+                  {onResult && (
+                    <Button size="sm" variant="ghost" onClick={() => onResult(row)} data-testid="photo-edit-use">
+                      {resultLabel ?? 'Abrir'}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────── Mejorar ───────────────────────────────
+
+function EnhanceTab({
+  pixels,
+  preview,
+  stats,
+  map,
+  saving,
+  onSave,
+}: {
+  pixels: Pixels;
+  preview: Pixels;
+  stats: ReturnType<typeof analyzeImage>;
+  map: ReturnType<typeof interestMap>;
+  saving: boolean;
+  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<unknown>;
+}) {
+  const [adjustments, setAdjustments] = useState<Adjustments>(NEUTRAL_ADJUSTMENTS);
+  const [auto, setAuto] = useState(false);
+  const [framing, setFraming] = useState<NetworkAspect | ''>('');
+  const adjusted = useMemo(() => applyAdjustments(preview, adjustments), [preview, adjustments]);
+  const unchanged = isNeutral(adjustments) && !framing;
+
+  async function submit() {
+    try {
+      let result = applyAdjustments(pixels, adjustments);
+      const steps: PhotoEditStep[] = [];
+      if (!isNeutral(adjustments)) steps.push({ kind: 'adjust', adjustments, auto });
+      if (framing) {
+        const box = smartCrop(result, framing, map);
+        result = cropPixels(result, box);
+        steps.push({ kind: 'crop', aspect: framing, box, smart: true });
+      }
+      await onSave(result, steps);
+      toast.success('Foto mejorada guardada en la biblioteca. La original no ha cambiado.');
+    } catch (error) {
+      toast.error(translateError(error));
+    }
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-[1fr_16rem]">
+      <div className="space-y-2">
+        <PixelsCanvas pixels={adjusted} className="rounded-lg border border-border" testId="photo-edit-preview" />
+        <p className="text-xs text-muted">Vista previa reducida. Se guarda a tamaño completo.</p>
+      </div>
+      <div className="space-y-3">
+        <Button
+          variant="secondary"
+          onClick={() => {
+            setAdjustments(autoAdjustments(stats));
+            setAuto(true);
+          }}
+          data-testid="photo-edit-auto"
+        >
+          <Wand2 className="h-4 w-4" aria-hidden />
+          Mejorar automáticamente
+        </Button>
+        {SLIDERS.map((slider) => (
+          <label key={slider.key} className="block text-xs">
+            <span className="flex justify-between">
+              {slider.label}
+              <span className="tabular-nums text-muted">{adjustments[slider.key]}</span>
+            </span>
+            <input
+              type="range"
+              min={slider.min}
+              max={100}
+              value={adjustments[slider.key]}
+              onChange={(e) => setAdjustments((current) => ({ ...current, [slider.key]: Number(e.target.value) }))}
+              className="w-full"
+              data-testid={`photo-edit-${slider.key}`}
+            />
+          </label>
+        ))}
+        <label className="block text-xs">
+          Encuadre
+          <select
+            className="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1 text-sm"
+            value={framing}
+            onChange={(e) => setFraming(e.target.value as NetworkAspect | '')}
+            data-testid="photo-edit-framing"
+          >
+            <option value="">Como está</option>
+            {NETWORK_ASPECTS.map((aspect) => (
+              <option key={aspect} value={aspect}>
+                {NETWORK_ASPECT_LABEL[aspect]}, encuadre inteligente
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setAdjustments(NEUTRAL_ADJUSTMENTS);
+              setAuto(false);
+              setFraming('');
+            }}
+          >
+            Deshacer cambios
+          </Button>
+          <Button onClick={() => void submit()} disabled={unchanged} loading={saving} data-testid="photo-edit-save">
+            <Sparkles className="h-4 w-4" aria-hidden />
+            Guardar copia
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────── Recortes ───────────────────────────────
+
+function CropsTab({
+  pixels,
+  preview,
+  map,
+  saving,
+  onSave,
+}: {
+  pixels: Pixels;
+  preview: Pixels;
+  map: ReturnType<typeof interestMap>;
+  saving: boolean;
+  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<unknown>;
+}) {
+  const [aspects, setAspects] = useState<NetworkAspect[]>([...NETWORK_ASPECTS]);
+  const [smart, setSmart] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const boxes = useMemo(
+    () =>
+      Object.fromEntries(
+        NETWORK_ASPECTS.map((aspect) => [
+          aspect,
+          smart ? smartCrop(pixels, aspect, map) : centeredCrop(pixels, aspect),
+        ]),
+      ) as Record<NetworkAspect, ReturnType<typeof smartCrop>>,
+    [pixels, map, smart],
+  );
+  const previews = useMemo(() => {
+    const scale = preview.width / pixels.width;
+    return Object.fromEntries(
+      NETWORK_ASPECTS.map((aspect) => {
+        const box = boxes[aspect];
+        return [
+          aspect,
+          cropPixels(preview, {
+            x: box.x * scale,
+            y: box.y * scale,
+            width: box.width * scale,
+            height: box.height * scale,
+          }),
+        ];
+      }),
+    ) as Record<NetworkAspect, Pixels>;
+  }, [preview, pixels.width, boxes]);
+
+  async function submit() {
+    setBusy(true);
+    try {
+      for (const aspect of aspects) {
+        const box = boxes[aspect];
+        await onSave(cropPixels(pixels, box), [{ kind: 'crop', aspect, box, smart }]);
+      }
+      toast.success(
+        `${aspects.length === 1 ? 'Recorte guardado' : `${aspects.length} recortes guardados`} en la biblioteca. La original no ha cambiado.`,
+      );
+    } catch (error) {
+      toast.error(translateError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted">
+        El recorte más grande que cabe en cada formato, colocado donde hay más detalle y color (sin IA: no reconoce
+        objetos; con fondos muy cargados, mira la vista previa).
+      </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={smart}
+          onChange={(e) => setSmart(e.target.checked)}
+          data-testid="photo-edit-smart"
+        />
+        Encuadre inteligente (si no, centrado)
+      </label>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {NETWORK_ASPECTS.map((aspect) => {
+          const checked = aspects.includes(aspect);
+          const box = boxes[aspect];
+          return (
+            <label
+              key={aspect}
+              className={cn(
+                'flex cursor-pointer flex-col gap-2 rounded-lg border p-2 text-xs',
+                checked ? 'border-primary bg-primary-soft' : 'border-border',
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() =>
+                    setAspects((current) =>
+                      checked
+                        ? current.filter((a) => a !== aspect)
+                        : NETWORK_ASPECTS.filter((a) => a === aspect || current.includes(a)),
+                    )
+                  }
+                  data-testid={`photo-edit-crop-${aspect}`}
+                />
+                {NETWORK_ASPECT_LABEL[aspect]}
+              </span>
+              <PixelsCanvas pixels={previews[aspect]} className="max-h-40 rounded" />
+              <span className="text-muted">
+                {box.width} × {box.height} px
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <Button
+        onClick={() => void submit()}
+        disabled={aspects.length === 0}
+        loading={busy || saving}
+        data-testid="photo-edit-crops-save"
+      >
+        <Crop className="h-4 w-4" aria-hidden />
+        {aspects.length === 0
+          ? 'Elige al menos un formato'
+          : `Guardar ${aspects.length === 1 ? 'el recorte' : `${aspects.length} recortes`}`}
+      </Button>
+    </div>
+  );
+}
+
+// ─────────────────────────────── Fondo ───────────────────────────────
+
+function BackgroundTab({
+  asset,
+  pixels,
+  transparent,
+  saving,
+  onSave,
+  ai,
+  onAiResult,
+}: {
+  asset: MediaAssetRow;
+  pixels: Pixels;
+  transparent: boolean;
+  saving: boolean;
+  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<MediaAssetRow>;
+  ai: AiEditChoice | undefined;
+  onAiResult: (row: MediaAssetRow) => void;
+}) {
+  const profile = useActiveProfile(asset.brand_id);
+  const brandColors = useMemo(
+    () =>
+      (profile.data ? parseProfile(profile.data.data).visual.colors : []).map((c) => ({
+        hex: c.hex.toUpperCase(),
+        name: c.name,
+      })),
+    [profile.data],
+  );
+  const [color, setColor] = useState('#FFFFFF');
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function apply(
+    background: { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; url: string },
+  ) {
+    setBusy(true);
+    try {
+      const backdrop =
+        background.type === 'color'
+          ? ({ kind: 'color', hex: background.hex } as const)
+          : ({ kind: 'image', pixels: await loadCoverPixels(background.url, pixels.width, pixels.height) } as const);
+      const result = compositeOver(pixels, backdrop);
+      await onSave(result, [
+        {
+          kind: 'background',
+          background:
+            background.type === 'color'
+              ? { type: 'color', hex: background.hex }
+              : { type: 'asset', assetId: background.asset.id },
+        },
+      ]);
+      toast.success('Foto con fondo nuevo guardada en la biblioteca. La original no ha cambiado.');
+    } catch (error) {
+      toast.error(error instanceof PhotoLoadError ? error.message : translateError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {!transparent && (
+        <div className="space-y-2">
+          <p className="text-sm">
+            Para cambiar el fondo, primero hay que quitarlo. Eso necesita IA
+            {ai ? '.' : ', y no está disponible en este entorno.'}
+          </p>
+          {ai && <AiAction asset={asset} operation="remove_background" choice={ai} onDone={onAiResult} />}
+        </div>
+      )}
+      {transparent && (
+        <div className="space-y-3" data-testid="photo-edit-backgrounds">
+          <p className="text-sm">Esta foto ya no tiene fondo. Elige uno nuevo (sin IA):</p>
+          {brandColors.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {brandColors.map((c) => (
+                <button
+                  key={c.hex}
+                  type="button"
+                  className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-subtle"
+                  onClick={() => void apply({ type: 'color', hex: c.hex })}
+                  disabled={busy || saving}
+                  data-testid="photo-edit-brand-color"
+                >
+                  <span
+                    className="h-4 w-4 rounded border border-border"
+                    style={{ backgroundColor: c.hex }}
+                    aria-hidden
+                  />
+                  {c.name || c.hex}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-xs">
+              Color liso
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value.toUpperCase())}
+                data-testid="photo-edit-color"
+              />
+            </label>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void apply({ type: 'color', hex: color })}
+              loading={busy || saving}
+              data-testid="photo-edit-color-apply"
+            >
+              Poner este color
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy || saving}>
+              <ImagePlus className="h-4 w-4" aria-hidden />
+              Imagen de la biblioteca
+            </Button>
+          </div>
+          <BackgroundPicker
+            brandId={asset.brand_id}
+            organizationId={asset.organization_id}
+            open={picking}
+            onOpenChange={setPicking}
+            onPick={(row, url) => {
+              setPicking(false);
+              void apply({ type: 'asset', asset: row, url });
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Elegir la imagen de fondo en la biblioteca y conseguir su dirección firmada. */
+function BackgroundPicker({
+  brandId,
+  organizationId,
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  brandId: string;
+  organizationId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (asset: MediaAssetRow, url: string) => void;
+}) {
+  const pick = (asset: MediaAssetRow) => {
+    signedUrlFor(asset.storage_path).then(
+      (url) => (url ? onPick(asset, url) : toast.error('No se ha podido abrir esa imagen.')),
+      (error: unknown) => toast.error(translateError(error)),
+    );
+  };
+  return (
+    <ImagePickerDialog
+      brandId={brandId}
+      libraryPath={`/o/${organizationId}/m/${brandId}/biblioteca`}
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Imagen de fondo"
+      onPick={pick}
+    />
+  );
+}
+
+// ─────────────────────────────── Con IA ───────────────────────────────
+
+/** Una edición con IA: coste máximo, tratamiento de los datos, lanzar y esperar. */
+function AiAction({
+  asset,
+  operation,
+  choice,
+  onDone,
+}: {
+  asset: MediaAssetRow;
+  operation: AiPhotoOperation;
+  choice: AiEditChoice;
+  onDone: (row: MediaAssetRow) => void;
+}) {
+  const factors = operation === 'upscale' ? upscaleFactors(asset.width, asset.height) : [];
+  const [scale, setScale] = useState<2 | 4>(factors[0] ?? 2);
+  const input = useMemo(
+    () => ({ assetId: asset.id, operation, ...(operation === 'upscale' ? { scale } : {}) }),
+    [asset.id, operation, scale],
+  );
+  const possible = operation !== 'upscale' || factors.length > 0;
+  const estimate = useAiEditEstimate(asset.brand_id, input, possible);
+  const edit = useAiEdit(asset.brand_id);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const progress = useGenerationProgress(asset.brand_id, pendingId);
+  const delivered = useRef<string | null>(null);
+  const finished = progress.data?.status === 'completed' ? progress.data.asset : null;
+  useEffect(() => {
+    if (!finished || delivered.current === finished.id) return;
+    delivered.current = finished.id;
+    toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
+    onDone(finished);
+  }, [finished, onDone, operation]);
+  const running =
+    edit.isPending ||
+    (pendingId !== null && progress.data?.status !== 'completed' && progress.data?.status !== 'failed');
+
+  function run() {
+    setPendingId(null);
+    edit.mutateAsync(input).then(
+      async (result) => {
+        if (result.status === 'pending') {
+          setPendingId(result.generationId);
+          return;
+        }
+        const row = await fetchAsset(asset.brand_id, result.asset.id).catch(() => null);
+        if (!row) {
+          toast.error('La foto se editó y está en la biblioteca, pero no se ha podido abrir aquí.');
+          return;
+        }
+        toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
+        onDone(row);
+      },
+      () => undefined,
+    );
+  }
+
+  const Icon = operation === 'upscale' ? Maximize2 : Eraser;
+  return (
+    <div className="space-y-3" data-testid={`photo-edit-ai-${operation}`}>
+      {operation === 'upscale' && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {factors.length === 0 ? (
+            <Notice tone="warning">Esta foto ya es grande: ampliada pasaría de 4096 px por lado.</Notice>
+          ) : (
+            factors.map((factor) => (
+              <label key={factor} className="flex items-center gap-1">
+                <input type="radio" name="upscale" checked={scale === factor} onChange={() => setScale(factor)} />×
+                {factor} ({(asset.width ?? 0) * factor} × {(asset.height ?? 0) * factor} px)
+              </label>
+            ))
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2 text-xs">
+        <Badge tone="neutral">Con IA</Badge>
+        {!choice.euProcessing && <Badge tone="warning">Se procesa fuera de la UE o en región desconocida</Badge>}
+        {choice.untestedAdapter && <Badge tone="neutral">Proveedor sin probar todavía</Badge>}
+      </div>
+      {possible && (
+        <p className="text-xs text-muted" data-testid="photo-edit-ai-cost">
+          {estimate.isPending
+            ? 'Calculando el coste…'
+            : estimate.data
+              ? `Coste máximo: ${formatMicros(estimate.data.costMicros)} (se descuenta del cupo de IA de la organización).`
+              : null}
+        </p>
+      )}
+      {estimate.isError && <AiErrorNotice error={estimate.error} />}
+      {edit.isError && <AiErrorNotice error={edit.error} onRetry={run} />}
+      {progress.data?.status === 'failed' && <Notice tone="warning">{progress.data.message}</Notice>}
+      {pendingId && running && (
+        <Spinner label="La IA está trabajando. Puedes cerrar: el resultado llegará igualmente a la biblioteca." />
+      )}
+      <Button
+        onClick={run}
+        disabled={!possible || running}
+        loading={edit.isPending}
+        data-testid={`photo-edit-ai-run-${operation}`}
+      >
+        <Icon className="h-4 w-4" aria-hidden />
+        {operation === 'upscale' ? `Ampliar ×${scale}` : 'Quitar el fondo'}
+      </Button>
+    </div>
+  );
+}

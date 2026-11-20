@@ -6,6 +6,8 @@ Lo de `f4/integracion` (Integraciones, copiloto por voz y Drive) ya está en la 
 de trabajo y en staging. Rama de integración `f5/integracion` (sin subir): une sobre
 la rama de trabajo `f5/almacenamiento-r2` (archivos de la biblioteca en Cloudflare
 R2) y `f5/copiloto-arreglos` (arreglos del copiloto por voz); **sin desplegar**.
+Rama `f6/edicion-fotos` (sobre `f5/integracion`, sin subir ni integrar): edición
+de fotos bajo demanda (`docs/edicion-fotos.md`).
 
 Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en
 local con proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas
@@ -158,18 +160,49 @@ Drive», además, con una conexión activa. Probado contra Drive simulado (base 
 datos, función y e2e); las fotos HEIC del iPhone no se pueden usar todavía.
 Detalle en `docs/biblioteca-drive.md`.
 
+### Edición de fotos bajo demanda (rama `f6/edicion-fotos`, sin integrar)
+«Editar foto» desde la ficha de la biblioteca y desde una capa de imagen del
+editor (la capa pasa a usar la editada; Ctrl+Z la devuelve). **El original no se
+toca nunca**: cada resultado es un recurso nuevo en «Ediciones» con su
+procedencia (`photo_edit` del navegador, `ai_edit` del servidor, que solo puede
+escribir él; el original tiene que ser de la misma marca).
+- **Sin IA, en el navegador:** mejorar (automático o a mano: luz, contraste,
+  color, temperatura, nitidez), recortes 1:1, 4:5 y 9:16 con encuadre
+  inteligente (heurística de detalle y color, no reconoce objetos) y poner un
+  fondo liso, de color de la marca o de la biblioteca a una foto con transparencia.
+- **Con IA, por `ai-media`** (`photo.options`, `photo.estimate`, `photo.edit`):
+  quitar el fondo y ampliar ×2/×4, con coste máximo antes, cupo y coste por
+  organización (`ai_generations`, propósito `photo.*`). Salen solo con
+  `VITE_AI_PHOTO_EDIT_ENABLED=true` y un modelo en el servidor. ComfyUI propio
+  como opción principal: ampliar con nodos del núcleo (Real-ESRGAN) y quitar el
+  fondo con el nodo BiRefNet de ComfyUI-RMBG; filas sembradas **inactivas** y
+  sin precio verificado. Migración `20261128010000` (con vuelta atrás), sin
+  tablas nuevas.
+- Quitar el fondo en el trabajador sin GPU (BiRefNet o IS-Net con
+  `onnxruntime-node`): valorado y documentado como alternativa, **sin descargar
+  pesos** (falta el «sí»).
+- Pruebas: unitarias, componentes y base de datos en verde; e2e
+  `22-edicion-fotos.spec.ts` **escrita y sin ejecutar**. Sin probar contra un
+  ComfyUI real ni el dibujo real en un navegador.
+- Para llevarla a staging: migración `20261128010000_photo_editing.sql`;
+  redesplegar `ai-media`, `ai-media-poll` y `ai-media-webhook` (código común de
+  medios); variable nueva `VITE_AI_PHOTO_EDIT_ENABLED` (apagada hasta tener
+  modelo) y, si el ComfyUI no está en la UE, `AI_MEDIA_REMOVE_BACKGROUND_MODEL` /
+  `AI_MEDIA_UPSCALE_MODEL`.
+
 ## Sin probar contra el servicio real
 
-| Servicio                                                                                | Estado                                                                              | Detalle                                    |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------ |
-| IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo)              | Adaptadores escritos, sin claves                                                    | `docs/ia-texto.md`                         |
-| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai) | Adaptadores escritos, sin claves; vídeo apagado                                     | `docs/ia-medios.md`                        |
-| Meta (OAuth, publicación, métricas)                                                     | Adaptador escrito; sin aplicación de Meta                                           | `docs/publicacion.md`, `docs/analitica.md` |
-| Stripe                                                                                  | Funciones escritas; sin cuenta                                                      | `docs/facturacion.md`                      |
-| Google Drive (OAuth, listar, servir imágenes)                                           | Adaptador escrito; sin cliente OAuth de Google                                      | `docs/biblioteca-drive.md`                 |
-| Dictado del navegador (Web Speech API de Chrome)                                        | Probado con una simulada                                                            | `docs/copiloto-voz.md`                     |
-| Cloudflare R2 (firmas, subidas, «Probar conexión», migración)                           | Probado con MinIO en local; sin cuenta de Cloudflare                                | `docs/almacenamiento-r2.md`                |
-| «Probar conexión» de Integraciones                                                      | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md`              |
+| Servicio | Estado | Detalle |
+|---|---|---|
+| IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo) | Adaptadores escritos, sin claves | `docs/ia-texto.md` |
+| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai) | Adaptadores escritos, sin claves; vídeo apagado | `docs/ia-medios.md` |
+| Meta (OAuth, publicación, métricas) | Adaptador escrito; sin aplicación de Meta | `docs/publicacion.md`, `docs/analitica.md` |
+| Stripe | Funciones escritas; sin cuenta | `docs/facturacion.md` |
+| Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
+| Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
+| Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
+| Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |
+| «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
 
 ## En staging
 
@@ -226,6 +259,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 
 ## Decisiones del dueño pendientes
 
+
 1. Moneda de cuenta, precios y límites de los planes (propuesta en `docs/facturacion.md`) y plan por defecto.
 2. Proveedor de IA (por defecto, Google Cloud en la UE) y cupo mensual.
 3. Activar el vídeo con IA (por defecto, apagado).
@@ -235,6 +269,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 7. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
 8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
 9. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
+10. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
 
 ## Pendientes conocidos
 

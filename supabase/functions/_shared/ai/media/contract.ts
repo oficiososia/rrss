@@ -53,7 +53,36 @@ export interface VideoRequest {
   aspectRatio: AspectRatio;
 }
 
-export type MediaRequest = ImageRequest | VideoRequest;
+/**
+ * Edición de una foto que ya existe (no se inventa nada nuevo): quitar el
+ * fondo o ampliar la resolución. Lo que se puede hacer sin IA (recortes, luz,
+ * color, nitidez, poner un fondo liso) lo hace el navegador, no esto
+ * (docs/edicion-fotos.md).
+ */
+export const IMAGE_EDIT_OPERATIONS = ['remove_background', 'upscale'] as const;
+export type ImageEditOperation = (typeof IMAGE_EDIT_OPERATIONS)[number];
+
+export interface ImageEditRequest {
+  kind: 'image_edit';
+  operation: ImageEditOperation;
+  /** La foto original, con sus medidas. El original no se toca: el resultado es un archivo nuevo. */
+  source: MediaInput & { width: number; height: number };
+  /** Solo para ampliar: cuántas veces más grande (2 o 4). */
+  scale?: 2 | 4;
+}
+
+export type MediaRequest = ImageRequest | VideoRequest | ImageEditRequest;
+
+/** Tipo de medio que produce una petición: una edición de foto produce una imagen. */
+export function mediaKindOf(request: MediaRequest): MediaKind {
+  return request.kind === 'video' ? 'video' : 'image';
+}
+
+/** Medidas del resultado de una edición: quitar el fondo conserva las de la foto; ampliar las multiplica. */
+export function editOutputSize(request: ImageEditRequest): { width: number; height: number } {
+  const factor = request.operation === 'upscale' ? (request.scale ?? 2) : 1;
+  return { width: request.source.width * factor, height: request.source.height * factor };
+}
 
 /** Unidad en la que cobra un modelo. Coincide con `ai_media_models.billing_unit`. */
 export type BillingUnit = 'image' | 'megapixel' | 'second';
@@ -80,6 +109,11 @@ export interface MediaModel {
   dataRegion: DataRegion;
   trainsOnInputs: TrainsOnInputs;
   delivery: 'sync' | 'async';
+  /**
+   * Qué hace el modelo: generar (por defecto) o una edición de foto. Un modelo
+   * de edición nunca se elige para generar, ni al revés.
+   */
+  operation?: 'generate' | ImageEditOperation;
   /** Ajustes del modelo para su adaptador (nombres de campos, límites…). */
   settings: { [key: string]: Json | undefined };
   priority: number;
@@ -145,6 +179,8 @@ export interface WebhookEvent {
 export interface MediaProvider {
   readonly id: string;
   readonly kinds: readonly MediaKind[];
+  /** Ediciones de foto que sabe hacer (quitar el fondo, ampliar). Sin el campo, ninguna. */
+  readonly edits?: readonly ImageEditOperation[];
   /**
    * `false` mientras el adaptador solo se haya probado con respuestas HTTP
    * simuladas. Viaja con cada resultado para que nadie lo dé por contrastado.
@@ -234,6 +270,18 @@ export interface MediaProvenance {
   dataRegion: DataRegion;
   trainsOnInputs: TrainsOnInputs;
   untestedAdapter: boolean;
+  /** Si es una edición de una foto: cuál, de qué recurso sale y con qué factor. */
+  edit?: MediaEditOrigin;
+}
+
+/** Edición de una foto de la biblioteca: el resultado apunta a su original. */
+export interface MediaEditOrigin {
+  operation: ImageEditOperation;
+  /** `media_assets.id` de la foto original (que no se modifica). */
+  sourceAssetId: string;
+  /** Nombre del original, para el nombre legible del resultado. */
+  sourceName?: string;
+  scale?: number;
 }
 
 /**
@@ -278,6 +326,8 @@ export interface MediaGenerateParams {
   /** Para qué se pide: `post.visual`, `reel.clip`… Queda en el registro. */
   purpose: string;
   request: MediaRequest;
+  /** Solo en ediciones: la foto de la biblioteca de la que sale el resultado. */
+  edit?: Omit<MediaEditOrigin, 'operation' | 'scale'>;
 }
 
 /** Lo que se sabe del tratamiento de datos del modelo usado: viaja con cada resultado. */

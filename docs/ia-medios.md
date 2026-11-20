@@ -37,7 +37,8 @@ páginas de documentación oficial contra las que se escribieron (consultadas el
 
 Fuera de este bloque: Runway (se eligió fal.ai como segundo de vídeo porque su
 cola y sus webhooks están documentados con detalle), OpenAI, Recraft,
-Stability, Replicate, edición determinista (quitar fondo, reencuadrar) y voz.
+Stability, Replicate y voz. La edición de fotos (quitar el fondo y ampliar con
+IA; recortes y ajustes sin IA) está en `docs/edicion-fotos.md`.
 Los reels montados con plantillas son del trabajador de medios, no de aquí.
 
 ## 2. Contrato (`contract.ts`)
@@ -147,6 +148,7 @@ ella no aparece nada (igual que `VITE_AI_TEXT_ENABLED` con el texto).
 
 | Proveedor         | Variables                                                                                                                                       |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Edición de fotos  | `AI_MEDIA_REMOVE_BACKGROUND_MODEL`, `AI_MEDIA_UPSCALE_MODEL` (`proveedor:modelo`; ver `docs/edicion-fotos.md`) |
 | Elección          | `AI_MEDIA_IMAGE_MODEL`, `AI_MEDIA_VIDEO_MODEL` (`proveedor:modelo`), `AI_MEDIA_ALLOW_NON_EU`, `AI_MEDIA_WEBHOOK_BASE_URL` (`https://<proyecto>.supabase.co/functions/v1/ai-media-webhook`), `AI_ALLOWED_ORIGIN` (CORS de `ai-media`) |
 | ComfyUI propio    | `COMFYUI_BASE_URL` (https, o http solo en localhost), `COMFYUI_API_TOKEN` (opcional: el token del proxy o túnel), `COMFYUI_DATA_REGION` (`eu`, `us`, `global` o `unknown`; por defecto `unknown`) |
 | Solo pruebas      | `AI_E2E_SIMULATED_PROVIDER=true` (imagen simulada síncrona y asíncrona en `ai-media`; exige un Supabase local, §12) y `AI_MEDIA_SIMULATED=true` (simulados de imagen y vídeo; desde el 18/11/2026 también exige un Supabase local) |
