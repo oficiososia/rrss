@@ -75,15 +75,29 @@ export function simulatedPng(seed: string): Uint8Array {
  * PNG de prueba de una edición: con transparencia alrededor (quitar el fondo)
  * o más grande (ampliar). Igual de determinista que `simulatedPng`.
  */
-export function simulatedEditPng(seed: string, operation: ImageEditOperation): Uint8Array {
-  return operation === 'remove_background' ? pngOf(seed, 16, true) : pngOf(seed, 32, false);
+export function simulatedEditPng(
+  seed: string,
+  operation: ImageEditOperation,
+  source?: { width: number; height: number },
+): Uint8Array {
+  if (operation === 'remove_background') return pngOf(seed, 16, true);
+  // Cambiar el fondo y mejorar conservan la proporción de la foto (como el proveedor real).
+  if (
+    (operation === 'replace_background' || operation === 'enhance') &&
+    source &&
+    source.width > 0 &&
+    source.height > 0
+  ) {
+    return pngOf(seed, 32, false, Math.max(1, Math.round((32 * source.height) / source.width)));
+  }
+  return pngOf(seed, 32, false);
 }
 
-function pngOf(seed: string, size: number, cutout: boolean): Uint8Array {
+function pngOf(seed: string, size: number, cutout: boolean, rows = size): Uint8Array {
   const h = hash(seed);
   const [r, g, b] = [(h >>> 16) & 0xff, (h >>> 8) & 0xff, h & 0xff];
   const raw: number[] = [];
-  for (let y = 0; y < size; y += 1) {
+  for (let y = 0; y < rows; y += 1) {
     raw.push(0); // sin filtro
     for (let x = 0; x < size; x += 1) {
       if (!cutout) {
@@ -117,7 +131,7 @@ function pngOf(seed: string, size: number, cutout: boolean): Uint8Array {
     0x1a,
     0x0a,
     // Tipo de color 2 (RGB) o 6 (RGB con alfa).
-    ...chunk('IHDR', [...u32(size), ...u32(size), 8, cutout ? 6 : 2, 0, 0, 0]),
+    ...chunk('IHDR', [...u32(size), ...u32(rows), 8, cutout ? 6 : 2, 0, 0, 0]),
     ...chunk('IDAT', zlib),
     ...chunk('IEND', []),
   ]);
@@ -394,7 +408,9 @@ export function createSimulatedImageEditProvider(options: SimulatedOptions = {})
       if (failure) throw failure;
       return {
         status: 'completed',
-        outputs: [{ mimeType: 'image/png', bytes: simulatedEditPng(fingerprint(request), request.operation) }],
+        outputs: [
+          { mimeType: 'image/png', bytes: simulatedEditPng(fingerprint(request), request.operation, request.source) },
+        ],
         usage: { images: 1 },
         providerRequestId: `sim-edit-${calls.length}`,
       };
