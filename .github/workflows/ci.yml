@@ -2,7 +2,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, staging]
+    branches: [main, staging, f8/e2e-fotos]
 permissions:
   contents: read
 concurrency:
