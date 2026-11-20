@@ -53,7 +53,12 @@ describe('páginas legales', () => {
     const table = await screen.findByTestId('legal-processors');
     expect(within(table).getByText('Supabase (Supabase Inc.)')).toBeInTheDocument();
     expect(within(table).getByText('Vercel (Vercel Inc.)')).toBeInTheDocument();
+    expect(within(table).getByText('Cloudflare R2 (Cloudflare, Inc.)')).toBeInTheDocument();
+    expect(within(table).getByText('Google Drive (Google LLC)')).toBeInTheDocument();
+    expect(within(table).getByText(/Dictado por voz del navegador/)).toBeInTheDocument();
+    expect(within(table).getByText(/jurisdicción UE del cubo/)).toBeInTheDocument();
     const page = screen.getByTestId('legal-page-privacy');
+    expect(page).toHaveTextContent('el navegador envía el audio a Google (Chrome) o Microsoft (Edge)');
     expect(page).toHaveTextContent('[RAZÓN SOCIAL]');
     expect(page).toHaveTextContent('[CIF]');
     expect(page).toHaveTextContent('[CORREO DE PRIVACIDAD]');
