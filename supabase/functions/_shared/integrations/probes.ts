@@ -6,7 +6,7 @@
 //   meta      GET /{app-id}?fields=id,name con el token de aplicación
 //             (App ID|App Secret): Meta dice si reconoce la aplicación.
 //   comfyui   GET {base}/system_stats: ComfyUI responde con su versión y GPU.
-//   ai_text   por cada adaptador elegido: Anthropic y Mistral, listar modelos;
+//   ai_text   por cada adaptador elegido: Anthropic, Mistral y OpenAI, listar modelos;
 //             Vertex, pedir un token de acceso con la cuenta de servicio;
 //             Bedrock, listar los modelos de Anthropic de la región.
 //   ai_image  Vertex, pedir un token; Black Forest Labs, consultar el saldo
@@ -28,6 +28,7 @@ import { parseServiceAccountKey, createGoogleTokenSource, GOOGLE_TOKEN_URL } fro
 import { signAwsRequest } from '../ai/text/sigv4.ts';
 import { ANTHROPIC_API_VERSION } from '../ai/text/anthropic-messages.ts';
 import { loadAiTextConfig } from '../ai/text/config.ts';
+import { normalizeOpenAiBaseUrl } from '../ai/text/openai.ts';
 import { loadLocalTestTextConfig } from '../ai/text/local-test.ts';
 import { BFL_DEFAULT_BASE_URL, isBflBaseUrl } from '../ai/media/bfl-image.ts';
 import { isComfyUiBaseUrl } from '../ai/media/comfyui-image.ts';
@@ -285,6 +286,26 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
           : r.status === 200
             ? { name: 'Mistral', ok: true, message: 'Mistral acepta la clave.' }
             : { name: 'Mistral', ok: false, message: rejected('Mistral', r.status) },
+      );
+    } else if (provider.id === 'openai') {
+      // Listar modelos es gratuito. Con el endpoint de la UE comprueba además
+      // que la clave pertenece a un proyecto con residencia en Europa.
+      const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${value(env, 'OPENAI_API_KEY') ?? ''}`,
+        Accept: 'application/json',
+      };
+      const org = value(env, 'OPENAI_ORGANIZATION');
+      const project = value(env, 'OPENAI_PROJECT');
+      if (org) headers['OpenAI-Organization'] = org;
+      if (project) headers['OpenAI-Project'] = project;
+      const r = await call(deps, `${base}/v1/models`, { headers });
+      checks.push(
+        'error' in r
+          ? { name: 'OpenAI', ok: false, message: unreachable('OpenAI', r) }
+          : r.status === 200
+            ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
+            : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
       );
     } else if (provider.id === 'anthropic-vertex') {
       checks.push(await googleToken(value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON') ?? '', deps));

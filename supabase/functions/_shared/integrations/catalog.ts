@@ -4,7 +4,7 @@
 // funciones leen primero lo guardado en la base de datos y, si no está, la
 // variable (settings.ts). El mismo catálogo vive en la migración
 // 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
-// y en 20261124010000 con Cloudflare R2
+// y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI)
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -64,7 +64,7 @@ const prices = json((parsed) =>
 const flag = oneOf(['true', 'false']);
 const providerModel = pattern(/^[A-Za-z0-9._@/:-]{1,200}$/, 'Solo letras, números y . _ @ / : -');
 
-export const TEXT_PROVIDER_CHOICES = ['anthropic-vertex', 'anthropic-bedrock', 'mistral', 'anthropic'] as const;
+export const TEXT_PROVIDER_CHOICES = ['anthropic-vertex', 'anthropic-bedrock', 'mistral', 'openai', 'anthropic'] as const;
 const textProvider = oneOf([...TEXT_PROVIDER_CHOICES]);
 
 /** Prefijos de las variables de proveedor y modelo de cada tarea de texto (ai/text/config.ts). */
@@ -142,6 +142,20 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   { key: 'AI_VERTEX_SERVICE_ACCOUNT_JSON', integration: 'ai_text', secret: true, validate: serviceAccount },
   { key: 'ANTHROPIC_API_KEY', integration: 'ai_text', secret: true },
   { key: 'MISTRAL_API_KEY', integration: 'ai_text', secret: true },
+  { key: 'OPENAI_API_KEY', integration: 'ai_text', secret: true },
+  { key: 'OPENAI_BASE_URL', integration: 'ai_text', secret: false, validate: url() },
+  {
+    key: 'OPENAI_ORGANIZATION',
+    integration: 'ai_text',
+    secret: false,
+    validate: pattern(/^[A-Za-z0-9_-]{3,100}$/, 'Identificador de organización no válido (org-…).'),
+  },
+  {
+    key: 'OPENAI_PROJECT',
+    integration: 'ai_text',
+    secret: false,
+    validate: pattern(/^[A-Za-z0-9_-]{3,100}$/, 'Identificador de proyecto no válido (proj_…).'),
+  },
   {
     key: 'AI_BEDROCK_REGION',
     integration: 'ai_text',

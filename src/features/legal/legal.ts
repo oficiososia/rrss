@@ -107,6 +107,15 @@ export const PROCESSORS: Processor[] = [
     status: 'optional',
   },
   {
+    name: 'OpenAI',
+    purpose: 'IA de texto (incluido el copiloto por voz), alternativa.',
+    region:
+      'Residencia en la UE con un proyecto de región Europa y el endpoint eu.api.openai.com. Sin él, procesa fuera de la UE.',
+    transfer:
+      'Sin transferencia prevista con el endpoint de la UE; el esquema de salida estructurada no entra en la residencia. [CONFIRMAR CONTRATO Y ELEGIBILIDAD]',
+    status: 'optional',
+  },
+  {
     name: 'Black Forest Labs (FLUX)',
     purpose: 'IA de imagen.',
     region: 'Dirección de la UE (api.eu.bfl.ai).',
