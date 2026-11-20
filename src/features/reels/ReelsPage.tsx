@@ -269,6 +269,24 @@ function ReelBuilder({ brandId }: { brandId: string }) {
                     value={piece.seconds ?? ''}
                     onChange={(e) => updatePiece(piece.key, { seconds: parseOptional(e.target.value) })}
                   />
+                  {piece.type === 'photo' && (
+                    <label className="flex items-center gap-1 text-xs text-muted">
+                      Desenfoque
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        className="w-24"
+                        aria-label={`Desenfoque de la pieza ${index + 1}`}
+                        value={piece.blur ?? 0}
+                        onChange={(e) => updatePiece(piece.key, { blur: Number(e.target.value) })}
+                      />
+                      <span className="w-8 tabular-nums" data-testid={`reel-blur-value-${index + 1}`}>
+                        {piece.blur ?? 0}
+                      </span>
+                    </label>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"

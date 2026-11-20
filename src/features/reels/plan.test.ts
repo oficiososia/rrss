@@ -120,6 +120,18 @@ describe('petición a request_media_job', () => {
     });
     expect(buildReelInput(template('pase-lateral'), [photo()], [], null)).not.toHaveProperty('plan.music');
   });
+
+  it('el desenfoque solo viaja en fotos con valor mayor que 0 y no pasa de 100', () => {
+    const blurred = { ...photo(), blur: 40 };
+    const input = buildReelInput(
+      template('pase-lateral'),
+      [blurred, { ...photo(), blur: 0 }, { ...clip(5), blur: 50 }, { ...photo(), blur: 250 }],
+      [],
+      null,
+    ) as { plan: { media: Array<Record<string, unknown>> } };
+    expect(input.plan.media.map((m) => m.blur)).toEqual([40, undefined, undefined, 100]);
+    expect(input.plan.media[1]).not.toHaveProperty('blur');
+  });
 });
 
 describe('estado de un trabajo', () => {
