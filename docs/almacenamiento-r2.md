@@ -160,7 +160,7 @@ Script de migración (en el entorno de quien lo ejecuta, nunca en el repositorio
 ## 4. Migración (`scripts/migrar-a-r2.ts`)
 
 ```
-node scripts/migrar-a-r2.ts --dry-run --org <id> --brand <id> \
+node scripts/migrar-a-r2.ts --dry-run --marcas <marcas.json> \
   --brand-media-list <lista.json> \
   --drive-csv <inventario.csv> \
   --jpeg-dir <carpeta salida> --jpeg-jsonl <subidas-pendientes.jsonl>
@@ -174,13 +174,18 @@ node scripts/migrar-a-r2.ts --dry-run --org <id> --brand <id> \
 - Orígenes: `brand-media` (misma ruta en R2); del inventario de Drive, solo filas
   con estado `incluida`; las HEIC se sustituyen por su JPEG (el subido a Drive,
   `jpeg_id`, o el local, `jpeg_local` / `<jpeg-dir>/<id>.jpg`). Las fotos de Drive
-  van a `<org>/<marca>/import/drive/<id>-<nombre>`.
+  van a `<org>/<marca>/import/google-drive/<id>-<nombre>`, en la marca que dice la
+  columna «marca» del inventario según `--marcas` (§4.1); las filas de una marca
+  sin destino no se copian. Sin `--marcas`, `--org` y `--brand` llevan todo a una
+  sola marca. (Hasta el 20/11 la carpeta era `import/drive/`: la biblioteca no
+  admite recursos bajo `…/drive/`, reservada para las referencias de Drive, así que
+  lo copiado con esa ruta, solo en la prueba con MinIO, no vale.)
 - `--limit <n>`: copia como mucho n archivos en la pasada (para probar).
 - `--switch` (opcional, tras copiar): pasa a `storage_backend = 'r2'` las filas de
   `media_assets` cuyo objeto ya está copiado y comprobado. Sin él, la biblioteca
   sigue leyendo de Supabase.
-- Las fotos de Drive se copian como objetos; **darlas de alta en la biblioteca**
-  (o pasar las referencias de Drive a R2) es un paso aparte, pendiente.
+- Las fotos de Drive se copian como objetos; darlas de alta en la biblioteca es el
+  paso siguiente, con `scripts/alta-biblioteca.ts` (§4.1).
 
 Recuento en seco del 20/11/2026 (brand-media leído de staging con SQL de solo
 lectura; inventario y JPEG locales):
@@ -200,6 +205,135 @@ permiso» y 21 HEIC cuyo JPEG original ya está en el inventario.
 La copia (`--apply`) se ha probado contra MinIO en local (6 JPEG en dos pasadas:
 la segunda se salta lo ya copiado). **Sin probar contra R2 real ni bajando de Drive**
 (hace falta `DRIVE_ACCESS_TOKEN`).
+
+### 4.1 Alta en la biblioteca (`scripts/alta-biblioteca.ts`)
+
+Convierte cada objeto copiado desde Drive o desde los JPEG locales en un recurso
+de la biblioteca (`media_assets`) de su marca. Sin código de ningún cliente: la
+marca y las categorías salen del inventario y del mapeo que da quien lo ejecuta.
+
+```
+node scripts/alta-biblioteca.ts [--dry-run | --apply | --comprobar] --marcas <marcas.json> \
+  --drive-csv <inventario.csv> --jpeg-dir <carpeta salida> --jpeg-jsonl <subidas-pendientes.jsonl> \
+  --state <migrar-a-r2.estado.jsonl>
+```
+
+Mapeo (`--marcas`, archivo fuera del repositorio; el mismo para la copia y el alta):
+
+```json
+{
+  "marcas": {
+    "<marca del inventario>": "<brand_id>",
+    "<otra marca>": { "brand_id": "<uuid>", "organization_id": "<uuid, opcional: se comprueba>" }
+  },
+  "categorias": {
+    "<categoría del inventario>": { "etiquetas": ["…"], "carpeta": "…" },
+    "<otra categoría>": ["etiqueta", "otra"]
+  }
+}
+```
+
+Las marcas y las categorías se comparan sin tildes ni mayúsculas. Una categoría sin
+entrada en el mapeo da etiquetas partiendo por «/» («vinos/botellas» → `vinos`,
+`botellas`) y la carpeta con la primera. La organización de cada marca se lee de la
+base de datos (y, si el mapeo la dice, tiene que coincidir).
+
+Qué guarda cada recurso:
+
+| Campo                      | Valor                                                                                                                                                                                                                                                                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Marca                      | La de la columna «marca» según el mapeo                                                                                                                                                                                                                                                                                    |
+| Nombre (`file_name`)       | Legible: la carpeta por debajo de la subcategoría (el plato o el vino: «Vinos/Espumosos/Collet Rosé» → «Collet Rosé.jpg»); si no la hay, lo que va antes de « - » en el archivo salvo que sea el de la cámara («Jameson - IMG_0454» → «Jameson»; «clover club - IMG…» en «Clover Club» → «Clover Club»); si no, la carpeta |
+| Carpeta y etiquetas        | Las de la categoría en el mapeo, más la subcategoría como etiqueta (sin numeración: «03 Entrantes fríos» → `entrantes fríos`), salvo que sea una ruta, un marcador como «(raíz)» o el nombre de la marca                                                                                                                   |
+| Tipo, mime, tamaño         | Del objeto en R2 (`image` / `video`)                                                                                                                                                                                                                                                                                       |
+| Ancho y alto               | De la cabecera del JPEG/PNG (con la orientación EXIF): del archivo local o leyendo los primeros 256 KB de R2; con `DRIVE_ACCESS_TOKEN`, de los metadatos de Drive (también la duración de los vídeos). Si no se pueden leer, vacíos                                                                                        |
+| Huella (`sha256`)          | La de `--state`; de los huérfanos locales, se calcula                                                                                                                                                                                                                                                                      |
+| Procedencia (`provenance`) | `{"type": "import", "source": "google_drive", "drive_file_id", "drive_jpeg_id", "drive_path", "original_name", "converted_from", "inventory_category", "imported_at"}`                                                                                                                                                     |
+| Origen y almacén           | `origin = 'import'`, `storage_backend = 'r2'`: antes de cada alta apunta el objeto con `media_storage_register_upload` (sin persona), como `media-storage`                                                                                                                                                                 |
+
+Idempotente y reanudable: con `--apply` lee lo que ya hay en la biblioteca de cada
+marca y lista R2 bajo `<org>/<marca>/import/google-drive/`; se salta lo que ya tiene
+recurso (por ruta, que es única, y por huella si es la misma foto) y lo que aún no
+está en R2; la inserción además ignora rutas repetidas. **Huérfanos**: un objeto que
+está en R2 sin recurso (la copia o el alta se cortaron a medias, o no se anotó en
+`--state`) sale en el listado de R2 y se da de alta igual. Los objetos de esa carpeta
+que no salen del inventario se listan y no se tocan.
+
+`--comprobar` (solo lectura): recursos importados sin objeto en R2, tamaños
+distintos, objetos sin recurso y recursos importados que no están en R2. Sale con 1
+si hay algo.
+
+Pruebas: `tests/db/alta-biblioteca.test.ts` (mapeo, nombre, etiquetas, dimensiones,
+recuento en seco y, contra las migraciones reales en PGlite, alta en la marca de
+cada fila con `storage_backend = 'r2'`, relanzar sin duplicar, huérfano completado,
+objeto que llega tarde, aislamiento entre organizaciones y comprobación).
+
+### 4.2 Recuento en seco del alta (20/11/2026)
+
+Con el inventario real (`drive-inventario-archivos.csv`), los 371 JPEG locales,
+sin `--state` (como si todo estuviera copiado) y este mapeo de categorías:
+platos → `platos` (Platos); vinos/botellas → `vinos`, `botellas` (Vinos); cócteles →
+`cócteles` (Cócteles); licores/botellas de barra → `licores`, `botellas` (Botellas);
+producto/elaboración → `elaboración` (Elaboración); local y ambiente → `local`
+(Local); logotipos/gráficos → `local`, `logotipo` (Local); salida de app y sin
+clasificar, su nombre.
+
+| Marca          | Categoría del inventario  | Fotos   | Vídeos | Tamaño         | Carpeta         |
+| -------------- | ------------------------- | ------- | ------ | -------------- | --------------- |
+| Casa Tomás     | platos                    | 91      | 0      | 121,2 MB       | Platos          |
+| Casa Tomás     | vinos/botellas            | 119     | 0      | 265,0 MB       | Vinos           |
+| Casa Tomás     | local y ambiente          | 22      | 0      | 49,9 MB        | Local           |
+| Casa Tomás     | logotipos/gráficos        | 2       | 0      | 4,3 MB         | Local           |
+| Casa Tomás     | salida de app             | 5       | 0      | 5,9 MB         | Salidas de apps |
+| **Casa Tomás** |                           | **239** | **0**  | **446,4 MB**   |                 |
+| Touza          | cócteles                  | 103     | 32     | 384,0 MB       | Cócteles        |
+| Touza          | licores/botellas de barra | 77      | 0      | 220,5 MB       | Botellas        |
+| Touza          | producto/elaboración      | 33      | 0      | 67,2 MB        | Elaboración     |
+| Touza          | local y ambiente          | 18      | 14     | 1.856,5 MB     | Local           |
+| Touza          | sin clasificar            | 10      | 0      | 23,1 MB        | Sin clasificar  |
+| **Touza**      |                           | **241** | **46** | **2.551,1 MB** |                 |
+| **Total**      |                           | **480** | **46** | **2.997,6 MB** |                 |
+
+Son los 526 objetos de Drive y JPEG locales de §4 (los 34 de `brand-media` ya tienen
+recurso). De platos faltan 20 de los 111 «incluidos»: son HEIC cuyo JPEG original ya
+está en el inventario y se da de alta ese. Los vídeos de Touza pesan 1,8 GB: en
+Supabase Free no cabrían, en R2 sí.
+
+### 4.3 Marca en modo agencia (`scripts/crear-marca-agencia.sql`)
+
+Para que una marca del inventario tenga destino (p. ej. Touza en la organización
+Oficiosos, como Casa Tomás), `scripts/crear-marca-agencia.sql` crea la marca en una
+organización existente con `ai_mode = 'agency'` y le copia las personas y roles de
+otra marca de la organización (la cuenta de la agencia como editora). Es una
+transacción, no duplica si la marca ya existe y devuelve el `brand_id` para el
+mapeo. **No se ha ejecutado.** Para Touza, en el editor SQL de staging, rellenar:
+
+| Parámetro                | Valor                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `organization_id`        | id de la organización Oficiosos (`select id, name from public.organizations;`) |
+| nombre                   | `Touza`                                                                        |
+| `sector`, `website`      | `Coctelería`, `https://touza.restaurantecasatomascrevillente.es`               |
+| `brand_id` de referencia | id de la marca Casa Tomás de esa organización                                  |
+
+El perfil de marca, el logotipo y las redes se completan después desde la aplicación.
+Probado en `tests/db/alta-biblioteca.test.ts` contra las migraciones reales.
+
+### 4.4 Orden completo
+
+1. **Marcas de destino**: que existan (§4.3 para la que falte) y escribir
+   `marcas.json` con sus `brand_id` (fuera del repositorio).
+2. **Copiar** (en seco y luego de verdad):
+   `node scripts/migrar-a-r2.ts --dry-run …` → revisar el recuento →
+   `node scripts/migrar-a-r2.ts --apply --marcas marcas.json … --state estado.jsonl`
+   (relanzar hasta que no falle nada).
+3. **Dar de alta**: `node scripts/alta-biblioteca.ts --dry-run …` → revisar el recuento
+   por marca y categoría → `node scripts/alta-biblioteca.ts --apply --marcas marcas.json
+… --state estado.jsonl` (relanzar si algo falla: no duplica).
+4. **Comprobar**: `node scripts/alta-biblioteca.ts --comprobar …` sin errores, y mirar
+   en la biblioteca de cada marca unas cuantas fotos y un vídeo (que se ven y se
+   pueden usar en el editor).
+5. **`--switch`**: `node scripts/migrar-a-r2.ts --apply --switch …` pasa a R2 los
+   recursos de `brand-media` ya copiados (los importados de Drive ya nacen en R2).
 
 ## 5. Lo que hace el dueño en Cloudflare
 
@@ -252,7 +386,9 @@ Hasta el paso 6 las subidas siguen yendo a Supabase y nada cambia.
 - Añadir a Cloudflare como encargado en `docs/rgpd.md` y en la política de privacidad.
 - Si el alta de un recurso falla después de subir a R2, el objeto queda en R2 sin
   recurso (en Supabase se borra en el momento).
-- Dar de alta en la biblioteca las fotos de Drive copiadas a R2.
+- Ejecutar el alta en la biblioteca (§4.1): escrito y probado con PGlite y un R2 en
+  memoria; **sin ejecutar** contra staging ni R2. Antes, crear la marca de Touza
+  (§4.3, sin ejecutar).
 - Tipografías, fuentes de marca y exportaciones RGPD siguen en Supabase Storage.
 - La exportación RGPD de la organización no incluye los archivos de R2 (tampoco los
   de Drive).

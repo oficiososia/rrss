@@ -10,8 +10,13 @@
 // --state, y lo anotado se salta en la siguiente pasada.
 //
 // Opciones:
-//   --org <uuid> --brand <uuid>   destino de las fotos de Drive y de los JPEG locales
-//                                 (<org>/<marca>/import/drive/<id>-<nombre>)
+//   --marcas <json>               destino de cada fila del inventario según su columna
+//                                 «marca»: {"marcas": {"<marca del inventario>": "<brand_id>"}}
+//                                 (el mismo archivo que usa scripts/alta-biblioteca.ts). Las
+//                                 filas de una marca que no está en el mapeo no se copian.
+//   --org <uuid> --brand <uuid>   sin --marcas: todo lo de Drive y los JPEG locales a esa marca
+//   Claves en R2: <org>/<marca>/import/google-drive/<id>-<nombre> (no «/drive/»: esa carpeta
+//   está reservada para las referencias de Drive y la biblioteca no admite recursos en ella)
 //   --brand-media-list <json>     lista de objetos de brand-media ({path, bytes, mime}),
 //                                 p. ej. exportada con SQL; sin ella, con --apply se lista
 //                                 con la clave de servicio
@@ -19,6 +24,10 @@
 //   --estado <texto>              estado del inventario que se copia (por defecto «incluida»)
 //   --jpeg-dir <carpeta>          JPEG convertidos: <carpeta>/<id del HEIC>.jpg
 //   --jpeg-jsonl <jsonl>          lista de esos JPEG ({id, title, ref})
+//   --drive-dir <carpeta>         archivos de Drive ya bajados a mano (p. ej. con el conector de Drive):
+//                                 <carpeta>/<id de Drive>.<ext>. Una fila de origen Drive se lee de ahí
+//                                 si el archivo existe; si no existe y no hay DRIVE_ACCESS_TOKEN, el
+//                                 recuento la marca «falta descargar»
 //   --state <jsonl>               registro de lo copiado (por defecto ./migrar-a-r2.estado.jsonl)
 //   --switch                      tras copiar, pasa a R2 los recursos de brand-media copiados
 //   --concurrency <n>             copias a la vez (por defecto 4)
@@ -53,7 +62,55 @@ export interface PlanItem {
   from: string;
   /** Qué representa (para el recuento): foto, vídeo, JPEG de un HEIC… */
   kind: 'foto' | 'vídeo' | 'otro';
+  /** Marca de destino (de --marcas o de --brand); null si aún no se sabe. */
+  brandId?: string | null;
+  /** Fila del inventario de la que sale (Drive y JPEG locales): para darla de alta en la biblioteca. */
+  meta?: InventoryMeta;
+  /** Origen Drive ya bajado a disco (--drive-dir): se lee de ahí, no de la API. */
+  localFrom?: string;
+  /** Origen Drive que no está en --drive-dir y no se puede bajar (sin DRIVE_ACCESS_TOKEN). */
+  missing?: boolean;
 }
+
+/** Lo que el paso de alta necesita saber de la fila del inventario. */
+export interface InventoryMeta {
+  /** Id de Drive del archivo original (el HEIC si se copia su JPEG). */
+  driveId: string;
+  /** Id de Drive del JPEG convertido, si lo hay. */
+  jpegDriveId: string | null;
+  /** Nombre del archivo original en Drive. */
+  name: string;
+  /** Ruta de carpetas en Drive. */
+  path: string;
+  /** Columna «marca» del inventario. */
+  brand: string;
+  category: string;
+  subcategory: string;
+  /** Mime del original (image/heic si se copia su JPEG). */
+  originalMime: string;
+  /** Se copia el JPEG de un HEIC. */
+  fromHeic: boolean;
+}
+
+/** Destino de una marca del inventario. */
+export interface BrandTarget {
+  brandId: string;
+  /** Si no se sabe (en seco, sin base de datos), las claves salen con <org>. */
+  organizationId: string | null;
+}
+
+/** Comparación tolerante de nombres de marca y de categoría: sin tildes, mayúsculas ni espacios de más. */
+export function normalizeLabel(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Carpeta de las claves en R2 de lo importado de Drive (fuera de la carpeta reservada `drive/`). */
+export const IMPORT_FOLDER = 'import/google-drive';
 
 export interface PlanSummary {
   items: PlanItem[];
@@ -128,6 +185,15 @@ export interface PlanInput {
   jpegList: Array<{ id: string; title?: string }> | null;
   /** Tamaño de un archivo local, o null si no existe. */
   localSize(file: string): number | null;
+  /**
+   * Destino según la columna «marca» del inventario (clave: normalizeLabel de
+   * la marca). Con él no se usan `org` y `brand`.
+   */
+  brands?: Map<string, BrandTarget> | null;
+  /** Carpeta con los archivos de Drive ya bajados: <carpeta>/<id>.<ext>. */
+  driveDir?: string | null;
+  /** Hay DRIVE_ACCESS_TOKEN: lo que falte en driveDir se podrá bajar de la API. */
+  driveToken?: boolean;
 }
 
 /** Qué se copiaría, sin tocar nada. */
@@ -142,13 +208,52 @@ export function buildPlan(input: PlanInput): PlanSummary {
     if (!items.has(item.key)) items.set(item.key, item);
     else skip('repetido (misma clave)');
   };
-  const prefix = input.org && input.brand ? `${input.org}/${input.brand}/import/drive` : '<org>/<marca>/import/drive';
-  if (!(input.org && input.brand) && (input.driveRows || input.jpegList)) {
-    warnings.push('Faltan --org y --brand: las claves de Drive salen con <org>/<marca> (solo vale en seco).');
+  const byBrand = input.brands ?? null;
+  const legacyPrefix =
+    input.org && input.brand ? `${input.org}/${input.brand}/${IMPORT_FOLDER}` : `<org>/<marca>/${IMPORT_FOLDER}`;
+  if (!byBrand && !(input.org && input.brand) && (input.driveRows || input.jpegList)) {
+    warnings.push(
+      'Faltan --marcas (o --org y --brand): las claves de Drive salen con <org>/<marca> (solo vale en seco).',
+    );
   }
   if ((input.org && !UUID.test(input.org)) || (input.brand && !UUID.test(input.brand))) {
     warnings.push('--org y --brand tienen que ser identificadores (uuid).');
   }
+  if (byBrand && [...byBrand.values()].some((t) => !t.organizationId)) {
+    warnings.push('Hay marcas sin organización resuelta: sus claves salen con <org> (solo vale en seco).');
+  }
+  /** Destino de una fila: prefijo de la clave y marca, o null si su marca no tiene destino. */
+  const targetOf = (brandLabel: string | null): { prefix: string; brandId: string | null } | null => {
+    if (!byBrand) return { prefix: legacyPrefix, brandId: input.brand };
+    if (brandLabel === null) return null;
+    const t = byBrand.get(normalizeLabel(brandLabel));
+    if (!t) return null;
+    return { prefix: `${t.organizationId ?? '<org>'}/${t.brandId}/${IMPORT_FOLDER}`, brandId: t.brandId };
+  };
+  /** Resuelve un origen Drive contra --drive-dir: archivo local, o «falta descargar» si no hay token. */
+  const driveLocal = (item: PlanItem, ext: string): PlanItem => {
+    if (!input.driveDir) return item;
+    const file = path.join(input.driveDir, `${item.from}${ext ? `.${ext}` : ''}`);
+    const size = input.localSize(file);
+    if (size !== null && size > 0 && (item.bytes === 0 || item.bytes === size)) {
+      return { ...item, localFrom: file, bytes: size };
+    }
+    if (size !== null && item.bytes > 0 && size !== item.bytes) {
+      warnings.push(`${item.from}: el archivo bajado tiene ${size} bytes y el inventario dice ${item.bytes}.`);
+    }
+    return input.driveToken ? item : { ...item, missing: true };
+  };
+  const metaOf = (row: Record<string, string>, fromHeic: boolean): InventoryMeta => ({
+    driveId: row.id ?? '',
+    jpegDriveId: row.jpeg_id || null,
+    name: row.nombre ?? '',
+    path: row.ruta ?? '',
+    brand: row.marca ?? '',
+    category: row.categoria ?? '',
+    subcategory: row.subcategoria ?? '',
+    originalMime: row.mimeType ?? '',
+    fromHeic,
+  });
 
   for (const object of input.brandMedia ?? []) {
     add({
@@ -177,6 +282,12 @@ export function buildPlan(input: PlanInput): PlanSummary {
       continue;
     }
     const baseName = (row.nombre ?? id).replace(/\.[^.]+$/, '');
+    const target = targetOf(row.marca ?? '');
+    if (!target) {
+      skip(`marca sin destino en --marcas: ${(row.marca ?? '').trim() || 'sin marca'}`);
+      continue;
+    }
+    const { prefix, brandId } = target;
     if (isHeic(row)) {
       const jpegState = row.jpeg_estado ?? '';
       if (/^ya exist/i.test(jpegState)) {
@@ -194,17 +305,26 @@ export function buildPlan(input: PlanInput): PlanSummary {
           mime: 'image/jpeg',
           from: local.file,
           kind: 'foto',
+          brandId,
+          meta: metaOf(row, true),
         });
       } else if (row.jpeg_id) {
         heicDone.add(id);
-        add({
-          source: 'drive',
-          key: `${prefix}/${id}-${safeName(baseName)}.jpg`,
-          bytes: 0,
-          mime: 'image/jpeg',
-          from: row.jpeg_id,
-          kind: 'foto',
-        });
+        add(
+          driveLocal(
+            {
+              source: 'drive',
+              key: `${prefix}/${id}-${safeName(baseName)}.jpg`,
+              bytes: 0,
+              mime: 'image/jpeg',
+              from: row.jpeg_id,
+              kind: 'foto',
+              brandId,
+              meta: metaOf(row, true),
+            },
+            'jpg',
+          ),
+        );
         warnings.push(`JPEG de ${id} solo en Drive: su tamaño se sabrá al copiarlo.`);
       } else {
         skip('HEIC sin JPEG (no se puede usar en el navegador)');
@@ -213,22 +333,37 @@ export function buildPlan(input: PlanInput): PlanSummary {
     }
     const mime = row.mimeType || 'application/octet-stream';
     const ext = (row.nombre ?? '').match(/\.([A-Za-z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? '';
-    add({
-      source: 'drive',
-      key: `${prefix}/${id}-${safeName(baseName)}${ext ? `.${ext}` : ''}`,
-      bytes: Number(row.bytes) || 0,
-      mime,
-      from: id,
-      kind: kindOf(mime),
-    });
+    add(
+      driveLocal(
+        {
+          source: 'drive',
+          key: `${prefix}/${id}-${safeName(baseName)}${ext ? `.${ext}` : ''}`,
+          bytes: Number(row.bytes) || 0,
+          mime,
+          from: id,
+          kind: kindOf(mime),
+          brandId,
+          meta: metaOf(row, false),
+        },
+        ext,
+      ),
+    );
   }
 
   // JPEG convertidos que no salen como «incluida» en el inventario.
   const excluded = new Set((input.driveRows ?? []).filter((r) => (r.estado ?? '') !== input.estado).map((r) => r.id));
+  const included = new Set((input.driveRows ?? []).filter((r) => (r.estado ?? '') === input.estado).map((r) => r.id));
   for (const entry of input.jpegList ?? []) {
     if (heicDone.has(entry.id)) continue;
     if (excluded.has(entry.id)) {
       skip('JPEG de un HEIC excluido en el inventario');
+      continue;
+    }
+    // Fila incluida ya contada arriba (su marca sin destino, o la HEIC con su JPEG original).
+    if (included.has(entry.id)) continue;
+    const target = targetOf(null);
+    if (!target) {
+      skip('JPEG sin fila en el inventario (no se sabe su marca)');
       continue;
     }
     const local = jpegFor(entry.id);
@@ -240,14 +375,80 @@ export function buildPlan(input: PlanInput): PlanSummary {
     const title = (entry.title ?? entry.id).replace(/\.[^.]+$/, '');
     add({
       source: 'local',
-      key: `${prefix}/${entry.id}-${safeName(title)}.jpg`,
+      key: `${target.prefix}/${entry.id}-${safeName(title)}.jpg`,
       bytes: local.size,
       mime: 'image/jpeg',
       from: local.file,
       kind: 'foto',
+      brandId: target.brandId,
     });
   }
   return { items: [...items.values()], skipped, notes, warnings: [...new Set(warnings)] };
+}
+
+/**
+ * Lee la parte «marcas» del archivo de mapeo que da quien ejecuta:
+ * `{"marcas": {"<marca del inventario>": "<brand_id>" | {"brand_id": "…", "organization_id": "…"}}}`.
+ */
+export function parseBrandTargets(raw: unknown): Map<string, BrandTarget> {
+  const root = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  const marcas = root?.marcas;
+  if (typeof marcas !== 'object' || marcas === null || Array.isArray(marcas)) {
+    throw new Error('El mapeo tiene que llevar {"marcas": {"<marca del inventario>": "<brand_id>"}}');
+  }
+  const out = new Map<string, BrandTarget>();
+  for (const [label, value] of Object.entries(marcas as Record<string, unknown>)) {
+    const obj = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
+    const brandId = typeof value === 'string' ? value : obj?.brand_id;
+    const organizationId = obj?.organization_id ?? null;
+    if (typeof brandId !== 'string' || !UUID.test(brandId)) {
+      throw new Error(`Marca «${label}»: falta su brand_id (uuid)`);
+    }
+    if (organizationId !== null && (typeof organizationId !== 'string' || !UUID.test(organizationId))) {
+      throw new Error(`Marca «${label}»: organization_id no es un uuid`);
+    }
+    const key = normalizeLabel(label);
+    if (!key) throw new Error('Hay una marca sin nombre en el mapeo');
+    if (out.has(key)) throw new Error(`La marca «${label}» está dos veces en el mapeo`);
+    out.set(key, { brandId: brandId.toLowerCase(), organizationId: organizationId?.toLowerCase() ?? null });
+  }
+  if (out.size === 0) throw new Error('El mapeo no tiene ninguna marca');
+  return out;
+}
+
+/**
+ * Completa la organización de cada marca leyéndola de la base de datos (clave
+ * de servicio). Falla si una marca no existe o si el mapeo dice otra organización.
+ */
+export async function resolveBrandOrganizations(
+  targets: Map<string, BrandTarget>,
+  lookup: (brandIds: string[]) => Promise<Map<string, string>>,
+): Promise<Map<string, BrandTarget>> {
+  const ids = [...new Set([...targets.values()].map((t) => t.brandId))];
+  const orgs = await lookup(ids);
+  const out = new Map<string, BrandTarget>();
+  for (const [label, t] of targets) {
+    const org = orgs.get(t.brandId);
+    if (!org) throw new Error(`La marca ${t.brandId} no existe`);
+    if (t.organizationId && t.organizationId !== org) {
+      throw new Error(`La marca ${t.brandId} es de la organización ${org}, no de ${t.organizationId}`);
+    }
+    out.set(label, { brandId: t.brandId, organizationId: org });
+  }
+  return out;
+}
+
+/** Organización de cada marca, con la API de datos y la clave de servicio. */
+export function brandOrganizationsFromRest(url: string, serviceKey: string, fetchImpl: typeof fetch = fetch) {
+  return async (brandIds: string[]): Promise<Map<string, string>> => {
+    const response = await fetchImpl(
+      `${url.replace(/\/+$/, '')}/rest/v1/brands?select=id,organization_id&id=in.(${brandIds.join(',')})`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+    );
+    if (!response.ok) throw new Error(`No se pudieron leer las marcas (HTTP ${response.status})`);
+    const rows = (await response.json()) as Array<{ id: string; organization_id: string }>;
+    return new Map(rows.map((r) => [r.id, r.organization_id]));
+  };
 }
 
 const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
@@ -280,7 +481,13 @@ export function formatSummary(plan: PlanSummary, done: Set<string> = new Set()):
     for (const [why, n] of Object.entries(plan.skipped).sort()) lines.push(`  ${n} · ${why}`);
   }
   for (const [what, n] of Object.entries(plan.notes)) lines.push('', `${n} · ${what}`);
-  const unknown = plan.items.filter((i) => i.bytes === 0).length;
+  const missing = plan.items.filter((i) => i.missing).length;
+  if (missing)
+    lines.push(
+      '',
+      `${missing} archivos de Drive: falta descargar (no están en --drive-dir y no hay DRIVE_ACCESS_TOKEN).`,
+    );
+  const unknown = plan.items.filter((i) => i.bytes === 0 && !i.missing).length;
   if (unknown) lines.push('', `${unknown} archivos de Drive sin tamaño conocido (se sabrá al copiarlos).`);
   if (plan.warnings.length) lines.push('', ...plan.warnings.slice(0, 10).map((w) => `Aviso: ${w}`));
   if (plan.warnings.length > 10) lines.push(`(y ${plan.warnings.length - 10} avisos más)`);
@@ -289,7 +496,7 @@ export function formatSummary(plan: PlanSummary, done: Set<string> = new Set()):
 
 // ─────────────────────────────── Ejecución ───────────────────────────────
 
-function args(argv: string[]) {
+export function args(argv: string[]) {
   const out: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
@@ -304,20 +511,20 @@ function args(argv: string[]) {
   return out;
 }
 
-async function readJsonl(file: string): Promise<Array<Record<string, unknown>>> {
+export async function readJsonl(file: string): Promise<Array<Record<string, unknown>>> {
   return (await readFile(file, 'utf8'))
     .split(/\r?\n/)
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
-function required(name: string): string {
+export function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Falta la variable ${name}`);
   return value;
 }
 
-function r2FromEnv(): ObjectStorage & { headBucket(): Promise<{ status: number }> } {
+export function r2FromEnv(): ObjectStorage & { headBucket(): Promise<{ status: number }> } {
   const local = process.env.MEDIA_STORAGE_S3_ENDPOINT?.trim();
   const jurisdiction = (process.env.R2_JURISDICTION?.trim() || 'eu') === 'default' ? 'default' : 'eu';
   const endpoint =
@@ -337,8 +544,9 @@ async function openSource(
   item: PlanItem,
   supabase: ObjectStorage | null,
 ): Promise<{ stream: Readable; bytes: number }> {
-  if (item.source === 'local') {
-    return { stream: createReadStream(item.from), bytes: (await stat(item.from)).size };
+  if (item.source === 'local' || item.localFrom) {
+    const file = item.localFrom ?? item.from;
+    return { stream: createReadStream(file), bytes: (await stat(file)).size };
   }
   let response: Response;
   if (item.source === 'drive') {
@@ -412,7 +620,19 @@ async function main(): Promise<number> {
       ? (await readJsonl(a['jpeg-jsonl'])).map((e) => ({ id: String(e.id), title: String(e.title ?? '') }))
       : null;
 
+  let brands: Map<string, BrandTarget> | null = null;
+  if (typeof a.marcas === 'string') {
+    brands = parseBrandTargets(JSON.parse(await readFile(a.marcas, 'utf8')) as unknown);
+    if (apply) {
+      brands = await resolveBrandOrganizations(
+        brands,
+        brandOrganizationsFromRest(required('SUPABASE_URL'), required('SUPABASE_SERVICE_ROLE_KEY')),
+      );
+    }
+  }
+
   const plan = buildPlan({
+    brands,
     org: typeof a.org === 'string' ? a.org : null,
     brand: typeof a.brand === 'string' ? a.brand : null,
     brandMedia,
@@ -420,6 +640,8 @@ async function main(): Promise<number> {
     estado: typeof a.estado === 'string' ? a.estado : 'incluida',
     jpegDir: typeof a['jpeg-dir'] === 'string' ? a['jpeg-dir'] : null,
     jpegList,
+    driveDir: typeof a['drive-dir'] === 'string' ? a['drive-dir'] : null,
+    driveToken: Boolean(process.env.DRIVE_ACCESS_TOKEN?.trim()),
     localSize(file) {
       try {
         return existsSync(file) ? statSync(file).size : null;
@@ -441,8 +663,8 @@ async function main(): Promise<number> {
   const bucket = await r2.headBucket();
   if (bucket.status !== 200) throw new Error(`El cubo no responde (HTTP ${bucket.status})`);
   const limit = Number(a.limit) > 0 ? Number(a.limit) : Infinity;
-  const pending = plan.items.filter((i) => !done.has(i.key)).slice(0, limit);
-  if (plan.items.some((i) => i.key.startsWith('<org>'))) throw new Error('Faltan --org y --brand');
+  const pending = plan.items.filter((i) => !done.has(i.key) && !i.missing).slice(0, limit);
+  if (plan.items.some((i) => i.key.startsWith('<org>'))) throw new Error('Faltan --marcas (o --org y --brand)');
   const concurrency = Math.max(1, Math.min(16, Number(a.concurrency) || 4));
   let ok = 0;
   let failed = 0;

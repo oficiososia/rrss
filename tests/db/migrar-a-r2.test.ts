@@ -50,11 +50,11 @@ describe('migrar a R2: recuento en seco', () => {
     const keys = plan.items.map((i) => `${i.source} ${i.key}`);
     expect(keys).toEqual([
       `brand-media ${ORG}/${BRAND}/media/a.jpg`,
-      `local ${ORG}/${BRAND}/import/drive/heicConJpegLocal01-IMG_1.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/heicSoloEnDrive001-IMG_2.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/fotoJpegDeDrive001-Plato-con-punto-y-coma.jpg`,
-      `drive ${ORG}/${BRAND}/import/drive/videoDeDrive00001-Video-bar.mov`,
-      `local ${ORG}/${BRAND}/import/drive/extraSinInventario-Extra.jpg`,
+      `local ${ORG}/${BRAND}/import/google-drive/heicConJpegLocal01-IMG_1.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/heicSoloEnDrive001-IMG_2.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/fotoJpegDeDrive001-Plato-con-punto-y-coma.jpg`,
+      `drive ${ORG}/${BRAND}/import/google-drive/videoDeDrive00001-Video-bar.mov`,
+      `local ${ORG}/${BRAND}/import/google-drive/extraSinInventario-Extra.jpg`,
     ]);
     expect(plan.items.find((i) => i.from === 'jpegEnDrive000002')).toMatchObject({ mime: 'image/jpeg', bytes: 0 });
     expect(plan.skipped).toMatchObject({
@@ -89,5 +89,36 @@ describe('migrar a R2: recuento en seco', () => {
     expect(safeName('Vídeo bar ñ (1)')).toBe('Video-bar-n-1');
     expect(safeName('../../etc')).toBe('etc');
     expect(safeName('')).toBe('archivo');
+  });
+
+  it('--drive-dir: lee de la carpeta lo ya bajado y marca «falta descargar» lo que no está', () => {
+    const local = new Map([
+      ['/dd/fotoJpegDeDrive001.jpg', 1500],
+      ['/dd/videoDeDrive00001.MOV', 12],
+    ]);
+    const base = {
+      org: ORG,
+      brand: BRAND,
+      brandMedia: null,
+      driveRows: parseCsv(CSV),
+      estado: 'incluida',
+      jpegDir: null,
+      jpegList: null,
+      driveDir: '/dd',
+      localSize: (file: string) => local.get(file.replaceAll('\\', '/')) ?? null,
+    };
+    const plan = buildPlan({ ...base, driveToken: false });
+    const foto = plan.items.find((i) => i.from === 'fotoJpegDeDrive001')!;
+    expect(foto.localFrom?.replaceAll('\\', '/')).toBe('/dd/fotoJpegDeDrive001.jpg');
+    expect(foto.missing).toBeUndefined();
+    // El tamaño no coincide con el inventario: no se da por bajado.
+    const video = plan.items.find((i) => i.from === 'videoDeDrive00001')!;
+    expect(video.localFrom).toBeUndefined();
+    expect(video.missing).toBe(true);
+    expect(plan.items.find((i) => i.from === 'jpegEnDrive000002')?.missing).toBe(true);
+    expect(formatSummary(plan)).toContain('falta descargar');
+    // Con token, lo que falta se podrá bajar de la API.
+    const withToken = buildPlan({ ...base, driveToken: true });
+    expect(withToken.items.some((i) => i.missing)).toBe(false);
   });
 });
