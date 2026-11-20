@@ -100,11 +100,20 @@ describe('Configuración → Plan', () => {
     expect(screen.getByTestId('plan-usage-ai')).toHaveTextContent('Tu plan no incluye IA');
     expect(screen.getByRole('progressbar', { name: 'Marcas activas' })).toHaveAttribute('aria-valuenow', '100');
     const features = screen.getByRole('list', { name: 'Funciones del plan' });
-    expect(within(features).getByText('Texto con IA').closest('li')).toHaveTextContent('(incluido)');
+    // Sin cupo de IA (límite 0) el texto con IA no figura como incluido.
+    expect(within(features).getByText('Texto con IA').closest('li')).toHaveTextContent('(no incluido)');
     expect(within(features).getByText('Reels').closest('li')).toHaveTextContent('(no incluido)');
     // Sin facturación activa: ni cambiar de plan ni planes a la venta.
     expect(screen.queryByText('Cambiar de plan')).not.toBeInTheDocument();
     expect(fake.callsTo('billing-checkout', 'function')).toHaveLength(0);
+  });
+
+  it('con cupo de IA, el texto con IA sí figura como incluido', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    fake.rpc('organization_plan_usage', () => usage({ ai_limit_micros: 5 * M }));
+    renderApp(`${BASE}/ajustes/plan`);
+    const features = await screen.findByRole('list', { name: 'Funciones del plan' });
+    expect(within(features).getByText('Texto con IA').closest('li')).toHaveTextContent('(incluido)');
   });
 
   it('una suscripción cancelada avisa de que rigen los límites del plan por defecto', async () => {
