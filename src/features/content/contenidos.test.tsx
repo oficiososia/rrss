@@ -391,6 +391,53 @@ describe('Editor: versiones', () => {
   });
 });
 
+describe('Editor: Publicar ahora', () => {
+  const account = {
+    id: 'acc-1',
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    network: 'instagram',
+    status: 'active',
+    external_id: '1784',
+    username: 'casa_demo',
+  };
+
+  it('en una pieza aprobada, con la publicación activa, ofrece exportar y publicar en el mismo paso', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    seedContent({ orgRole: 'owner' }, { status: 'approved' });
+    fake.tables.social_accounts = [account];
+    fake.tables.scheduled_publications = [];
+    fake.tables.media_assets = [];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    await user.click(screen.getByTestId('editor-publish-now'));
+    expect(await screen.findByTestId('publish-now-warning')).toHaveTextContent(
+      'Se publicará ahora en @casa_demo. No se puede deshacer desde aquí.',
+    );
+    expect(screen.getByTestId('publish-now-export-note')).toHaveTextContent(/se exportará a JPEG/);
+    vi.unstubAllEnvs();
+  });
+
+  it('no aparece sin aprobar, sin la publicación activa ni para quien no edita', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    await openEditor({ orgRole: 'owner' }, { status: 'draft' });
+    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+    vi.unstubAllEnvs();
+  });
+
+  it('sin la publicación activa en el entorno no se ofrece', async () => {
+    await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+  });
+
+  it('quien solo ve no puede publicar', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'approved' });
+    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+    vi.unstubAllEnvs();
+  });
+});
+
 describe('Editor: estados según el rol', () => {
   it('quien edita envía a revisión la versión que tiene abierta', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });

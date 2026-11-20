@@ -785,3 +785,201 @@ describe('función social-publish', () => {
     expect((await pubOf(pub.id)).status).toBe('published');
   });
 });
+
+describe('publicar ahora', () => {
+  // Lo que dejaron las pruebas anteriores en la cola se saca antes (el lote de la función es de 5 trabajos).
+  beforeEach(async () => {
+    await tick();
+    graph = createSimulatedGraph();
+  });
+
+  const nowArgs = (p: { contentId: string; assets: string[] }, account = cuenta) => ({
+    p_content_id: p.contentId,
+    p_social_account_id: account,
+    p_media_asset_ids: p.assets,
+    p_content_version: 1,
+  });
+  const jobsOf = async (pubId: string) =>
+    (
+      await db.query<{ n: number }>(
+        `select count(*)::int as n from public.jobs where kind = 'social.publish' and payload->>'publication_id' = $1`,
+        [pubId],
+      )
+    )[0]!.n;
+
+  /** Cliente RPC con la sesión de una persona (lo que hace la ruta /now con su JWT). */
+  const asUserRpc =
+    (user: TestUser): RpcClient =>
+    async (fn, args) => {
+      try {
+        const { list, params } = toParams(args);
+        const [row] = await as<{ data: unknown }>(db, user, `select to_jsonb(public.${fn}(${list})) as data`, params);
+        return { data: row?.data ?? null, error: null };
+      } catch (error) {
+        const { code, message, detail } = error as { code?: string; message: string; detail?: string };
+        return { data: null, error: { code, message, details: detail ?? null } };
+      }
+    };
+
+  const nowHandler = () =>
+    createSocialPublishHandler({
+      serviceKeys: ['clave-de-servicio-de-pruebas-larga'],
+      rpc,
+      userRpc: (token) => asUserRpc(token === 'tok-lector' ? lector : editor),
+      publisher: () => publisherDeps(),
+      accountsToCheck: async () => [],
+      checkTokens: async () => 0,
+      workerName: 'pruebas:ahora',
+    });
+  const kickRequest = (pubId: string, token = 'tok-editor') =>
+    new Request('http://x/social-publish/now', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ publicationId: pubId }),
+    });
+
+  it('una pieza aprobada se publica al momento, sin esperar a su hora, y una sola vez', async () => {
+    const p = await piece();
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    expect(pub.status).toBe('scheduled');
+    expect(await jobsOf(pub.id)).toBe(1);
+
+    const res = await nowHandler()(kickRequest(pub.id));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: Row[] };
+    expect(body.results.find((r) => r.publicationId === pub.id)).toMatchObject({ outcome: 'published' });
+    const after = await pubOf(pub.id);
+    expect(after.status).toBe('published');
+    expect(after.external_url).toBe(`${SIMULATED_PERMALINK_HOST}/p/${after.external_id}/`);
+    expect(graph.published).toHaveLength(1);
+
+    // El reloj, después, no encola ni publica nada más; repetir «ahora» devuelve lo mismo.
+    expect(await tick()).toEqual([]);
+    expect(await jobsOf(pub.id)).toBe(1);
+    const again = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    expect(again.id).toBe(pub.id);
+    expect(again.status).toBe('published');
+    expect(graph.published).toHaveLength(1);
+  });
+
+  it('la llamada directa y el reloj, uno tras otro, dan una sola publicación', async () => {
+    const p = await piece();
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    // Una tras otra: PGlite tiene una sola conexión, así que aquí se prueba la
+    // idempotencia (la segunda pasada la encuentra publicada). La exclusión entre
+    // procesos de verdad la dan FOR UPDATE SKIP LOCKED y el cerrojo de fila.
+    await nowHandler()(kickRequest(pub.id));
+    await tick();
+    await tick();
+    expect((await pubOf(pub.id)).status).toBe('published');
+    expect(graph.published).toHaveLength(1);
+    const intentos = await db.query<{ outcome: string }>(
+      `select outcome from public.publication_attempts where publication_id = $1 and outcome in ('published', 'recovered')`,
+      [pub.id],
+    );
+    expect(intentos).toHaveLength(1);
+  });
+
+  it('dos trabajos para la misma publicación (otra clave) tampoco la publican dos veces', async () => {
+    const p = await piece();
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    // Un trabajo extra, como si la hora hubiera cambiado entre dos pasadas del reloj.
+    await serviceCall('enqueue_job', {
+      p_organization_id: org,
+      p_kind: 'social.publish',
+      p_payload: { publication_id: pub.id, generation: pub.generation },
+      p_idempotency_key: `otra-clave:${pub.id}`,
+      p_brand_id: marca,
+      p_priority: 10,
+      p_max_attempts: 5,
+    });
+    expect(await jobsOf(pub.id)).toBe(2);
+    const resultados = [...(await tick()), ...(await tick())].filter((r) => r.publicationId === pub.id);
+    expect(resultados.filter((r) => r.outcome === 'published')).toHaveLength(1);
+    expect(graph.published).toHaveLength(1);
+    expect((await pubOf(pub.id)).status).toBe('published');
+  });
+
+  it('adelanta una programada para dentro de una hora; la ruta de la función por sí sola no adelanta nada', async () => {
+    const p = await piece();
+    const futura = await schedule(p.contentId, p.assets);
+    expect(futura.status).toBe('scheduled');
+    const kick = await nowHandler()(kickRequest(futura.id));
+    expect(kick.status).toBe(200);
+    expect((await pubOf(futura.id)).status).toBe('scheduled');
+    expect(graph.published).toHaveLength(0);
+
+    const ahora = await userCall<Pub>(editor, 'publish_publication_now', {
+      ...nowArgs(p),
+      p_publication_id: futura.id,
+    });
+    expect(ahora.id).toBe(futura.id);
+    await nowHandler()(kickRequest(futura.id));
+    expect((await pubOf(futura.id)).status).toBe('published');
+  });
+
+  it('sin aprobar, sin exportación o sin cuenta no se publica y no queda nada guardado', async () => {
+    const sinAprobar = await piece({ approve: false });
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, $2, $3, 1)`, [
+        sinAprobar.contentId,
+        cuenta,
+        sinAprobar.assets,
+      ]),
+    ).rejects.toMatchObject({ code: 'PB003', detail: 'not_approved' });
+    expect(
+      await db.query(`select 1 from public.scheduled_publications where content_id = $1`, [sinAprobar.contentId]),
+    ).toEqual([]);
+
+    const aprobada = await piece();
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, $2, '{}'::uuid[], 1)`, [aprobada.contentId, cuenta]),
+    ).rejects.toMatchObject({ code: 'PB003', detail: 'no_media' });
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, null, $2, 1)`, [aprobada.contentId, aprobada.assets]),
+    ).rejects.toMatchObject({ code: 'PB003', detail: 'no_account' });
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, $2, $3, 2)`, [
+        aprobada.contentId,
+        cuenta,
+        aprobada.assets,
+      ]),
+    ).rejects.toThrow(/versión/);
+    expect(
+      await db.query(`select 1 from public.scheduled_publications where content_id = $1`, [aprobada.contentId]),
+    ).toEqual([]);
+    expect(graph.published).toHaveLength(0);
+  });
+
+  it('solo quien puede programar: el lector no publica ni empuja la cola, ni con la cuenta de otra marca', async () => {
+    const p = await piece();
+    await denied(db, lector, `select public.publish_publication_now($1, $2, $3, 1)`, [p.contentId, cuenta, p.assets]);
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    await denied(db, lector, `select public.publication_publish_kick($1)`, [pub.id]);
+    expect((await nowHandler()(kickRequest(pub.id, 'tok-lector'))).status).toBe(403);
+    const q = await piece();
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, $2, $3, 1)`, [q.contentId, cuenta2, q.assets]),
+    ).rejects.toThrow(/cuenta/);
+    // Sin sesión, la ruta no publica nada.
+    const sin = await nowHandler()(
+      new Request('http://x/social-publish/now', { method: 'POST', body: JSON.stringify({ publicationId: pub.id }) }),
+    );
+    expect(sin.status).toBe(401);
+  });
+
+  it('un rechazo de la red deja «falló» y «ahora» lo reintenta sobre la misma publicación', async () => {
+    const p = await piece();
+    graph.fail({ op: 'container', mode: 'error', error: { code: 100, message: 'Imagen no válida', status: 400 } });
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', nowArgs(p));
+    await nowHandler()(kickRequest(pub.id));
+    expect((await pubOf(pub.id)).status).toBe('failed');
+    expect(graph.published).toHaveLength(0);
+
+    const retried = await userCall<Pub>(editor, 'publish_publication_now', { ...nowArgs(p), p_publication_id: pub.id });
+    expect(retried).toMatchObject({ id: pub.id, status: 'scheduled', generation: pub.generation + 1 });
+    await nowHandler()(kickRequest(pub.id));
+    expect((await pubOf(pub.id)).status).toBe('published');
+    expect(graph.published).toHaveLength(1);
+  });
+});

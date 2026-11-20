@@ -13,6 +13,7 @@ Instagram. Estado a 19/11/2026:
 | Adaptador real de Meta (`_shared/social/meta-graph.ts`) | Escrito contra la documentación oficial, **sin probar contra el servicio real**: no hay aplicación de Meta |
 | Facebook (páginas) | Modelo preparado (`social_accounts.network = 'facebook'`); no se conecta ni se publica |
 | Stories de Instagram | No se publican (el formato queda «Detenida: formato no admitido») |
+| «Publicar ahora» (migración `20261130010000`, ruta `social-publish/now`) | Probado en base de datos (PGlite) y en componentes; escenario e2e `tests/e2e/22-publicar-ahora.spec.ts` **escrito, sin ejecutar** |
 
 ## 1. Qué hace
 
@@ -29,6 +30,9 @@ Instagram. Estado a 19/11/2026:
    intentos, comentarios, mover, cancelar y reintentar.
 3. **Publicador.** Cada minuto, pg_cron encola las publicaciones cuya hora ha
    llegado y llama a la Edge Function `social-publish`, que las publica.
+
+4. **Publicar ahora.** Para lo que no puede esperar al día y la hora ni al
+   minuto del reloj (sección «Publicar ahora» más abajo).
 
 Estados que se ven: Idea, Borrador, En revisión (la pieza aún no está
 aprobada), Detenida (con el motivo), **Programada** (solo cuando la base de
@@ -125,6 +129,46 @@ pasa a «hay que volver a conectarla» y se pega uno nuevo. Solo tokens de
 Facebook Login (graph.facebook.com, empiezan por `EAA`); los de «inicio de
 sesión de Instagram» (`IG…`) se rechazan con un mensaje claro. Volver a conectar
 por OAuth deja la cuenta como `oauth`. Probado solo contra la Graph API simulada.
+
+### Publicar ahora
+
+Está en el editor de una pieza aprobada (junto a «Retirar la aprobación»), en el
+diálogo «Programar una publicación» (opción «Ahora» en lugar de día y hora) y en
+la ficha de una publicación programada del calendario. Solo con la publicación
+activa en el entorno y para quien puede programar (edita la marca). Pide una
+confirmación: «Se publicará ahora en @cuenta. No se puede deshacer desde aquí.»
+
+Qué pasa al confirmar:
+
+1. Si es el editor y la versión aprobada no tiene su exportación, el navegador
+   la exporta a JPEG y la guarda en la biblioteca **en ese mismo paso** (misma
+   procedencia que «Exportar imagen»; la hace el navegador, no el servidor). Desde
+   el calendario no hay documento que dibujar: si falta, el diálogo lo dice y
+   remite al editor.
+2. `publish_publication_now` (RPC, capacidad `edit`) pone o adelanta la
+   publicación con la hora actual **pasando por `save_publication` y la regla
+   dura**: aprobada, su versión, su exportación o vídeo, cuenta viva y plan con
+   publicación. Si algo falla se niega con `PB003` y el motivo, y no queda nada
+   guardado. Una fallida se reintenta con una generación nueva; una que ya está
+   publicando o publicada se devuelve tal cual (doble clic, dos personas).
+3. Encola el trabajo con **la misma clave de idempotencia que el reloj**.
+4. El navegador llama a `social-publish/now` con la sesión de la persona. La
+   función comprueba el permiso (`publication_publish_kick`, que no cambia
+   estados ni adelanta lo programado a futuro) y procesa la cola al momento.
+   Si esa llamada falla, no se pierde nada: el reloj recoge el trabajo en el
+   siguiente minuto.
+5. La interfaz sondea el estado cada 2 s (sin tiempo real): «Publicando…» →
+   «Publicada» con su enlace, o el error con «Reintentar». Pasados 90 s avisa de
+   que sigue en curso (vídeos); se puede cerrar.
+
+No se publica dos veces: el reloj y la llamada directa reclaman con
+`FOR UPDATE SKIP LOCKED` y `social_publication_begin` toma el cerrojo de fila;
+quien llega después encuentra la publicación «busy» o «already_published». En
+las pruebas de base de datos (PGlite, una sola conexión) esto se comprueba de
+forma secuencial —llamada directa y reclamaciones del reloj, también con dos
+trabajos de claves distintas para la misma publicación— y da una sola
+publicación; la exclusión real entre procesos descansa en esos bloqueos de
+Postgres y **no se ha probado con dos conexiones**.
 
 ## 3. Por qué una Edge Function y no el trabajador de medios
 

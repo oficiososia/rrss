@@ -11,6 +11,7 @@ import {
   Redo2,
   ScanEye,
   Save,
+  Send,
   SearchX,
   Sparkles,
   Square,
@@ -88,7 +89,10 @@ import { NetworkPreviewDialog } from './editor/preview/NetworkPreviewDialog';
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
+import { PublishNowDialog } from '@/features/social/PublishNowDialog';
+import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
+import { exportForPublishing } from './export/exportForPublishing';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
 import { safeZoneFor } from './safeZones';
@@ -188,6 +192,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [saveIssues, setSaveIssues] = useState<DocumentIssue[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [publishNowOpen, setPublishNowOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState(false);
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
@@ -551,6 +556,13 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const full = state.document.layers.length >= MAX_LAYERS;
   const actions = statusActions(item, { edit: canEdit, approve: canApprove });
   const allowed = spec ? allowedCanvasRatios(spec, spec.media.includes('image') ? 'image' : spec.media[0]) : null;
+  const publishingOn = useFeature('publishing');
+  const canPublishNow =
+    publishingOn &&
+    canEdit &&
+    !item.archived_at &&
+    item.status === 'approved' &&
+    PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`);
   const BrandCheck = BRAND_CHECK_PANEL;
   const videoOnly = spec !== undefined && !spec.media.includes('image');
 
@@ -687,6 +699,18 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               </Button>
             );
           })}
+          {canPublishNow && (
+            <Button
+              size="sm"
+              disabled={dirty || busyStatus !== null}
+              title={dirty ? 'Guarda los cambios antes' : undefined}
+              onClick={() => setPublishNowOpen(true)}
+              data-testid="editor-publish-now"
+            >
+              <Send className="h-4 w-4" aria-hidden />
+              Publicar ahora
+            </Button>
+          )}
           {canEdit && (
             <Button
               variant="ghost"
@@ -1090,6 +1114,29 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         issues={saveIssues}
         onSave={(note) => void save(note)}
       />
+      {canPublishNow && (
+        <PublishNowDialog
+          brandId={brand.id}
+          open={publishNowOpen}
+          onOpenChange={setPublishNowOpen}
+          contentId={contentId}
+          exportVersion={
+            item.format === 'post' && !dirty
+              ? () =>
+                  exportForPublishing({
+                    document: state.document,
+                    images,
+                    title: item.title,
+                    contentId,
+                    orgId: org.id,
+                    brandId: brand.id,
+                    version: expectedVersion,
+                    prepareFonts: () => loadBrandFonts(brandFonts.fonts).then(() => undefined),
+                  })
+              : undefined
+          }
+        />
+      )}
       <ExportImageDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
