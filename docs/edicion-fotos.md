@@ -20,6 +20,8 @@ procedencia en `media_assets.provenance`, igual que «Exportar imagen».
 | Quitar el fondo, **en el navegador** (por defecto) | No (modelo propio en el navegador, gratis) | Navegador (`cutout/`, §7) | `photo_edit`, paso `remove_background` (`engine: browser`) |
 | Quitar el fondo, con IA (si el servidor tiene proveedor) | **Sí** | `ai-media` (`photo.edit`) → adaptador de IA de medios | `ai_edit`, `operation: remove_background` |
 | Ampliar la resolución ×2 o ×4 (hasta 4096 px por lado) | **Sí** | `ai-media` (`photo.edit`) → adaptador | `ai_edit`, `operation: upscale`, `scale` |
+| Cambiar el fondo con IA (texto libre; máscara del plato si la hay) | **Sí** | `ai-media` (`photo.edit`) → OpenAI (§7) | `ai_edit`, `operation: replace_background`, `prompt` |
+| Mejorar luz y color con IA | **Sí** | `ai-media` (`photo.edit`) → OpenAI (§7) | `ai_edit`, `operation: enhance` |
 
 «Cambiar el fondo» de una foto normal son dos pasos: quitarlo (en el navegador
 o con IA) y poner otro (sin IA). Con el navegador, el recorte se queda en el
@@ -313,3 +315,61 @@ Quitar el fondo en el navegador (§7):
   demás real; comprueba que el original no cambia). **Escrita y sin ejecutar**
   (el Supabase local de esta máquina lo ocupaba otro proyecto). **Sin probar:**
   el modelo real en un navegador real (descarga, WebGPU, WASM, tiempos, calidad).
+
+## 8. Cambiar el fondo con IA y mejorar con IA (OpenAI)
+
+Dos acciones de `ai-media` (`photo.edit`) que se suman a quitar el fondo y
+ampliar: **`replace_background`** («Cambiar el fondo con IA») y **`enhance`**
+(«Mejorar luz y color con IA»). Hoy las hace el adaptador de OpenAI
+(`docs/ia-medios.md`, §13); otro proveedor las ofrece si su adaptador declara
+esas ediciones. Salen en el diálogo solo si el servidor tiene un modelo activo
+y permitido para ellas (misma regla que «Ampliar»).
+
+- **Dónde:** pestaña **«Fondo con IA»** de «Editar foto» (el mismo diálogo se
+  abre desde la ficha de la biblioteca y desde el editor de piezas).
+- **Cómo se usa:** un campo de texto («¿qué fondo quieres?», hasta 500
+  caracteres) y sugerencias a un clic: mesa de mármol blanco con luz cálida,
+  mantel de lino beige, mesa de madera rústica, pizarra oscura
+  (`BACKGROUND_SUGGESTIONS` en `api.ts`). Se ve el coste máximo antes y si se
+  procesa fuera de la UE. El botón no se activa sin texto.
+- **Proteger el plato.** El adaptador manda la foto con una **máscara del
+  sujeto** si se la dan, y un prompt que pide no cambiar ni añadir ni quitar
+  comida. Aun así, OpenAI documenta que la máscara es orientativa (por
+  indicación): **no está garantizado** que el plato quede intacto. El resultado
+  es una propuesta que hay que revisar. Mejora pendiente si hace falta
+  garantía: volver a pegar el plato original encima del resultado con la misma
+  máscara, en el navegador.
+- **Interfaz «máscara del sujeto opcional» (para el integrador).**
+  `PhotoEditDialog` acepta la propiedad opcional
+  `getSubjectMask?: (asset) => Promise<Blob | null>`: un **PNG con las mismas
+  medidas que la foto original** donde lo **opaco es el plato** y lo
+  transparente es el fondo (el convenio de la máscara de OpenAI: se edita lo
+  transparente). Quien tenga un recorte (el de la rama
+  `f7/recorte-navegador` con ISNet, o uno del servidor) solo tiene que
+  pasarla al abrir el diálogo, convirtiendo su máscara a ese PNG; la interfaz
+  la envía en base64 (`subjectMask`) y el servidor comprueba que sea un PNG
+  con las medidas de la foto (hasta 1 MB). **Hoy nadie la pasa**: por eso la
+  interfaz avisa «No hay recorte del plato: la IA puede retocar también el
+  plato». Con la máscara el aviso cambia a «se protege el plato con su
+  recorte… revisa el resultado».
+- **Resultado:** un recurso **nuevo** («Fondo nuevo · <original>.jpg»,
+  carpeta «Ediciones», etiqueta «ia»), con procedencia `ai_edit`
+  (`operation: replace_background`, `source_asset_id`, el encargo en `prompt`,
+  proveedor, modelo, región y `untested_adapter`). El original no se toca.
+- **Tamaño del resultado:** ~1,5 MP con la proporción de la foto (p. ej. una
+  de 4000×3000 sale a 1456×1088). Para más resolución, «Ampliar» después.
+- **Quitar el fondo** con OpenAI (PNG transparente) es la opción de menor
+  prioridad: si hay un modelo propio (ComfyUI) activo, gana ese.
+- **API:** `photo.estimate`/`photo.edit` con `operation`, `prompt` (obligatorio
+  en `replace_background`, prohibido en las demás) y `subjectMask` (base64 de
+  un PNG; en `photo.estimate` basta `maskPresent: true`). El cuerpo admite
+  hasta 1,5 MB por esa máscara.
+
+**Pruebas:** `tests/db/ia-openai-imagen.test.ts` (adaptador con `fetch`
+simulado: multipart con foto y máscara, parseo, errores, coste, tamaños;
+catálogo y precios; configuración y residencia; «Probar conexión»),
+`tests/db/edicion-fotos.test.ts` (función con la edición simulada, máscara
+inválida, procedencia con el encargo), `editarFoto.test.tsx` (flujo del
+diálogo) y la e2e `tests/e2e/26-cambiar-fondo-ia.spec.ts` (**escrita, sin
+ejecutar**: el Supabase local de esta máquina lo usaba otro proyecto).
+**Sin probar:** contra OpenAI real (ver `docs/ia-medios.md`, §13).

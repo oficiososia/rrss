@@ -186,6 +186,8 @@ const EDITABLE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 /** Tope por defecto de la foto de entrada (36 MP) y del lado del resultado al ampliar. */
 const DEFAULT_MAX_INPUT_PIXELS = 36_000_000;
 const DEFAULT_MAX_OUTPUT_SIDE = 4096;
+/** Tope de la máscara del sujeto (PNG). */
+const MAX_MASK_BYTES = 1_000_000;
 
 function numberSetting(model: MediaModel, name: string): number | undefined {
   const value = model.settings[name];
@@ -219,7 +221,17 @@ function validate(request: MediaRequest, model: MediaModel, maxVideoSeconds: num
         );
       }
     } else if (request.scale !== undefined) {
-      throw new MediaRequestError('Quitar el fondo no admite factor de ampliación.');
+      throw new MediaRequestError('Esta edición no admite factor de ampliación.');
+    }
+    if (request.operation === 'replace_background') {
+      const text = request.prompt?.trim() ?? '';
+      if (text === '') throw new MediaRequestError('Describe el fondo que quieres.');
+      if (text.length > 500) throw new MediaRequestError('La descripción del fondo es demasiado larga (máximo 500 caracteres).');
+    } else if (request.prompt !== undefined) {
+      throw new MediaRequestError('Esta edición no admite descripción.');
+    }
+    if (request.subjectMask && request.subjectMask.bytes.byteLength > MAX_MASK_BYTES) {
+      throw new MediaRequestError('La máscara del sujeto es demasiado grande.');
     }
     return;
   }
@@ -424,7 +436,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
   async function generate(params: MediaGenerateParams): Promise<MediaGenerateResult> {
     const { request } = params;
     const kind = mediaKindOf(request);
-    const prompt = request.kind === 'image_edit' ? undefined : request.prompt;
+    const prompt = request.prompt;
     let edit: MediaEditOrigin | undefined;
     if (request.kind === 'image_edit') {
       // Para estimar basta con las medidas; para editar hace falta la foto.

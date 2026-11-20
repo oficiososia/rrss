@@ -34,7 +34,7 @@ export interface MediaModelRow {
   operation?: string | null;
 }
 
-const EDIT_OPERATIONS: readonly string[] = ['remove_background', 'upscale'];
+const EDIT_OPERATIONS: readonly string[] = ['remove_background', 'upscale', 'replace_background', 'enhance'];
 
 /** Qué hace un modelo: sin el campo, generar (así eran todos antes de la edición de fotos). */
 export function operationOf(model: Pick<MediaModel, 'operation'>): 'generate' | ImageEditOperation {
@@ -229,6 +229,8 @@ export function resolveMediaModel(
 export const EDIT_LABEL: Record<ImageEditOperation, string> = {
   remove_background: 'quitar el fondo',
   upscale: 'ampliar la resolución',
+  replace_background: 'cambiar el fondo',
+  enhance: 'mejorar la luz y el color',
 };
 
 /**

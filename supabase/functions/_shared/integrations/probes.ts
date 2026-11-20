@@ -307,6 +307,32 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
             ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
             : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
       );
+      // Edición de fotos con IA: la misma lista dice si la clave ve un modelo de imagen.
+      if (!('error' in r) && r.status === 200) {
+        const ids =
+          typeof r.body === 'object' && r.body !== null && Array.isArray((r.body as { data?: unknown }).data)
+            ? ((r.body as { data: unknown[] }).data as unknown[]).map((m) =>
+                typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string'
+                  ? (m as { id: string }).id
+                  : '',
+              )
+            : [];
+        const images = ids.filter((id) => id.startsWith('gpt-image'));
+        checks.push(
+          images.length > 0
+            ? {
+                name: 'OpenAI imagen',
+                ok: true,
+                message: `La clave ve ${images.length} modelo(s) de imagen (${images.slice(0, 3).join(', ')}). Editar fotos con IA está disponible.`,
+              }
+            : {
+                name: 'OpenAI imagen',
+                ok: null,
+                message:
+                  'La clave funciona, pero no lista ningún modelo de imagen (gpt-image…). Para editar fotos con IA puede hacer falta verificar la organización en OpenAI o dar acceso al proyecto.',
+              },
+        );
+      }
     } else if (provider.id === 'anthropic-vertex') {
       checks.push(await googleToken(value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON') ?? '', deps));
     } else if (provider.id === 'anthropic-bedrock') {

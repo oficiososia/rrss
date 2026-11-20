@@ -152,6 +152,8 @@ export function provenanceJson(generationId: string, provenance: MediaProvenance
       provider: provenance.provider,
       model: provenance.model,
       purpose: provenance.purpose ?? null,
+      // Cambiar el fondo: cómo se pidió (recortado: la procedencia tiene tope de tamaño).
+      ...(provenance.prompt ? { prompt: [...provenance.prompt].slice(0, 400).join('') } : {}),
       data_region: provenance.dataRegion,
       trains_on_inputs: provenance.trainsOnInputs,
       untested_adapter: provenance.untestedAdapter,
@@ -183,6 +185,8 @@ export function provenanceJson(generationId: string, provenance: MediaProvenance
 const EDIT_NAME: Record<string, (scale?: number) => string> = {
   remove_background: () => 'Sin fondo',
   upscale: (scale) => `Ampliada ×${scale ?? 2}`,
+  replace_background: () => 'Fondo nuevo',
+  enhance: () => 'Mejorada',
 };
 
 /** Nombre legible en la biblioteca: «IA · <encargo recortado>.png» o «Sin fondo · <original>.png». */

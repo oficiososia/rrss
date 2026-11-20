@@ -53,6 +53,8 @@ export interface EditChoice {
   euProcessing: boolean;
   trainsOnInputs: TrainsOnInputs;
   untestedAdapter: boolean;
+  /** El modelo usa la máscara del sujeto para proteger el plato al cambiar el fondo. */
+  usesSubjectMask: boolean;
 }
 
 export interface MediaRuntime {
@@ -154,6 +156,7 @@ export function createMediaRuntime(deps: MediaRuntimeDeps): MediaRuntime {
         model: modelKey(model),
         delivery: typeof provider.poll === 'function' ? 'async' : 'sync',
         ...dataHandlingOf(model, provider),
+        usesSubjectMask: provider.subjectMaskEdits?.includes(operation) ?? false,
       });
     } catch {
       // Sin modelo para esta edición: no se ofrece.

@@ -49,7 +49,10 @@ export const MAX_REFERENCES = 4;
 const DEFAULT_PURPOSE = 'post.visual';
 const PURPOSE = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_BODY_BYTES = 100_000;
+/** Tope del cuerpo: la máscara del sujeto (PNG, hasta 1 MB) viaja en base64 dentro del JSON. */
+const MAX_BODY_BYTES = 1_500_000;
+const MAX_BACKGROUND_CHARS = 500;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 export interface AiMediaDeps {
   /** Valida el token de sesión y devuelve el usuario, o `null` si no vale. */
@@ -108,6 +111,32 @@ interface PhotoInput {
   assetId: string;
   operation: ImageEditOperation;
   scale?: 2 | 4;
+  prompt?: string;
+  /** PNG con las medidas de la foto: lo opaco es el sujeto (ver `ImageEditRequest.subjectMask`). */
+  subjectMask?: Uint8Array;
+  /** Solo al estimar: avisa de que habrá máscara, sin mandarla (el coste cuenta la máscara). */
+  maskPresent?: boolean;
+}
+
+function decodePng(base64: string): Uint8Array {
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new InputError('La máscara del sujeto no es válida.');
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  if (bytes.length < 33 || PNG_SIGNATURE.some((byte, i) => bytes[i] !== byte)) {
+    throw new InputError('La máscara del sujeto tiene que ser un PNG.');
+  }
+  return bytes;
+}
+
+/** Ancho y alto que declara la cabecera de un PNG (IHDR). */
+export function pngSize(bytes: Uint8Array): { width: number; height: number } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
 function parsePhotoInput(data: Record<string, unknown>): PhotoInput {
@@ -118,13 +147,35 @@ function parsePhotoInput(data: Record<string, unknown>): PhotoInput {
   if (typeof operation !== 'string' || !(IMAGE_EDIT_OPERATIONS as readonly string[]).includes(operation)) {
     throw new InputError(`Indica la edición: ${IMAGE_EDIT_OPERATIONS.join(', ')}.`);
   }
-  if (operation === 'upscale') {
+  const op = operation as ImageEditOperation;
+  if (op === 'upscale') {
     const scale = data.scale ?? 2;
     if (scale !== 2 && scale !== 4) throw new InputError('Se puede ampliar ×2 o ×4.');
-    return { assetId: data.assetId, operation, scale };
+    if (data.prompt !== undefined || data.subjectMask !== undefined || data.maskPresent !== undefined) {
+      throw new InputError('Ampliar no admite descripción ni máscara.');
+    }
+    return { assetId: data.assetId, operation: op, scale };
   }
-  if (data.scale !== undefined) throw new InputError('Quitar el fondo no admite factor de ampliación.');
-  return { assetId: data.assetId, operation: operation as ImageEditOperation };
+  if (data.scale !== undefined) throw new InputError('Esta edición no admite factor de ampliación.');
+  if (op === 'replace_background') {
+    const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
+    if (!prompt) throw new InputError('Describe el fondo que quieres.');
+    if (prompt.length > MAX_BACKGROUND_CHARS) {
+      throw new InputError(`La descripción del fondo es demasiado larga: como mucho ${MAX_BACKGROUND_CHARS} caracteres.`);
+    }
+    const subjectMask = data.subjectMask === undefined ? undefined : decodePng(String(data.subjectMask));
+    return {
+      assetId: data.assetId,
+      operation: op,
+      prompt,
+      ...(subjectMask ? { subjectMask } : {}),
+      ...(data.maskPresent === true ? { maskPresent: true } : {}),
+    };
+  }
+  if (data.prompt !== undefined || data.subjectMask !== undefined || data.maskPresent !== undefined) {
+    throw new InputError('Esta edición no admite descripción ni máscara.');
+  }
+  return { assetId: data.assetId, operation: op };
 }
 
 interface ParsedInput {
@@ -253,7 +304,18 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
           operation: photo.operation,
           source: loaded.input,
           ...(photo.scale ? { scale: photo.scale } : {}),
+          ...(photo.prompt ? { prompt: photo.prompt } : {}),
         };
+        if (photo.maskPresent && action === 'photo.estimate') {
+          editRequest.subjectMask = { mimeType: 'image/png', bytes: new Uint8Array(0) };
+        } else if (photo.subjectMask) {
+          // La máscara tiene que tener exactamente las medidas de la foto.
+          const size = pngSize(photo.subjectMask);
+          if (size.width !== loaded.input.width || size.height !== loaded.input.height) {
+            throw new InputError('La máscara del sujeto no tiene las mismas medidas que la foto.');
+          }
+          editRequest.subjectMask = { mimeType: 'image/png', bytes: photo.subjectMask };
+        }
         const service = runtime.serviceFor();
         if (action === 'photo.estimate') {
           const estimate = service.estimate(editRequest);

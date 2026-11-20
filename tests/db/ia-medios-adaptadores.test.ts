@@ -1020,6 +1020,7 @@ describe('configuración del servidor', () => {
       'google-vertex': 'faltan las variables GOOGLE_VERTEX_PROJECT_ID y GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON',
       bfl: 'falta la variable BFL_API_KEY',
       ideogram: 'falta la variable IDEOGRAM_API_KEY',
+      openai: 'falta la variable OPENAI_API_KEY',
       higgsfield: 'faltan las variables HIGGSFIELD_API_KEY_ID y HIGGSFIELD_API_KEY_SECRET',
       fal: 'falta la variable FAL_KEY',
       comfyui: 'falta la variable COMFYUI_BASE_URL',

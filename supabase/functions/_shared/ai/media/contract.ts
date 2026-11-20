@@ -54,12 +54,12 @@ export interface VideoRequest {
 }
 
 /**
- * Edición de una foto que ya existe (no se inventa nada nuevo): quitar el
- * fondo o ampliar la resolución. Lo que se puede hacer sin IA (recortes, luz,
- * color, nitidez, poner un fondo liso) lo hace el navegador, no esto
- * (docs/edicion-fotos.md).
+ * Edición de una foto que ya existe: quitar el fondo, ampliar la resolución,
+ * cambiar el fondo por otro descrito con palabras o mejorar luz y color. Lo
+ * que se puede hacer sin IA (recortes, luz, color, nitidez, poner un fondo
+ * liso) lo hace el navegador, no esto (docs/edicion-fotos.md).
  */
-export const IMAGE_EDIT_OPERATIONS = ['remove_background', 'upscale'] as const;
+export const IMAGE_EDIT_OPERATIONS = ['remove_background', 'upscale', 'replace_background', 'enhance'] as const;
 export type ImageEditOperation = (typeof IMAGE_EDIT_OPERATIONS)[number];
 
 export interface ImageEditRequest {
@@ -69,6 +69,16 @@ export interface ImageEditRequest {
   source: MediaInput & { width: number; height: number };
   /** Solo para ampliar: cuántas veces más grande (2 o 4). */
   scale?: 2 | 4;
+  /** Solo para cambiar el fondo: cómo debe quedar (texto de la persona). */
+  prompt?: string;
+  /**
+   * Máscara del sujeto, OPCIONAL (interfaz para el recorte en el navegador o
+   * en el servidor): un PNG con las MISMAS medidas que la foto, donde lo
+   * OPACO es el sujeto (el plato) y lo transparente, el fondo. Con ella, el
+   * proveedor que sepa usarla cambia solo el fondo. Sin ella, la IA puede
+   * retocar también el plato y la interfaz lo avisa.
+   */
+  subjectMask?: { mimeType: 'image/png'; bytes: Uint8Array };
 }
 
 export type MediaRequest = ImageRequest | VideoRequest | ImageEditRequest;
@@ -181,6 +191,8 @@ export interface MediaProvider {
   readonly kinds: readonly MediaKind[];
   /** Ediciones de foto que sabe hacer (quitar el fondo, ampliar). Sin el campo, ninguna. */
   readonly edits?: readonly ImageEditOperation[];
+  /** Ediciones en las que usa la máscara del sujeto (`ImageEditRequest.subjectMask`) para proteger el plato. */
+  readonly subjectMaskEdits?: readonly ImageEditOperation[];
   /**
    * `false` mientras el adaptador solo se haya probado con respuestas HTTP
    * simuladas. Viaja con cada resultado para que nadie lo dé por contrastado.
