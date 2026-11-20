@@ -100,6 +100,10 @@ trabajador; migración `20261121010000_reel_media_blur.sql`). Sale con
 `VITE_AI_VOICE_COPILOT_ENABLED` + `VITE_AI_TEXT_ENABLED` y la IA de texto
 configurada en el servidor. Probado con el proveedor simulado y una Web Speech
 API simulada; **sin probar** con un proveedor real ni con el dictado real.
+Arreglos de la evaluación sin API (rama `f5/copiloto-arreglos`, 20/11/2026, sin
+subir): color de los textos por el uso del color en el perfil y legible sobre
+lo que hay debajo, órdenes relativas («sube», «más difuminada») y ambiguas
+(se preguntan), órdenes de terceros, logotipo que no pisa textos.
 Detalle en `docs/copiloto-voz.md`.
 
 ### Biblioteca con Google Drive (rama `f4/biblioteca-drive`)
