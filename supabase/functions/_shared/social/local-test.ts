@@ -12,7 +12,7 @@
 // pública: solo vale aquí.
 import { parseKeyRing, type TokenKeyRing } from './crypto.ts';
 import type { FetchLike } from './meta-graph.ts';
-import { createSimulatedGraph, type SimulatedGraph } from './simulated-graph.ts';
+import { createSimulatedGraph, type SimulatedExistingPost, type SimulatedGraph } from './simulated-graph.ts';
 import { isLocalSupabaseUrl, LocalTestConfigError } from '../ai/text/local-test.ts';
 
 export const SOCIAL_LOCAL_TEST_FLAG = 'SOCIAL_E2E_SIMULATED_GRAPH';
@@ -21,6 +21,24 @@ const LOCAL_KEY_ID = 'local';
 const LOCAL_KEY = 'local-solo-para-pruebas-rrss-!!!';
 
 let shared: SimulatedGraph | null = null;
+
+/**
+ * Histórico previo de la cuenta simulada (importar publicaciones): 30
+ * publicaciones antiguas y fijas — la más reciente es un carrusel de 3 imágenes,
+ * la siguiente un reel y el resto, imágenes —, para que la prueba de extremo a
+ * extremo siempre vea lo mismo. Son anteriores a cualquier publicación de la
+ * plataforma, así que no alteran lo que ve el publicador.
+ */
+export const LOCAL_TEST_HISTORY_SIZE = 30;
+export function localTestHistory(): SimulatedExistingPost[] {
+  return Array.from({ length: LOCAL_TEST_HISTORY_SIZE }, (_, i) => ({
+    id: `1790000000${String(i).padStart(4, '0')}`,
+    caption: `Publicación anterior número ${i + 1} #sabor`,
+    timestamp: new Date(Date.UTC(2026, 0, 31) - i * 86_400_000).toISOString(),
+    ...(i === 0 ? { mediaType: 'CAROUSEL_ALBUM' as const, children: 3 } : {}),
+    ...(i === 1 ? { mediaType: 'VIDEO' as const, productType: 'REELS' as const } : {}),
+  }));
+}
 
 export interface SocialLocalTest {
   fetch: FetchLike;
@@ -41,7 +59,7 @@ export function loadSocialLocalTest(env: Record<string, string | undefined>): So
     );
   }
   // Publica una función y mide otra (cada una con su simulada): se responde por cualquier publicación.
-  shared ??= createSimulatedGraph({ insights: { answerUnknownMedia: true } });
+  shared ??= createSimulatedGraph({ insights: { answerUnknownMedia: true }, existing: localTestHistory() });
   return {
     fetch: shared.fetch,
     graph: shared,

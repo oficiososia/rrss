@@ -456,3 +456,9 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# Importar publicaciones de la cuenta: la llama el navegador con la sesión de la
+# persona; la comprueba social-import/handler.ts (y la base de datos, que vuelve
+# a exigir que gestione la marca).
+[functions.social-import]
+verify_jwt = false

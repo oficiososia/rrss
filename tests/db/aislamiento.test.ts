@@ -215,6 +215,10 @@ const TENANT_TABLES = [
   'analytics_reports',
   // Biblioteca con Google Drive.
   'drive_connections',
+  // Importar publicaciones de la cuenta y plantillas de diseño.
+  'social_import_runs',
+  'social_imported_media',
+  'brand_design_templates',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -2413,6 +2417,202 @@ describe('almacenamiento en Cloudflare R2 (20261124010000)', () => {
       `update public.storage_cleanup_queue set storage_backend = 'supabase'`,
       [],
       /permission denied/,
+    );
+  });
+});
+
+describe('importar publicaciones y plantillas de diseño (20261201010000)', () => {
+  let cuentaA1: string, cuentaB1: string;
+  let importadaA1: string, importadaB1: string;
+  let runA1: string;
+
+  const connect = async (user: TestUser, brand: string, externalId: string) =>
+    (
+      await serviceRpc<{ id: string }>(db, 'social_account_connect', {
+        p_user_id: user.id,
+        p_brand_id: brand,
+        p_network: 'instagram',
+        p_external_id: externalId,
+        p_username: 'cuenta',
+        p_display_name: 'Cuenta',
+        p_page_id: '1',
+        p_scopes: ['instagram_basic'],
+        p_token_expires_at: null,
+        p_key_id: 'k1',
+        p_access_token_ciphertext: 'c'.repeat(40),
+        p_refresh_token_ciphertext: null,
+      })
+    ).id;
+
+  const doc = (assetId?: string) => ({
+    schemaVersion: 3,
+    canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
+    layers: assetId
+      ? [
+          {
+            id: 'foto',
+            type: 'image',
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 1080,
+            source: { kind: 'asset', assetId },
+          },
+        ]
+      : [],
+    copy: { caption: '', hashtags: [], mentions: [], altText: '', callToAction: { label: '', url: '' } },
+  });
+  const template = (permalink: string, assetId?: string) =>
+    JSON.stringify([
+      {
+        key: 'plato-del-dia',
+        name: 'Plato',
+        network: 'instagram',
+        format: 'post',
+        document: doc(assetId),
+        analysis: { examples: [{ permalink }] },
+      },
+    ]);
+  const deliver = `select public.deliver_design_templates($1, $2::jsonb)`;
+
+  beforeAll(async () => {
+    // Las mismas cuentas que en la publicación (volver a conectarlas solo renueva el token).
+    cuentaA1 = await connect(ana, marcaA1, '1001');
+    cuentaB1 = await connect(berta, marcaB1, '2001');
+    const [run] = await as<{ data: { id: string } }>(
+      db,
+      ana,
+      `select to_jsonb(r) as data from public.social_import_begin($1, false) r`,
+      [cuentaA1],
+    );
+    runA1 = run!.data.id;
+    const [runB] = await as<{ data: { id: string } }>(
+      db,
+      berta,
+      `select to_jsonb(r) as data from public.social_import_begin($1, false) r`,
+      [cuentaB1],
+    );
+    for (const [id, brand] of [
+      [runA1, marcaA1],
+      [runB!.data.id, marcaB1],
+    ] as const) {
+      await serviceRpc(db, 'social_import_save_page', {
+        p_run_id: id,
+        p_items: [{ id: `m-${brand}`, media_type: 'IMAGE', permalink: `https://ig.invalid/p/${brand}/` }],
+        p_from_cursor: null,
+        p_next_cursor: 'siguiente',
+      });
+    }
+    importadaA1 = `https://ig.invalid/p/${marcaA1}/`;
+    importadaB1 = `https://ig.invalid/p/${marcaB1}/`;
+  });
+
+  it('una organización no ve las importaciones, las publicaciones importadas ni las plantillas de otra', async () => {
+    await as(db, ana, deliver, [marcaA1, template(importadaA1)]);
+    await as(db, berta, deliver, [marcaB1, template(importadaB1)]);
+    for (const table of ['social_import_runs', 'social_imported_media', 'brand_design_templates']) {
+      const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deB.map((r) => r.org),
+        table,
+      ).toEqual([orgB]);
+      const deA = await as(db, ana, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deA.map((r) => r.org),
+        table,
+      ).toEqual([orgA]);
+      expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
+      expect(await as(db, ajeno, `select 1 from public.${table}`), table).toEqual([]);
+      // Dentro de la organización: quien no ve la marca no ve nada; quien la ve (cliente), sí.
+      expect(await as(db, sinMarcaA, `select 1 from public.${table}`), table).toEqual([]);
+      expect((await as(db, clienteA, `select 1 from public.${table}`)).length, table).toBeGreaterThan(0);
+    }
+  });
+
+  it('nadie escribe estas tablas desde la API', async () => {
+    for (const table of ['social_import_runs', 'social_imported_media', 'brand_design_templates']) {
+      await denied(db, ana, `delete from public.${table}`, [], /permission denied/);
+      await denied(db, ana, `update public.${table} set id = id`, [], /permission denied/);
+    }
+    await denied(
+      db,
+      ana,
+      `insert into public.social_imported_media (social_account_id, brand_id, organization_id, external_id, media_type)
+       values ($1, $2, $3, 'x', 'IMAGE')`,
+      [cuentaA1, marcaA1, orgA],
+      /permission denied/,
+    );
+    await denied(
+      db,
+      ana,
+      `insert into public.brand_design_templates (brand_id, organization_id, template_key, name, network, format, document)
+       values ($1, $2, 'x', 'x', 'instagram', 'post', '{"schemaVersion":3}')`,
+      [marcaA1, orgA],
+      /permission denied/,
+    );
+  });
+
+  it('solo quien gestiona la marca importa, y nunca en la cuenta de otra organización', async () => {
+    await denied(db, editorA, `select public.social_import_begin($1, false)`, [cuentaA1], /gestiona/);
+    await denied(db, clienteA, `select public.social_import_begin($1, false)`, [cuentaA1], /gestiona/);
+    await denied(db, ana, `select public.social_import_begin($1, false)`, [cuentaB1], /gestiona/);
+    await denied(db, berta, `select public.social_import_pause($1)`, [runA1], /gestiona/);
+    await denied(db, null, `select public.social_import_begin($1, false)`, [cuentaA1], /permission denied/);
+  });
+
+  it('las plantillas las entrega quien edita la marca, con recursos y ejemplos de esa marca', async () => {
+    await denied(db, clienteA, deliver, [marcaA1, template(importadaA1)], /edita/);
+    await denied(db, berta, deliver, [marcaA1, template(importadaA1)], /edita/);
+    // Un ejemplo que no es una publicación importada de la marca (ni la de otra) se rechaza.
+    await denied(db, ana, deliver, [marcaA1, template(importadaB1)], /ejemplo/);
+    await denied(db, ana, deliver, [marcaA1, template('https://ig.invalid/inventada')], /ejemplo/);
+    // Un recurso de otra marca no vale en el documento.
+    await denied(db, ana, deliver, [marcaA1, template(importadaA1, assetB1)], /recurso/);
+    // Entregarla otra vez la actualiza, no la duplica.
+    await as(db, editorA, deliver, [marcaA1, template(importadaA1, assetA1)]);
+    expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toHaveLength(
+      1,
+    );
+  });
+
+  it('las funciones del servidor no se ejecutan desde la API', async () => {
+    const calls: Array<[string, unknown[]]> = [
+      [`select public.social_import_claim($1, $2)`, [runA1, ana.id]],
+      [`select public.social_import_save_page($1, '[]'::jsonb, null, null)`, [runA1]],
+      [`select public.social_import_pending_copies($1)`, [runA1]],
+      [`select public.social_import_check_space($1, 1)`, [runA1]],
+      [`select public.social_import_end_step($1)`, [runA1]],
+      [`select public.social_import_mark_copy($1, gen_random_uuid(), 'failed')`, [runA1]],
+      [`select public.social_import_register_copy($1, $2, gen_random_uuid(), '[]'::jsonb)`, [runA1, ana.id]],
+    ];
+    for (const user of [ana, editorA, null]) {
+      for (const [sql, params] of calls) await denied(db, user, sql, params, /permission denied/);
+    }
+  });
+
+  it('quien edita la marca borra una plantilla; quien solo la ve, no; y nadie la de otra marca', async () => {
+    const [t] = await as<{ id: string }>(db, ana, `select id from public.brand_design_templates where brand_id = $1`, [
+      marcaA1,
+    ]);
+    await denied(db, clienteA, `select public.delete_design_template($1)`, [t!.id], /edita/);
+    await denied(db, berta, `select public.delete_design_template($1)`, [t!.id], /edita/);
+    await as(db, editorA, `select public.delete_design_template($1)`, [t!.id]);
+    expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toEqual(
+      [],
+    );
+  });
+
+  it('al borrar la cuenta conectada se van sus importaciones y publicaciones importadas', async () => {
+    expect(
+      await db.query(`select 1 from public.social_imported_media where social_account_id = $1`, [cuentaB1]),
+    ).toHaveLength(1);
+    await db.query(`delete from public.scheduled_publications where social_account_id = $1`, [cuentaB1]);
+    await db.query(`delete from public.social_accounts where id = $1`, [cuentaB1]);
+    expect(
+      await db.query(`select 1 from public.social_imported_media where social_account_id = $1`, [cuentaB1]),
+    ).toEqual([]);
+    expect(await db.query(`select 1 from public.social_import_runs where social_account_id = $1`, [cuentaB1])).toEqual(
+      [],
     );
   });
 });

@@ -64,6 +64,9 @@ npm run agencia -- comprobar <carpeta>/entrega.json [--contexto <carpeta>] [--js
 npm run agencia -- entregar <id> <carpeta>/entrega.json [--aun-con-bloqueos]
 npm run agencia -- comprobar-plan <carpeta>/plan.json [--contexto <carpeta>]
 npm run agencia -- entregar-plan <id> <carpeta>/plan.json
+npm run agencia -- importadas [<marca>] [--descargar] [--limite N]
+npm run agencia -- comprobar-plantillas <plantillas.json>
+npm run agencia -- entregar-plantillas <marca> <plantillas.json>
 npm run agencia -- comentar <id> "texto"
 npm run agencia -- soltar <id>
 ```
@@ -77,6 +80,9 @@ npm run agencia -- soltar <id>
 | `entregar` | Vuelve a leer del servidor el encargo, el perfil y la pieza, valida y comprueba, y llama a `deliver_content_request`: crea la pieza (o una versión nueva de la enlazada) en **borrador** con la nota «Entregado por la agencia» y marca el encargo como entregado. Las variantes se publican como comentario. Con bloqueos no entrega salvo `--aun-con-bloqueos` |
 | `comprobar-plan` | Sin red: valida un plan de campaña con el mismo esquema que la aplicación (`src/features/campaigns/plan.ts`) contra la campaña de `campana.json`, y ensaya el motor que lo convertirá en borradores |
 | `entregar-plan` | Vuelve a leer la campaña del servidor, valida y llama a `deliver_campaign_plan`: el encargo queda entregado y la campaña, «por revisar». No crea piezas: las crea el motor cuando el cliente acepta el plan en Campañas |
+| `importadas` | Sin marca, las marcas con publicaciones importadas de Instagram; con marca, deja en `<trabajo>/plantillas-<marca>/` lo importado, su resumen, el perfil, la biblioteca y, con `--descargar`, las imágenes más recientes, para sacar las plantillas de diseño (docs/importar-publicaciones.md) |
+| `comprobar-plantillas` | Sin red: valida el archivo con el esquema del documento v3 y del análisis de la aplicación |
+| `entregar-plantillas` | Valida y llama a `deliver_design_templates`: las guarda como plantillas de la marca (la base de datos exige recursos de la marca y ejemplos que sean publicaciones importadas) |
 | `comentar` | Comentario en la conversación del encargo |
 | `soltar` | Devuelve un encargo tomado a la cola sin entregarlo |
 

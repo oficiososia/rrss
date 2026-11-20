@@ -23,10 +23,10 @@ y las funciones desplegadas sin proveedores.
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm test`         | 750 pasan (20/11/2026, rama `f6/integracion`) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db`  | 796 pasan, 2 omitidas (20/11/2026, rama `f6/integracion`) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `npm run test:db`  | 818 pasan, 2 omitidas (20/11/2026, rama `f7/importar-publicaciones`; incluye importar publicaciones) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
 | `worker/`          | 81 pasan (20/11/2026) | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
-| `agency/`          | 37 pasan (20/11/2026) | Herramienta de la agencia contra un Supabase simulado |
-| `npm run test:e2e` | 85 de 85 en una tanda completa desde cero (`supabase db reset` + `npm run test:e2e`, 4,5 min, 20/11/2026, rama `f6/integracion`); las e2e 22 y 23 pasaron a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
+| `agency/`          | 45 pasan (20/11/2026; incluye plantillas de diseño) | Herramienta de la agencia contra un Supabase simulado |
+| `npm run test:e2e` | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
 | CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Hecho
@@ -197,6 +197,21 @@ escribir él; el original tiene que ser de la misma marca).
   medios); variable nueva `VITE_AI_PHOTO_EDIT_ENABLED` (apagada hasta tener
   modelo) y, si el ComfyUI no está en la UE, `AI_MEDIA_REMOVE_BACKGROUND_MODEL` /
   `AI_MEDIA_UPSCALE_MODEL`.
+
+### Importar publicaciones de la cuenta y plantillas de diseño (rama `f7/importar-publicaciones`)
+
+Botón «Importar publicaciones» en Marca → Datos de la marca → Cuentas conectadas:
+lee el histórico de Instagram (`/media`, con paginación, `children`, límites de la
+API y reanudación) con la cuenta conectada, sin que el token salga del servidor, lo
+guarda en `social_imported_media` y, si se pide, copia las imágenes a la biblioteca
+(carpeta «Instagram / Publicadas», con procedencia y en el almacén activo). Se puede
+detener y reanudar sin perder ni duplicar nada. En modo agencia, `agency/` saca las
+plantillas (`importadas`, `comprobar-plantillas`, `entregar-plantillas`) y se guardan
+como plantillas de la marca (`brand_design_templates`: documento v3 + análisis con
+ejemplos). Detalle, decisiones y lo no probado en `docs/importar-publicaciones.md`.
+- Pruebas: base de datos (`importar-publicaciones.test.ts` y casos en `aislamiento.test.ts`), `agency/` (`plantillas.test.ts`) y e2e `24-importar-publicaciones.spec.ts`.
+- Para llevarla a staging: migración `20261201010000_social_import.sql` y desplegar la función nueva `social-import`.
+- Pendiente: interfaz para usar las plantillas (crear una pieza desde una), exportación RGPD de lo importado, probar contra Meta y R2 reales.
 
 ## Sin probar contra el servicio real
 

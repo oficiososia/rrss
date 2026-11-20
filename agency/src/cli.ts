@@ -16,6 +16,7 @@ import {
   take,
   type CheckOutcome,
 } from './commands.ts';
+import { checkTemplatesFile, deliverTemplates, importedBrands, importedContext, TemplatesError } from './templates.ts';
 import { ConfigError, loadCredentials, resolveConfig } from './config.ts';
 import { ApiError, createClient, type SupabaseClient } from './supabase.ts';
 import type { BrandCheckResult } from '../../src/features/brandcheck/types.ts';
@@ -34,6 +35,15 @@ const HELP = `Herramienta de la agencia (rrss)
   comprobar-plan <plan.json> [--contexto <carpeta>]
                                       Valida un plan de campaña (encargo de tipo «plan»), sin red
   entregar-plan <id> <plan.json>      Entrega el plan; el cliente lo revisa y lo acepta en Campañas
+  importadas [<marca>] [--descargar] [--limite N] [--json]
+                                      Sin marca: las marcas con publicaciones importadas de Instagram.
+                                      Con marca: deja en la carpeta de trabajo lo importado, su resumen,
+                                      el perfil y la biblioteca (y con --descargar, las imágenes
+                                      más recientes) para sacar sus plantillas de diseño
+  comprobar-plantillas <plantillas.json>
+                                      Valida las plantillas (documento v3, formato, análisis), sin red
+  entregar-plantillas <marca> <plantillas.json>
+                                      Las guarda como plantillas de la marca
   comentar <id> <texto>               Añade un comentario al encargo
   soltar <id>                         Devuelve un encargo tomado a la cola
 
@@ -177,6 +187,57 @@ export async function run(
         );
         return 0;
       }
+      case 'importadas': {
+        const client = await signedInClient(env);
+        if (!positional[0]) {
+          const brands = await importedBrands(client);
+          if (flags.has('json')) out.log(JSON.stringify(brands, null, 2));
+          else if (!brands.length) out.log('Ninguna marca tiene publicaciones importadas.');
+          else {
+            for (const b of brands) out.log(`${b.brandId}  ${b.name} · ${b.imported} publicaciones importadas`);
+          }
+          return 0;
+        }
+        const limitFlag = flags.get('limite');
+        const result = await importedContext(client, config.workDir, checkId(positional[0]), {
+          download: flags.has('descargar'),
+          limit:
+            typeof limitFlag === 'string'
+              ? Math.max(1, Math.min(Number.parseInt(limitFlag, 10) || 40, 200))
+              : undefined,
+        });
+        const lines = [
+          `${result.total} publicaciones importadas. Material escrito en ${result.dir}:`,
+          ...result.files.map((f) => `  - ${f}`),
+        ];
+        if (flags.has('descargar')) {
+          lines.push(`Imágenes descargadas: ${result.downloaded} (sin imagen o caducadas: ${result.skipped}).`);
+        }
+        out.log(lines.join('\n'));
+        out.log(
+          `Prepara las plantillas en ${path.join(result.dir, 'plantillas.json')} y compruébalas con «comprobar-plantillas».`,
+        );
+        return 0;
+      }
+      case 'comprobar-plantillas': {
+        const file = positional[0];
+        if (!file) throw new CommandError('Indica el archivo de plantillas.');
+        const checked = await checkTemplatesFile(path.resolve(file));
+        out.log(
+          `Plantillas válidas: ${checked.templates.map((t) => `${t.key} (${t.network}/${t.format})`).join(', ')}.`,
+        );
+        return 0;
+      }
+      case 'entregar-plantillas': {
+        const brandId = checkId(positional[0]);
+        const file = positional[1];
+        if (!file) throw new CommandError('Indica el archivo de plantillas.');
+        const result = await deliverTemplates(await signedInClient(env), brandId, path.resolve(file));
+        out.log(
+          `Plantillas guardadas en la marca: ${result.delivered.map((t) => `${t.template_key} («${t.name}»)`).join(', ')}.`,
+        );
+        return 0;
+      }
       case 'comentar': {
         const id = checkId(positional[0]);
         await comment(await signedInClient(env), id, positional.slice(1).join(' '));
@@ -199,7 +260,7 @@ export async function run(
         return 2;
     }
   } catch (error) {
-    if (error instanceof CommandError || error instanceof ConfigError) {
+    if (error instanceof CommandError || error instanceof ConfigError || error instanceof TemplatesError) {
       out.error(error.message);
       return 2;
     }

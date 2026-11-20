@@ -25,6 +25,7 @@ import { formatDate } from '@/lib/utils';
 import { startSocialConnect, useConnectWithToken, useDisconnectAccount, useSocialAccounts } from './api';
 import { quotaWarning, tokenExpiresSoon } from './calendar';
 import { CONNECT_RESULT } from './connectResult';
+import { ImportPostsPanel } from './ImportPostsPanel';
 
 /**
  * Ajustes de la marca · Cuentas conectadas. Solo aparece si el entorno tiene la
@@ -89,6 +90,7 @@ export function ConnectedAccountsCard() {
             No hay ninguna cuenta de Instagram conectada.
           </p>
         )}
+        {canManage && instagram?.status === 'active' && <ImportPostsPanel brandId={brand.id} account={instagram} />}
         {canManage && accounts.isSuccess && (!instagram || instagram.status === 'needs_reauth') && (
           <div className="flex flex-wrap gap-2">
             {modes.socialOAuth && (

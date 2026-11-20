@@ -15,6 +15,13 @@ export const SIMULATED_IG_USER_ID = '17841400000000001';
 export const SIMULATED_IG_USERNAME = 'cuenta_simulada';
 export const SIMULATED_PAGE_ID = '100000000000001';
 export const SIMULATED_PERMALINK_HOST = 'https://instagram.simulado.invalid';
+/** CDN simulada de las imágenes del histórico (importar publicaciones). */
+export const SIMULATED_CDN_HOST = 'https://scontent.simulado.invalid';
+// PNG de 1×1 píxel: lo que sirve la CDN simulada.
+const PNG_1X1 = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+  (c) => c.charCodeAt(0),
+);
 
 export type SimulatedOperation =
   | 'container'
@@ -22,6 +29,8 @@ export type SimulatedOperation =
   | 'media_publish'
   | 'limit'
   | 'media_list'
+  // Descarga de una imagen de la CDN simulada.
+  | 'cdn'
   // Métricas (analítica, Fase 5): insights de cuenta y de publicación, y seguidores.
   | 'insights'
   | 'any';
@@ -61,7 +70,23 @@ export interface SimulatedMedia {
   permalink: string;
 }
 
+/** Publicación que la cuenta ya tenía antes de la plataforma (importar publicaciones). */
+export interface SimulatedExistingPost {
+  id: string;
+  igUserId?: string;
+  caption?: string;
+  mediaType?: 'IMAGE' | 'VIDEO' | 'CAROUSEL_ALBUM';
+  productType?: 'FEED' | 'REELS' | 'STORY';
+  timestamp: string;
+  /** Piezas de un carrusel (cada una con su propia imagen). */
+  children?: number;
+}
+
 export interface SimulatedGraphOptions {
+  /** Histórico previo de la cuenta, de cualquier orden: se sirve de la más reciente a la más antigua. */
+  existing?: SimulatedExistingPost[];
+  /** Cabecera X-Business-Use-Case-Usage de las respuestas de /media (JSON). */
+  mediaUsageHeader?: string;
   now?: () => number;
   /** Cupo que da content_publishing_limit (config.quota_total). Por defecto, 50. */
   quotaTotal?: number;
@@ -87,6 +112,10 @@ export interface SimulatedGraph {
   /** Marca un token como caducado: desde ahora responde con el error 190. */
   expireToken(token: string): void;
   setQuotaUsage(usage: number): void;
+  /** Cambia desde ahora la cabecera de uso del límite de llamadas de /media (null = sin cabecera). */
+  setMediaUsageHeader(header: string | null): void;
+  /** Añade publicaciones previas al histórico. */
+  addExisting(posts: SimulatedExistingPost[]): void;
   /** Cambia desde ahora cómo responden las métricas (analítica). */
   setInsights(options: SimulatedInsightsOptions): void;
 }
@@ -110,6 +139,9 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
   const failures: SimulatedFailure[] = [];
   const expired = new Set<string>();
   let baseUsage = options.quotaUsage ?? 0;
+  let mediaUsageHeader: string | null = options.mediaUsageHeader ?? null;
+  const existing: SimulatedExistingPost[] = [...(options.existing ?? [])];
+  const defaultIg = options.pages?.[0]?.instagram?.id ?? SIMULATED_IG_USER_ID;
   let insights: SimulatedInsightsOptions = { ...(options.insights ?? {}) };
   const pages = options.pages ?? [
     {
@@ -298,17 +330,78 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
       return json(200, { id });
     }
 
-    // GET /{ig-user-id}/media
+    // GET /{ig-user-id}/media: el histórico (previo y publicado aquí), paginado como Meta
+    // (`limit`, cursor `after`; `paging.next` solo si hay otra página).
     if (method === 'GET' && parts[2] === 'media') {
       const failure = takeFailure('media_list');
       if (failure) return failureResponse(failure);
-      const mine = published
-        .filter((m) => m.igUserId === parts[1])
-        .reverse()
-        .slice(0, 10);
-      return json(200, {
-        data: mine.map((m) => ({ id: m.id, caption: m.caption, timestamp: m.timestamp, permalink: m.permalink })),
+      const igUserId = parts[1]!;
+      const fields = new Set((query.get('fields') ?? '').split(/[,{}]/).map((f) => f.trim()));
+      const history = [
+        ...published
+          .filter((m) => m.igUserId === igUserId)
+          .reverse()
+          .map((m) => ({ ...m, product: m.kind === 'REELS' ? 'REELS' : 'FEED', previous: false as const })),
+        ...existing
+          .filter((e) => (e.igUserId ?? defaultIg) === igUserId)
+          .map((e) => ({
+            id: e.id,
+            caption: e.caption ?? '',
+            kind: e.mediaType ?? 'IMAGE',
+            timestamp: e.timestamp,
+            permalink: `${SIMULATED_PERMALINK_HOST}/p/${e.id}/`,
+            product: e.productType ?? 'FEED',
+            children: e.children ?? 0,
+            previous: true as const,
+          })),
+      ].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+      const wanted = query.get('limit') ? Number(query.get('limit')) : 10;
+      const limit = Math.max(1, Math.min(Number.isFinite(wanted) ? wanted : 10, 100));
+      const offset = Number.parseInt(atob(query.get('after') ?? btoa('0')), 10);
+      if (!Number.isInteger(offset) || offset < 0) return graphError(400, 100, 'Invalid cursor');
+      const slice = history.slice(offset, offset + limit);
+      const cdn = (id: string) => `${SIMULATED_CDN_HOST}/img/${id}.png`;
+      const data = slice.map((m) => {
+        const row: Record<string, unknown> = { id: m.id };
+        if (fields.has('caption')) row.caption = m.caption;
+        if (fields.has('timestamp')) row.timestamp = m.timestamp;
+        if (fields.has('permalink')) row.permalink = m.permalink;
+        if (fields.has('media_type'))
+          row.media_type = m.previous
+            ? m.kind
+            : m.kind === 'REELS'
+              ? 'VIDEO'
+              : m.kind === 'CAROUSEL'
+                ? 'CAROUSEL_ALBUM'
+                : 'IMAGE';
+        if (fields.has('media_product_type')) row.media_product_type = m.product;
+        const video = m.previous ? m.kind === 'VIDEO' : m.kind === 'REELS';
+        if (fields.has('media_url')) row.media_url = video ? `${SIMULATED_CDN_HOST}/video/${m.id}.mp4` : cdn(m.id);
+        if (fields.has('thumbnail_url') && video) row.thumbnail_url = cdn(`${m.id}-t`);
+        const kids = m.previous ? (m.children ?? 0) : m.kind === 'CAROUSEL' ? m.mediaUrls.length : 0;
+        if (fields.has('children') && kids > 0) {
+          row.children = {
+            data: Array.from({ length: kids }, (_, i) => ({
+              id: `${m.id}${i}`,
+              media_type: 'IMAGE',
+              media_url: cdn(`${m.id}-${i}`),
+            })),
+          };
+        }
+        return row;
       });
+      const more = offset + limit < history.length;
+      const response = json(200, {
+        data,
+        paging: {
+          cursors: { before: btoa(String(offset)), after: btoa(String(offset + limit)) },
+          ...(more
+            ? { next: `https://graph.facebook.com/v0/${igUserId}/media?after=${btoa(String(offset + limit))}` }
+            : {}),
+        },
+      });
+      if (mediaUsageHeader) response.headers.set('x-business-use-case-usage', mediaUsageHeader);
+      return response;
     }
 
     // Métricas (analítica, Fase 5): ../analytics/simulated-insights.ts.
@@ -362,6 +455,14 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
 
   const simulatedFetch: FetchLike = async (input, init) => {
     const url = new URL(input);
+    if (url.origin === SIMULATED_CDN_HOST) {
+      calls.push(`GET ${url.pathname}`);
+      const failure = takeFailure('cdn');
+      if (failure) return failureResponse(failure);
+      if (url.pathname.endsWith('.mp4'))
+        return new Response('video', { status: 200, headers: { 'content-type': 'video/mp4' } });
+      return new Response(PNG_1X1, { status: 200, headers: { 'content-type': 'image/png' } });
+    }
     if (url.origin !== 'https://graph.facebook.com') {
       throw new Error(`La Graph API simulada no atiende ${url.origin}`);
     }
@@ -380,6 +481,12 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
     expireToken: (token) => expired.add(token),
     setQuotaUsage: (usage) => {
       baseUsage = usage;
+    },
+    setMediaUsageHeader: (header) => {
+      mediaUsageHeader = header;
+    },
+    addExisting: (posts) => {
+      existing.push(...posts);
     },
     setInsights: (next) => {
       insights = { ...next };

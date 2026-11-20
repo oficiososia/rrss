@@ -891,6 +891,83 @@ type PublicationTables = {
   content_comments: Table<ContentCommentRow>;
 };
 
+// ───────────── Importar publicaciones y plantillas de diseño (20261201010000) ─────────────
+
+export type SocialImportStatus = 'running' | 'paused' | 'completed';
+export type SocialImportPhase = 'listing' | 'copying' | 'done';
+
+export type SocialImportRunRow = {
+  id: string;
+  social_account_id: string;
+  brand_id: string;
+  organization_id: string;
+  status: SocialImportStatus;
+  phase: SocialImportPhase;
+  copy_images: boolean;
+  after_cursor: string | null;
+  pages: number;
+  items_seen: number;
+  items_new: number;
+  copied: number;
+  copy_failed: number;
+  retry_after: string | null;
+  lease_until: string | null;
+  last_error: string | null;
+  started_by: string | null;
+  started_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type SocialImportedMediaRow = {
+  id: string;
+  social_account_id: string;
+  brand_id: string;
+  organization_id: string;
+  network: 'instagram';
+  external_id: string;
+  caption: string | null;
+  media_type: string;
+  media_product_type: string | null;
+  media_url: string | null;
+  thumbnail_url: string | null;
+  permalink: string | null;
+  published_at: string | null;
+  children: Json;
+  copy_status: 'none' | 'pending' | 'copied' | 'failed' | 'skipped';
+  copy_error: string | null;
+  asset_ids: string[];
+  copied_at: string | null;
+  first_imported_at: string;
+  last_seen_at: string;
+};
+
+export type BrandDesignTemplateRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  template_key: string;
+  name: string;
+  network: string;
+  format: string;
+  document: Json;
+  analysis: Json;
+  source: 'instagram_import' | 'manual';
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ImportTables = {
+  social_import_runs: Table<SocialImportRunRow>;
+  social_imported_media: Table<SocialImportedMediaRow>;
+  brand_design_templates: Table<BrandDesignTemplateRow>;
+};
+
+type ImportFunctions = {
+  delete_design_template: { Args: { p_template_id: string }; Returns: undefined };
+};
+
 type PublicationFunctions = {
   social_oauth_begin: { Args: { p_brand_id: string; p_network: SocialNetwork }; Returns: string };
   disconnect_social_account: { Args: { p_account_id: string }; Returns: SocialAccountRow };
@@ -1557,6 +1634,7 @@ export type Database = {
       PolishTables &
       SourceFontTables &
       PublicationTables &
+      ImportTables &
       BillingTables &
       CampaignTables &
       RgpdTables &
@@ -1598,7 +1676,8 @@ export type Database = {
       RgpdFunctions &
       AnalyticsFunctions &
       IntegrationFunctions &
-      DriveFunctions;
+      DriveFunctions &
+      ImportFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;
