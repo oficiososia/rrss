@@ -90,4 +90,35 @@ describe('migrar a R2: recuento en seco', () => {
     expect(safeName('../../etc')).toBe('etc');
     expect(safeName('')).toBe('archivo');
   });
+
+  it('--drive-dir: lee de la carpeta lo ya bajado y marca «falta descargar» lo que no está', () => {
+    const local = new Map([
+      ['/dd/fotoJpegDeDrive001.jpg', 1500],
+      ['/dd/videoDeDrive00001.MOV', 12],
+    ]);
+    const base = {
+      org: ORG,
+      brand: BRAND,
+      brandMedia: null,
+      driveRows: parseCsv(CSV),
+      estado: 'incluida',
+      jpegDir: null,
+      jpegList: null,
+      driveDir: '/dd',
+      localSize: (file: string) => local.get(file.replaceAll('\\', '/')) ?? null,
+    };
+    const plan = buildPlan({ ...base, driveToken: false });
+    const foto = plan.items.find((i) => i.from === 'fotoJpegDeDrive001')!;
+    expect(foto.localFrom?.replaceAll('\\', '/')).toBe('/dd/fotoJpegDeDrive001.jpg');
+    expect(foto.missing).toBeUndefined();
+    // El tamaño no coincide con el inventario: no se da por bajado.
+    const video = plan.items.find((i) => i.from === 'videoDeDrive00001')!;
+    expect(video.localFrom).toBeUndefined();
+    expect(video.missing).toBe(true);
+    expect(plan.items.find((i) => i.from === 'jpegEnDrive000002')?.missing).toBe(true);
+    expect(formatSummary(plan)).toContain('falta descargar');
+    // Con token, lo que falta se podrá bajar de la API.
+    const withToken = buildPlan({ ...base, driveToken: true });
+    expect(withToken.items.some((i) => i.missing)).toBe(false);
+  });
 });

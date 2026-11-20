@@ -24,6 +24,10 @@
 //   --estado <texto>              estado del inventario que se copia (por defecto «incluida»)
 //   --jpeg-dir <carpeta>          JPEG convertidos: <carpeta>/<id del HEIC>.jpg
 //   --jpeg-jsonl <jsonl>          lista de esos JPEG ({id, title, ref})
+//   --drive-dir <carpeta>         archivos de Drive ya bajados a mano (p. ej. con el conector de Drive):
+//                                 <carpeta>/<id de Drive>.<ext>. Una fila de origen Drive se lee de ahí
+//                                 si el archivo existe; si no existe y no hay DRIVE_ACCESS_TOKEN, el
+//                                 recuento la marca «falta descargar»
 //   --state <jsonl>               registro de lo copiado (por defecto ./migrar-a-r2.estado.jsonl)
 //   --switch                      tras copiar, pasa a R2 los recursos de brand-media copiados
 //   --concurrency <n>             copias a la vez (por defecto 4)
@@ -62,6 +66,10 @@ export interface PlanItem {
   brandId?: string | null;
   /** Fila del inventario de la que sale (Drive y JPEG locales): para darla de alta en la biblioteca. */
   meta?: InventoryMeta;
+  /** Origen Drive ya bajado a disco (--drive-dir): se lee de ahí, no de la API. */
+  localFrom?: string;
+  /** Origen Drive que no está en --drive-dir y no se puede bajar (sin DRIVE_ACCESS_TOKEN). */
+  missing?: boolean;
 }
 
 /** Lo que el paso de alta necesita saber de la fila del inventario. */
@@ -182,6 +190,10 @@ export interface PlanInput {
    * la marca). Con él no se usan `org` y `brand`.
    */
   brands?: Map<string, BrandTarget> | null;
+  /** Carpeta con los archivos de Drive ya bajados: <carpeta>/<id>.<ext>. */
+  driveDir?: string | null;
+  /** Hay DRIVE_ACCESS_TOKEN: lo que falte en driveDir se podrá bajar de la API. */
+  driveToken?: boolean;
 }
 
 /** Qué se copiaría, sin tocar nada. */
@@ -217,6 +229,19 @@ export function buildPlan(input: PlanInput): PlanSummary {
     const t = byBrand.get(normalizeLabel(brandLabel));
     if (!t) return null;
     return { prefix: `${t.organizationId ?? '<org>'}/${t.brandId}/${IMPORT_FOLDER}`, brandId: t.brandId };
+  };
+  /** Resuelve un origen Drive contra --drive-dir: archivo local, o «falta descargar» si no hay token. */
+  const driveLocal = (item: PlanItem, ext: string): PlanItem => {
+    if (!input.driveDir) return item;
+    const file = path.join(input.driveDir, `${item.from}${ext ? `.${ext}` : ''}`);
+    const size = input.localSize(file);
+    if (size !== null && size > 0 && (item.bytes === 0 || item.bytes === size)) {
+      return { ...item, localFrom: file, bytes: size };
+    }
+    if (size !== null && item.bytes > 0 && size !== item.bytes) {
+      warnings.push(`${item.from}: el archivo bajado tiene ${size} bytes y el inventario dice ${item.bytes}.`);
+    }
+    return input.driveToken ? item : { ...item, missing: true };
   };
   const metaOf = (row: Record<string, string>, fromHeic: boolean): InventoryMeta => ({
     driveId: row.id ?? '',
@@ -285,16 +310,21 @@ export function buildPlan(input: PlanInput): PlanSummary {
         });
       } else if (row.jpeg_id) {
         heicDone.add(id);
-        add({
-          source: 'drive',
-          key: `${prefix}/${id}-${safeName(baseName)}.jpg`,
-          bytes: 0,
-          mime: 'image/jpeg',
-          from: row.jpeg_id,
-          kind: 'foto',
-          brandId,
-          meta: metaOf(row, true),
-        });
+        add(
+          driveLocal(
+            {
+              source: 'drive',
+              key: `${prefix}/${id}-${safeName(baseName)}.jpg`,
+              bytes: 0,
+              mime: 'image/jpeg',
+              from: row.jpeg_id,
+              kind: 'foto',
+              brandId,
+              meta: metaOf(row, true),
+            },
+            'jpg',
+          ),
+        );
         warnings.push(`JPEG de ${id} solo en Drive: su tamaño se sabrá al copiarlo.`);
       } else {
         skip('HEIC sin JPEG (no se puede usar en el navegador)');
@@ -303,16 +333,21 @@ export function buildPlan(input: PlanInput): PlanSummary {
     }
     const mime = row.mimeType || 'application/octet-stream';
     const ext = (row.nombre ?? '').match(/\.([A-Za-z0-9]{2,5})$/)?.[1]?.toLowerCase() ?? '';
-    add({
-      source: 'drive',
-      key: `${prefix}/${id}-${safeName(baseName)}${ext ? `.${ext}` : ''}`,
-      bytes: Number(row.bytes) || 0,
-      mime,
-      from: id,
-      kind: kindOf(mime),
-      brandId,
-      meta: metaOf(row, false),
-    });
+    add(
+      driveLocal(
+        {
+          source: 'drive',
+          key: `${prefix}/${id}-${safeName(baseName)}${ext ? `.${ext}` : ''}`,
+          bytes: Number(row.bytes) || 0,
+          mime,
+          from: id,
+          kind: kindOf(mime),
+          brandId,
+          meta: metaOf(row, false),
+        },
+        ext,
+      ),
+    );
   }
 
   // JPEG convertidos que no salen como «incluida» en el inventario.
@@ -446,7 +481,13 @@ export function formatSummary(plan: PlanSummary, done: Set<string> = new Set()):
     for (const [why, n] of Object.entries(plan.skipped).sort()) lines.push(`  ${n} · ${why}`);
   }
   for (const [what, n] of Object.entries(plan.notes)) lines.push('', `${n} · ${what}`);
-  const unknown = plan.items.filter((i) => i.bytes === 0).length;
+  const missing = plan.items.filter((i) => i.missing).length;
+  if (missing)
+    lines.push(
+      '',
+      `${missing} archivos de Drive: falta descargar (no están en --drive-dir y no hay DRIVE_ACCESS_TOKEN).`,
+    );
+  const unknown = plan.items.filter((i) => i.bytes === 0 && !i.missing).length;
   if (unknown) lines.push('', `${unknown} archivos de Drive sin tamaño conocido (se sabrá al copiarlos).`);
   if (plan.warnings.length) lines.push('', ...plan.warnings.slice(0, 10).map((w) => `Aviso: ${w}`));
   if (plan.warnings.length > 10) lines.push(`(y ${plan.warnings.length - 10} avisos más)`);
@@ -503,8 +544,9 @@ async function openSource(
   item: PlanItem,
   supabase: ObjectStorage | null,
 ): Promise<{ stream: Readable; bytes: number }> {
-  if (item.source === 'local') {
-    return { stream: createReadStream(item.from), bytes: (await stat(item.from)).size };
+  if (item.source === 'local' || item.localFrom) {
+    const file = item.localFrom ?? item.from;
+    return { stream: createReadStream(file), bytes: (await stat(file)).size };
   }
   let response: Response;
   if (item.source === 'drive') {
@@ -598,6 +640,8 @@ async function main(): Promise<number> {
     estado: typeof a.estado === 'string' ? a.estado : 'incluida',
     jpegDir: typeof a['jpeg-dir'] === 'string' ? a['jpeg-dir'] : null,
     jpegList,
+    driveDir: typeof a['drive-dir'] === 'string' ? a['drive-dir'] : null,
+    driveToken: Boolean(process.env.DRIVE_ACCESS_TOKEN?.trim()),
     localSize(file) {
       try {
         return existsSync(file) ? statSync(file).size : null;
@@ -619,7 +663,7 @@ async function main(): Promise<number> {
   const bucket = await r2.headBucket();
   if (bucket.status !== 200) throw new Error(`El cubo no responde (HTTP ${bucket.status})`);
   const limit = Number(a.limit) > 0 ? Number(a.limit) : Infinity;
-  const pending = plan.items.filter((i) => !done.has(i.key)).slice(0, limit);
+  const pending = plan.items.filter((i) => !done.has(i.key) && !i.missing).slice(0, limit);
   if (plan.items.some((i) => i.key.startsWith('<org>'))) throw new Error('Faltan --marcas (o --org y --brand)');
   const concurrency = Math.max(1, Math.min(16, Number(a.concurrency) || 4));
   let ok = 0;
