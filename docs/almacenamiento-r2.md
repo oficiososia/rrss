@@ -148,6 +148,9 @@ función, p. ej. `http://host.docker.internal:9000`) y
 `http://127.0.0.1:59000`). La función no arranca así si `SUPABASE_URL` no es local.
 La prueba e2e arranca MinIO con la imagen `bitnamilegacy/minio:2025.7.23` (MinIO ya
 no publica imágenes en Docker Hub) en la red del stack local y lo quita al acabar.
+Esa imagen arranca MinIO, se configura, lo para y lo vuelve a arrancar: la prueba
+espera a «MinIO setup finished» en su registro antes de usarlo (si no, las primeras
+subidas del navegador se cortan con `ERR_EMPTY_RESPONSE`).
 
 Script de migración (en el entorno de quien lo ejecuta, nunca en el repositorio):
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,

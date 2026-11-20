@@ -1,6 +1,6 @@
 // MinIO en Docker: el «Cloudflare R2» de la prueba local (docs/almacenamiento-r2.md).
 // Solo para la prueba e2e: credenciales fijas y públicas, cubo de usar y tirar.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { signS3Request } from '../../supabase/functions/_shared/storage/sigv4.ts';
 
 export const MINIO = {
@@ -20,6 +20,12 @@ export const MINIO = {
 
 const docker = (...args: string[]) =>
   execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+/** Registro del contenedor; Bitnami escribe sus avisos por la salida de errores. */
+function registro(): string {
+  const r = spawnSync('docker', ['logs', MINIO.contenedor], { encoding: 'utf8' });
+  return `${r.stdout ?? ''}${r.stderr ?? ''}`;
+}
 
 async function firmado(method: string, ruta: string): Promise<Response> {
   const url = `${MINIO.publico}${ruta}`;
@@ -55,6 +61,14 @@ export async function arrancarMinio(): Promise<void> {
     MINIO.imagen,
   );
   const limite = Date.now() + 60_000;
+  // La imagen de Bitnami arranca MinIO en segundo plano para configurarse, lo
+  // PARA y lo vuelve a arrancar: durante esa preparación ya responde «vivo»,
+  // pero el reinicio corta las conexiones (el navegador ve ERR_EMPTY_RESPONSE en
+  // la subida). Hay que esperar al final de la preparación y, después, a que responda.
+  while (!registro().includes('MinIO setup finished')) {
+    if (Date.now() > limite) throw new Error('MinIO no terminó de prepararse');
+    await new Promise((listo) => setTimeout(listo, 500));
+  }
   for (;;) {
     const vivo = await fetch(`${MINIO.publico}/minio/health/live`).catch(() => null);
     if (vivo?.ok) break;
