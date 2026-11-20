@@ -155,8 +155,15 @@ export function createSupabaseStorage(
       const fromDrive = DRIVE_PATH.test(objectPath);
       const signed = fromDrive
         ? null
-        : await mediaStorage<{ urls?: Record<string, { url?: string }> }>('sign', { paths: [objectPath] }, signal);
-      const signedUrl = signed?.urls?.[objectPath]?.url;
+        : await mediaStorage<{ urls?: Record<string, { backend?: string; url?: string }> }>(
+            'sign',
+            { paths: [objectPath] },
+            signal,
+          );
+      // Solo lo que está en R2 va por la URL firmada; lo de Supabase se baja como
+      // siempre (la URL que firma la función usa su dirección interna).
+      const entry = signed?.urls?.[objectPath];
+      const signedUrl = entry?.backend === 'r2' ? entry.url : undefined;
       const response = fromDrive
         ? await doFetch(await driveUrl(objectPath, signal), { signal })
         : signedUrl

@@ -275,6 +275,19 @@ describe('almacenamiento con la función media-storage (Cloudflare R2)', () => {
     expect(r2Objects.has(`${org}/${marca}/reels/grande.mp4`)).toBe(true);
   });
 
+  it('lo que la función dice que está en Supabase se baja de Storage con la clave, no por su URL', async () => {
+    const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });
+    const objectPath = `${org}/${marca}/media/en-supabase.jpg`;
+    objects.set(`brand-media/${objectPath}`, Buffer.from('de-supabase'));
+    const target = path.join(dir, 'supabase-bajada.bin');
+    await storage.download(objectPath, target);
+    expect((await readFile(target)).toString()).toBe('de-supabase');
+    expect(seen.map((s) => s.url)).toEqual([
+      '/functions/v1/media-storage/sign',
+      `/storage/v1/object/brand-media/${objectPath}`,
+    ]);
+  });
+
   it('si la función no está desplegada, usa Supabase Storage y no vuelve a preguntar enseguida', async () => {
     mediaStorageDeployed = false;
     const storage = createSupabaseStorage({ url, serviceKey: KEY, bucket: 'brand-media', mediaStorage: true });

@@ -375,6 +375,7 @@ permitirlos cuando se use.
 | `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                  |
 | `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                     |
 | `WORKER_MAX_UPLOAD_BYTES`     | `52428800` (50 MB)            | Tope de cada archivo subido (el del cubo en el plan gratuito). Por encima, fallo sin reintento con el motivo |
+| `WORKER_MEDIA_STORAGE`        | `auto`                        | `auto`: pregunta a la función `media-storage` dónde está cada archivo (Cloudflare R2 o Supabase) y dónde subir los resultados, sin credenciales de R2; si la función no está desplegada, Supabase Storage. `supabase`: solo Supabase Storage (docs/almacenamiento-r2.md) |
 
 Mejora de seguridad pendiente (recomendada en la investigación): un rol de
 Postgres limitado a `claim_jobs`, `complete_job` y `fail_job` en vez de la
