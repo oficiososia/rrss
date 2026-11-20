@@ -18,7 +18,7 @@ import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
 test.describe.configure({ mode: 'serial' });
 
 const marcaA = () => `/o/${dato('orgA')}/m/${dato('marcaA')}`;
-const FOTO = png(640, 480, [180, 120, 60]);
+const FOTO = png(640, 480, [90, 160, 110]);
 const NOMBRE = 'tarta-para-recortar.png';
 
 function tarjeta(page: Page, nombre: string) {
@@ -64,7 +64,7 @@ test('quitar el fondo en el navegador crea un recurso nuevo y la foto original n
   await page.getByTestId('asset-edit-photo').click();
   const editor = page.getByTestId('photo-edit');
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
-  await editor.getByRole('tab', { name: 'Fondo' }).click();
+  await editor.getByRole('tab', { name: 'Fondo', exact: true }).click();
 
   // Quitar el fondo: sin IA ni coste; la opción del navegador es la de siempre.
   await editor.getByTestId('photo-edit-cutout-run').click();
