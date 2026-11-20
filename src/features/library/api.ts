@@ -14,7 +14,13 @@ import {
 } from '@/lib/files';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';
-import { deleteStoredMedia, mediaStorageEnabled, signStoragePaths, uploadTarget } from '@/features/storage/api';
+import {
+  deleteStoredMedia,
+  discardUploadedMedia,
+  mediaStorageEnabled,
+  signStoragePaths,
+  uploadTarget,
+} from '@/features/storage/api';
 
 export const ASSET_PAGE_SIZE = 48;
 
@@ -240,9 +246,10 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
     .single();
 
   if (inserted.error) {
-    // Sin fila no hay anotación en la cola: lo subido a R2 se queda (sin recurso
-    // que lo nombre); lo de Supabase se borra como siempre.
+    // Sin fila no hay anotación en la cola: lo de Supabase se borra como siempre y
+    // lo de R2 lo borra el servidor (y, si no puede, la tarea programada de huérfanos).
     await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+    await discardUploadedMedia(path);
     throw inserted.error;
   }
   return inserted.data;

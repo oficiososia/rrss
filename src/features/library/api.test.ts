@@ -51,6 +51,7 @@ vi.mock('@/lib/supabase', () => {
           if (name === 'platform-integrations') return { data: { mediaStorage: state.mediaStorage }, error: null };
           state.calls.push(`${name} ${(options.body?.paths ?? []).join(',')}`);
           const paths = options.body?.paths ?? [];
+          if (name === 'media-storage/discard') return { data: { removed: paths, failed: [] }, error: null };
           if (name === 'media-storage/delete') return { data: { removed: paths, failed: [] }, error: null };
           if (name === 'media-storage/sign') {
             const urls = Object.fromEntries(
@@ -65,7 +66,7 @@ vi.mock('@/lib/supabase', () => {
   };
 });
 
-import { resetMediaStorageAvailability, signStoragePaths } from '@/features/storage/api';
+import { discardUploadedMedia, resetMediaStorageAvailability, signStoragePaths } from '@/features/storage/api';
 import { deleteAssets, sortFacets, sweepStorageCleanup } from './api';
 
 beforeEach(() => {
@@ -138,5 +139,18 @@ describe('con Cloudflare R2 en el servidor', () => {
   it('sin R2, ni se pregunta a media-storage', async () => {
     await signStoragePaths(['o/b/media/r2-a.jpg'], 3600);
     expect(state.calls).toEqual(['firma supabase o/b/media/r2-a.jpg']);
+  });
+});
+
+describe('borrado compensatorio de un alta fallida', () => {
+  it('con R2, pide al servidor que borre el archivo subido sin recurso', async () => {
+    state.mediaStorage = true;
+    await discardUploadedMedia('o/b/media/1-a.jpg');
+    expect(state.calls).toEqual(['media-storage/discard o/b/media/1-a.jpg']);
+  });
+
+  it('sin R2 no llama a nada (Supabase ya lo borra el cliente)', async () => {
+    await discardUploadedMedia('o/b/media/1-a.jpg');
+    expect(state.calls).toEqual([]);
   });
 });
