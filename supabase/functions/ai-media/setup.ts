@@ -104,7 +104,7 @@ export async function loadRuntime(): Promise<MediaRuntime> {
   const { data, error } = await admin
     .from('ai_media_models')
     .select(
-      'provider, model, task, display_name, billing_unit, price_micros, price_details, price_verified, data_region, trains_on_inputs, delivery, settings, priority, active',
+      'provider, model, task, operation, display_name, billing_unit, price_micros, price_details, price_verified, data_region, trains_on_inputs, delivery, settings, priority, active',
     )
     .eq('active', true);
   if (error) throw new Error('No se ha podido leer el registro de modelos');

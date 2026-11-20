@@ -16,10 +16,14 @@
 // hacen nada.
 import { AiError, AiProviderFailure, type Json, type RpcClient } from '../contract.ts';
 import {
+  editOutputSize,
+  IMAGE_EDIT_OPERATIONS,
   MEDIA_JOB_KIND,
+  mediaKindOf,
   MediaProviderFailure,
   MediaRequestError,
   type ClaimedJob,
+  type MediaEditOrigin,
   type MediaEstimate,
   type MediaGenerateParams,
   type MediaGenerateResult,
@@ -43,6 +47,7 @@ import { download, isRecord, type FetchLike } from './http.ts';
 import {
   dataHandlingOf,
   priceMediaUsage,
+  resolveEditModel,
   resolveMediaModel,
   type ModelSelection,
   type ProviderAvailability,
@@ -113,6 +118,23 @@ interface JobPayload {
   purpose?: string;
   prompt?: string;
   user_id?: string;
+  /** Si es una edición de foto: de qué recurso sale (procedencia del resultado). */
+  edit?: MediaEditOrigin;
+}
+
+function parseEdit(value: unknown): MediaEditOrigin | undefined {
+  if (!isRecord(value)) return undefined;
+  const { operation, sourceAssetId, sourceName, scale } = value;
+  if (typeof operation !== 'string' || !(IMAGE_EDIT_OPERATIONS as readonly string[]).includes(operation)) {
+    return undefined;
+  }
+  if (typeof sourceAssetId !== 'string') return undefined;
+  return {
+    operation: operation as MediaEditOrigin['operation'],
+    sourceAssetId,
+    ...(typeof sourceName === 'string' ? { sourceName } : {}),
+    ...(typeof scale === 'number' ? { scale } : {}),
+  };
 }
 
 function parsePayload(value: unknown): JobPayload | null {
@@ -138,6 +160,7 @@ function parsePayload(value: unknown): JobPayload | null {
     purpose: text(value.purpose),
     prompt: text(value.prompt),
     user_id: text(value.user_id),
+    edit: parseEdit(value.edit),
   };
 }
 
@@ -158,7 +181,48 @@ function field(row: unknown, name: string): string | null {
 const jobKey = (generationId: string) => `ai-media:${generationId}`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Tipos de foto que se pueden editar con IA. */
+const EDITABLE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+/** Tope por defecto de la foto de entrada (36 MP) y del lado del resultado al ampliar. */
+const DEFAULT_MAX_INPUT_PIXELS = 36_000_000;
+const DEFAULT_MAX_OUTPUT_SIDE = 4096;
+
+function numberSetting(model: MediaModel, name: string): number | undefined {
+  const value = model.settings[name];
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function validate(request: MediaRequest, model: MediaModel, maxVideoSeconds: number): void {
+  if (request.kind === 'image_edit') {
+    const { source } = request;
+    if (!EDITABLE_MIME_TYPES.includes(source.mimeType)) {
+      throw new MediaRequestError('Solo se pueden editar fotos JPEG, PNG o WebP.');
+    }
+    const valid = (n: number) => Number.isInteger(n) && n >= 16 && n <= 20_000;
+    if (!valid(source.width) || !valid(source.height)) {
+      throw new MediaRequestError('No se conocen las medidas de la foto: vuelve a subirla a la biblioteca.');
+    }
+    const maxInput = numberSetting(model, 'max_input_pixels') ?? DEFAULT_MAX_INPUT_PIXELS;
+    if (source.width * source.height > maxInput) {
+      throw new MediaRequestError(
+        `La foto es demasiado grande para editarla con IA (más de ${Math.floor(maxInput / 1_000_000)} megapíxeles).`,
+      );
+    }
+    if (request.operation === 'upscale') {
+      if (request.scale !== 2 && request.scale !== 4) throw new MediaRequestError('Se puede ampliar ×2 o ×4.');
+      const maxSide = numberSetting(model, 'max_output_side') ?? DEFAULT_MAX_OUTPUT_SIDE;
+      const out = editOutputSize(request);
+      if (Math.max(out.width, out.height) > maxSide) {
+        throw new MediaRequestError(
+          `Ampliada ×${request.scale} pasaría de ${maxSide} px por lado: la foto ya tiene resolución suficiente` +
+            (request.scale === 4 ? ' (prueba ×2).' : '.'),
+        );
+      }
+    } else if (request.scale !== undefined) {
+      throw new MediaRequestError('Quitar el fondo no admite factor de ampliación.');
+    }
+    return;
+  }
   if (!/^[1-9]\d{0,2}:[1-9]\d{0,2}$/.test(request.aspectRatio)) {
     throw new MediaRequestError('La proporción debe tener la forma «ancho:alto», por ejemplo 4:5.');
   }
@@ -208,7 +272,10 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
   }
 
   function plan(request: MediaRequest) {
-    const { model, provider } = resolveMediaModel(request.kind, config.models, config.providers, config.selection);
+    const { model, provider } =
+      request.kind === 'image_edit'
+        ? resolveEditModel(request.operation, config.models, config.providers, config.selection)
+        : resolveMediaModel(request.kind, config.models, config.providers, config.selection);
     validate(request, model, options.maxVideoSeconds);
     const usage = provider.estimateUsage(request, model);
     const priced = priceMediaUsage(model, usage);
@@ -284,8 +351,8 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
     outputs: MediaOutputRef[];
     startedAt: number;
     providerRequestId: string | undefined;
-    /** Para qué se pidió, el encargo y quién lo pidió (procedencia del recurso). */
-    origin?: { purpose?: string; prompt?: string; requestedBy?: string };
+    /** Para qué se pidió, el encargo, quién lo pidió y, si es una edición, de qué foto (procedencia del recurso). */
+    origin?: { purpose?: string; prompt?: string; requestedBy?: string; edit?: MediaEditOrigin };
   }): Promise<{ assets: StoredMedia[]; usage: MediaUsage; costMicros: number }> {
     const provenance: MediaProvenance = {
       provider: context.provider.id,
@@ -356,6 +423,21 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
 
   async function generate(params: MediaGenerateParams): Promise<MediaGenerateResult> {
     const { request } = params;
+    const kind = mediaKindOf(request);
+    const prompt = request.kind === 'image_edit' ? undefined : request.prompt;
+    let edit: MediaEditOrigin | undefined;
+    if (request.kind === 'image_edit') {
+      // Para estimar basta con las medidas; para editar hace falta la foto.
+      if (!request.source.url && !request.source.bytes)
+        throw new MediaRequestError('Falta la foto que hay que editar.');
+      if (!params.edit?.sourceAssetId) throw new MediaRequestError('Falta la foto de la biblioteca que se edita.');
+      edit = {
+        operation: request.operation,
+        sourceAssetId: params.edit.sourceAssetId,
+        ...(params.edit.sourceName ? { sourceName: params.edit.sourceName.slice(0, 120) } : {}),
+        ...(request.scale ? { scale: request.scale } : {}),
+      };
+    }
     const { model, provider, usage: estimatedUsage, costMicros: reserveMicros } = plan(request);
     const asynchronous = typeof provider.poll === 'function';
     const ttlSeconds = asynchronous
@@ -366,7 +448,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
     const reservation = await rpc('ai_reserve_generation', {
       p_user_id: params.userId,
       p_brand_id: params.brandId,
-      p_task: request.kind,
+      p_task: kind,
       p_purpose: params.purpose,
       p_provider: provider.id,
       p_model: model.model,
@@ -461,7 +543,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
           generationId,
           organizationId,
           brandId: params.brandId,
-          kind: request.kind,
+          kind,
           provider,
           model,
           reserveMicros,
@@ -470,11 +552,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
           outputs: started.outputs,
           startedAt,
           providerRequestId: started.providerRequestId,
-          origin: {
-            purpose: params.purpose,
-            prompt: request.prompt,
-            requestedBy: params.userId,
-          },
+          origin: { purpose: params.purpose, prompt, requestedBy: params.userId, edit },
         });
         return { ...base, status: 'completed', ...settled };
       } catch (error) {
@@ -501,15 +579,16 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       generation_id: generationId,
       provider: provider.id,
       model: model.model,
-      kind: request.kind,
+      kind,
       job: started.job,
       reserve_micros: reserveMicros,
       estimated_usage: estimatedUsage,
       started_at: startedAt,
       deadline_at: startedAt + options.asyncDeadlineSeconds * 1000,
       purpose: params.purpose,
-      prompt: request.prompt,
+      prompt,
       user_id: params.userId,
+      ...(edit ? { edit } : {}),
     };
     const queued = await rpc('enqueue_job', {
       p_organization_id: organizationId,
@@ -616,7 +695,12 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
             outputs: outcome.outputs,
             startedAt: payload.started_at,
             providerRequestId: payload.job.id,
-            origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id },
+            origin: {
+              purpose: payload.purpose,
+              prompt: payload.prompt,
+              requestedBy: payload.user_id,
+              edit: payload.edit,
+            },
           });
           await finishJob({ status: 'completed', cost_micros: settled.costMicros });
           return { status: 'completed', generationId, assets: settled.assets, costMicros: settled.costMicros };
@@ -722,7 +806,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       outputs: event.outcome.outputs,
       startedAt: payload.started_at,
       providerRequestId: payload.job.id,
-      origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id },
+      origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id, edit: payload.edit },
     });
     return { status: 'completed', generationId };
   }

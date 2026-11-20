@@ -5,6 +5,7 @@ import { AiError, type Json } from '../contract.ts';
 import type {
   BillingUnit,
   DataRegion,
+  ImageEditOperation,
   MediaDataHandling,
   MediaKind,
   MediaModel,
@@ -29,6 +30,15 @@ export interface MediaModelRow {
   settings: unknown;
   priority: number;
   active: boolean;
+  /** `generate` (por defecto) o una edición de foto (migración 20261128010000). */
+  operation?: string | null;
+}
+
+const EDIT_OPERATIONS: readonly string[] = ['remove_background', 'upscale'];
+
+/** Qué hace un modelo: sin el campo, generar (así eran todos antes de la edición de fotos). */
+export function operationOf(model: Pick<MediaModel, 'operation'>): 'generate' | ImageEditOperation {
+  return model.operation ?? 'generate';
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -48,6 +58,8 @@ export function mediaModelsFromRows(rows: MediaModelRow[]): MediaModel[] {
     if (!['image', 'megapixel', 'second'].includes(row.billing_unit)) continue;
     if (!Number.isFinite(price) || price < 0) continue;
     const details = record(row.price_details);
+    const operation = row.operation ?? 'generate';
+    if (operation !== 'generate' && (row.task !== 'image' || !EDIT_OPERATIONS.includes(operation))) continue;
     models.push({
       provider: row.provider,
       model: row.model,
@@ -65,6 +77,7 @@ export function mediaModelsFromRows(rows: MediaModelRow[]): MediaModel[] {
         ? row.trains_on_inputs
         : 'unknown') as TrainsOnInputs,
       delivery: row.delivery === 'async' ? 'async' : 'sync',
+      operation: operation as 'generate' | ImageEditOperation,
       settings: record(row.settings) as { [key: string]: Json | undefined },
       priority: Number.isFinite(row.priority) ? row.priority : 0,
       active: row.active === true,
@@ -126,6 +139,8 @@ export interface ModelSelection {
    * o permitirlos aquí.
    */
   allowNonEu?: boolean;
+  /** Modelo fijado para cada edición de foto: `proveedor:modelo`. */
+  preferredEdits?: Partial<Record<ImageEditOperation, string>>;
 }
 
 export interface ProviderAvailability {
@@ -161,7 +176,9 @@ export function resolveMediaModel(
     const separator = preferred.indexOf(':');
     const providerId = separator > 0 ? preferred.slice(0, separator) : preferred;
     const modelName = separator > 0 ? preferred.slice(separator + 1) : '';
-    const model = models.find((m) => m.kind === kind && m.provider === providerId && m.model === modelName);
+    const model = models.find(
+      (m) => m.kind === kind && operationOf(m) === 'generate' && m.provider === providerId && m.model === modelName,
+    );
     if (!model) {
       throw new AiError(
         'not_configured',
@@ -184,7 +201,9 @@ export function resolveMediaModel(
     return { model, provider };
   }
 
-  const active = models.filter((m) => m.kind === kind && m.active).sort((a, b) => b.priority - a.priority);
+  const active = models
+    .filter((m) => m.kind === kind && operationOf(m) === 'generate' && m.active)
+    .sort((a, b) => b.priority - a.priority);
   if (active.length === 0) {
     throw new AiError(
       'not_configured',
@@ -205,6 +224,77 @@ export function resolveMediaModel(
   }
   const reasons = [...new Set(allowed.map((m) => whyNot(m.provider)))].join('; ');
   throw new AiError('not_configured', `Ningún proveedor de ${KIND_LABEL[kind]} está disponible: ${reasons}.`);
+}
+
+export const EDIT_LABEL: Record<ImageEditOperation, string> = {
+  remove_background: 'quitar el fondo',
+  upscale: 'ampliar la resolución',
+};
+
+/**
+ * Elige el modelo de una edición de foto (quitar el fondo, ampliar). Mismas
+ * reglas que `resolveMediaModel`: lo fijado manda; si no, el activo de más
+ * prioridad que procese en la UE (salvo que se permitan los demás) y cuyo
+ * adaptador sepa hacer esa edición. Sin ninguno, `AiError('not_configured')`.
+ */
+export function resolveEditModel(
+  operation: ImageEditOperation,
+  models: MediaModel[],
+  availability: ProviderAvailability,
+  selection: ModelSelection = {},
+): { model: MediaModel; provider: MediaProvider } {
+  const label = EDIT_LABEL[operation];
+  const providers = new Map(availability.providers.map((p) => [p.id, p]));
+  const usable = (model: MediaModel): MediaProvider | undefined => {
+    const provider = providers.get(model.provider);
+    return provider?.edits?.includes(operation) ? provider : undefined;
+  };
+  const whyNot = (providerId: string): string => {
+    const missing = availability.unavailable.find((u) => u.id === providerId);
+    return missing ? missing.reason : `el adaptador «${providerId}» no sabe ${label}`;
+  };
+  const candidates = models.filter((m) => m.kind === 'image' && operationOf(m) === operation);
+
+  const preferred = selection.preferredEdits?.[operation];
+  if (preferred) {
+    const separator = preferred.indexOf(':');
+    const providerId = separator > 0 ? preferred.slice(0, separator) : preferred;
+    const modelName = separator > 0 ? preferred.slice(separator + 1) : '';
+    const model = candidates.find((m) => m.provider === providerId && m.model === modelName);
+    if (!model || !model.active) {
+      throw new AiError(
+        'not_configured',
+        `El modelo para ${label} configurado («${preferred}») no está activo en el registro de modelos.`,
+      );
+    }
+    const provider = usable(model);
+    if (!provider) {
+      throw new AiError(
+        'not_configured',
+        `El modelo para ${label} configurado («${preferred}») no se puede usar: ${whyNot(providerId)}.`,
+      );
+    }
+    return { model, provider };
+  }
+
+  const active = candidates.filter((m) => m.active).sort((a, b) => b.priority - a.priority);
+  if (active.length === 0) {
+    throw new AiError('not_configured', `No hay ningún modelo para ${label} activo en el registro de modelos.`);
+  }
+  const allowed = selection.allowNonEu ? active : active.filter((m) => regionOf(m, providers.get(m.provider)) === 'eu');
+  if (allowed.length === 0) {
+    throw new AiError(
+      'not_configured',
+      `Hay modelos para ${label} activos, pero ninguno procesa los datos en la UE. ` +
+        'Para usar uno hay que fijarlo a propósito en la configuración del servidor.',
+    );
+  }
+  for (const model of allowed) {
+    const provider = usable(model);
+    if (provider) return { model, provider };
+  }
+  const reasons = [...new Set(allowed.map((m) => whyNot(m.provider)))].join('; ');
+  throw new AiError('not_configured', `Ningún proveedor para ${label} está disponible: ${reasons}.`);
 }
 
 // ─────────────────────────── Geometría ───────────────────────────

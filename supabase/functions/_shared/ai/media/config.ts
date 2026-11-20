@@ -30,6 +30,8 @@ export type MediaEnv = Record<string, string | undefined>;
 export const MEDIA_ENV = {
   imageModel: 'AI_MEDIA_IMAGE_MODEL',
   videoModel: 'AI_MEDIA_VIDEO_MODEL',
+  removeBackgroundModel: 'AI_MEDIA_REMOVE_BACKGROUND_MODEL',
+  upscaleModel: 'AI_MEDIA_UPSCALE_MODEL',
   allowNonEu: 'AI_MEDIA_ALLOW_NON_EU',
   webhookBaseUrl: 'AI_MEDIA_WEBHOOK_BASE_URL',
   simulated: 'AI_MEDIA_SIMULATED',
@@ -126,7 +128,9 @@ export function createMediaProviders(env: MediaEnv, options: { fetch: FetchLike 
   load(COMFYUI_PROVIDER_ID, [MEDIA_ENV.comfyUiBaseUrl], () => {
     const baseUrl = value(env, MEDIA_ENV.comfyUiBaseUrl)!;
     if (!isComfyUiBaseUrl(baseUrl)) {
-      throw new Error(`${MEDIA_ENV.comfyUiBaseUrl} debe ser https (o http solo en localhost), sin usuario ni contraseña`);
+      throw new Error(
+        `${MEDIA_ENV.comfyUiBaseUrl} debe ser https (o http solo en localhost), sin usuario ni contraseña`,
+      );
     }
     const region = value(env, MEDIA_ENV.comfyUiDataRegion) ?? 'unknown';
     if (!['eu', 'us', 'global', 'unknown'].includes(region)) {
@@ -157,9 +161,13 @@ export function createMediaProviders(env: MediaEnv, options: { fetch: FetchLike 
 
 /** Qué modelo se fija para cada tipo y si se admiten los que no procesan en la UE. */
 export function mediaSelectionFromEnv(env: MediaEnv): ModelSelection {
+  const removeBackground = value(env, MEDIA_ENV.removeBackgroundModel);
+  const upscale = value(env, MEDIA_ENV.upscaleModel);
   return {
     preferred: { image: value(env, MEDIA_ENV.imageModel), video: value(env, MEDIA_ENV.videoModel) },
     allowNonEu: value(env, MEDIA_ENV.allowNonEu) === 'true',
+    // Solo si se fija alguno: quien no edita fotos ve la misma configuración que antes.
+    ...(removeBackground || upscale ? { preferredEdits: { remove_background: removeBackground, upscale } } : {}),
   };
 }
 

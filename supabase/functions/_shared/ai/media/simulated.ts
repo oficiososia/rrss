@@ -6,6 +6,7 @@
 // config.ts), y su salida se reconoce a simple vista.
 import {
   MediaProviderFailure,
+  type ImageEditOperation,
   type MediaModel,
   type MediaOutcome,
   type MediaProvider,
@@ -67,13 +68,32 @@ function chunk(type: string, data: number[]): number[] {
  * misma petición produce exactamente los mismos bytes.
  */
 export function simulatedPng(seed: string): Uint8Array {
-  const size = 8;
+  return pngOf(seed, 8, false);
+}
+
+/**
+ * PNG de prueba de una edición: con transparencia alrededor (quitar el fondo)
+ * o más grande (ampliar). Igual de determinista que `simulatedPng`.
+ */
+export function simulatedEditPng(seed: string, operation: ImageEditOperation): Uint8Array {
+  return operation === 'remove_background' ? pngOf(seed, 16, true) : pngOf(seed, 32, false);
+}
+
+function pngOf(seed: string, size: number, cutout: boolean): Uint8Array {
   const h = hash(seed);
   const [r, g, b] = [(h >>> 16) & 0xff, (h >>> 8) & 0xff, h & 0xff];
   const raw: number[] = [];
   for (let y = 0; y < size; y += 1) {
     raw.push(0); // sin filtro
-    for (let x = 0; x < size; x += 1) raw.push(r, g, b);
+    for (let x = 0; x < size; x += 1) {
+      if (!cutout) {
+        raw.push(r, g, b);
+        continue;
+      }
+      // «Recorte»: el centro opaco y un marco transparente, como una figura sin fondo.
+      const inside = x >= size / 4 && x < (size * 3) / 4 && y >= size / 4 && y < (size * 3) / 4;
+      raw.push(r, g, b, inside ? 255 : 0);
+    }
   }
   // zlib con un único bloque sin comprimir.
   const zlib = [
@@ -96,13 +116,17 @@ export function simulatedPng(seed: string): Uint8Array {
     0x0a,
     0x1a,
     0x0a,
-    ...chunk('IHDR', [...u32(size), ...u32(size), 8, 2, 0, 0, 0]),
+    // Tipo de color 2 (RGB) o 6 (RGB con alfa).
+    ...chunk('IHDR', [...u32(size), ...u32(size), 8, cutout ? 6 : 2, 0, 0, 0]),
     ...chunk('IDAT', zlib),
     ...chunk('IEND', []),
   ]);
 }
 
 function fingerprint(request: MediaRequest): string {
+  if (request.kind === 'image_edit') {
+    return `edit|${request.operation}|${request.source.url ?? ''}|${request.source.width}x${request.source.height}|${request.scale ?? 1}`;
+  }
   if (request.kind === 'image') {
     return `image|${request.prompt}|${request.aspectRatio}|${request.size.width}x${request.size.height}|${request.references?.length ?? 0}`;
   }
@@ -335,5 +359,44 @@ export function createSimulatedAsyncImageProvider(options: SimulatedAsyncImageOp
     },
 
     async cancel(): Promise<void> {},
+  };
+}
+
+// ───────────────────────── Edición de fotos ─────────────────────────
+
+export const SIMULATED_IMAGE_EDIT_PROVIDER_ID = 'simulated-image-edit';
+
+/**
+ * Edición de fotos simulada, síncrona: «quita el fondo» o «amplía» sin mirar
+ * la foto (no la descarga) y devuelve un PNG de prueba determinista. Sirve
+ * para probar de punta a punta que el resultado es un recurso nuevo y que el
+ * original no cambia.
+ */
+export function createSimulatedImageEditProvider(options: SimulatedOptions = {}): SimulatedProvider {
+  const calls: MediaStartRequest[] = [];
+  return {
+    id: SIMULATED_IMAGE_EDIT_PROVIDER_ID,
+    kinds: ['image'],
+    edits: ['remove_background', 'upscale'],
+    testedAgainstRealService: false,
+    calls,
+    estimateUsage: (request): MediaUsage => (request.kind === 'image_edit' ? { images: 1 } : {}),
+
+    async start(start): Promise<MediaStartResult> {
+      calls.push(start);
+      const { request } = start;
+      if (request.kind !== 'image_edit') {
+        throw new MediaProviderFailure('invalid_request', 'El proveedor simulado de edición solo edita fotos');
+      }
+      if (options.delayMs) await wait(options.delayMs, start.signal);
+      const failure = options.failWith?.(start, calls.length);
+      if (failure) throw failure;
+      return {
+        status: 'completed',
+        outputs: [{ mimeType: 'image/png', bytes: simulatedEditPng(fingerprint(request), request.operation) }],
+        usage: { images: 1 },
+        providerRequestId: `sim-edit-${calls.length}`,
+      };
+    },
   };
 }

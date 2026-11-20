@@ -8,6 +8,11 @@
 //   image.generate  reserva cupo y genera. Síncrono → devuelve el recurso de la
 //                   biblioteca; asíncrono → devuelve la generación en curso, que
 //                   cierra `ai-media-poll` (o el webhook del proveedor).
+//   photo.options   ediciones de foto con IA disponibles (quitar el fondo, ampliar);
+//   photo.estimate  coste máximo de editar una foto, SIN reservar nada;
+//   photo.edit      reserva cupo y edita una foto de la biblioteca. El resultado
+//                   es SIEMPRE un recurso nuevo (procedencia `ai_edit` con el
+//                   original); la foto original no se toca (docs/edicion-fotos.md).
 //
 // El permiso de edición en la marca lo impone la base de datos al reservar el
 // cupo (`ai_reserve_generation`, 42501 → 403): no hay forma de generar sin él.
@@ -17,14 +22,24 @@
 // Errores: mismos códigos, estados y mensajes que `ai-generate`.
 import { AiError, type AiErrorCode } from '../_shared/ai/contract.ts';
 import {
+  IMAGE_EDIT_OPERATIONS,
   MediaRequestError,
   type AspectRatio,
+  type ImageEditOperation,
+  type ImageEditRequest,
   type ImageRequest,
   type MediaInput,
 } from '../_shared/ai/media/contract.ts';
 import type { MediaRuntime } from '../_shared/ai/media/runtime.ts';
 
-export const AI_MEDIA_ACTIONS = ['image.models', 'image.estimate', 'image.generate'] as const;
+export const AI_MEDIA_ACTIONS = [
+  'image.models',
+  'image.estimate',
+  'image.generate',
+  'photo.options',
+  'photo.estimate',
+  'photo.edit',
+] as const;
 export type AiMediaAction = (typeof AI_MEDIA_ACTIONS)[number];
 
 /** Proporciones del lienzo del editor. */
@@ -47,6 +62,18 @@ export interface AiMediaDeps {
    * `null` si alguna no cumple.
    */
   loadReferences(accessToken: string, brandId: string, assetIds: string[]): Promise<MediaInput[] | null>;
+  /**
+   * La foto que se va a editar, CON LA IDENTIDAD DEL USUARIO (RLS): solo una
+   * imagen de esa marca, guardada en nuestro almacenamiento (no Drive), JPEG,
+   * PNG o WebP y con medidas. Con `sign`, la URL firmada para el proveedor.
+   * `null` si no cumple. Sin ella, la edición de fotos no se ofrece.
+   */
+  loadPhoto?(
+    accessToken: string,
+    brandId: string,
+    assetId: string,
+    options: { sign: boolean },
+  ): Promise<{ input: MediaInput & { width: number; height: number }; fileName: string } | null>;
   /** Servicio y modelos, ya montados (ver runtime.ts). */
   runtime(): Promise<MediaRuntime>;
   /** Registro del servidor. Nunca recibe claves ni el encargo. */
@@ -76,6 +103,29 @@ export function imageSizeFor(ratio: string): { width: number; height: number } {
 }
 
 class InputError extends Error {}
+
+interface PhotoInput {
+  assetId: string;
+  operation: ImageEditOperation;
+  scale?: 2 | 4;
+}
+
+function parsePhotoInput(data: Record<string, unknown>): PhotoInput {
+  if (typeof data.assetId !== 'string' || !UUID.test(data.assetId)) {
+    throw new InputError('Indica la foto de la biblioteca que quieres editar.');
+  }
+  const operation = data.operation;
+  if (typeof operation !== 'string' || !(IMAGE_EDIT_OPERATIONS as readonly string[]).includes(operation)) {
+    throw new InputError(`Indica la edición: ${IMAGE_EDIT_OPERATIONS.join(', ')}.`);
+  }
+  if (operation === 'upscale') {
+    const scale = data.scale ?? 2;
+    if (scale !== 2 && scale !== 4) throw new InputError('Se puede ampliar ×2 o ×4.');
+    return { assetId: data.assetId, operation, scale };
+  }
+  if (data.scale !== undefined) throw new InputError('Quitar el fondo no admite factor de ampliación.');
+  return { assetId: data.assetId, operation: operation as ImageEditOperation };
+}
 
 interface ParsedInput {
   prompt: string;
@@ -179,6 +229,76 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
 
       if (action === 'image.models') {
         return json(200, { action, models: runtime.imageChoices });
+      }
+
+      if (action === 'photo.options') {
+        return json(200, { action, edits: deps.loadPhoto ? runtime.editChoices : [] });
+      }
+
+      if (action === 'photo.estimate' || action === 'photo.edit') {
+        const photo = parsePhotoInput(data);
+        if (!deps.loadPhoto || !runtime.editChoices.some((c) => c.operation === photo.operation)) {
+          throw new AiError('not_configured', `No hay ningún modelo para «${photo.operation}» disponible.`);
+        }
+        const loaded = await deps.loadPhoto(accessToken, brandId, photo.assetId, { sign: action === 'photo.edit' });
+        if (!loaded) {
+          return fail(
+            400,
+            'invalid_request',
+            'Esa foto no existe, no es de esta marca o no se puede editar con IA (solo fotos JPEG, PNG o WebP subidas a la biblioteca).',
+          );
+        }
+        const editRequest: ImageEditRequest = {
+          kind: 'image_edit',
+          operation: photo.operation,
+          source: loaded.input,
+          ...(photo.scale ? { scale: photo.scale } : {}),
+        };
+        const service = runtime.serviceFor();
+        if (action === 'photo.estimate') {
+          const estimate = service.estimate(editRequest);
+          return json(200, {
+            action,
+            operation: photo.operation,
+            model: `${estimate.provider}:${estimate.model}`,
+            costMicros: estimate.costMicros,
+            dataHandling: estimate.dataHandling,
+          });
+        }
+        const result = await service.generate({
+          userId: user.userId,
+          brandId,
+          purpose: `photo.${photo.operation}`,
+          request: editRequest,
+          edit: { sourceAssetId: photo.assetId, sourceName: loaded.fileName },
+        });
+        const common = {
+          action,
+          operation: photo.operation,
+          generationId: result.generationId,
+          model: `${result.provider}:${result.model}`,
+          estimatedCostMicros: result.estimatedCostMicros,
+          dataHandling: {
+            dataRegion: result.dataRegion,
+            euProcessing: result.euProcessing,
+            trainsOnInputs: result.trainsOnInputs,
+            untestedAdapter: result.untestedAdapter,
+          },
+        };
+        if (result.status === 'pending') return json(202, { ...common, status: 'pending', jobId: result.jobId });
+        const asset = result.assets[0];
+        if (!asset?.assetId) {
+          return fail(500, 'internal', 'La foto se editó, pero no se ha podido añadir a la biblioteca.', {
+            retryable: true,
+            generationId: result.generationId,
+          });
+        }
+        return json(200, {
+          ...common,
+          status: 'completed',
+          costMicros: result.costMicros,
+          asset: { id: asset.assetId, path: asset.path, mimeType: asset.mimeType, bytes: asset.bytes },
+        });
       }
 
       const parsed = parseImageInput(data, action === 'image.generate');

@@ -72,6 +72,37 @@ const handler = createAiMediaHandler({
     return inputs;
   },
 
+  // Con la identidad del usuario: solo una foto de la marca que ve, guardada en
+  // nuestro almacenamiento (las de Google Drive no se mandan a un proveedor).
+  async loadPhoto(accessToken, brandId, assetId, { sign }) {
+    const { data, error } = await asUser(accessToken)
+      .from('media_assets')
+      .select('id, storage_path, storage_backend, source, mime_type, width, height, kind, file_name')
+      .eq('brand_id', brandId)
+      .eq('id', assetId)
+      .maybeSingle();
+    if (error) throw new Error('No se ha podido leer la foto');
+    if (!data || (data.kind !== 'image' && data.kind !== 'logo') || data.source === 'google_drive') return null;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(data.mime_type) || !data.width || !data.height) return null;
+    let url: string | undefined;
+    if (sign) {
+      try {
+        url = await signStoredPath(
+          await mediaStores(),
+          async () => (data.storage_backend === 'r2' ? 'r2' : 'supabase'),
+          data.storage_path,
+          REFERENCE_URL_SECONDS,
+        );
+      } catch {
+        return null;
+      }
+    }
+    return {
+      input: { mimeType: data.mime_type, width: data.width, height: data.height, ...(url ? { url } : {}) },
+      fileName: data.file_name,
+    };
+  },
+
   runtime: loadRuntime,
   log: (event, data) => console.error(`[ai-media] ${event}`, JSON.stringify(data)),
   allowedOrigin: env.AI_ALLOWED_ORIGIN,

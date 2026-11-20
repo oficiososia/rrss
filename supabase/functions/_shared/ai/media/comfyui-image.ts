@@ -22,6 +22,15 @@
 // se pueden cambiar por modelo en `ai_media_models.settings`. Las imágenes de
 // referencia usan `ReferenceLatent`, que el cuaderno NO prueba: sin contrastar.
 //
+// Edición de fotos (docs/edicion-fotos.md), SIN CONTRASTAR con un ComfyUI real:
+//   · ampliar: solo nodos del núcleo (UpscaleModelLoader + ImageUpscaleWithModel
+//     con Real-ESRGAN, ImageScale al tamaño exacto y, si la foto tiene
+//     transparencia, la misma escala para el canal alfa);
+//   · quitar el fondo: el núcleo de ComfyUI no trae ningún nodo que lo haga; el
+//     flujo usa un nodo personalizado fijado en el servidor (por defecto, el de
+//     BiRefNet de ComfyUI-RMBG), configurable entero en `settings`, y une la
+//     máscara a la foto con JoinImageWithAlpha (núcleo).
+//
 // Asíncrono, solo por sondeo: ComfyUI no tiene webhooks. Cada consulta es una
 // llamada a /history; el resultado se descarga en la consulta que lo encuentra.
 //
@@ -33,8 +42,10 @@
 // barrera delante (túnel con acceso, proxy con token) deja que cualquiera
 // ejecute grafos en esa GPU. Ver docs/ia-medios.md, «ComfyUI propio».
 import {
+  editOutputSize,
   MediaProviderFailure,
   type DataRegion,
+  type ImageEditRequest,
   type MediaInput,
   type MediaModel,
   type MediaOutcome,
@@ -52,6 +63,8 @@ export const COMFYUI_PROVIDER_ID = 'comfyui';
 const PROVIDER_NAME = 'ComfyUI';
 const MAX_REFERENCES = 4;
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
+/** La foto que se edita puede ser mayor que una referencia: el tope del cubo. */
+const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_RESULT_BYTES = 50 * 1024 * 1024;
 /** Tope de píxeles por defecto (1,5 MP): cabe en una T4 de 16 GB con el modelo de 4B. */
 const DEFAULT_MAX_PIXELS = 1_572_864;
@@ -65,6 +78,28 @@ export const COMFYUI_FLUX2_KLEIN_DEFAULTS = {
   steps: 4,
   sampler_name: 'euler',
   cfg: 1,
+} as const;
+
+/**
+ * Flujo de «quitar el fondo» por defecto. El nodo y sus entradas son los del
+ * paquete ComfyUI-RMBG (nodo `BiRefNetRMBG`, modelo BiRefNet con licencia MIT)
+ * tal como figuran en su documentación; SIN CONTRASTAR: hay que comprobarlos
+ * en el servidor con `GET /object_info/<nodo>` y, si cambian, ajustarlos en
+ * `ai_media_models.settings` sin tocar código.
+ */
+export const COMFYUI_REMOVE_BACKGROUND_DEFAULTS = {
+  rmbg_class_type: 'BiRefNetRMBG',
+  rmbg_inputs: { model: 'BiRefNet-general' } as Record<string, unknown>,
+  rmbg_image_input: 'image',
+  /** Salida del nodo que da la máscara (0 = primera). */
+  rmbg_mask_output: 1,
+  /** `true` si en la máscara 1 = lo que se queda (lo habitual). JoinImageWithAlpha espera lo contrario. */
+  rmbg_mask_is_foreground: true,
+} as const;
+
+/** Flujo de «ampliar» por defecto: Real-ESRGAN ×4 (BSD-3-Clause), solo nodos del núcleo. */
+export const COMFYUI_UPSCALE_DEFAULTS = {
+  upscale_model_name: 'RealESRGAN_x4plus.pth',
 } as const;
 
 export interface ComfyUiOptions {
@@ -197,7 +232,88 @@ export function buildFlux2KleinGraph(params: {
   return graph;
 }
 
+/** Ajusta un nombre de entrada de nodo: letras, números y guion bajo. */
+const inputName = (value: unknown, fallback: string) =>
+  typeof value === 'string' && /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(value) ? value : fallback;
+
+/**
+ * Grafo de «quitar el fondo»: carga la foto, saca la máscara con el nodo
+ * configurado y la une a la foto como canal alfa (PNG con transparencia).
+ */
+export function buildRemoveBackgroundGraph(params: {
+  image: string;
+  filenamePrefix: string;
+  settings: Record<string, unknown>;
+}): Graph {
+  const s = params.settings;
+  const d = COMFYUI_REMOVE_BACKGROUND_DEFAULTS;
+  const extra = isRecord(s.rmbg_inputs) ? s.rmbg_inputs : d.rmbg_inputs;
+  const maskOutput = Math.max(0, Math.round(num(s.rmbg_mask_output, d.rmbg_mask_output)));
+  const foreground =
+    typeof s.rmbg_mask_is_foreground === 'boolean' ? s.rmbg_mask_is_foreground : d.rmbg_mask_is_foreground;
+  const graph: Graph = {
+    '1': { class_type: 'LoadImage', inputs: { image: params.image } },
+    '2': {
+      class_type: text(s.rmbg_class_type, d.rmbg_class_type),
+      inputs: { ...extra, [inputName(s.rmbg_image_input, d.rmbg_image_input)]: ['1', 0] },
+    },
+  };
+  // JoinImageWithAlpha invierte la máscara (las máscaras de ComfyUI marcan lo transparente).
+  let alpha: [string, number] = ['2', maskOutput];
+  if (foreground) {
+    graph['3'] = { class_type: 'InvertMask', inputs: { mask: alpha } };
+    alpha = ['3', 0];
+  }
+  graph['4'] = { class_type: 'JoinImageWithAlpha', inputs: { image: ['1', 0], alpha } };
+  graph['9'] = { class_type: 'SaveImage', inputs: { images: ['4', 0], filename_prefix: params.filenamePrefix } };
+  return graph;
+}
+
+/**
+ * Grafo de «ampliar»: Real-ESRGAN (×4 nativo) y después escala exacta al
+ * tamaño pedido (×2 o ×4). Si la foto puede tener transparencia, el alfa se
+ * escala igual y se vuelve a unir. Solo nodos del núcleo de ComfyUI.
+ */
+export function buildUpscaleGraph(params: {
+  image: string;
+  width: number;
+  height: number;
+  keepAlpha: boolean;
+  filenamePrefix: string;
+  settings: Record<string, unknown>;
+}): Graph {
+  const s = params.settings;
+  const scale = (image: [string, number]) => ({
+    class_type: 'ImageScale',
+    inputs: { image, upscale_method: 'lanczos', width: params.width, height: params.height, crop: 'disabled' },
+  });
+  const graph: Graph = {
+    '1': { class_type: 'LoadImage', inputs: { image: params.image } },
+    '2': {
+      class_type: 'UpscaleModelLoader',
+      inputs: { model_name: text(s.upscale_model_name, COMFYUI_UPSCALE_DEFAULTS.upscale_model_name) },
+    },
+    '3': { class_type: 'ImageUpscaleWithModel', inputs: { upscale_model: ['2', 0], image: ['1', 0] } },
+    '4': scale(['3', 0]),
+  };
+  let result: [string, number] = ['4', 0];
+  if (params.keepAlpha) {
+    // La máscara de LoadImage ya viene invertida (1 = transparente); JoinImageWithAlpha la vuelve a invertir.
+    graph['5'] = { class_type: 'MaskToImage', inputs: { mask: ['1', 1] } };
+    graph['6'] = scale(['5', 0]);
+    graph['7'] = { class_type: 'ImageToMask', inputs: { image: ['6', 0], channel: 'red' } };
+    graph['8'] = { class_type: 'JoinImageWithAlpha', inputs: { image: ['4', 0], alpha: ['7', 0] } };
+    result = ['8', 0];
+  }
+  graph['9'] = { class_type: 'SaveImage', inputs: { images: result, filename_prefix: params.filenamePrefix } };
+  return graph;
+}
+
 function usageFor(request: MediaRequest, model: MediaModel): MediaUsage {
+  if (request.kind === 'image_edit') {
+    const out = editOutputSize(request);
+    return model.billingUnit === 'megapixel' ? { megapixels: megapixels(out.width, out.height) } : { images: 1 };
+  }
   if (request.kind !== 'image') return {};
   if (model.billingUnit === 'megapixel') return { megapixels: megapixels(request.size.width, request.size.height) };
   return { images: 1 };
@@ -245,13 +361,19 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
     }
   }
 
-  async function uploadReference(input: MediaInput, index: number, key: string, signal: AbortSignal): Promise<string> {
+  async function uploadReference(
+    input: MediaInput,
+    index: number,
+    key: string,
+    signal: AbortSignal,
+    maxBytes = MAX_REFERENCE_BYTES,
+  ): Promise<string> {
     let bytes = input.bytes;
     if (!bytes) {
       if (!input.url || !/^https?:\/\//i.test(input.url)) {
         throw new MediaProviderFailure('invalid_request', 'Falta una imagen de referencia');
       }
-      bytes = (await fetchBytes(input.url, MAX_REFERENCE_BYTES, signal)).bytes;
+      bytes = (await fetchBytes(input.url, maxBytes, signal)).bytes;
     }
     const extension = input.mimeType === 'image/jpeg' ? 'jpg' : input.mimeType === 'image/webp' ? 'webp' : 'png';
     const form = new FormData();
@@ -265,14 +387,72 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
     return subfolder ? `${subfolder}/${name}` : name;
   }
 
+  /** Lanza un grafo y devuelve el trabajo en curso. */
+  async function submit(graph: Graph, key: string, signal: AbortSignal): Promise<MediaStartResult> {
+    const { response, body } = await request_(`${base}/prompt`, graph, key, signal);
+    if (!response.ok) {
+      if (response.status === 400) {
+        // Faltan nodos o modelos en el servidor: no es culpa de la petición de la persona.
+        throw new MediaProviderFailure(
+          'provider_error',
+          `${PROVIDER_NAME} ha rechazado el flujo (faltan nodos o archivos de modelo en el servidor)`,
+        );
+      }
+      throw failureFromResponse(PROVIDER_NAME, response, body);
+    }
+    const promptId = isRecord(body) && typeof body.prompt_id === 'string' ? body.prompt_id : null;
+    const nodeErrors = isRecord(body) && isRecord(body.node_errors) ? Object.keys(body.node_errors) : [];
+    if (nodeErrors.length > 0) {
+      throw new MediaProviderFailure(
+        'provider_error',
+        `${PROVIDER_NAME} ha rechazado el flujo (faltan nodos o archivos de modelo en el servidor)`,
+      );
+    }
+    if (!promptId) throw new MediaProviderFailure('bad_response', `${PROVIDER_NAME} no ha devuelto el trabajo`);
+    return { status: 'pending', job: { id: promptId } };
+  }
+
+  /** Quitar el fondo o ampliar: sube la foto y lanza el flujo de esa edición. */
+  async function startEdit(
+    request: ImageEditRequest,
+    model: MediaModel,
+    key: string,
+    signal: AbortSignal,
+  ): Promise<MediaStartResult> {
+    const image = await uploadReference(request.source, 0, `${key}-src`, signal, MAX_SOURCE_BYTES);
+    const settings = model.settings as Record<string, unknown>;
+    const filenamePrefix = `rrss/${key}`;
+    if (request.operation === 'remove_background') {
+      return submit(buildRemoveBackgroundGraph({ image, filenamePrefix, settings }), key, signal);
+    }
+    const out = editOutputSize(request);
+    return submit(
+      buildUpscaleGraph({
+        image,
+        width: out.width,
+        height: out.height,
+        keepAlpha: request.source.mimeType === 'image/png' || request.source.mimeType === 'image/webp',
+        filenamePrefix,
+        settings,
+      }),
+      key,
+      signal,
+    );
+  }
+
   return {
     id: COMFYUI_PROVIDER_ID,
     kinds: ['image'],
+    edits: ['remove_background', 'upscale'],
     testedAgainstRealService: false,
     dataRegion: options.dataRegion ?? 'unknown',
     estimateUsage: usageFor,
 
     async start({ request, model, idempotencyKey, signal }: MediaStartRequest): Promise<MediaStartResult> {
+      if (request.kind === 'image_edit') {
+        const key = idempotencyKey.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64) || 'rrss';
+        return startEdit(request, model, key, signal);
+      }
       if (request.kind !== 'image') {
         throw new MediaProviderFailure('invalid_request', 'Este servidor ComfyUI solo genera imágenes');
       }
@@ -299,27 +479,7 @@ export function createComfyUiImageProvider(options: ComfyUiOptions): MediaProvid
         references: uploaded,
         settings: model.settings as Record<string, unknown>,
       });
-      const { response, body } = await request_(`${base}/prompt`, graph, key, signal);
-      if (!response.ok) {
-        if (response.status === 400) {
-          // Faltan nodos o modelos en el servidor: no es culpa de la petición de la persona.
-          throw new MediaProviderFailure(
-            'provider_error',
-            `${PROVIDER_NAME} ha rechazado el flujo (faltan nodos o archivos de modelo en el servidor)`,
-          );
-        }
-        throw failureFromResponse(PROVIDER_NAME, response, body);
-      }
-      const promptId = isRecord(body) && typeof body.prompt_id === 'string' ? body.prompt_id : null;
-      const nodeErrors = isRecord(body) && isRecord(body.node_errors) ? Object.keys(body.node_errors) : [];
-      if (nodeErrors.length > 0) {
-        throw new MediaProviderFailure(
-          'provider_error',
-          `${PROVIDER_NAME} ha rechazado el flujo (faltan nodos o archivos de modelo en el servidor)`,
-        );
-      }
-      if (!promptId) throw new MediaProviderFailure('bad_response', `${PROVIDER_NAME} no ha devuelto el trabajo`);
-      return { status: 'pending', job: { id: promptId } };
+      return submit(graph, key, signal);
     },
 
     async poll(job: ProviderJobRef, model: MediaModel, signal: AbortSignal): Promise<MediaOutcome> {
