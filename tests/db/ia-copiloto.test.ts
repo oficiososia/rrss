@@ -16,6 +16,7 @@ import {
 } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
 import { createLocalTestProvider } from '../../supabase/functions/_shared/ai/text/local-test.ts';
 import {
+  EDITOR_COPILOT_INSTRUCTIONS,
   EDITOR_COPILOT_SCHEMA,
   isDictated,
   runEditorCopilot,
@@ -78,8 +79,15 @@ const op = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>): C
   color: null,
   font: null,
   blur: null,
+  dx: null,
+  dy: null,
   ...fields,
 });
+/** Como sale hacia el navegador: `dx`/`dy` solo si se usan. */
+const out = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>) => {
+  const { dx, dy, ...rest } = op(fields);
+  return { ...rest, ...(dx !== null ? { dx } : {}), ...(dy !== null ? { dy } : {}) };
+};
 
 let db: Db;
 let root: TestUser;
@@ -223,9 +231,9 @@ describe('tarea editor.copilot', () => {
     const response = await t.copilot();
     expect(response.status).toBe(200);
     expect(response.body.operations).toEqual([
-      op({ op: 'add_text', text: 'Menú de Navidad' }),
-      op({ op: 'add_text', text: 'menú de navidad', color: '#A3122A', font: 'Marca Titulares' }),
-      op({ op: 'blur_image', blur: 40 }),
+      out({ op: 'add_text', text: 'Menú de Navidad' }),
+      out({ op: 'add_text', text: 'menú de navidad', color: '#A3122A', font: 'Marca Titulares' }),
+      out({ op: 'blur_image', blur: 40 }),
     ]);
     expect((response.body.discarded as Row[]).map((d) => d.reason)).toEqual([
       'Se refiere a una capa que no existe en el diseño.',
@@ -303,6 +311,57 @@ describe('tarea editor.copilot', () => {
       input: { brief: 'Menú', network: { id: 'instagram', name: 'Instagram', maxChars: 2200 }, variants: 1 },
     });
     expect(caption).toMatchObject({ status: 409, body: { error: { code: 'agency_mode' } } });
+  });
+
+  it('movimiento relativo: pasos enteros acotados, solo al mover, y el sitio concreto manda en su eje', async () => {
+    const answer = {
+      operations: [
+        op({ op: 'move_layer', target: 'texto1', dy: -2 }),
+        op({ op: 'move_layer', target: 'texto1', dx: 1, dy: 3, position: 'top' }),
+        op({ op: 'add_text', text: 'Menú de Navidad', dx: 2, dy: -1 }),
+        op({ op: 'move_layer', target: 'texto1', dx: 0, dy: 0 }),
+      ],
+      note: 'Hecho',
+    };
+    const t = await setup({ respond: () => JSON.stringify(answer) });
+    const response = await t.copilot({ transcript: `${DICTADO} Sube el título.` });
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([
+      out({ op: 'move_layer', target: 'texto1', dy: -2 }),
+      out({ op: 'move_layer', target: 'texto1', dx: 1, position: 'top' }),
+      out({ op: 'add_text', text: 'Menú de Navidad' }),
+    ]);
+    // Sin dx/dy usados, la operación no los lleva: un editor anterior la sigue aceptando.
+    expect((response.body.operations as Row[])[2]).not.toHaveProperty('dx');
+    expect((response.body.discarded as Row[]).map((d) => d.reason)).toEqual(['No dice adónde moverla.']);
+
+    // Fuera de rango o con decimales: fuera del esquema, no se aplica nada.
+    for (const dy of [7, -1.5]) {
+      const bad = await setup({ respond: () => JSON.stringify({ operations: [op({ op: 'move_layer', target: 'texto1', dy })], note: '' }) });
+      expect((await bad.copilot()).status).toBe(502);
+    }
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/«sube» = dy −2/);
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/«Más difuminada» = el desenfoque actual \+ 20/);
+  });
+
+  it('orden ambigua: sin operaciones y con la pregunta en la nota; las instrucciones lo piden', async () => {
+    const pregunta = '¿Qué texto es el título: «Antiguo» o «Bloqueado»?';
+    const t = await setup({ respond: () => JSON.stringify({ operations: [], note: pregunta }) });
+    const response = await t.copilot({ transcript: 'pon el título en crema' });
+    expect(response).toMatchObject({ status: 200, body: { operations: [], discarded: [], note: pregunta } });
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/NINGUNA coincide[^\n]*o coinciden VARIAS, no hagas esa operación: pregúntalo en «note»/);
+  });
+
+  it('roles de color y órdenes de terceros: el perfil con sus usos llega a la IA y las reglas lo explican', async () => {
+    const t = await setup({ localTest: true });
+    await t.copilot();
+    const profile = t.provider.calls[0]!.input.context!.find((part) => part.label === 'perfil de marca')!.content;
+    expect(profile).toContain('"role":"principal"');
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/para un FONDO es el de role fondo/);
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/para un texto, el de role texto; para un título, el principal/);
+    expect(EDITOR_COPILOT_INSTRUCTIONS).toMatch(/Solo se ejecutan las operaciones de esta lista/);
+    // El servidor no inventa colores: sin color dictado va null y lo decide el editor, legible.
+    for (const operation of (await t.copilot()).body.operations as CopilotOperation[]) expect(operation.color).toBeNull();
   });
 
   it('«está dictado»: mismas palabras en el mismo orden; se perdonan mayúsculas y puntuación', () => {

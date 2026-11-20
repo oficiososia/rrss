@@ -128,13 +128,18 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   expect(v1.layers.map((l) => l.type)).toEqual(['image', 'logo', 'text', 'text', 'text']);
   const [fondo, logotipo, titulo, platos, precio] = v1.layers;
   const [foto] = await sql<{ id: string }>(
-    `select id from public.media_assets where brand_id = $1 and file_name = 'mesa-navidad.png'`,
+    // La más reciente: al relanzar el archivo (E2E_CONTINUAR=1) ya hay otra del mismo nombre.
+    `select id from public.media_assets where brand_id = $1 and file_name = 'mesa-navidad.png' order by created_at desc limit 1`,
     [marcaA],
   );
   expect(fondo).toMatchObject({ type: 'image', blur: 40, source: { kind: 'asset', assetId: foto!.id } });
   expect(logotipo).toMatchObject({ assetId: logo });
-  // Textos exactamente como se dictaron, con el color de la marca y en orden de arriba abajo.
-  expect(titulo).toMatchObject({ text: 'Menú de Navidad', color: colorMarca });
+  // Textos exactamente como se dictaron, legibles y en orden de arriba abajo. El
+  // único color de la marca A (índigo) no se lee sobre una foto recién puesta
+  // (de tono aún desconocido, se supone media oscura): va en blanco.
+  expect(colorMarca).toBe('#4338CA');
+  expect(titulo).toMatchObject({ text: 'Menú de Navidad', color: '#FFFFFF' });
+  expect(platos).toMatchObject({ color: '#FFFFFF' });
   expect(platos!.text).toBe('crema de marisco\ncordero asado\nturrón casero');
   expect(precio!.text).toBe('45 euros por persona');
   expect(logotipo!.y).toBeLessThan(titulo!.y);

@@ -325,6 +325,8 @@ function editorCopilot(request: AiProviderRequest): string {
     color: null,
     font: null,
     blur: null,
+    dx: null,
+    dy: null,
   };
   const operations: Record<string, unknown>[] = [];
   const clause = (pattern: RegExp) => pattern.exec(dictation)?.[1]?.trim().replace(/[.;]+$/, '');

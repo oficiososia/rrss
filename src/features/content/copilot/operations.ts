@@ -20,6 +20,10 @@ export const COPILOT_OPS = [
 export const COPILOT_TEXT_STYLES = ['title', 'subtitle', 'body', 'small'] as const;
 export const COPILOT_POSITIONS = ['top', 'upper', 'middle', 'lower', 'bottom'] as const;
 export const COPILOT_ALIGNS = ['left', 'center', 'right'] as const;
+/** Pasos máximos de un movimiento relativo (igual que `MAX_MOVE_STEPS` del servidor). */
+export const COPILOT_MAX_MOVE_STEPS = 6;
+/** Un paso de movimiento relativo: el 5 % del lado del lienzo. */
+export const COPILOT_MOVE_STEP = 0.05;
 
 export type CopilotTextStyle = (typeof COPILOT_TEXT_STYLES)[number];
 export type CopilotPosition = (typeof COPILOT_POSITIONS)[number];
@@ -42,6 +46,10 @@ export const copilotOperationSchema = z.strictObject({
     .nullable(),
   font: z.string().max(120).nullable(),
   blur: z.number().finite().min(0).max(100).nullable(),
+  // Movimiento relativo de move_layer, en pasos (un paso = 5 % del lienzo). El
+  // servidor solo los manda cuando se usan: sin ellos, null.
+  dx: z.number().int().min(-COPILOT_MAX_MOVE_STEPS).max(COPILOT_MAX_MOVE_STEPS).nullable().default(null),
+  dy: z.number().int().min(-COPILOT_MAX_MOVE_STEPS).max(COPILOT_MAX_MOVE_STEPS).nullable().default(null),
 });
 export type CopilotOperation = z.infer<typeof copilotOperationSchema>;
 

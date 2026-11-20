@@ -48,6 +48,8 @@ export interface VoiceCopilotProps {
   document: ContentDocument;
   brand: CopilotBrandStyle;
   logoIds: string[];
+  /** Tono medio de las fotos ya analizadas, por id de recurso (para que los textos se lean encima). */
+  imageTones?: ReadonlyMap<string, string>;
   /** La foto elegida en el lienzo, si la hay: cuenta como «esta foto». */
   selectedImage: CopilotAssetInfo | null;
   libraryPath: string;
@@ -64,6 +66,7 @@ export function VoiceCopilot({
   document,
   brand,
   logoIds,
+  imageTones,
   selectedImage,
   libraryPath,
   onApply,
@@ -75,9 +78,9 @@ export function VoiceCopilot({
   const logos = useAssetsByIds(brandId, logoIds);
 
   // Lo último de cada cosa, para las órdenes que se procesan en cola (fuera del ciclo de React).
-  const latest = useRef({ document, photos, selectedImage, brand, logoIds, logos: logos.data ?? [], onApply });
+  const latest = useRef({ document, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply });
   useEffect(() => {
-    latest.current = { document, photos, selectedImage, brand, logoIds, logos: logos.data ?? [], onApply };
+    latest.current = { document, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply };
   });
   const queue = useRef<Promise<void>>(Promise.resolve());
   /** Quien espera a que la persona elija una foto («esta foto» sin ninguna elegida). */
@@ -131,6 +134,7 @@ export function VoiceCopilot({
         brand: current.brand,
         assets,
         logoIds: current.logoIds,
+        imageTones: current.imageTones,
       });
       const notes = [
         ...(response.note ? [response.note] : []),

@@ -70,6 +70,7 @@ import {
   type LoadedVersion,
 } from './api';
 import { aiContentReasons, describeAiReasons } from './aiLabel';
+import { toneOfPalette } from './copilot/legibility';
 import { speechRecognitionAvailable } from './copilot/speech';
 import { createEmptyDocument, DocumentError, MAX_LAYERS, type ContentDocument, type DocumentIssue } from './document';
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
@@ -310,6 +311,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   // ── Paleta de la imagen principal, para el verificador ──
   const paletteLayer = mainImageLayer(state.document);
   const palette = useImagePalette(imageUrlOf(paletteLayer, images));
+  // Tono medio de esa imagen: el copiloto lo usa para que los textos se lean encima.
+  const paletteAssetId = paletteLayer?.source.kind === 'asset' ? paletteLayer.source.assetId : null;
+  const imageTones = useMemo(() => {
+    const tone = palette.status === 'ready' ? toneOfPalette(palette.palette) : null;
+    return tone && paletteAssetId ? new Map([[paletteAssetId, tone]]) : undefined;
+  }, [palette, paletteAssetId]);
 
   /** Al pulsar un hallazgo del verificador: elegir la capa o llevar al campo señalado. */
   function selectTarget(target: FindingTarget) {
@@ -876,7 +883,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             orgId={org.id}
             brandId={brand.id}
             document={state.document}
-            brand={{ palette: brandStyle.palette.map((c) => c.hex), fonts: brandStyle.fonts }}
+            brand={{
+              palette: (profile?.visual.colors ?? []).map((c) => ({ hex: c.hex.toUpperCase(), role: c.role })),
+              fonts: brandStyle.fonts,
+            }}
+            imageTones={imageTones}
             logoIds={logoIds}
             selectedImage={selectedImage}
             libraryPath={`${brandBase}/biblioteca`}
