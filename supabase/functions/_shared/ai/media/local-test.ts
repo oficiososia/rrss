@@ -30,6 +30,8 @@ export const LOCAL_TEST_IMAGE_PRICE_MICROS = 20_000;
 export const LOCAL_TEST_EDIT_MODELS: Record<ImageEditOperation, string> = {
   remove_background: 'simulado-e2e-quitar-fondo',
   upscale: 'simulado-e2e-ampliar',
+  replace_background: 'simulado-e2e-cambiar-fondo',
+  enhance: 'simulado-e2e-mejorar',
 };
 /** Precio inventado por edición (micros): 0,01 unidades de cuenta. */
 export const LOCAL_TEST_EDIT_PRICE_MICROS = 10_000;

@@ -291,7 +291,7 @@ describe('migración de la edición de fotos', () => {
     ]);
     // Los demás modelos siguen siendo de generar.
     const [other] = await db.query<{ n: number }>(
-      `select count(*)::int as n from public.ai_media_models where provider <> 'comfyui' and operation <> 'generate'`,
+      `select count(*)::int as n from public.ai_media_models where provider not in ('comfyui', 'openai') and operation <> 'generate'`,
     );
     expect(other!.n).toBe(0);
   });
@@ -326,6 +326,104 @@ describe('migración de la edición de fotos', () => {
       root,
       `update public.ai_media_models set notes = notes, operation = operation where model = 'birefnet-general'`,
     );
+  });
+});
+
+// ─────────────────────── Cambiar el fondo con IA (OpenAI y simulado) ───────────────────────
+
+/** PNG mínimo con la cabecera IHDR de esas medidas (la función solo mira la cabecera). */
+function maskPng(width: number, height: number): string {
+  const bytes = new Uint8Array(33);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return Buffer.from(bytes).toString('base64');
+}
+
+describe('ai-media · cambiar el fondo con IA', () => {
+  it('pide la descripción del fondo y no admite descripción en otras ediciones', async () => {
+    const { owner, org, brand, token } = await setup();
+    const photo = await addPhoto(owner, org, brand);
+    const handler = mediaHandler();
+    const sin = await call(handler, token, {
+      action: 'photo.edit',
+      brandId: brand,
+      input: { assetId: photo, operation: 'replace_background' },
+    });
+    expect(sin.status).toBe(400);
+    expect(errorOf(sin.body).message).toMatch(/Describe el fondo/);
+    const demasiado = await call(handler, token, {
+      action: 'photo.edit',
+      brandId: brand,
+      input: { assetId: photo, operation: 'replace_background', prompt: 'x'.repeat(501) },
+    });
+    expect(demasiado.status).toBe(400);
+    const otra = await call(handler, token, {
+      action: 'photo.edit',
+      brandId: brand,
+      input: { assetId: photo, operation: 'enhance', prompt: 'mármol' },
+    });
+    expect(otra.status).toBe(400);
+  });
+
+  it('la máscara tiene que ser un PNG con las medidas de la foto', async () => {
+    const { owner, org, brand, token } = await setup();
+    const photo = await addPhoto(owner, org, brand, { w: 1200, h: 900 });
+    const handler = mediaHandler();
+    const edit = (subjectMask: string) =>
+      call(handler, token, {
+        action: 'photo.edit',
+        brandId: brand,
+        input: { assetId: photo, operation: 'replace_background', prompt: 'mesa de mármol', subjectMask },
+      });
+    expect((await edit(Buffer.from('no es un png de verdad, ni de lejos').toString('base64'))).status).toBe(400);
+    const otraMedida = await edit(maskPng(600, 450));
+    expect(otraMedida.status).toBe(400);
+    expect(errorOf(otraMedida.body).message).toMatch(/mismas medidas/);
+  });
+
+  it('cambia el fondo: recurso nuevo con procedencia ai_edit y el encargo; el original no cambia', async () => {
+    const { owner, org, brand, token } = await setup();
+    const photo = await addPhoto(owner, org, brand, { w: 1200, h: 900 });
+    const before = await assetRow(photo);
+    const handler = mediaHandler();
+    const options = await call(handler, token, { action: 'photo.options', brandId: brand });
+    expect(
+      (options.body.edits as { operation: string; usesSubjectMask: boolean }[]).find(
+        (e) => e.operation === 'replace_background',
+      )?.usesSubjectMask,
+    ).toBe(true);
+    const estimate = await call(handler, token, {
+      action: 'photo.estimate',
+      brandId: brand,
+      input: { assetId: photo, operation: 'replace_background', prompt: 'fondo', maskPresent: true },
+    });
+    expect(estimate.status).toBe(200);
+    const result = await call(handler, token, {
+      action: 'photo.edit',
+      brandId: brand,
+      input: {
+        assetId: photo,
+        operation: 'replace_background',
+        prompt: 'mesa de mármol blanco con luz cálida',
+        subjectMask: maskPng(1200, 900),
+      },
+    });
+    expect(result.status).toBe(200);
+    const created = await assetRow((result.body.asset as { id: string }).id);
+    expect(created).toMatchObject({
+      origin: 'generated',
+      file_name: 'Fondo nuevo · Chuletón en la parrilla.png',
+      provenance: {
+        type: 'ai_edit',
+        operation: 'replace_background',
+        source_asset_id: photo,
+        purpose: 'photo.replace_background',
+        prompt: 'mesa de mármol blanco con luz cálida',
+      },
+    });
+    expect(await assetRow(photo)).toEqual(before);
   });
 });
 
@@ -545,6 +643,8 @@ describe('ai-media · editar una foto con IA', () => {
     expect((options.body.edits as { operation: string; model: string }[]).map((e) => [e.operation, e.model])).toEqual([
       ['remove_background', `simulated-image-edit:${LOCAL_TEST_EDIT_MODELS.remove_background}`],
       ['upscale', `simulated-image-edit:${LOCAL_TEST_EDIT_MODELS.upscale}`],
+      ['replace_background', `simulated-image-edit:${LOCAL_TEST_EDIT_MODELS.replace_background}`],
+      ['enhance', `simulated-image-edit:${LOCAL_TEST_EDIT_MODELS.enhance}`],
     ]);
     const estimate = await call(handler, token, {
       action: 'photo.estimate',

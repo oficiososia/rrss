@@ -13,6 +13,8 @@ import { createGoogleTokenSource, parseServiceAccount } from './google-auth.ts';
 import { createHiggsfieldVideoProvider, HIGGSFIELD_PROVIDER_ID } from './higgsfield-video.ts';
 import type { FetchLike } from './http.ts';
 import { createIdeogramImageProvider, IDEOGRAM_PROVIDER_ID } from './ideogram-image.ts';
+import { createOpenAiImageProvider, OPENAI_IMAGE_PROVIDER_ID } from './openai-image.ts';
+import { openAiBaseUrlProblem } from '../text/openai.ts';
 import type { ModelSelection, ProviderAvailability } from './models.ts';
 import {
   createSimulatedImageProvider,
@@ -41,6 +43,10 @@ export const MEDIA_ENV = {
   bflKey: 'BFL_API_KEY',
   bflBaseUrl: 'BFL_API_BASE_URL',
   ideogramKey: 'IDEOGRAM_API_KEY',
+  openaiKey: 'OPENAI_API_KEY',
+  openaiBaseUrl: 'OPENAI_BASE_URL',
+  openaiOrganization: 'OPENAI_ORGANIZATION',
+  openaiProject: 'OPENAI_PROJECT',
   higgsfieldKeyId: 'HIGGSFIELD_API_KEY_ID',
   higgsfieldKeySecret: 'HIGGSFIELD_API_KEY_SECRET',
   higgsfieldWebhookSecret: 'HIGGSFIELD_WEBHOOK_SECRET',
@@ -108,6 +114,20 @@ export function createMediaProviders(env: MediaEnv, options: { fetch: FetchLike 
   load(IDEOGRAM_PROVIDER_ID, [MEDIA_ENV.ideogramKey], () =>
     createIdeogramImageProvider({ apiKey: value(env, MEDIA_ENV.ideogramKey)!, fetch }),
   );
+
+  // Imagen · OpenAI (GPT Image). La misma clave y dirección que el texto.
+  load(OPENAI_IMAGE_PROVIDER_ID, [MEDIA_ENV.openaiKey], () => {
+    const baseUrl = value(env, MEDIA_ENV.openaiBaseUrl);
+    const problem = baseUrl ? openAiBaseUrlProblem(baseUrl) : null;
+    if (problem) throw new Error(problem);
+    return createOpenAiImageProvider({
+      apiKey: value(env, MEDIA_ENV.openaiKey)!,
+      baseUrl,
+      organization: value(env, MEDIA_ENV.openaiOrganization),
+      project: value(env, MEDIA_ENV.openaiProject),
+      fetch,
+    });
+  });
 
   // Vídeo · Higgsfield. Sin HIGGSFIELD_WEBHOOK_SECRET funciona, pero solo por sondeo.
   load(HIGGSFIELD_PROVIDER_ID, [MEDIA_ENV.higgsfieldKeyId, MEDIA_ENV.higgsfieldKeySecret], () =>

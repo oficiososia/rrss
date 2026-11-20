@@ -125,7 +125,7 @@ function pngOf(seed: string, size: number, cutout: boolean): Uint8Array {
 
 function fingerprint(request: MediaRequest): string {
   if (request.kind === 'image_edit') {
-    return `edit|${request.operation}|${request.source.url ?? ''}|${request.source.width}x${request.source.height}|${request.scale ?? 1}`;
+    return `edit|${request.operation}|${request.source.url ?? ''}|${request.source.width}x${request.source.height}|${request.scale ?? 1}|${request.prompt ?? ''}|${request.subjectMask ? 'mask' : 'sin-mascara'}`;
   }
   if (request.kind === 'image') {
     return `image|${request.prompt}|${request.aspectRatio}|${request.size.width}x${request.size.height}|${request.references?.length ?? 0}`;
@@ -377,7 +377,8 @@ export function createSimulatedImageEditProvider(options: SimulatedOptions = {})
   return {
     id: SIMULATED_IMAGE_EDIT_PROVIDER_ID,
     kinds: ['image'],
-    edits: ['remove_background', 'upscale'],
+    edits: ['remove_background', 'upscale', 'replace_background', 'enhance'],
+    subjectMaskEdits: ['replace_background'],
     testedAgainstRealService: false,
     calls,
     estimateUsage: (request): MediaUsage => (request.kind === 'image_edit' ? { images: 1 } : {}),

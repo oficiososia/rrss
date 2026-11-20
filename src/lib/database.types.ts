@@ -444,7 +444,7 @@ export type AiMediaTask = Extract<AiTask, 'image' | 'video'>;
 export type AiMediaBillingUnit = 'image' | 'megapixel' | 'second';
 export type AiMediaDataRegion = 'eu' | 'us' | 'global' | 'unknown';
 export type AiMediaTrainsOnInputs = 'no' | 'yes' | 'unknown';
-export type AiMediaOperation = 'generate' | 'remove_background' | 'upscale';
+export type AiMediaOperation = 'generate' | 'remove_background' | 'upscale' | 'replace_background' | 'enhance';
 
 export type AiMediaModelRow = {
   id: string;
