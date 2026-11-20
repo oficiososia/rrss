@@ -1,6 +1,7 @@
 // Edge Function `social-publish`: el publicador de la Fase 3 (handler.ts).
 // La dispara pg_cron (migración 20261119040000) y solo atiende a la clave de
-// servicio. En config.toml lleva `verify_jwt = false` porque la clave puede
+// servicio. La ruta `/now` («Publicar ahora»)
+// atiende a la sesión de la persona. En config.toml lleva `verify_jwt = false` porque la clave puede
 // llegar en la cabecera `apikey`; la comprobación la hace handler.ts.
 //
 // Secretos (docs/publicacion.md): META_APP_ID, META_APP_SECRET y las claves de
@@ -46,6 +47,15 @@ const handlerFor = memoByEnv((effective) => {
   return createSocialPublishHandler({
     serviceKeys: [env.SUPABASE_SERVICE_ROLE_KEY ?? ''],
     rpc,
+    // «Publicar ahora»: la ruta /now actúa con la sesión de la persona.
+    userRpc(accessToken) {
+      const asUser = createClient(env.SUPABASE_URL ?? '', env.SUPABASE_ANON_KEY ?? '', {
+        auth: { persistSession: false, autoRefreshToken: false },
+        global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      });
+      return (fn, args) => asUser.rpc(fn, args);
+    },
+    allowedOrigin: env.SOCIAL_ALLOWED_ORIGIN?.trim() || undefined,
     workerName,
     log,
     publisher: () =>

@@ -911,6 +911,17 @@ type PublicationFunctions = {
   };
   cancel_publication: { Args: { p_publication_id: string }; Returns: ScheduledPublicationRow };
   retry_publication: { Args: { p_publication_id: string }; Returns: ScheduledPublicationRow };
+  publish_publication_now: {
+    Args: {
+      p_content_id: string;
+      p_social_account_id: string | null;
+      p_media_asset_ids: string[];
+      p_content_version: number | null;
+      p_publication_id?: string | null;
+    };
+    Returns: ScheduledPublicationRow;
+  };
+  publication_publish_kick: { Args: { p_publication_id: string }; Returns: string };
   comment_content_item: {
     Args: { p_content_id: string; p_body: string; p_version?: number | null };
     Returns: ContentCommentRow;

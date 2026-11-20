@@ -10,6 +10,7 @@ import type {
 } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import { HOLD_REASON_TEXT } from './calendar';
 
 // Acceso a datos de la publicación (Fase 3): cuentas conectadas, calendario,
 // intentos y comentarios de la pieza. Las reglas viven en la base de datos
@@ -25,13 +26,17 @@ export const socialKeys = {
   comments: (brandId: string, contentId: string) => ['brand', brandId, 'social', 'comments', contentId] as const,
   candidates: (brandId: string) => ['brand', brandId, 'social', 'candidates'] as const,
   media: (brandId: string) => ['brand', brandId, 'social', 'media'] as const,
+  contentPublication: (brandId: string, contentId: string) =>
+    ['brand', brandId, 'social', 'content-publication', contentId] as const,
+  contentItem: (brandId: string, contentId: string) => ['brand', brandId, 'social', 'content-item', contentId] as const,
 };
 
 // ── Cuentas conectadas ───────────────────────────────────────────────────
 
-export function useSocialAccounts(brandId: string) {
+export function useSocialAccounts(brandId: string, enabled = true) {
   return useQuery({
     queryKey: socialKeys.accounts(brandId),
+    enabled,
     queryFn: async (): Promise<SocialAccountRow[]> =>
       unwrap(
         await supabase
@@ -364,4 +369,92 @@ export function useRequestChanges(brandId: string) {
       void qc.invalidateQueries({ queryKey: socialKeys.comments(brandId, input.contentId) });
     },
   });
+}
+
+// ── Publicar ahora ───────────────────────────────────────────────────────
+
+/** Estados en los que la publicación ya no cambia sola: se deja de sondear. */
+export const SETTLED_STATUSES = ['published', 'failed', 'planned', 'cancelled'] as const;
+
+/** La publicación viva (no cancelada) de una pieza, o null. Con `pollMs` se vuelve a leer cada cierto tiempo (sin tiempo real). */
+export function useContentPublication(
+  brandId: string,
+  contentId: string | null,
+  enabled = true,
+  pollMs: number | false = false,
+) {
+  return useQuery({
+    queryKey: socialKeys.contentPublication(brandId, contentId ?? ''),
+    enabled: enabled && Boolean(contentId),
+    refetchInterval: pollMs,
+    queryFn: async (): Promise<ScheduledPublicationRow | null> => {
+      const rows = unwrap(
+        await supabase
+          .from('scheduled_publications')
+          .select('*')
+          .eq('content_id', contentId!)
+          .neq('status', 'cancelled')
+          .limit(1),
+      );
+      return rows[0] ?? null;
+    },
+  });
+}
+
+/** La pieza que se va a publicar, con su estado actual. */
+export function useCalendarContent(brandId: string, contentId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: socialKeys.contentItem(brandId, contentId ?? ''),
+    enabled: enabled && Boolean(contentId),
+    queryFn: async (): Promise<CalendarContent | null> => {
+      const rows = unwrap(
+        await supabase
+          .from('content_items')
+          .select('id, title, status, current_version, network, format, archived_at')
+          .eq('id', contentId!)
+          .limit(1),
+      );
+      return (rows[0] as CalendarContent | undefined) ?? null;
+    },
+  });
+}
+
+export interface PublishNowInput {
+  contentId: string;
+  accountId: string;
+  mediaAssetIds: string[];
+  contentVersion: number;
+  publicationId: string | null;
+}
+
+/**
+ * Pone la pieza en el calendario con la hora actual y la encola (todas las
+ * garantías las impone la base de datos). Si no se puede, el error explica por qué.
+ */
+export async function publishNowRequest(input: PublishNowInput): Promise<ScheduledPublicationRow> {
+  const { data, error } = await supabase.rpc('publish_publication_now', {
+    p_content_id: input.contentId,
+    p_social_account_id: input.accountId,
+    p_media_asset_ids: input.mediaAssetIds,
+    p_content_version: input.contentVersion,
+    p_publication_id: input.publicationId,
+  });
+  if (error) {
+    const reason = (error as { details?: string | null }).details as keyof typeof HOLD_REASON_TEXT | null | undefined;
+    if (error.code === 'PB003' && reason && HOLD_REASON_TEXT[reason]) throw new Error(HOLD_REASON_TEXT[reason]);
+    throw error;
+  }
+  return data as ScheduledPublicationRow;
+}
+
+/**
+ * Pide al publicador que procese la cola ya, sin esperar al minuto del reloj.
+ * Si falla (red, función caída), no pasa nada grave: el reloj la recoge.
+ */
+export async function kickPublisher(publicationId: string): Promise<void> {
+  try {
+    await supabase.functions.invoke('social-publish/now', { body: { publicationId } });
+  } catch {
+    /* el reloj de cada minuto la recogerá */
+  }
 }

@@ -1,4 +1,4 @@
-import { ExternalLink, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
+import { ExternalLink, MessageSquare, RotateCcw, Send, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -28,6 +28,7 @@ import {
   isEditable,
   toLocalInput,
 } from './calendar';
+import { useFeature } from '@/features/platform/integrations/useFeature';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
   started: 'En curso',
@@ -55,6 +56,8 @@ interface PublicationDialogProps {
   canEdit: boolean;
   canApprove: boolean;
   canComment: boolean;
+  /** «Publicar ahora»: lo abre quien monta la ficha (la ficha se vuelve a montar al cambiar la hora). */
+  onPublishNow: (entry: CalendarEntry) => void;
 }
 
 /** Ficha de una publicación del calendario: estado, motivo, intentos, comentarios y acciones. */
@@ -66,6 +69,7 @@ export function PublicationDialog({
   canEdit,
   canApprove,
   canComment,
+  onPublishNow,
 }: PublicationDialogProps) {
   const attempts = usePublicationAttempts(brandId, entry?.id ?? null);
   const comments = useContentComments(brandId, entry?.content_id ?? null);
@@ -78,6 +82,7 @@ export function PublicationDialog({
   // El calendario monta el diálogo con una clave por publicación y fecha: el estado nace con ella.
   const [when, setWhen] = useState(() => (entry ? toLocalInput(entry.scheduled_at) : ''));
   const [body, setBody] = useState('');
+  const publishing = useFeature('publishing');
 
   if (!entry) return null;
   const state = displayState(entry, entry.content?.status ?? null);
@@ -184,6 +189,12 @@ export function PublicationDialog({
               data-testid="publication-approve"
             >
               Aprobar la versión {content.current_version}
+            </Button>
+          )}
+          {publishing && editable && entry.status === 'scheduled' && (
+            <Button onClick={() => onPublishNow(entry)} data-testid="publication-publish-now">
+              <Send className="h-4 w-4" aria-hidden />
+              Publicar ahora
             </Button>
           )}
           {canEdit && entry.status === 'failed' && (

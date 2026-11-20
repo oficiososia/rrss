@@ -57,6 +57,16 @@ con cerrojo, idempotencia y reintentos: imagen, carrusel y reel. La base de
 datos impide publicar lo no aprobado, incluso con la clave de servicio, y que el
 plan no incluya publicación. Detalle en `docs/publicacion.md`.
 
+**Publicar ahora** (rama `f7/publicar-ahora`, sin subir): botón en el editor de
+una pieza aprobada, opción «Ahora» al programar y botón en la ficha del
+calendario; confirma en un paso, exporta la imagen si falta (en el editor), pone
+la publicación con la hora actual por las mismas garantías, procesa la cola al
+momento (`social-publish/now`, con la sesión de la persona) y enseña el progreso
+y el enlace. Migración `20261130010000` (dos RPC, sin tablas) con su vuelta
+atrás; hay que desplegar la migración y `social-publish`. Probado en base de
+datos y componentes; el escenario e2e `22-publicar-ahora.spec.ts` está escrito y
+**sin ejecutar** (el Supabase local lo usaba otro proceso).
+
 ### Fase 4 · Campañas (primera parte)
 
 «Prepara la semana que viene» → plan explicado (observado / datos / hipótesis) →

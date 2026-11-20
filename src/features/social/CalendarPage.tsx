@@ -27,6 +27,7 @@ import {
   type DisplayState,
 } from './calendar';
 import { PublicationDialog } from './PublicationDialog';
+import { PublishNowDialog } from './PublishNowDialog';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useFeature } from '@/features/platform/integrations/useFeature';
 
@@ -48,6 +49,7 @@ export function CalendarPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState<{ date: Date | null } | null>(null);
   const [selecting, setSelecting] = useState(false);
+  const [publishNow, setPublishNow] = useState<CalendarEntry | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const range = useMemo(() => viewRange(view, anchor), [view, anchor]);
@@ -366,7 +368,21 @@ export function CalendarPage() {
         canEdit={canEdit}
         canApprove={canApprove}
         canComment={can('comment')}
+        onPublishNow={(e) => {
+          setOpenId(null);
+          setPublishNow(e);
+        }}
       />
+      {publishing && publishNow && (
+        <PublishNowDialog
+          brandId={brand.id}
+          open
+          onOpenChange={(o) => !o && setPublishNow(null)}
+          contentId={publishNow.content_id}
+          accountId={publishNow.social_account_id ?? undefined}
+          assetIds={publishNow.media_asset_ids.length > 0 ? publishNow.media_asset_ids : undefined}
+        />
+      )}
       {publishing && scheduling && (
         <ScheduleDialog
           brandId={brand.id}

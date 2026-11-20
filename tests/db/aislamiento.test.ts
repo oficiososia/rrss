@@ -1581,6 +1581,13 @@ describe('publicación: cuentas, calendario, intentos y comentarios (Fase 3)', (
     await denied(db, ana, `select public.reschedule_publication($1, now() + interval '2 days')`, [pubB1]);
     await denied(db, ana, `select public.cancel_publication($1)`, [pubB1]);
     await denied(db, ana, `select public.retry_publication($1)`, [pubB1]);
+    await denied(
+      db,
+      ana,
+      `select public.publish_publication_now($1, null, '{}'::uuid[], 1, null)`,
+      [contentB1],
+    );
+    await denied(db, ana, `select public.publication_publish_kick($1)`, [pubB1]);
     await denied(db, ana, `select public.comment_content_item($1, 'intrusa')`, [contentB1]);
     await denied(db, ana, `select public.request_content_changes($1, 'intrusa')`, [contentB1]);
     const [lote] = await as<{ ok: boolean }>(db, ana, `select * from public.approve_content_items($1::jsonb)`, [
