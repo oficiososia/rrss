@@ -4,8 +4,11 @@ import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
 // Cambiar el fondo con IA de punta a punta (docs/edicion-fotos.md): con la
 // edición SIMULADA de pruebas locales (`simulated-image-edit`, que se carga con
 // AI_E2E_SIMULATED_PROVIDER=true). No usa OpenAI: comprueba la interfaz, el
-// encargo, el aviso de que no hay recorte del plato, que el resultado es un
-// recurso NUEVO con procedencia `ai_edit` y que la foto original no cambia.
+// encargo, que el plato se recorta en el navegador (recorte simulado del worker,
+// VITE_CUTOUT_SIMULATED) y se manda como máscara, que el plato original se vuelve
+// a pegar (casilla «Proteger el plato original»), que el resultado es UN recurso
+// NUEVO con procedencia `photo_edit` + paso `ai_background` con `plate_protected`
+// (la versión sin proteger del servidor se retira) y que la foto original no cambia.
 // Parte de lo que dejó 09 (Ana, organización A, marca La Espiga, con cupo de IA).
 
 test.describe.configure({ mode: 'serial' });
@@ -41,8 +44,9 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
   await editor.getByRole('tab', { name: 'Fondo con IA' }).click();
   const ia = editor.getByTestId('photo-edit-ai-replace_background');
-  // Sin recorte del plato: avisa; sin texto: no se puede lanzar; el coste se ve antes.
-  await expect(ia.getByText(/No hay recorte del plato/)).toBeVisible();
+  // Con recorte en el navegador: ofrece proteger el plato (marcado); sin texto: no se puede lanzar; el coste se ve antes.
+  await expect(ia.getByText(/No hay recorte del plato/)).toHaveCount(0);
+  await expect(ia.getByTestId('photo-edit-ai-protect')).toBeChecked();
   await expect(ia.getByTestId('photo-edit-ai-run-replace_background')).toBeDisabled();
   await expect(ia.getByTestId('photo-edit-ai-cost')).toContainText('Coste máximo');
   await ia.getByRole('button', { name: 'mesa de mármol blanco con luz cálida' }).click();
@@ -56,11 +60,16 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   expect(ediciones).toHaveLength(1);
   expect(ediciones[0]!.storage_path).not.toBe(original!.storage_path);
   expect(ediciones[0]!.provenance).toMatchObject({
-    type: 'ai_edit',
-    operation: 'replace_background',
+    type: 'photo_edit',
     source_asset_id: original!.id,
-    prompt: 'mesa de mármol blanco con luz cálida',
-    provider: 'simulated-image-edit',
+    steps: [
+      {
+        kind: 'ai_background',
+        operation: 'replace_background',
+        prompt: 'mesa de mármol blanco con luz cálida',
+        plate_protected: true,
+      },
+    ],
   });
   const [despues] = await sql(`select * from public.media_assets where id = $1`, [original!.id]);
   expect(despues).toEqual(original);

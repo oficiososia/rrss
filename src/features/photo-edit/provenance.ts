@@ -21,6 +21,17 @@ export type PhotoEditStep =
       background: { type: 'color'; hex: string } | { type: 'asset'; assetId: string };
       /** Sombra suave bajo el sujeto. */
       shadow?: boolean;
+    }
+  | {
+      /** Fondo cambiado con IA y el plato original vuelto a pegar encima (docs/edicion-fotos.md, §9). */
+      kind: 'ai_background';
+      prompt: string;
+      /** Modelo de IA que pintó el fondo («proveedor:modelo»). */
+      model: string;
+      /** Modelo del recorte que dio la máscara del plato. */
+      maskModel: string;
+      /** Se volvió a pegar el plato original sobre el resultado de la IA. */
+      plateProtected: true;
     };
 
 const round = (value: number, digits = 3) => Math.round(value * 10 ** digits) / 10 ** digits;
@@ -51,6 +62,16 @@ function stepJson(step: PhotoEditStep): Json {
         width: Math.round(step.box.width),
         height: Math.round(step.box.height),
       },
+    };
+  }
+  if (step.kind === 'ai_background') {
+    return {
+      kind: 'ai_background',
+      operation: 'replace_background',
+      prompt: step.prompt.slice(0, 300),
+      model: step.model.slice(0, 80),
+      mask_model: step.maskModel,
+      plate_protected: step.plateProtected,
     };
   }
   if (step.kind === 'remove_background') return { kind: 'remove_background', engine: step.engine, model: step.model };
@@ -90,6 +111,7 @@ const STEP_NAME: Record<PhotoEditStep['kind'], string> = {
   adjust: 'Mejorada',
   crop: 'Recorte',
   background: 'Fondo nuevo',
+  ai_background: 'Fondo nuevo',
   remove_background: 'Sin fondo',
 };
 
@@ -104,7 +126,7 @@ export function editedFileName(sourceName: string, steps: PhotoEditStep[], exten
       .trim() || 'foto';
   const crop = steps.find((s): s is Extract<PhotoEditStep, { kind: 'crop' }> => s.kind === 'crop');
   const main =
-    steps.find((s) => s.kind === 'background') ??
+    steps.find((s) => s.kind === 'background' || s.kind === 'ai_background') ??
     steps.find((s) => s.kind === 'remove_background') ??
     (steps.some((s) => s.kind === 'adjust') ? steps.find((s) => s.kind === 'adjust') : crop);
   let label = main ? STEP_NAME[main.kind] : 'Editada';

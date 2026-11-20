@@ -23,7 +23,7 @@ const DEFAULT_SHADOW = { offset: 0.02, blur: 0.02, opacity: 0.35 };
 const SHADOW_WORK_SIDE = 640;
 
 /** Desenfoque de caja separable (tres pasadas ≈ gaussiana) de un canal. */
-function boxBlur(channel: Float32Array, width: number, height: number, radius: number): Float32Array {
+export function boxBlur(channel: Float32Array, width: number, height: number, radius: number): Float32Array {
   const r = Math.max(0, Math.round(radius));
   if (r === 0) return channel;
   let src = channel;

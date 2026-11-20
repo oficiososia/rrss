@@ -117,6 +117,50 @@ async function openEditDialog(user: Awaited<ReturnType<typeof openPhoto>>['user'
   return within(dialog);
 }
 
+/** `ai-media` simulado para «Cambiar el fondo con IA» (con modelo que usa la máscara). */
+function fakeBackgroundAi(calls: Array<{ action: string; input?: unknown }>) {
+  fake.fn('ai-media', (body) => {
+    const { action, input } = body as { action: string; input?: Record<string, unknown> };
+    calls.push({ action, input });
+    if (action === 'photo.options') {
+      return {
+        status: 200,
+        body: {
+          action,
+          edits: [
+            {
+              operation: 'replace_background',
+              model: 'openai:gpt-image-2.5-sunburst',
+              delivery: 'sync',
+              dataRegion: 'global',
+              euProcessing: false,
+              trainsOnInputs: 'no',
+              untestedAdapter: true,
+              usesSubjectMask: true,
+            },
+          ],
+        },
+      };
+    }
+    if (action === 'photo.estimate') {
+      return { status: 200, body: { action, costMicros: 200_000, model: 'openai:gpt-image-2.5-sunburst' } };
+    }
+    fake
+      .rows('media_assets')
+      .push(asset('fondo-ia', 'Fondo nuevo · plato.png', { mime_type: 'image/png', origin: 'generated' }));
+    return {
+      status: 200,
+      body: {
+        action,
+        status: 'completed',
+        generationId: 'gen-2',
+        costMicros: 200_000,
+        asset: { id: 'fondo-ia', path: `${ORG_ID}/${BRAND_ID}/ia/gen-2-0.png` },
+      },
+    };
+  });
+}
+
 describe('Editar foto desde la biblioteca', () => {
   it('quien solo ve la marca no puede editar', async () => {
     await openPhoto({ orgRole: 'member', brandRole: 'viewer' }, [asset('foto-1', 'plato.jpg')]);
@@ -343,48 +387,10 @@ describe('Editar foto desde la biblioteca', () => {
 
   it('con IA: cambiar el fondo pide el texto, avisa de que no hay recorte del plato y crea un recurso nuevo', async () => {
     vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    vi.spyOn(cutoutEngine, 'cutoutSupport').mockReturnValue({ ok: false, reason: 'sin WebAssembly' });
     const original = asset('foto-1', 'plato.jpg');
     const calls: Array<{ action: string; input?: unknown }> = [];
-    fake.fn('ai-media', (body) => {
-      const { action, input } = body as { action: string; input?: Record<string, unknown> };
-      calls.push({ action, input });
-      if (action === 'photo.options') {
-        return {
-          status: 200,
-          body: {
-            action,
-            edits: [
-              {
-                operation: 'replace_background',
-                model: 'openai:gpt-image-2.5-sunburst',
-                delivery: 'sync',
-                dataRegion: 'global',
-                euProcessing: false,
-                trainsOnInputs: 'no',
-                untestedAdapter: true,
-                usesSubjectMask: true,
-              },
-            ],
-          },
-        };
-      }
-      if (action === 'photo.estimate') {
-        return { status: 200, body: { action, costMicros: 200_000, model: 'openai:gpt-image-2.5-sunburst' } };
-      }
-      fake
-        .rows('media_assets')
-        .push(asset('fondo-ia', 'Fondo nuevo · plato.png', { mime_type: 'image/png', origin: 'generated' }));
-      return {
-        status: 200,
-        body: {
-          action,
-          status: 'completed',
-          generationId: 'gen-2',
-          costMicros: 200_000,
-          asset: { id: 'fondo-ia', path: `${ORG_ID}/${BRAND_ID}/ia/gen-2-0.png` },
-        },
-      };
-    });
+    fakeBackgroundAi(calls);
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
     await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
@@ -409,6 +415,121 @@ describe('Editar foto desde la biblioteca', () => {
       input: { assetId: 'foto-1', operation: 'replace_background', prompt: 'mantel de lino beige' },
     });
     expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
+  });
+
+  it('con IA: cambiar el fondo recorta el plato en el navegador, manda la máscara y vuelve a pegar el plato original', async () => {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    const original = asset('foto-1', 'plato.jpg');
+    const calls: Array<{ action: string; input?: unknown }> = [];
+    fakeBackgroundAi(calls);
+    const cut = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image, onProgress) => {
+      onProgress?.({ phase: 'running' });
+      // El plato: la mitad izquierda de la foto.
+      const out = new Uint8ClampedArray(image.data);
+      for (let i = 0; i < image.width * image.height; i += 1) {
+        out[i * 4 + 3] = i % image.width < image.width / 2 ? 255 : 0;
+      }
+      return {
+        pixels: { data: out, width: image.width, height: image.height },
+        model: 'isnet-test',
+        provider: 'wasm',
+        fromCache: true,
+      };
+    });
+    const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
+    const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
+    const dialog = await openEditDialog(user);
+    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    // Hay recorte posible: nada de «no hay recorte»; la casilla viene marcada.
+    expect(ai.queryByText(/No hay recorte del plato/)).not.toBeInTheDocument();
+    expect(ai.getByTestId('photo-edit-ai-protect')).toBeChecked();
+    await user.click(ai.getByRole('button', { name: 'mantel de lino beige' }));
+    await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
+
+    expect(await dialog.findByTestId('photo-edit-result')).toHaveTextContent('Fondo nuevo · plato.jpg');
+    expect(cut).toHaveBeenCalledTimes(1);
+    // La máscara viaja en base64 y es un PNG (ya codificado por el doble) con las medidas de la foto.
+    const sent = calls.find((c) => c.action === 'photo.edit')!.input as Record<string, unknown>;
+    expect(sent).toMatchObject({ assetId: 'foto-1', operation: 'replace_background', prompt: 'mantel de lino beige' });
+    expect(typeof sent.subjectMask).toBe('string');
+    const maskCall = mocks.encodePixels.mock.calls.find(([p, mime]) => mime === 'image/png' && p.width === 1200);
+    expect(maskCall).toBeTruthy();
+    const mask = maskCall![0] as Pixels;
+    expect([mask.width, mask.height]).toEqual([1200, 900]);
+    expect(mask.data[(450 * 1200 + 100) * 4 + 3]).toBe(255); // plato: opaco
+    expect(mask.data[(450 * 1200 + 1100) * 4 + 3]).toBe(0); // fondo: transparente
+    // Se guarda una versión nueva con el plato protegido (photo_edit, no ai_edit) y se retira la sin proteger.
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]!.provenance).toMatchObject({
+      type: 'photo_edit',
+      source_asset_id: 'foto-1',
+      steps: [
+        {
+          kind: 'ai_background',
+          operation: 'replace_background',
+          prompt: 'mantel de lino beige',
+          plate_protected: true,
+          mask_model: 'isnet-test',
+        },
+      ],
+    });
+    expect(removed).toHaveBeenCalledWith(['fondo-ia']);
+    expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
+  });
+
+  it('con IA: sin la casilla «Proteger el plato original» manda la máscara pero deja el resultado de la IA', async () => {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    const calls: Array<{ action: string; input?: unknown }> = [];
+    fakeBackgroundAi(calls);
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
+      pixels: image,
+      model: 'isnet-test',
+      provider: 'wasm',
+      fromCache: true,
+    }));
+    const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    await user.click(ai.getByTestId('photo-edit-ai-protect'));
+    await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
+    await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
+
+    expect(await dialog.findByTestId('photo-edit-result')).toHaveTextContent('Fondo nuevo · plato.png');
+    expect((calls.find((c) => c.action === 'photo.edit')!.input as Record<string, unknown>).subjectMask).toBeTruthy();
+    expect(uploaded).toHaveLength(0);
+    expect(removed).not.toHaveBeenCalled();
+  });
+
+  it('con IA: si no se puede volver a pegar el plato, deja el resultado de la IA y avisa', async () => {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    const calls: Array<{ action: string; input?: unknown }> = [];
+    fakeBackgroundAi(calls);
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
+      pixels: image,
+      model: 'isnet-test',
+      provider: 'wasm',
+      fromCache: true,
+    }));
+    const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    // El resultado de la IA tiene otra proporción que la foto: no se puede pegar el plato sin deformarlo.
+    mocks.loadPixels.mockImplementation(async (url: string) =>
+      /Fondo nuevo|Fondo%20nuevo/.test(url)
+        ? { pixels: pixels(160, 40), reduced: false, natural: { width: 160, height: 40 } }
+        : { pixels: pixels(120, 90), reduced: false, natural: { width: 120, height: 90 } },
+    );
+    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
+    await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
+
+    expect(await dialog.findByTestId('photo-edit-result')).toHaveTextContent('Fondo nuevo · plato.png');
+    expect(uploaded).toHaveLength(0);
+    expect(removed).not.toHaveBeenCalled();
   });
 
   it('con IA: si no hay modelo de cambiar el fondo, no sale la pestaña', async () => {

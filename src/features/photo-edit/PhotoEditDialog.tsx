@@ -10,7 +10,7 @@
 // modelo para esa acción. Cada resultado es un recurso NUEVO de la biblioteca,
 // con su procedencia; la foto original no se toca nunca.
 import { Crop, Eraser, ImagePlus, Maximize2, Sparkles, Wand2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge, Button, Dialog, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
@@ -19,7 +19,7 @@ import { formatMicros } from '@/features/ai/money';
 import { useActiveProfile } from '@/features/brand/api';
 import { parseProfile } from '@/features/brand/profile';
 import { ImagePickerDialog } from '@/features/content/editor/AssetPickerDialog';
-import { useSignedUrls } from '@/features/library/api';
+import { deleteAssets, useSignedUrls } from '@/features/library/api';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
@@ -60,6 +60,7 @@ import {
   type Pixels,
 } from './pixels';
 import { composeCutout } from './cutout/composition';
+import { alphaOf, restorePlate, sameAspect, subjectMaskPixels } from './cutout/plate';
 import { cutoutSupport, describeCutoutError, removeBackgroundInBrowser, type CutoutProgress } from './cutout/engine';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
 
@@ -78,8 +79,11 @@ interface PhotoEditDialogProps {
    * Máscara del sujeto (el plato), OPCIONAL: devuelve un PNG con las MISMAS
    * medidas que la foto original, donde lo opaco es el plato y lo transparente
    * el fondo. La da quien tenga un recorte (en el navegador o en el servidor).
-   * Si está, «Cambiar el fondo con IA» la envía para proteger el plato; si no,
-   * avisa de que la IA puede retocarlo.
+   * Si no se pasa, «Cambiar el fondo con IA» la saca del recorte del navegador
+   * (IS-Net, docs/edicion-fotos.md §9) y, además, vuelve a pegar el plato original
+   * sobre el resultado. Si se pasa, se usa esa máscara y el plato no se vuelve a
+   * pegar (no hay su recorte aquí). Sin recorte posible, avisa de que la IA puede
+   * retocar el plato.
    */
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
 }
@@ -263,6 +267,7 @@ export function PhotoEditDialog({
                       choice={aiChoice('replace_background')!}
                       onDone={addResult}
                       getSubjectMask={getSubjectMask}
+                      pixels={loaded.pixels}
                     />
                   )}
                   {aiChoice('enhance') && (
@@ -877,6 +882,15 @@ function BackgroundPicker({
 
 // ─────────────────────────────── Con IA ───────────────────────────────
 
+/** Lo necesario para volver a pegar el plato original sobre el resultado de la IA. */
+interface PlateProtection {
+  original: Pixels;
+  /** Alfa del recorte (0–255) con las medidas de `original`. */
+  alpha: Uint8Array;
+  maskModel: string;
+  prompt: string;
+}
+
 /** Una edición con IA: coste máximo, tratamiento de los datos, lanzar y esperar. */
 function AiAction({
   asset,
@@ -884,18 +898,30 @@ function AiAction({
   choice,
   onDone,
   getSubjectMask,
+  pixels,
 }: {
   asset: MediaAssetRow;
   operation: AiPhotoOperation;
   choice: AiEditChoice;
   onDone: (row: MediaAssetRow) => void;
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
+  /** La foto original ya cargada (para sacar el recorte del plato y volver a pegarlo). */
+  pixels?: Pixels;
 }) {
   const factors = operation === 'upscale' ? upscaleFactors(asset.width, asset.height) : [];
   const [scale, setScale] = useState<2 | 4>(factors[0] ?? 2);
   const [background, setBackground] = useState('');
   const isBackground = operation === 'replace_background';
-  const withMask = isBackground && Boolean(getSubjectMask) && choice.usesSubjectMask !== false;
+  // La máscara viene de quien integra el diálogo o, si no, del recorte del navegador.
+  const browserCutout = useMemo(() => cutoutSupport().ok && Boolean(pixels), [pixels]);
+  const withMask = isBackground && (Boolean(getSubjectMask) || browserCutout) && choice.usesSubjectMask !== false;
+  // Solo se puede volver a pegar el plato con el recorte propio.
+  const canProtect = withMask && !getSubjectMask;
+  const [protect, setProtect] = useState(true);
+  const [maskProgress, setMaskProgress] = useState<CutoutProgress | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const plate = useRef<PlateProtection | null>(null);
+  const saveEdit = useSaveEdit(asset.brand_id);
   // Para estimar basta un texto cualquiera: el coste no depende de lo que se pida.
   const input = useMemo<AiEditInput>(
     () => ({
@@ -913,28 +939,110 @@ function AiAction({
   const progress = useGenerationProgress(asset.brand_id, pendingId);
   const delivered = useRef<string | null>(null);
   const finished = progress.data?.status === 'completed' ? progress.data.asset : null;
+  /** Entrega el resultado; si hay plato que proteger, lo vuelve a pegar antes y guarda esa versión. */
+  const deliver = useCallback(
+    async (row: MediaAssetRow) => {
+      const protection = plate.current;
+      plate.current = null;
+      if (protection) {
+        try {
+          const url = await signedUrlFor(row.storage_path);
+          if (!url) throw new Error('sin dirección');
+          const generated = await loadPixels(url);
+          if (!sameAspect(generated.pixels, protection.original)) throw new Error('proporción');
+          const merged = restorePlate(generated.pixels, protection.original, protection.alpha);
+          const format = outputFormat(false, asset.mime_type);
+          const steps: PhotoEditStep[] = [
+            {
+              kind: 'ai_background',
+              prompt: protection.prompt,
+              model: choice.model,
+              maskModel: protection.maskModel,
+              plateProtected: true,
+            },
+          ];
+          const saved = await saveEdit.mutateAsync({
+            source: asset,
+            blob: await encodePixels(merged, format.mime),
+            fileName: editedFileName(asset.file_name, steps, format.ext),
+            width: merged.width,
+            height: merged.height,
+            provenance: photoEditProvenance({
+              sourceAssetId: asset.id,
+              steps,
+              width: merged.width,
+              height: merged.height,
+            }),
+          });
+          // La versión sin proteger ya sobra; si no se pudiera borrar, queda en la biblioteca.
+          await deleteAssets([row.id]).catch(() => undefined);
+          toast.success(
+            `${AI_OPERATION_LABEL[operation]}: listo, con el plato original intacto. La original no ha cambiado.`,
+          );
+          onDone(saved);
+          return;
+        } catch {
+          toast.warning(
+            'La IA cambió el fondo, pero no se ha podido volver a pegar el plato original. Se deja el resultado de la IA: revisa el plato.',
+          );
+          onDone(row);
+          return;
+        }
+      }
+      toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
+      onDone(row);
+    },
+    [asset, choice.model, onDone, operation, saveEdit],
+  );
   useEffect(() => {
     if (!finished || delivered.current === finished.id) return;
     delivered.current = finished.id;
-    toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
-    onDone(finished);
-  }, [finished, onDone, operation]);
+    void deliver(finished);
+  }, [finished, deliver]);
   const running =
+    preparing ||
+    saveEdit.isPending ||
     edit.isPending ||
     (pendingId !== null && progress.data?.status !== 'completed' && progress.data?.status !== 'failed');
 
   async function run() {
     setPendingId(null);
     let request: AiEditInput = input;
+    plate.current = null;
     if (isBackground) {
       request = { assetId: asset.id, operation, prompt: background.trim() };
       if (withMask) {
         try {
-          const mask = await getSubjectMask!(asset);
-          if (mask) request = { ...request, subjectMask: await blobToBase64(mask) };
-        } catch {
-          toast.error('No se ha podido preparar la máscara del plato. Inténtalo de nuevo.');
+          if (getSubjectMask) {
+            const mask = await getSubjectMask(asset);
+            if (mask) request = { ...request, subjectMask: await blobToBase64(mask) };
+          } else if (pixels) {
+            setPreparing(true);
+            setMaskProgress(null);
+            const cut = await removeBackgroundInBrowser(pixels, setMaskProgress);
+            const alpha = alphaOf(cut.pixels);
+            const mask = subjectMaskPixels(
+              alpha,
+              cut.pixels.width,
+              cut.pixels.height,
+              asset.width ?? pixels.width,
+              asset.height ?? pixels.height,
+            );
+            request = { ...request, subjectMask: await blobToBase64(await encodePixels(mask, 'image/png')) };
+            if (protect) {
+              plate.current = { original: pixels, alpha, maskModel: cut.model, prompt: background.trim() };
+            }
+          }
+        } catch (error) {
+          toast.error(
+            getSubjectMask
+              ? 'No se ha podido preparar la máscara del plato. Inténtalo de nuevo.'
+              : `No se ha podido recortar el plato para protegerlo. ${describeCutoutError(error)}`,
+          );
           return;
+        } finally {
+          setPreparing(false);
+          setMaskProgress(null);
         }
       }
     }
@@ -946,11 +1054,11 @@ function AiAction({
         }
         const row = await fetchAsset(asset.brand_id, result.asset.id).catch(() => null);
         if (!row) {
+          plate.current = null;
           toast.error('La foto se editó y está en la biblioteca, pero no se ha podido abrir aquí.');
           return;
         }
-        toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
-        onDone(row);
+        await deliver(row);
       },
       () => undefined,
     );
@@ -1002,9 +1110,25 @@ function AiAction({
             ))}
           </div>
           {withMask ? (
-            <Notice tone="info">
-              Se protege el plato con su recorte. La IA lo trata como orientación: revisa el resultado antes de usarlo.
-            </Notice>
+            <div className="space-y-2">
+              <Notice tone="info">
+                {canProtect && protect
+                  ? 'Se recorta el plato en tu navegador y se le dice a la IA que no lo toque. Como la IA lo trata solo como orientación, al terminar se vuelve a pegar encima el plato original.'
+                  : 'Se protege el plato con su recorte. La IA lo trata como orientación: revisa el resultado antes de usarlo.'}
+              </Notice>
+              {canProtect && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={protect}
+                    onChange={(e) => setProtect(e.target.checked)}
+                    data-testid="photo-edit-ai-protect"
+                  />
+                  Proteger el plato original
+                </label>
+              )}
+              {preparing && <CutoutProgressBar progress={maskProgress} />}
+            </div>
           ) : (
             <Notice tone="warning">
               No hay recorte del plato: la IA puede retocar también el plato (forma, colores, guarnición). Revisa el

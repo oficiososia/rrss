@@ -332,26 +332,48 @@ y permitido para ellas (misma regla que «Ampliar»).
   mantel de lino beige, mesa de madera rústica, pizarra oscura
   (`BACKGROUND_SUGGESTIONS` en `api.ts`). Se ve el coste máximo antes y si se
   procesa fuera de la UE. El botón no se activa sin texto.
-- **Proteger el plato.** El adaptador manda la foto con una **máscara del
-  sujeto** si se la dan, y un prompt que pide no cambiar ni añadir ni quitar
-  comida. Aun así, OpenAI documenta que la máscara es orientativa (por
-  indicación): **no está garantizado** que el plato quede intacto. El resultado
-  es una propuesta que hay que revisar. Mejora pendiente si hace falta
-  garantía: volver a pegar el plato original encima del resultado con la misma
-  máscara, en el navegador.
+- **Proteger el plato (dos capas).**
+  1. **Máscara.** Si el navegador puede recortar (`cutoutSupport()`, §7), antes
+     de llamar a `ai-media` se recorta el plato con el mismo IS-Net (mismo
+     worker, misma caché del modelo y misma barra de progreso) y su alfa se
+     convierte en la máscara. **Convenio** (el del adaptador de OpenAI, que
+     manda el PNG tal cual como `mask`; OpenAI repinta lo transparente): PNG RGBA
+     con las medidas **exactas de la foto original** (`asset.width × height`,
+     aunque el recorte se hiciera sobre una versión reducida), **plato opaco
+     (alfa 255), fondo transparente (alfa 0)**, sin grises (alfa ≥ 128 → 255).
+     Código: `cutout/plate.ts` (`subjectMaskPixels`).
+  2. **Garantía.** OpenAI documenta que la máscara es orientativa, así que al
+     recibir el resultado el navegador lo descarga, vuelve a pegar el plato
+     **original** encima (`restorePlate`: original y alfa escalados al tamaño del
+     resultado, borde suavizado con un radio ≈ 0,4 % del lado menor) y guarda
+     esa versión. Casilla **«Proteger el plato original»**, marcada por
+     defecto; sin marcar, se manda la máscara igualmente pero el resultado de la
+     IA se deja como llega.
+  - **Qué se guarda.** Con protección, el recurso es **uno solo**: la versión
+    con el plato pegado, con procedencia `photo_edit` (no `ai_edit`: la guarda de
+    la base de datos solo deja al servidor escribir `ai_edit`) y un paso
+    `ai_background` (`prompt`, `model` de la IA, `mask_model` del recorte,
+    `plate_protected: true`). La copia sin proteger que ya creó `ai-media` se
+    borra de la biblioteca (el coste de IA no se devuelve). Sin protección, el
+    recurso es el de `ai-media` con su `ai_edit` y **sin** la marca (esa
+    procedencia no se puede tocar desde el navegador).
+  - **Si algo falla.** Recorte imposible (sin red para el modelo, memoria,
+    nada que recortar): no se llama a la IA y se explica. Si el resultado de la
+    IA llega con otra proporción (más del 3 %) o no se puede abrir o guardar, se
+    deja el resultado de la IA y se avisa de que hay que revisar el plato.
+  - **Sin recorte posible** (navegador sin WebAssembly o con poca memoria): se
+    mantiene el aviso «No hay recorte del plato: la IA puede retocar también el
+    plato», sin casilla ni máscara.
+  - **Límite.** La recomposición se hace sobre la foto cargada (como mucho
+    24 MP) y al tamaño del resultado de la IA (~1,5 MP). El plato sale con la
+    resolución del resultado, no la de la foto original.
 - **Interfaz «máscara del sujeto opcional» (para el integrador).**
-  `PhotoEditDialog` acepta la propiedad opcional
-  `getSubjectMask?: (asset) => Promise<Blob | null>`: un **PNG con las mismas
-  medidas que la foto original** donde lo **opaco es el plato** y lo
-  transparente es el fondo (el convenio de la máscara de OpenAI: se edita lo
-  transparente). Quien tenga un recorte (el de la rama
-  `f7/recorte-navegador` con ISNet, o uno del servidor) solo tiene que
-  pasarla al abrir el diálogo, convirtiendo su máscara a ese PNG; la interfaz
-  la envía en base64 (`subjectMask`) y el servidor comprueba que sea un PNG
-  con las medidas de la foto (hasta 1 MB). **Hoy nadie la pasa**: por eso la
-  interfaz avisa «No hay recorte del plato: la IA puede retocar también el
-  plato». Con la máscara el aviso cambia a «se protege el plato con su
-  recorte… revisa el resultado».
+  `PhotoEditDialog` sigue aceptando
+  `getSubjectMask?: (asset) => Promise<Blob | null>` (mismo convenio: PNG con
+  las medidas de la foto, plato opaco). Si se pasa, **sustituye** al recorte del
+  navegador y, como no hay recorte propio, **no** se vuelve a pegar el plato ni
+  sale la casilla. Sin ella (lo normal) se usa el recorte del navegador. El
+  servidor comprueba que sea un PNG con las medidas de la foto (hasta 1 MB).
 - **Resultado:** un recurso **nuevo** («Fondo nuevo · <original>.jpg»,
   carpeta «Ediciones», etiqueta «ia»), con procedencia `ai_edit`
   (`operation: replace_background`, `source_asset_id`, el encargo en `prompt`,
@@ -370,6 +392,10 @@ simulado: multipart con foto y máscara, parseo, errores, coste, tamaños;
 catálogo y precios; configuración y residencia; «Probar conexión»),
 `tests/db/edicion-fotos.test.ts` (función con la edición simulada, máscara
 inválida, procedencia con el encargo), `editarFoto.test.tsx` (flujo del
-diálogo) y la e2e `tests/e2e/26-cambiar-fondo-ia.spec.ts` (**escrita, sin
-ejecutar**: el Supabase local de esta máquina lo usaba otro proyecto).
-**Sin probar:** contra OpenAI real (ver `docs/ia-medios.md`, §13).
+diálogo, con el recorte y la respuesta de la IA simulados: máscara enviada,
+plato vuelto a pegar, casilla desmarcada y fallo de proporción),
+`cutout/plate.test.ts` (convenio y medidas de la máscara, recomposición, borde
+suave, proporción) y la e2e `tests/e2e/26-cambiar-fondo-ia.spec.ts`
+(actualizada para el recorte simulado del worker y la procedencia
+`photo_edit`/`ai_background`; **escrita, sin ejecutar**: el Supabase local de esta máquina lo usaba otro proyecto).
+**Sin probar:** contra OpenAI real (ver `docs/ia-medios.md`, §13), el recorte real del plato en un navegador y el borde de la recomposición a ojo.
