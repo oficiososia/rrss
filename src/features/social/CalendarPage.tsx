@@ -27,7 +27,8 @@ import {
   type DisplayState,
 } from './calendar';
 import { PublicationDialog } from './PublicationDialog';
-import { EntryThumb, useEntryThumbs } from './preview';
+import { EntryThumb } from './preview';
+import { useEntryThumbs } from './previewData';
 import { PublishNowDialog } from './PublishNowDialog';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useFeature } from '@/features/platform/integrations/useFeature';
