@@ -77,6 +77,11 @@ export const DRIVE_PATH = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/drive\/[A-Za-z0-9_-]{1
 
 const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
 
+/** Tope de una subida a R2 de una sola vez (supabase/functions/_shared/storage/s3.ts). */
+export const R2_MAX_OBJECT_BYTES = 2 * 1024 * 1024 * 1024;
+/** Si `media-storage` no está desplegada, se vuelve a preguntar pasado este tiempo. */
+const MEDIA_STORAGE_RETRY_MS = 5 * 60_000;
+
 export function createSupabaseStorage(
   options: SupabaseOptions & {
     bucket: string;
@@ -85,11 +90,45 @@ export function createSupabaseStorage(
      * se avisa antes de subir y sin reintento (otro intento pesaría lo mismo).
      */
     maxObjectBytes?: number;
+    /**
+     * Preguntar a la función `media-storage` dónde está cada archivo y dónde
+     * subir los resultados (Cloudflare R2 o Supabase Storage,
+     * docs/almacenamiento-r2.md). Si la función no está desplegada, se usa
+     * Supabase Storage como siempre.
+     */
+    mediaStorage?: boolean;
+    now?: () => number;
   },
 ): MediaStorage {
   const maxObjectBytes = options.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES;
   const doFetch = options.fetch ?? fetch;
+  const now = options.now ?? (() => Date.now());
   const base = options.url.replace(/\/+$/, '');
+  let mediaStorageMissingUntil = 0;
+
+  /** Llama a `media-storage` con la clave de servicio; null si no está desplegada (o no se usa). */
+  async function mediaStorage<T>(route: 'sign' | 'upload', body: unknown, signal?: AbortSignal): Promise<T | null> {
+    if (!options.mediaStorage || now() < mediaStorageMissingUntil) return null;
+    const response = await doFetch(`${base}/functions/v1/media-storage/${route}`, {
+      method: 'POST',
+      headers: { ...authHeaders(options.serviceKey), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (response.status === 404) {
+      await response.arrayBuffer().catch(() => undefined);
+      mediaStorageMissingUntil = now() + MEDIA_STORAGE_RETRY_MS;
+      return null;
+    }
+    if (!response.ok) {
+      const message = `El almacenamiento respondió ${response.status}: ${await errorText(response)}`;
+      if (response.status === 400 || response.status === 403 || response.status === 413) {
+        throw new PermanentError(message);
+      }
+      throw new Error(message);
+    }
+    return (await response.json()) as T;
+  }
   const objectUrl = (objectPath: string) =>
     `${base}/storage/v1/object/${encodeURIComponent(options.bucket)}/${objectPath.split('/').map(encodeURIComponent).join('/')}`;
 
@@ -114,9 +153,15 @@ export function createSupabaseStorage(
   return {
     async download(objectPath, destinationFile, signal) {
       const fromDrive = DRIVE_PATH.test(objectPath);
+      const signed = fromDrive
+        ? null
+        : await mediaStorage<{ urls?: Record<string, { url?: string }> }>('sign', { paths: [objectPath] }, signal);
+      const signedUrl = signed?.urls?.[objectPath]?.url;
       const response = fromDrive
         ? await doFetch(await driveUrl(objectPath, signal), { signal })
-        : await doFetch(objectUrl(objectPath), { headers: authHeaders(options.serviceKey), signal });
+        : signedUrl
+          ? await doFetch(signedUrl, { signal })
+          : await doFetch(objectUrl(objectPath), { headers: authHeaders(options.serviceKey), signal });
       if (!response.ok || !response.body) {
         const message = await errorText(response);
         // Storage responde 400 o 404 cuando el objeto no existe: reintentar no lo arregla.
@@ -131,6 +176,31 @@ export function createSupabaseStorage(
     },
     async upload(sourceFile, objectPath, { contentType, signal }) {
       const { size } = await stat(sourceFile);
+      const target =
+        size > 0 && size <= R2_MAX_OBJECT_BYTES
+          ? await mediaStorage<{ backend?: string; url?: string; headers?: Record<string, string> }>(
+              'upload',
+              { path: objectPath, contentType, bytes: size },
+              signal,
+            )
+          : null;
+      if (target?.backend === 'r2' && target.url) {
+        // R2: PUT a la URL firmada (tipo y tamaño firmados). Reintentar sobrescribe.
+        const response = await doFetch(target.url, {
+          method: 'PUT',
+          headers: { ...(target.headers ?? {}), 'Content-Type': contentType, 'Content-Length': String(size) },
+          body: Readable.toWeb(createReadStream(sourceFile)) as unknown as RequestInit['body'],
+          duplex: 'half',
+          signal,
+        } as RequestInit);
+        if (!response.ok) {
+          const message = `No se pudo subir «${objectPath}» a R2: ${response.status} ${await errorText(response)}`;
+          if (response.status === 400 || response.status === 403) throw new PermanentError(message);
+          throw new Error(message);
+        }
+        await response.arrayBuffer().catch(() => undefined);
+        return;
+      }
       if (size > maxObjectBytes) {
         throw new PermanentError(
           `El archivo resultante pesa ${megabytes(size)} y el almacenamiento admite ${megabytes(maxObjectBytes)} como máximo. ` +

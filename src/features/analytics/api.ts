@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { STORAGE_BUCKET } from '@/config/app';
 import type {
   AnalyticsCaptureRunRow,
   AnalyticsMediaSummaryRow,
@@ -9,6 +8,7 @@ import type {
 } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import { signStoragePaths } from '@/features/storage/api';
 import type {
   AccountInfo,
   MediaSummary,
@@ -186,9 +186,10 @@ export function useRequestReport(brandId: string) {
 
 /** Dirección temporal (1 h) para descargar el PDF del informe. */
 export async function reportDownloadUrl(storagePath: string): Promise<string> {
-  const { data, error } = await supabase.storage
-    .from(STORAGE_BUCKET)
-    .createSignedUrl(storagePath, 3600, { download: true });
-  if (error || !data?.signedUrl) throw new Error('No se pudo preparar la descarga. Inténtalo de nuevo.');
-  return data.signedUrl;
+  // En Supabase Storage o en Cloudflare R2, según dónde lo guardó el trabajador.
+  const url = await signStoragePaths([storagePath], 3600, { download: true })
+    .then((map) => map.get(storagePath))
+    .catch(() => undefined);
+  if (!url) throw new Error('No se pudo preparar la descarga. Inténtalo de nuevo.');
+  return url;
 }

@@ -13,10 +13,11 @@ import type { RpcClient } from '../_shared/ai/contract.ts';
 import { createRpcSettingsLoader, memoByEnv } from '../_shared/integrations/settings.ts';
 import { loadSocialConfig } from '../_shared/social/config.ts';
 import { checkAccountTokens } from '../_shared/social/oauth.ts';
+import { mediaStoresFor, signStoredPath } from '../_shared/storage/resolve.ts';
+import { createSupabaseObjectStorage } from '../_shared/storage/supabase.ts';
+import type { StorageBackend } from '../_shared/storage/contract.ts';
 import { createSocialPublishHandler } from './handler.ts';
 
-/** Cubo privado de la biblioteca (20261115121000_storage_brand_media.sql). */
-const STORAGE_BUCKET = 'brand-media';
 const env = Deno.env.toObject();
 const admin = createClient(env.SUPABASE_URL ?? '', env.SUPABASE_SERVICE_ROLE_KEY ?? '', {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -26,10 +27,22 @@ const log = (event: string, data: Record<string, unknown>) =>
   console.error(`[social-publish] ${event}`, JSON.stringify(data));
 const settings = createRpcSettingsLoader(rpc, env, log);
 const workerName = `social-publish:${crypto.randomUUID()}`;
+const supabaseStorage = createSupabaseObjectStorage({
+  url: env.SUPABASE_URL ?? '',
+  serviceKey: env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+});
+
+/** En qué almacén está el archivo (docs/almacenamiento-r2.md); lo que no es un recurso, en Supabase. */
+async function backendOf(path: string): Promise<StorageBackend> {
+  const { data } = await admin.from('media_assets').select('storage_backend').eq('storage_path', path).maybeSingle();
+  return data?.storage_backend === 'r2' ? 'r2' : 'supabase';
+}
 
 const handlerFor = memoByEnv((effective) => {
   const config = loadSocialConfig(effective, (input, init) => fetch(input, init));
   for (const problem of config.problems) console.warn(`[social-publish] configuración: ${problem}`);
+  // Supabase Storage o Cloudflare R2: Instagram descarga la URL firmada sin cabeceras.
+  const stores = mediaStoresFor(effective, supabaseStorage, log);
   return createSocialPublishHandler({
     serviceKeys: [env.SUPABASE_SERVICE_ROLE_KEY ?? ''],
     rpc,
@@ -42,9 +55,11 @@ const handlerFor = memoByEnv((effective) => {
             keyRing: config.keyRing,
             log,
             async signedUrl(path, seconds) {
-              const { data, error } = await admin.storage.from(STORAGE_BUCKET).createSignedUrl(path, seconds);
-              if (error || !data?.signedUrl) throw new Error('No se pudo firmar la dirección del recurso');
-              return data.signedUrl;
+              try {
+                return await signStoredPath(stores, backendOf, path, seconds);
+              } catch {
+                throw new Error('No se pudo firmar la dirección del recurso');
+              }
             },
           }
         : null,

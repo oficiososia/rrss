@@ -1,6 +1,7 @@
 // Aislamiento multi-tenant y permisos, contra las migraciones reales.
 // Cada comprobación se hace con la identidad de un usuario (rol y JWT), igual
 // que llegaría desde la API.
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   addAsset,
@@ -2317,5 +2318,94 @@ describe('biblioteca con Google Drive', () => {
       ]),
     ).rejects.toThrow(/edita la marca/);
     await as(db, ana, `delete from public.media_assets where id = $1`, [recurso!.id]);
+  });
+});
+
+describe('almacenamiento en Cloudflare R2 (20261124010000)', () => {
+  it('nadie del cliente lee ni escribe lo apuntado por el servidor, ni llama a sus funciones', async () => {
+    const path = `${orgA}/${marcaA1}/media/${randomUUID()}-r2.jpg`;
+    await asService(db, `select public.media_storage_register_upload($1, $2)`, [editorA.id, path]);
+    for (const user of [ana, adminA, editorA, clienteA, berta, gema, ajeno, superadmin, null]) {
+      await denied(db, user, `select * from private.media_object_locations`, [], /permission denied/);
+      await denied(db, user, `delete from private.media_object_locations`, [], /permission denied/);
+      await denied(
+        db,
+        user,
+        `select public.media_storage_register_upload($1, $2)`,
+        [user?.id ?? null, `${orgA}/${marcaA1}/media/x.jpg`],
+        /permission denied/,
+      );
+      await denied(db, user, `select public.media_storage_forget_paths($1::text[])`, [[path]], /permission denied/);
+    }
+  });
+
+  it('una organización no apunta subidas a R2 en otra, ni con la ruta de una marca ajena', async () => {
+    await expect(
+      asService(db, `select public.media_storage_register_upload($1, $2)`, [
+        berta.id,
+        `${orgA}/${marcaA1}/media/x.jpg`,
+      ]),
+    ).rejects.toThrow(/edita la marca/);
+    await expect(
+      asService(db, `select public.media_storage_register_upload($1, $2)`, [
+        berta.id,
+        `${orgB}/${marcaA1}/media/x.jpg`,
+      ]),
+    ).rejects.toThrow(/ninguna marca/);
+    await expect(
+      asService(db, `select public.media_storage_register_upload($1, $2)`, [
+        clienteA.id,
+        `${orgA}/${marcaA1}/media/x.jpg`,
+      ]),
+    ).rejects.toThrow(/edita la marca/);
+  });
+
+  it('el almacén de un recurso lo ve quien ve la marca, y no se cambia desde el cliente', async () => {
+    const path = `${orgA}/${marcaA1}/media/${randomUUID()}-r2.jpg`;
+    await asService(db, `select public.media_storage_register_upload($1, $2)`, [editorA.id, path]);
+    await as(
+      db,
+      editorA,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'image', $3, 'r2.jpg', 'image/jpeg', 10)`,
+      [marcaA1, orgA, path],
+    );
+    const [visto] = await as<{ storage_backend: string }>(
+      db,
+      clienteA,
+      `select storage_backend from public.media_assets where storage_path = $1`,
+      [path],
+    );
+    expect(visto?.storage_backend).toBe('r2');
+    expect(await as(db, berta, `select 1 from public.media_assets where storage_path = $1`, [path])).toEqual([]);
+    await denied(
+      db,
+      ana,
+      `update public.media_assets set storage_backend = 'supabase' where storage_path = $1`,
+      [path],
+      /permission denied/,
+    );
+    // Al borrarlo, la cola (que solo ve quien edita la marca) recuerda que estaba en R2.
+    await as(db, editorA, `delete from public.media_assets where storage_path = $1`, [path]);
+    expect(await as(db, berta, `select 1 from public.storage_cleanup_queue where storage_path = $1`, [path])).toEqual(
+      [],
+    );
+    expect(
+      (
+        await as<{ b: string }>(
+          db,
+          editorA,
+          `select storage_backend as b from public.storage_cleanup_queue where storage_path = $1`,
+          [path],
+        )
+      )[0]?.b,
+    ).toBe('r2');
+    await denied(
+      db,
+      editorA,
+      `update public.storage_cleanup_queue set storage_backend = 'supabase'`,
+      [],
+      /permission denied/,
+    );
   });
 });

@@ -122,12 +122,19 @@ export type MediaAssetRow = {
   source?: AssetSource;
   drive_connection_id?: string | null;
   drive_file_id?: string | null;
+  /**
+   * En qué almacén está el archivo de un recurso de Storage: Supabase Storage o
+   * Cloudflare R2 (migración 20261124010000). Lo fija el servidor.
+   */
+  storage_backend?: StorageBackend;
   created_by: string | null;
   created_at: string;
   updated_at: string;
 };
 
 export type AssetSource = 'storage' | 'google_drive';
+
+export type StorageBackend = 'supabase' | 'r2';
 
 export type InvitationRow = {
   id: string;
@@ -183,6 +190,7 @@ export type StorageCleanupRow = {
   organization_id: string;
   brand_id: string;
   storage_path: string;
+  storage_backend?: StorageBackend;
   created_at: string;
 };
 

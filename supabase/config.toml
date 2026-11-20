@@ -424,6 +424,12 @@ verify_jwt = false
 [functions.drive-media]
 verify_jwt = false
 
+# Almacenamiento de medios en Cloudflare R2: la llama el trabajador con la clave
+# de servicio (que puede no ser un JWT); la sesión o la clave las comprueba
+# media-storage/handler.ts en cada ruta.
+[functions.media-storage]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327

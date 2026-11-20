@@ -1,13 +1,13 @@
 // Lo que se enseña en «Plataforma → Integraciones»: cada integración, sus
 // apartados y sus campos, con el nombre de la variable de entorno que sustituye.
 // El catálogo que manda es el de la base de datos (migraciones 20261120010000
-// y 20261123010000);
+// 20261123010000 y 20261124010000);
 // el del servidor está en supabase/functions/_shared/integrations/catalog.ts y
 // una prueba (tests/db/integraciones.test.ts) comprueba que los tres coinciden.
 //
 // Sin importaciones con «@/»: lo usan también las pruebas de base de datos.
 
-export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive';
+export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive' | 'r2';
 
 export interface UiField {
   key: string;
@@ -342,6 +342,65 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             secret: false,
             placeholder: 'https://…',
             help: 'A dónde vuelve la persona tras conectar Drive. Si no se pone, la de Meta (SOCIAL_APP_URL).',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'r2',
+    title: 'Cloudflare R2 (almacenamiento)',
+    description:
+      'Fotos, vídeos y exportaciones en un cubo de Cloudflare R2 en la UE, en lugar de Supabase Storage: sin coste de salida y sin el límite de espacio del plan de Supabase. Lo ya subido sigue en Supabase y se sigue viendo.',
+    testDescription:
+      'Pregunta a R2 si el cubo existe y si la clave puede usarlo (HeadBucket). No sube ni descarga nada.',
+    groups: [
+      {
+        title: 'Cuenta y cubo',
+        description:
+          'El cubo, con jurisdicción UE y sin acceso público, y su regla CORS: docs/almacenamiento-r2.md, «Lo que hace el dueño en Cloudflare».',
+        fields: [
+          {
+            key: 'R2_ACCOUNT_ID',
+            label: 'Account ID',
+            secret: false,
+            placeholder: '32 caracteres hexadecimales',
+          },
+          { key: 'R2_BUCKET', label: 'Cubo', secret: false, placeholder: 'rrss-media-staging' },
+          {
+            key: 'R2_JURISDICTION',
+            label: 'Jurisdicción del cubo',
+            secret: false,
+            input: 'select',
+            options: [
+              { value: 'eu', label: 'Unión Europea (recomendado)' },
+              { value: 'default', label: 'Sin jurisdicción (fuera de la garantía UE)' },
+            ],
+            help: 'La que se eligió al crear el cubo: no se puede cambiar después. Sin poner, eu.',
+          },
+        ],
+      },
+      {
+        title: 'Token de API de R2',
+        description: '«Object Read & Write» limitado a ese cubo.',
+        fields: [
+          { key: 'R2_ACCESS_KEY_ID', label: 'Access Key ID', secret: true },
+          { key: 'R2_SECRET_ACCESS_KEY', label: 'Secret Access Key', secret: true },
+        ],
+      },
+      {
+        title: 'Subidas nuevas',
+        fields: [
+          {
+            key: 'MEDIA_UPLOAD_BACKEND',
+            label: 'Dónde se guardan',
+            secret: false,
+            input: 'select',
+            options: [
+              { value: 'r2', label: 'Cloudflare R2' },
+              { value: 'supabase', label: 'Supabase Storage (respaldo)' },
+            ],
+            help: 'Sin poner, en R2 si está configurado. Cambiarlo no mueve lo ya subido.',
           },
         ],
       },

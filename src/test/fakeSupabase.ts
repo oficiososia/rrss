@@ -42,6 +42,8 @@ export const ALL_AVAILABLE = {
   aiImage: true,
   billing: true,
   drive: true,
+  // Sin R2: las pruebas de siempre firman y suben con Supabase Storage.
+  mediaStorage: false,
 };
 type Op = 'select' | 'insert' | 'update' | 'delete';
 

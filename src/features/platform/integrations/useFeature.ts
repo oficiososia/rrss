@@ -12,7 +12,7 @@ import { useIntegrationAvailability, type IntegrationAvailability } from './api'
 // despliegue) y el servidor decide si de verdad funcionan. Mientras no hay
 // respuesta del servidor, o si falla, no se enseña.
 
-export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing' | 'drive';
+export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing' | 'drive' | 'mediaStorage';
 
 const BUILD_FLAGS: Record<Feature, () => boolean> = {
   aiText: aiTextEnabled,
@@ -20,6 +20,9 @@ const BUILD_FLAGS: Record<Feature, () => boolean> = {
   publishing: socialPublishingEnabled,
   billing: billingEnabled,
   drive: driveLibraryEnabled,
+  // Archivos en Cloudflare R2: sin variable de compilación. Si el servidor guarda
+  // archivos en R2, la aplicación tiene que saber leerlos en cualquier despliegue.
+  mediaStorage: () => true,
 };
 
 export function useFeature(feature: Feature): boolean {

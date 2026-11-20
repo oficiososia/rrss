@@ -17,6 +17,7 @@ import { TEXT_UNITS } from '../ai/text/prompt.ts';
 import { normalizeAppUrl } from '../billing/handlers.ts';
 import { loadDriveConfig } from '../drive/config.ts';
 import { loadSocialConfig } from '../social/config.ts';
+import { loadMediaStorageConfig, mediaStorageReady } from '../storage/config.ts';
 import type { Env } from './settings.ts';
 
 export interface IntegrationAvailability {
@@ -31,6 +32,8 @@ export interface IntegrationAvailability {
   billing: boolean;
   /** Biblioteca con Google Drive: cliente OAuth, direcciones y claves de cifrado. */
   drive: boolean;
+  /** Archivos de la biblioteca en Cloudflare R2: cuenta, clave y cubo. */
+  mediaStorage: boolean;
 }
 
 export const NOTHING_AVAILABLE: IntegrationAvailability = {
@@ -41,6 +44,7 @@ export const NOTHING_AVAILABLE: IntegrationAvailability = {
   aiImage: false,
   billing: false,
   drive: false,
+  mediaStorage: false,
 };
 
 const unused = () => {
@@ -91,5 +95,6 @@ export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): 
     aiImage: runtime.imageChoices.length > 0,
     billing: Boolean(env.STRIPE_SECRET_KEY?.trim()) && webhook && normalizeAppUrl(env.BILLING_APP_URL) !== null,
     drive: driveReady(drive),
+    mediaStorage: mediaStorageReady(loadMediaStorageConfig(env)),
   };
 }
