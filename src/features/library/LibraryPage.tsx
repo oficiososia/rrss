@@ -12,12 +12,13 @@ import { formatBytes } from '@/lib/utils';
 import { useAssetFacets, useAssets, useAssetsByIds, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
 import { AssetDialog } from './AssetDialog';
 import { ASSET_KIND_LABEL, ASSET_KINDS } from './labels';
+import { ThumbImage } from './ThumbImage';
 import { UploadPanel } from './UploadPanel';
 
 function Thumbnail({ asset, url }: { asset: MediaAssetRow; url: string | undefined }) {
   if (asset.mime_type.startsWith('image/')) {
     return url ? (
-      <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
+      <ThumbImage url={url} />
     ) : (
       <Skeleton className="h-full w-full rounded-none" />
     );
