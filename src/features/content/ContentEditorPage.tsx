@@ -50,6 +50,8 @@ import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
+import { canEditPhoto } from '@/features/photo-edit/api';
+import { PhotoEditDialog } from '@/features/photo-edit/PhotoEditDialog';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
 import { orderFontOptions } from '@/features/brand/fonts';
@@ -191,6 +193,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [imagePicker, setImagePicker] = useState(false);
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
+  const [photoEditing, setPhotoEditing] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
@@ -273,6 +276,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     const row = (assets.data ?? []).find((asset) => asset.id === assetId);
     return row ? { id: row.id, name: row.file_name, width: row.width, height: row.height } : null;
   }, [selected, assets.data]);
+
+  // «Editar foto» de la capa elegida: el recurso de la biblioteca y su dirección.
+  const editablePhoto = useMemo(() => {
+    if (selected?.type !== 'image' || selected.source.kind !== 'asset') return null;
+    const assetId = selected.source.assetId;
+    const row = (assets.data ?? []).find((asset) => asset.id === assetId);
+    return row && canEditPhoto(row) ? { layerId: selected.id, row, url: images.get(row.id) } : null;
+  }, [selected, assets.data, images]);
 
   // Marca de contenido generado con IA: la calcula la base de datos al guardar
   // (`item.ai_generated`); aquí se adelanta con lo que hay en pantalla.
@@ -981,6 +992,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                     brandStyle={brandStyle}
                     allowedRatios={allowed?.ratios ?? null}
                     textRef={textRef}
+                    onEditPhoto={editablePhoto?.url ? () => setPhotoEditing(true) : undefined}
                   />
                   {selected && !readOnly && !selected.locked && (
                     <ArrangeControls layers={[selected]} dispatch={dispatch} />
@@ -1144,6 +1156,25 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                 setImageAi(false);
                 dispatch({ type: 'add', layer: newImageLayer(canvas, state.document.layers, image) });
                 toast.success('Imagen generada y añadida al diseño. Está también en la biblioteca.');
+              }}
+            />
+          )}
+          {photoEditing && editablePhoto && (
+            <PhotoEditDialog
+              asset={editablePhoto.row}
+              url={editablePhoto.url}
+              open
+              onOpenChange={setPhotoEditing}
+              resultLabel="Usar en el diseño"
+              // Cambia la imagen de la capa por la editada (se deshace con Ctrl+Z); la original sigue en la biblioteca.
+              onResult={(row) => {
+                dispatch({
+                  type: 'update',
+                  id: editablePhoto.layerId,
+                  patch: { source: { kind: 'asset', assetId: row.id } },
+                });
+                setPhotoEditing(false);
+                toast.success('La capa usa ahora la foto editada. La original sigue en la biblioteca.');
               }}
             />
           )}

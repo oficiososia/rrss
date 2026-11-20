@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_AI_IMAGE_ENABLED?: string;
   /** `true` (junto con VITE_AI_TEXT_ENABLED) enseña el copiloto por voz del editor, si el navegador tiene dictado. */
   readonly VITE_AI_VOICE_COPILOT_ENABLED?: string;
+  /** `true` si el servidor tiene modelos de edición de fotos con IA: enseña «Quitar el fondo» y «Ampliar». */
+  readonly VITE_AI_PHOTO_EDIT_ENABLED?: string;
   /** `true` si hay un trabajador de medios desplegado: enseña la pantalla de reels de la biblioteca. */
   readonly VITE_MEDIA_WORKER_ENABLED?: string;
   /** `true` si hay aplicación de Meta y publicador configurados: enseña conectar cuentas y programar para publicar. */

@@ -79,6 +79,8 @@ export default defineConfig({
         VITE_AI_TEXT_ENABLED: 'true',
         // Y la de imagen (ai-media con la imagen simulada de pruebas locales).
         VITE_AI_IMAGE_ENABLED: 'true',
+        // Y la edición de fotos con IA (ai-media con la edición simulada de pruebas locales).
+        VITE_AI_PHOTO_EDIT_ENABLED: 'true',
         // El copiloto por voz del editor (tarea editor.copilot con el mismo proveedor simulado).
         VITE_AI_VOICE_COPILOT_ENABLED: 'true',
         // El trabajador de medios existe en este entorno: lo arranca tests/e2e/11-reels.spec.ts contra el stack local.

@@ -1,4 +1,4 @@
-import { BringToFront, SendToBack, Trash2 } from 'lucide-react';
+import { BringToFront, SendToBack, SlidersHorizontal, Trash2 } from 'lucide-react';
 import type { Dispatch, Ref } from 'react';
 import { Button } from '@/components/ui';
 import {
@@ -30,6 +30,8 @@ interface PropertiesPanelProps {
   /** Proporciones que admite la red; null si no se sabe. */
   allowedRatios: AspectRatio[] | null;
   textRef: Ref<HTMLTextAreaElement>;
+  /** Abre «Editar foto» con la imagen de la capa (solo si es de la biblioteca y se puede editar). */
+  onEditPhoto?: () => void;
 }
 
 const ANCHOR_X_LABEL: Record<(typeof ANCHORS_X)[number], string> = {
@@ -55,6 +57,7 @@ export function PropertiesPanel({
   brandStyle,
   allowedRatios,
   textRef,
+  onEditPhoto,
 }: PropertiesPanelProps) {
   const checkpoint = () => dispatch({ type: 'checkpoint' });
 
@@ -173,6 +176,18 @@ export function PropertiesPanel({
             onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
             onCommit={checkpoint}
           />
+          {onEditPhoto && !readOnly && layer.source.kind === 'asset' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="col-span-2"
+              onClick={onEditPhoto}
+              data-testid="layer-edit-photo"
+            >
+              <SlidersHorizontal className="h-4 w-4" aria-hidden />
+              Editar foto
+            </Button>
+          )}
         </div>
       )}
 

@@ -1,9 +1,11 @@
-import { ExternalLink, Trash2 } from 'lucide-react';
+import { ExternalLink, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Badge, Button, ConfirmDialog, Dialog, Field, Input, Select, Textarea } from '@/components/ui';
 import { mediaWorkerEnabled } from '@/config/app';
 import { StringListInput } from '@/features/brand/editor/inputs';
+import { canEditPhoto } from '@/features/photo-edit/api';
+import { PhotoEditDialog } from '@/features/photo-edit/PhotoEditDialog';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatBytes, formatDateTime } from '@/lib/utils';
@@ -34,6 +36,7 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
   const [tags, setTags] = useState<string[]>(asset.tags);
   const [rights, setRights] = useState<AssetRights>(() => parseRights(asset.rights));
   const [confirming, setConfirming] = useState(false);
+  const [editingPhoto, setEditingPhoto] = useState(false);
 
   const setRight = (key: keyof AssetRights, value: string) => setRights((current) => ({ ...current, [key]: value }));
   const details = [
@@ -121,6 +124,12 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
               <ExternalLink className="h-4 w-4" aria-hidden />
               Abrir el archivo original
             </a>
+          )}
+          {canEdit && url && canEditPhoto(asset) && (
+            <Button variant="secondary" onClick={() => setEditingPhoto(true)} data-testid="asset-edit-photo">
+              <SlidersHorizontal className="h-4 w-4" aria-hidden />
+              Editar foto
+            </Button>
           )}
 
           {mediaWorkerEnabled() && canCrop(asset) && onOpenAsset && (
@@ -231,6 +240,17 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
           </fieldset>
         </div>
       </Dialog>
+
+      {editingPhoto && (
+        <PhotoEditDialog
+          asset={asset}
+          url={url}
+          open
+          onOpenChange={setEditingPhoto}
+          resultLabel="Abrir"
+          onResult={onOpenAsset ? (row) => onOpenAsset(row.id) : undefined}
+        />
+      )}
 
       <ConfirmDialog
         open={confirming}

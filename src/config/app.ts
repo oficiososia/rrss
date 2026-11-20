@@ -34,6 +34,18 @@ export function aiImageEnabled(): boolean {
 }
 
 /**
+ * ¿Se puede editar fotos con IA (quitar el fondo, ampliar) en este entorno?
+ * Interruptor propio, `VITE_AI_PHOTO_EDIT_ENABLED=true`; además, cada acción
+ * solo sale si el servidor tiene un modelo para ella (`ai-media`,
+ * `photo.options`). Sin proveedor, esas acciones no aparecen. Lo que se hace
+ * sin IA (recortes, luz, color, nitidez, fondo liso) no depende de esto
+ * (docs/edicion-fotos.md).
+ */
+export function aiPhotoEditEnabled(): boolean {
+  return import.meta.env.VITE_AI_PHOTO_EDIT_ENABLED === 'true';
+}
+
+/**
  * ¿Hay un trabajador de medios (worker/) desplegado que vacíe la cola? Sin él,
  * un reel encargado se quedaría «en cola» para siempre: la pantalla de reels no
  * se enseña (lo que no funciona no sale en la interfaz). Se activa con
