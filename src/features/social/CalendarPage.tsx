@@ -27,6 +27,7 @@ import {
   type DisplayState,
 } from './calendar';
 import { PublicationDialog } from './PublicationDialog';
+import { EntryThumb, useEntryThumbs } from './preview';
 import { PublishNowDialog } from './PublishNowDialog';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useFeature } from '@/features/platform/integrations/useFeature';
@@ -75,6 +76,7 @@ export function CalendarPage() {
     }
     return map;
   }, [entries]);
+  const thumbs = useEntryThumbs(brand.id, entries);
   const open = (calendar.data ?? []).find((e) => e.id === openId) ?? null;
   const reviewable = entries.filter((e) => e.content?.status === 'in_review');
 
@@ -142,6 +144,7 @@ export function CalendarPage() {
           data-testid="calendar-entry"
           data-state={s}
         >
+          <EntryThumb thumb={thumbs.get(e.media_asset_ids[0] ?? '')} />
           <span className="shrink-0 tabular-nums text-muted">{formatTime(e.scheduled_at)}</span>
           <span className="min-w-0 flex-1 truncate">{e.content?.title ?? 'Pieza'}</span>
           {!compact && <span className="shrink-0 text-muted">{networkLabel(e.network)}</span>}
