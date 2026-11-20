@@ -36,6 +36,9 @@ async function quitarR2(): Promise<void> {
 
 test.beforeAll(async () => {
   await quitarR2();
+  // Al relanzar solo este archivo (E2E_CONTINUAR=1), la foto de la pasada anterior
+  // haría que la subida se tomara por un duplicado: se quita su fila.
+  await sql(`delete from public.media_assets where brand_id = $1 and file_name = $2`, [dato('marcaA'), FOTO]);
   await arrancarMinio();
 });
 
