@@ -17,6 +17,7 @@
     "playwright.config.ts",
     "tests",
     "tailwind.config.ts",
-    "supabase/functions/_shared"
+    "supabase/functions/_shared",
+    "scripts/**/*.ts"
   ]
 }

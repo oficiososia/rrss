@@ -35,14 +35,15 @@ export interface ObjectStorage {
   list(prefix: string): Promise<Array<{ key: string; bytes: number }>>;
 }
 
+/** Sin propiedades de parámetro: el script de migración lo carga con Node sin compilar. */
 export class StorageError extends Error {
-  constructor(
-    message: string,
-    readonly status = 0,
-    readonly retryable = true,
-  ) {
+  readonly status: number;
+  readonly retryable: boolean;
+  constructor(message: string, status = 0, retryable = true) {
     super(message);
     this.name = 'StorageError';
+    this.status = status;
+    this.retryable = retryable;
   }
 }
 

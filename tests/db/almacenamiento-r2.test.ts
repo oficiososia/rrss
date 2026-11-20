@@ -122,12 +122,12 @@ function handler(r2: ObjectStorage | null, supabase: ObjectStorage, env: Record<
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function post(
   h: (r: Request) => Promise<Response>,
   route: string,
   token: string | null,
   body: unknown,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ status: number; json: any }> {
   const res = await h(
     new Request(`http://funciones.test/functions/v1/media-storage${route}`, {
