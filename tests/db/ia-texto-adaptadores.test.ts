@@ -1,4 +1,4 @@
-// Adaptadores de texto reales (Vertex AI, Anthropic, Mistral, Bedrock) contra
+// Adaptadores de texto reales (Vertex AI, Anthropic, Mistral, OpenAI, Bedrock) contra
 // respuestas HTTP SIMULADAS: ninguna prueba llama a un proveedor. Comprueban
 // qué se envía (URL, cabeceras, salida estructurada, caché) y cómo se leen el
 // éxito, el error del proveedor, el límite de uso, el tiempo agotado y la
@@ -19,6 +19,7 @@ import { createBedrockProvider } from '../../supabase/functions/_shared/ai/text/
 import { GOOGLE_TOKEN_URL } from '../../supabase/functions/_shared/ai/text/google-auth.ts';
 import type { FetchLike } from '../../supabase/functions/_shared/ai/text/http.ts';
 import { createMistralProvider } from '../../supabase/functions/_shared/ai/text/mistral.ts';
+import { createOpenAiProvider } from '../../supabase/functions/_shared/ai/text/openai.ts';
 import { estimateTextUsage, renderContextPart } from '../../supabase/functions/_shared/ai/text/prompt.ts';
 import { signAwsRequest } from '../../supabase/functions/_shared/ai/text/sigv4.ts';
 import { createVertexProvider } from '../../supabase/functions/_shared/ai/text/vertex.ts';
@@ -165,6 +166,15 @@ const ADAPTERS: { name: string; model: string; make: Factory; prelude: Reply[]; 
     prelude: [],
     ok: MISTRAL_OK,
     errorBody: { detail: [{ loc: ['body', 'max_tokens'], msg: 'demasiado alto', type: 'value_error', input: 'ECO' }] },
+  },
+  {
+    name: 'OpenAI (endpoint UE)',
+    model: 'modelo-o',
+    make: (fetch) =>
+      createOpenAiProvider({ apiKey: 'clave-secreta-openai', baseUrl: 'https://eu.api.openai.com', fetch }),
+    prelude: [],
+    ok: MISTRAL_OK,
+    errorBody: { error: { message: 'max_completion_tokens: demasiado alto', type: 'invalid_request_error', param: 'ECO' } },
   },
   {
     name: 'Amazon Bedrock (Claude, región UE)',
@@ -619,6 +629,90 @@ describe('Mistral: lo que se envía', () => {
   it('sin material estable no envía clave de caché', async () => {
     const http = fakeFetch({ body: MISTRAL_OK });
     await createMistralProvider({ apiKey: 'k', fetch: http.fetch }).generate({
+      ...request('m'),
+      input: { prompt: 'Hola', cacheKey: 'x' },
+    });
+    expect(http.calls[0]!.body).not.toHaveProperty('prompt_cache_key');
+    expect(http.calls[0]!.body).not.toHaveProperty('response_format');
+  });
+});
+
+// ── OpenAI ───────────────────────────────────────────────────────────────
+
+describe('OpenAI: lo que se envía', () => {
+  it('URL de la UE, cabeceras, salida estructurada estricta, clave de caché y sin store', async () => {
+    const http = fakeFetch({ body: MISTRAL_OK });
+    const provider = createOpenAiProvider({
+      apiKey: 'clave-secreta-openai',
+      baseUrl: 'https://eu.api.openai.com/v1/',
+      organization: 'org-prueba',
+      project: 'proj_prueba',
+      fetch: http.fetch,
+    });
+    const result = await provider.generate(request('modelo-o'));
+
+    const [call] = http.calls;
+    expect(call!.url).toBe('https://eu.api.openai.com/v1/chat/completions');
+    expect(call!.headers).toEqual({
+      'content-type': 'application/json',
+      authorization: 'Bearer clave-secreta-openai',
+      'openai-organization': 'org-prueba',
+      'openai-project': 'proj_prueba',
+    });
+    expect(call!.body).toMatchObject({
+      model: 'modelo-o',
+      max_completion_tokens: 900,
+      prompt_cache_key: 'post.caption:marca-1',
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'post_copy', strict: true, schema: { type: 'object', required: ['variants'] } },
+      },
+    });
+    expect(call!.body).not.toHaveProperty('store');
+    expect(call!.body).not.toHaveProperty('max_tokens');
+    // Sin las restricciones que el modo estricto no admite.
+    expect(call!.rawBody).not.toMatch(/maxItems|minLength|maxLength/);
+    expect((call!.body.messages as { role: string }[]).map((m) => m.role)).toEqual(['system', 'user']);
+    // Los tokens de caché van incluidos en prompt_tokens: se separan.
+    expect(result.usage).toEqual({ input_tokens: 5, output_tokens: 30, cache_read_input_tokens: 1008 });
+    expect(result.providerRequestId).toBe('cmpl-1');
+  });
+
+  it('sin dirección usa api.openai.com y sin organización no envía esas cabeceras', async () => {
+    const http = fakeFetch({ body: MISTRAL_OK });
+    await createOpenAiProvider({ apiKey: 'k', fetch: http.fetch }).generate(request('m'));
+    expect(http.calls[0]!.url).toBe('https://api.openai.com/v1/chat/completions');
+    expect(Object.keys(http.calls[0]!.headers)).toEqual(['content-type', 'authorization']);
+  });
+
+  it('negativa y filtro de contenido: fallo sin copiar el texto; corte por longitud se entrega', async () => {
+    const negativa = fakeFetch({
+      body: { ...MISTRAL_OK, choices: [{ index: 0, finish_reason: 'stop', message: { content: null, refusal: 'No puedo con ECO' } }] },
+    });
+    const error = await failure(createOpenAiProvider({ apiKey: 'k', fetch: negativa.fetch }).generate(request('m')));
+    expect(error).toMatchObject({ code: 'refused', retryable: false });
+    expect(error.message).not.toMatch(/ECO/);
+
+    const filtro = fakeFetch({ body: { ...MISTRAL_OK, choices: [{ index: 0, finish_reason: 'content_filter', message: { content: '' } }] } });
+    expect(await failure(createOpenAiProvider({ apiKey: 'k', fetch: filtro.fetch }).generate(request('m')))).toMatchObject({
+      code: 'refused',
+    });
+
+    const largo = fakeFetch({
+      body: {
+        ...MISTRAL_OK,
+        choices: [{ index: 0, finish_reason: 'length', message: { content: '{"var' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 3 },
+      },
+    });
+    const r = await createOpenAiProvider({ apiKey: 'k', fetch: largo.fetch }).generate(request('m'));
+    expect(r.output).toEqual({ text: '{"var', finish_reason: 'length' });
+    expect(r.usage).toEqual({ input_tokens: 10, output_tokens: 3, cache_read_input_tokens: 0 });
+  });
+
+  it('sin material estable no envía clave de caché ni formato', async () => {
+    const http = fakeFetch({ body: MISTRAL_OK });
+    await createOpenAiProvider({ apiKey: 'k', fetch: http.fetch }).generate({
       ...request('m'),
       input: { prompt: 'Hola', cacheKey: 'x' },
     });

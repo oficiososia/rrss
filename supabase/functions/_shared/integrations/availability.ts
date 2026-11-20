@@ -58,7 +58,7 @@ function aiTextReady(env: Env): boolean {
   return config.models.some((m) => {
     if (!loaded.has(m.provider)) return false;
     const needed: string[] = [TEXT_UNITS.input, TEXT_UNITS.output, TEXT_UNITS.cacheRead];
-    if (m.provider !== 'mistral') needed.push(TEXT_UNITS.cacheWrite);
+    if (m.provider !== 'mistral' && m.provider !== 'openai') needed.push(TEXT_UNITS.cacheWrite);
     return needed.every((unit) => m.microsPerUnit[unit] !== undefined);
   });
 }

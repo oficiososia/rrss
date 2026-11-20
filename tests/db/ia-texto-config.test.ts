@@ -5,6 +5,7 @@ import { loadAiTextConfig, parsePrices, type Env } from '../../supabase/function
 import type { FetchLike } from '../../supabase/functions/_shared/ai/text/http.ts';
 
 const PRICES = JSON.stringify({
+  'openai/modelo-o': { input_tokens: 1, output_tokens: 5, cache_read_input_tokens: 0.05 },
   'mistral/modelo-m': { input_tokens: 0.7, output_tokens: 2.1, cache_read_input_tokens: 0.07 },
   'anthropic-vertex/modelo-v': {
     input_tokens: 2.2,
@@ -94,6 +95,34 @@ describe('qué adaptador y qué modelo sirve cada tarea', () => {
   });
 });
 
+describe('OpenAI: precios y copiloto', () => {
+  it('sirve el copiloto con su precio sin recargo de escritura de caché', () => {
+    const config = load({
+      OPENAI_API_KEY: 'k',
+      OPENAI_BASE_URL: 'https://eu.api.openai.com',
+      AI_TEXT_EDITOR_COPILOT_PROVIDER: 'openai',
+      AI_TEXT_EDITOR_COPILOT_MODEL: 'modelo-o',
+      AI_PRICES: PRICES,
+    });
+    expect(config.providers.map((p) => p.id)).toEqual(['openai']);
+    expect(config.models).toEqual([
+      expect.objectContaining({ provider: 'openai', model: 'modelo-o', purposes: ['editor.copilot'] }),
+    ]);
+    expect(config.problems).toEqual([]);
+  });
+
+  it('sin precio de entrada, salida o caché leída avisa', () => {
+    const config = load({
+      OPENAI_API_KEY: 'k',
+      OPENAI_BASE_URL: 'https://eu.api.openai.com',
+      AI_TEXT_PROVIDER: 'openai',
+      AI_TEXT_MODEL: 'modelo-o',
+      AI_PRICES: JSON.stringify({ 'openai/modelo-o': { input_tokens: 1 } }),
+    });
+    expect(config.problems.join(' ')).toMatch(/openai\/modelo-o.*output_tokens/);
+  });
+});
+
 describe('sin credenciales el adaptador no está disponible', () => {
   it.each([
     ['mistral', {}, /MISTRAL_API_KEY/],
@@ -104,6 +133,10 @@ describe('sin credenciales el adaptador no está disponible', () => {
     ['anthropic', { AI_ALLOW_NON_EU_PROCESSING: 'true' }, /ANTHROPIC_API_KEY/],
     ['inventado', {}, /no existe/],
     ['simulated', {}, /no existe/],
+    ['openai', {}, /OPENAI_API_KEY/],
+    ['openai', { OPENAI_API_KEY: 'k' }, /eu\.api\.openai\.com/],
+    ['openai', { OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'https://api.openai.com' }, /api\.openai\.com. no es el endpoint/],
+    ['openai', { OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'http://eu.api.openai.com' }, /https/],
   ] as [string, Env, RegExp][])('%s: se dice qué falta y no se sustituye por nada', (provider, extra, reason) => {
     const config = load({ AI_TEXT_PROVIDER: provider, AI_TEXT_MODEL: 'modelo', ...extra });
     expect(config.providers).toEqual([]);
@@ -118,6 +151,8 @@ describe('sin credenciales el adaptador no está disponible', () => {
     const cases: [string, Env][] = [
       ['anthropic-vertex', VERTEX],
       ['mistral', { MISTRAL_API_KEY: 'k' }],
+      ['openai', { OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'https://eu.api.openai.com' }],
+      ['openai', { OPENAI_API_KEY: 'k', AI_ALLOW_NON_EU_PROCESSING: 'true' }],
       ['anthropic-bedrock', { AI_BEDROCK_REGION: 'eu-west-1', AI_BEDROCK_ACCESS_KEY_ID: 'a', AI_BEDROCK_SECRET_ACCESS_KEY: 's' }],
       ['anthropic-bedrock', { AI_BEDROCK_REGION: 'eu-central-1', AI_BEDROCK_BEARER_TOKEN: 't' }],
       ['anthropic', { ANTHROPIC_API_KEY: 'k', AI_ALLOW_NON_EU_PROCESSING: 'true' }],

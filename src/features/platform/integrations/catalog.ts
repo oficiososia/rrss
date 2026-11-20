@@ -39,6 +39,7 @@ const TEXT_PROVIDERS = [
   { value: 'anthropic-vertex', label: 'Claude en Google Vertex AI (UE)' },
   { value: 'anthropic-bedrock', label: 'Claude en Amazon Bedrock (UE)' },
   { value: 'mistral', label: 'Mistral (UE)' },
+  { value: 'openai', label: 'OpenAI (UE con eu.api.openai.com)' },
   { value: 'anthropic', label: 'Anthropic directo (fuera de la UE)' },
 ];
 const YES_NO = [
@@ -146,7 +147,7 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
     description:
       'Qué proveedor y qué modelo redacta cada tarea, las credenciales de cada proveedor y la tabla de precios. Sin precio completo, el modelo no genera.',
     testDescription:
-      'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, Bedrock) o pide un token de acceso (Vertex). No genera texto ni gasta cupo.',
+      'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, OpenAI, Bedrock) o pide un token de acceso (Vertex). No genera texto ni gasta cupo.',
     groups: [
       {
         title: 'Proveedor y modelo',
@@ -192,6 +193,23 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             help: 'La API directa no procesa en la UE: solo se usa si se admite expresamente.',
           },
           { key: 'MISTRAL_API_KEY', label: 'Clave de Mistral', secret: true },
+        ],
+      },
+      {
+        title: 'OpenAI',
+        description:
+          'Para procesar en la UE: proyecto creado con región Europa, su clave y la dirección https://eu.api.openai.com.',
+        fields: [
+          { key: 'OPENAI_API_KEY', label: 'Clave de OpenAI', secret: true },
+          {
+            key: 'OPENAI_BASE_URL',
+            label: 'Dirección de la API',
+            secret: false,
+            placeholder: 'https://eu.api.openai.com',
+            help: 'Sin ella se usa api.openai.com, que no garantiza la UE y exige admitirlo expresamente.',
+          },
+          { key: 'OPENAI_ORGANIZATION', label: 'Organización (opcional)', secret: false, placeholder: 'org-…' },
+          { key: 'OPENAI_PROJECT', label: 'Proyecto (opcional)', secret: false, placeholder: 'proj_…' },
         ],
       },
       {

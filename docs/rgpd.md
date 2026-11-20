@@ -47,6 +47,7 @@ privacidad). Resumen:
 | Google Cloud · Vertex AI | IA de texto e imagen | Multirregión UE | No | Opcional, recomendado |
 | AWS Bedrock | IA de texto | `eu-…` | No | Opcional |
 | Mistral | IA de texto | Empresa europea; región de proceso sin confirmar | [CONFIRMAR] | Opcional |
+| OpenAI | IA de texto (también el copiloto por voz) | UE solo con un proyecto de región Europa y el endpoint `eu.api.openai.com`; el esquema de salida estructurada queda fuera de la residencia | Ninguna prevista con el endpoint de la UE; con `api.openai.com`, sí (EE. UU.). [CONFIRMAR DPA, elegibilidad y modelos con residencia UE] | Opcional; sin el endpoint de la UE, apagado salvo permiso expreso |
 | Black Forest Labs | IA de imagen | `api.eu.bfl.ai` | Puede entrenar salvo contrato enterprise | Opcional |
 | ComfyUI propio | IA de imagen (modelos abiertos) | La del servidor | Depende del alojamiento | Opcional |
 | Anthropic API directa, Ideogram | IA | EE. UU. / sin documentar | Sí | Apagados: solo con permiso expreso de la organización |

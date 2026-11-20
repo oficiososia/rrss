@@ -7,7 +7,7 @@ respuestas HTTP simuladas. Tampoco hay pantallas: es la parte de servidor.
 | Pieza | Estado |
 |---|---|
 | Servicio (reservar cupo → generar → registrar), salida estructurada validada, modelo por tarea | Implementado y probado con la base de datos real y el proveedor simulado |
-| Adaptadores Vertex AI (UE), Anthropic directo, Mistral, Bedrock (UE) | Implementados; **sin probar contra el servicio real** (solo HTTP simulado) |
+| Adaptadores Vertex AI (UE), Anthropic directo, Mistral, OpenAI (UE con `eu.api.openai.com`), Bedrock (UE) | Implementados; **sin probar contra el servicio real** (solo HTTP simulado) |
 | Tareas: texto de publicación, propuesta de perfil, comprobación de marca | Implementadas y probadas con el proveedor simulado. **La calidad de los textos no se ha medido** con ningún modelo |
 | Lógica de `ai-generate` (`handler.ts`) | Probada en Node con la base de datos real |
 | Arranque de `ai-generate` en Deno (`index.ts`) | Ejecutado **solo en local** (`supabase functions serve`, edge-runtime 1.74) con el proveedor simulado de pruebas locales, en la prueba de extremo a extremo de la Fase 2. **Sin desplegar** |
@@ -30,6 +30,7 @@ supabase/functions/_shared/ai/
     anthropic.ts                Claude por la API directa
     bedrock.ts  sigv4.ts        Claude por Amazon Bedrock (firma SigV4)
     mistral.ts                  Mistral
+    openai.ts                   OpenAI (Chat Completions, endpoint de la UE configurable)
     tasks/               post-copy.ts · profile-proposal.ts · brand-check.ts · shared.ts
 supabase/functions/ai-generate/
   handler.ts             lógica (sin Deno, probada)
@@ -48,12 +49,13 @@ configuración (apartado 3).
 | `anthropic-vertex` | `https://aiplatform.eu.rep.googleapis.com/v1/projects/{proyecto}/locations/eu/publishers/anthropic/models/{modelo}:rawPredict` | Token OAuth de una cuenta de servicio (JWT RS256 firmado con Web Crypto) | Sí con `eu` (multirregión) o una región `europe-…`. El adaptador rechaza cualquier otra ubicación |
 | `anthropic` | `https://api.anthropic.com/v1/messages` | Cabecera `x-api-key` | **No**: la API directa solo admite `us` o `global`. No se carga salvo aceptación expresa |
 | `mistral` | `https://api.mistral.ai/v1/chat/completions` | `Authorization: Bearer` | Empresa europea; **dónde procesa no consta** en las páginas consultadas |
+| `openai` | `{OPENAI_BASE_URL}/v1/chat/completions` (por defecto `https://api.openai.com`; para la UE, `https://eu.api.openai.com`) | `Authorization: Bearer` (+ `OpenAI-Organization` y `OpenAI-Project` opcionales) | Solo con un proyecto creado con región Europa **y** el endpoint `eu.api.openai.com`. Con otra dirección no se carga salvo aceptación expresa |
 | `anthropic-bedrock` | `https://bedrock-mantle.{región}.api.aws/anthropic/v1/messages` | SigV4 (servicio `bedrock-mantle`) o token de Bedrock en `x-api-key` | Sí si la región es `eu-…` y el modelo no usa el enrutado `global.`; el adaptador rechaza lo demás |
 
 Lo que hacen todos:
 
 - **Salida estructurada** con el mecanismo nativo (`output_config.format` en
-  Claude, `response_format: json_schema` con `strict` en Mistral). Al proveedor
+  Claude, `response_format: json_schema` con `strict` en Mistral y OpenAI). Al proveedor
   se le envía el esquema sin las restricciones que no admite (`minLength`,
   `maxItems`…); el servicio valida después con el esquema completo. Un rechazo
   o un corte por longitud no cumplen el esquema: se registran con su coste y la
@@ -89,6 +91,12 @@ Lo que hacen todos:
 - **Bedrock**: con qué identificador de modelo (o perfil de inferencia EU) se
   sirve dentro de la UE desde el punto `bedrock-mantle`. El token de Bedrock
   caduca a las 12 horas: en un servidor, usar claves de IAM.
+- **OpenAI**: nada probado con cuenta real. Falta confirmar: que el proyecto de
+  la organización es elegible para residencia en Europa (hay que contactar con
+  ventas de OpenAI), que los modelos elegidos están en la lista de residencia UE,
+  que los esquemas de las tareas (campos opcionales, `enum`) los acepta el modo
+  `strict`, y cuántos tokens de razonamiento gasta cada modelo dentro de
+  `max_completion_tokens` (si se queda corto, la salida se corta con `length`).
 - **Mistral**: cuerpo de los errores que no son 422, qué modelos admiten
   `strict`, duración de la caché y dónde se procesan los datos.
 - **Todos**: la calidad en español, los límites de uso de cada cuenta y los
@@ -98,12 +106,12 @@ Lo que hacen todos:
 
 **Desde la interfaz:** un superadministrador puede meter todo esto en
 **Plataforma → Integraciones → IA de texto** (proveedor y modelo de todas las
-tareas o de cada una, cuenta de servicio de Vertex en JSON, claves de Anthropic
-y Mistral, credenciales de Bedrock, tabla de precios, criterio de datos y tiempo
+tareas o de cada una, cuenta de servicio de Vertex en JSON, claves de Anthropic,
+Mistral y OpenAI, credenciales de Bedrock, tabla de precios, criterio de datos y tiempo
 máximo). Los secretos se guardan cifrados en Supabase Vault (migración
 `20261120010000`) y no se vuelven a ver; cada ajuste se llama como su variable
 y manda sobre ella. `ai-generate` los lee en cada petición (caché de 30 s), sin
-redesplegar. «Probar conexión» lista los modelos (Anthropic, Mistral, Bedrock)
+redesplegar. «Probar conexión» lista los modelos (Anthropic, Mistral, OpenAI, Bedrock)
 o pide un token de acceso con la cuenta de servicio (Vertex): no genera texto ni
 gasta cupo. La interfaz enseña la IA de texto si `VITE_AI_TEXT_ENABLED=true` en
 el despliegue **y** alguna tarea tiene proveedor cargado y precio completo.
@@ -127,7 +135,57 @@ función; nunca `VITE_`.
 | `ANTHROPIC_API_KEY` | Anthropic directo (además exige `AI_ALLOW_NON_EU_PROCESSING=true`) |
 | `AI_E2E_SIMULATED_PROVIDER` | **Solo pruebas locales.** `true` usa el proveedor simulado de `text/local-test.ts`; exige además que `SUPABASE_URL` sea local (`http` y host `127.0.0.1`, `localhost` o `kong`). En otro entorno la función no arranca. Va en `supabase/functions/e2e.env` |
 | `MISTRAL_API_KEY` | Mistral |
+| `OPENAI_API_KEY` | OpenAI (secreto) |
+| `OPENAI_BASE_URL` | OpenAI: dirección de la API. Para la UE, `https://eu.api.openai.com` (sin ella, `api.openai.com`, que exige `AI_ALLOW_NON_EU_PROCESSING=true`) |
+| `OPENAI_ORGANIZATION`, `OPENAI_PROJECT` | OpenAI: cabeceras opcionales de organización y proyecto |
 | `AI_BEDROCK_REGION` y `AI_BEDROCK_ACCESS_KEY_ID` + `AI_BEDROCK_SECRET_ACCESS_KEY` (+ `AI_BEDROCK_SESSION_TOKEN`), o `AI_BEDROCK_BEARER_TOKEN` | Bedrock |
+
+### OpenAI: residencia en la UE y precios
+
+Fuentes consultadas el **20/11/2026**:
+<https://developers.openai.com/api/docs/guides/data-residency> y
+<https://developers.openai.com/api/docs/pricing>.
+
+- **Residencia.** Hay que ser elegible (contactar con ventas de OpenAI), crear un
+  proyecto con región Europa en «Data and inference residency» (no se puede
+  cambiar después), crear una clave de ese proyecto y usar
+  `OPENAI_BASE_URL=https://eu.api.openai.com`. Chat Completions admite
+  almacenamiento y proceso en la UE; no se puede enviar `store=true` (el
+  adaptador no lo envía nunca). Según OpenAI, **el esquema de la salida
+  estructurada cuenta como dato de sistema y queda fuera de la residencia**: no
+  debe llevar datos personales (los de las tareas no los llevan). El adaptador
+  solo se carga con `eu.api.openai.com`; con `api.openai.com` u otra dirección
+  hace falta `AI_ALLOW_NON_EU_PROCESSING=true`. «Probar conexión» llama a
+  `GET /v1/models` en la dirección configurada.
+- **Recargo.** Los endpoints de residencia cuestan un **10 % más** en los modelos
+  publicados desde el 05/03/2026: multiplicar los precios de la tabla por 1,10.
+- **Precios (USD por millón de tokens, nivel Standard, contexto ≤ 272 K)**, ya
+  sin el recargo; la caché de entrada se factura como «cached input» y no hay
+  recargo por escribirla:
+
+| Modelo | Entrada | Entrada en caché | Salida | Con recargo UE (entrada / caché / salida) |
+|---|---|---|---|---|
+| `gpt-6-luna` | 0,10 | 0,01 | 0,50 | 0,11 / 0,011 / 0,55 |
+| `gpt-6.1-terra` | 1,00 | 0,05 | 5,00 | 1,10 / 0,055 / 5,50 |
+| `gpt-6.1-sol` | 2,00 | 0,10 | 10,00 | 2,20 / 0,11 / 11,00 |
+| `gpt-6.2-sol` | 2,00 | 0,10 | 10,00 | 2,20 / 0,11 / 11,00 |
+| `gpt-6.2-astra` | 8,00 | 0,40 | 40,00 | 8,80 / 0,44 / 44,00 |
+| `gpt-5.4-mini` | 0,75 | 0,075 | 4,50 | 0,825 / 0,0825 / 4,95 |
+
+  La página no da fecha de los precios Standard y OpenAI los cambia: revisarlos
+  antes de activar. No se han fijado en código; van en `AI_PRICES`, por ejemplo
+  para el copiloto con el recargo de la UE (el adaptador no usa
+  `cache_write_input_tokens`):
+
+```json
+{ "openai/gpt-6.1-terra": { "input_tokens": 1.1, "output_tokens": 5.5, "cache_read_input_tokens": 0.055 } }
+```
+
+- **Recomendación para el copiloto** (`editor.copilot`: instrucciones cortas y
+  esquema de operaciones, muchas llamadas): `gpt-6.1-terra` como modelo
+  principal; `gpt-6-luna` si la calidad medida basta y se quiere bajar el coste
+  unas 10 veces. Sin medir con el modelo real: la calidad es una suposición.
+  Comprobar antes que el modelo figura en la lista de residencia UE de OpenAI.
 
 Formato de `AI_PRICES` (un micro por token = una unidad de moneda por millón de
 tokens; los números de este ejemplo son inventados):

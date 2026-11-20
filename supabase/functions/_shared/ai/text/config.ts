@@ -21,6 +21,13 @@ import { BEDROCK_PROVIDER_ID, createBedrockProvider, euResidencyProblem, type Be
 import type { FetchLike } from './http.ts';
 import { parseServiceAccountKey } from './google-auth.ts';
 import { createMistralProvider, MISTRAL_PROVIDER_ID } from './mistral.ts';
+import {
+  createOpenAiProvider,
+  normalizeOpenAiBaseUrl,
+  OPENAI_PROVIDER_ID,
+  openAiBaseUrlProblem,
+  openAiEuProblem,
+} from './openai.ts';
 import { TEXT_UNITS } from './prompt.ts';
 import { createVertexProvider, VERTEX_PROVIDER_ID, vertexEuProblem } from './vertex.ts';
 
@@ -54,6 +61,7 @@ export const TEXT_PROVIDER_IDS = [
   ANTHROPIC_PROVIDER_ID,
   MISTRAL_PROVIDER_ID,
   BEDROCK_PROVIDER_ID,
+  OPENAI_PROVIDER_ID,
 ] as const;
 
 export interface AiTextConfig {
@@ -149,7 +157,7 @@ export function loadAiTextConfig(env: Env, options: { fetch?: FetchLike } = {}):
       const apiKey = value(env, 'ANTHROPIC_API_KEY');
       if (!allowNonEu) {
         unavailable[id] =
-          'El adaptador «anthropic» (API directa) no procesa los datos en la UE. Usa «anthropic-vertex», «anthropic-bedrock» o «mistral», o acepta expresamente ese tratamiento con AI_ALLOW_NON_EU_PROCESSING=true.';
+          'El adaptador «anthropic» (API directa) no procesa los datos en la UE. Usa «anthropic-vertex», «anthropic-bedrock», «mistral» o «openai» (endpoint UE), o acepta expresamente ese tratamiento con AI_ALLOW_NON_EU_PROCESSING=true.';
       } else if (!apiKey) {
         unavailable[id] = 'Falta la clave del adaptador «anthropic» (variable ANTHROPIC_API_KEY).';
       } else {
@@ -197,6 +205,30 @@ export function loadAiTextConfig(env: Env, options: { fetch?: FetchLike } = {}):
       const apiKey = value(env, 'MISTRAL_API_KEY');
       if (!apiKey) unavailable[id] = 'Falta la clave del adaptador «mistral» (variable MISTRAL_API_KEY).';
       else providers.push(createMistralProvider({ apiKey, fetch: options.fetch }));
+    } else if (id === OPENAI_PROVIDER_ID) {
+      const apiKey = value(env, 'OPENAI_API_KEY');
+      const rawBase = value(env, 'OPENAI_BASE_URL');
+      const baseProblem = rawBase ? openAiBaseUrlProblem(rawBase) : null;
+      const baseUrl = normalizeOpenAiBaseUrl(rawBase);
+      const residency = baseProblem ? null : openAiEuProblem(baseUrl);
+      if (!apiKey) {
+        unavailable[id] = 'Falta la clave del adaptador «openai» (variable OPENAI_API_KEY).';
+      } else if (baseProblem) {
+        unavailable[id] = baseProblem;
+      } else if (residency && !allowNonEu) {
+        unavailable[id] =
+          `El adaptador «openai» no se carga: ${residency}. Crea un proyecto con residencia en Europa y pon OPENAI_BASE_URL=https://eu.api.openai.com, o acepta expresamente ese tratamiento con AI_ALLOW_NON_EU_PROCESSING=true.`;
+      } else {
+        providers.push(
+          createOpenAiProvider({
+            apiKey,
+            baseUrl,
+            organization: value(env, 'OPENAI_ORGANIZATION'),
+            project: value(env, 'OPENAI_PROJECT'),
+            fetch: options.fetch,
+          }),
+        );
+      }
     } else {
       unavailable[id] =
         `El adaptador «${id}» no existe. Los de texto son: ${TEXT_PROVIDER_IDS.join(', ')}.`;
@@ -210,7 +242,7 @@ export function loadAiTextConfig(env: Env, options: { fetch?: FetchLike } = {}):
     const key = `${route.provider}/${route.model}`;
     const microsPerUnit = prices[key] ?? {};
     const needed: string[] = [TEXT_UNITS.input, TEXT_UNITS.output, TEXT_UNITS.cacheRead];
-    if (route.provider !== MISTRAL_PROVIDER_ID) needed.push(TEXT_UNITS.cacheWrite);
+    if (route.provider !== MISTRAL_PROVIDER_ID && route.provider !== OPENAI_PROVIDER_ID) needed.push(TEXT_UNITS.cacheWrite);
     const missing = needed.filter((unit) => microsPerUnit[unit] === undefined);
     if (missing.length > 0 && !(route.provider in unavailable)) {
       problems.push(`AI_PRICES: a «${key}» le falta el precio de ${missing.join(', ')}.`);

@@ -540,6 +540,42 @@ describe('Probar conexión (servicios simulados)', () => {
     expect(empty.message).toMatch(/ninguna tarea/);
   });
 
+  it('IA de texto: OpenAI lista modelos en el endpoint de la UE con sus cabeceras', async () => {
+    const seen: Record<string, string>[] = [];
+    const providers = fake({
+      'https://eu.api.openai.com/v1/models': (init?: RequestInit) => {
+        seen.push(init?.headers as Record<string, string>);
+        return ok({ data: [] });
+      },
+    });
+    const prices = JSON.stringify({
+      'openai/gpt-x': { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 },
+    });
+    const r = await probeIntegration(
+      'ai_text',
+      {
+        AI_TEXT_PROVIDER: 'openai',
+        AI_TEXT_MODEL: 'gpt-x',
+        OPENAI_API_KEY: 'clave-openai',
+        OPENAI_BASE_URL: 'https://eu.api.openai.com',
+        OPENAI_PROJECT: 'proj_x',
+        AI_PRICES: prices,
+      },
+      { fetch: providers },
+    );
+    expect(r).toMatchObject({ ok: true, message: 'OpenAI acepta la clave (eu.api.openai.com).' });
+    expect(seen[0]).toMatchObject({ Authorization: 'Bearer clave-openai', 'OpenAI-Project': 'proj_x' });
+    expect(JSON.stringify(r)).not.toContain('clave-openai');
+    // Sin admitir otro tratamiento, la dirección global no se prueba ni se carga.
+    const global = await probeIntegration(
+      'ai_text',
+      { AI_TEXT_PROVIDER: 'openai', AI_TEXT_MODEL: 'gpt-x', OPENAI_API_KEY: 'clave-openai' },
+      { fetch: providers },
+    );
+    expect(global.ok).toBe(false);
+    expect(global.message).toMatch(/eu\.api\.openai\.com/);
+  });
+
   it('IA de imagen: saldo de Black Forest Labs; Ideogram no se puede comprobar gratis', async () => {
     const r = await probeIntegration(
       'ai_image',
