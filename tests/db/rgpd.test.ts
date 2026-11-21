@@ -480,6 +480,31 @@ describe('contenido generado con IA', () => {
     expect((await piece(doc({ layers: [imageLayer({ kind: 'asset', assetId: foreignAiAsset })] }))).ai).toBe(false);
   });
 
+  it('en un documento v4 mira las capas de todas las páginas', async () => {
+    const paged = (pages: Json[][]) => ({
+      schemaVersion: 4,
+      pages: pages.map((layers, i) => ({ id: `p${i + 1}`, layers })),
+      copy: {},
+    });
+    expect((await piece(paged([[imageLayer({ kind: 'asset', assetId: plainAsset })], []]))).ai).toBe(false);
+    // La imagen generada con IA está en la página 3.
+    expect(
+      (
+        await piece(
+          paged([
+            [imageLayer({ kind: 'asset', assetId: plainAsset }, 'a')],
+            [],
+            [imageLayer({ kind: 'asset', assetId: aiAsset }, 'b')],
+          ]),
+        )
+      ).ai,
+    ).toBe(true);
+    expect(
+      (await piece(paged([[], [{ id: 't', type: 'text', x: 0, y: 0, width: 1, height: 1, text: 'x', aiGenerated: true }]])))
+        .ai,
+    ).toBe(true);
+  });
+
   it('marca el texto redactado con IA según el documento', async () => {
     expect((await piece(doc({ copy: { caption: 'Hola', aiGenerated: true } }))).ai).toBe(true);
     expect((await piece(doc({ copy: { caption: 'Hola', aiGenerated: false } }))).ai).toBe(false);

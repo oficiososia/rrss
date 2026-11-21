@@ -4,7 +4,10 @@
 // veces, lo no aprobado no se publica aunque esté programado, token caducado,
 // cupo de la API agotado, carrusel y reel. El aislamiento entre organizaciones
 // está en aislamiento.test.ts.
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { validateDocument } from '../../src/features/content/document/index.ts';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import type { ClaimedSocialJob } from '../../supabase/functions/_shared/social/contract.ts';
 import { encryptToken, parseKeyRing, tokenBinding } from '../../supabase/functions/_shared/social/crypto.ts';
@@ -56,11 +59,26 @@ type Pub = {
   attempt_count: number;
 };
 
+const COPY_OF = (caption: string, hashtags: string[]) => ({
+  caption,
+  hashtags,
+  mentions: [],
+  altText: 'Texto alternativo',
+  callToAction: { label: '', url: '' },
+});
+/** Documento de una página tal y como lo guardaba la versión 1 (sin páginas). */
 const DOC = (caption: string, hashtags: string[] = []) => ({
   schemaVersion: 1,
   canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
   layers: [],
-  copy: { caption, hashtags, mentions: [], altText: 'Texto alternativo', callToAction: { label: '', url: '' } },
+  copy: COPY_OF(caption, hashtags),
+});
+/** Documento v4 con varias páginas (un carrusel). */
+const PAGED_DOC = (pages: number, caption: string, hashtags: string[] = []) => ({
+  schemaVersion: 4,
+  canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
+  pages: Array.from({ length: pages }, (_, i) => ({ id: `p${i + 1}`, name: '', layers: [] })),
+  copy: COPY_OF(caption, hashtags),
 });
 
 const toParams = (args: Record<string, unknown>) => {
@@ -113,12 +131,15 @@ async function piece(
     format?: 'post' | 'carousel' | 'reel';
     approve?: boolean;
     exports?: number;
+    /** Páginas del documento; por omisión, en un carrusel, una por exportación (al menos 2). */
+    pages?: number;
     caption?: string;
     hashtags?: string[];
   } = {},
 ): Promise<{ contentId: string; assets: string[] }> {
   const brand = opts.brand ?? marca;
   const format = opts.format ?? 'post';
+  const pages = opts.pages ?? (format === 'carousel' ? Math.max(2, opts.exports ?? 1) : 1);
   const [item] = await as<{ id: string }>(
     db,
     editor,
@@ -129,7 +150,11 @@ async function piece(
   const contentId = item!.id;
   await as(db, ana, `select public.save_content_version($1, $2::jsonb, 1)`, [
     contentId,
-    JSON.stringify(DOC(opts.caption ?? 'Pan de otoño', opts.hashtags ?? [])),
+    JSON.stringify(
+      pages > 1
+        ? PAGED_DOC(pages, opts.caption ?? 'Pan de otoño', opts.hashtags ?? [])
+        : DOC(opts.caption ?? 'Pan de otoño', opts.hashtags ?? []),
+    ),
   ]);
   const assets: string[] = [];
   if (format === 'reel') {
@@ -142,7 +167,9 @@ async function piece(
     );
     assets.push(row!.id);
   } else {
-    for (let i = 0; i < (opts.exports ?? 1); i++) assets.push(await exportOf(brand, contentId, 1));
+    for (let i = 0; i < (opts.exports ?? 1); i++) {
+      assets.push(await exportOf(brand, contentId, 1, 'image/jpeg', pages > 1 ? { page: i + 1, count: pages } : undefined));
+    }
   }
   if (opts.approve ?? true) {
     await as(db, ana, `select public.set_content_status($1, 'approved', 1)`, [contentId]);
@@ -150,7 +177,13 @@ async function piece(
   return { contentId, assets };
 }
 
-async function exportOf(brand: string, contentId: string, version: number | null, mime = 'image/jpeg') {
+async function exportOf(
+  brand: string,
+  contentId: string,
+  version: number | null,
+  mime = 'image/jpeg',
+  page?: { page: number; count: number },
+) {
   const [row] = await as<{ id: string }>(
     db,
     editor,
@@ -161,7 +194,14 @@ async function exportOf(brand: string, contentId: string, version: number | null
       org,
       assetPath(org, brand),
       mime,
-      JSON.stringify({ type: 'export', content_id: contentId, version, unsaved_changes: false, format: 'jpeg' }),
+      JSON.stringify({
+        type: 'export',
+        content_id: contentId,
+        version,
+        unsaved_changes: false,
+        format: 'jpeg',
+        ...(page ? { page: page.page, page_count: page.count } : {}),
+      }),
     ],
   );
   return row!.id;
@@ -737,6 +777,186 @@ describe('publicador con la Graph API simulada', () => {
     const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
     expect(r?.outcome).toBe('gone');
     expect(graph.published).toHaveLength(0);
+  });
+});
+
+describe('carrusel: una versión con varias páginas', () => {
+  beforeEach(async () => {
+    await tick();
+    graph = createSimulatedGraph();
+  });
+
+  const pathsOf = async (ids: string[]) =>
+    (
+      await db.query<{ storage_path: string }>(
+        `select a.storage_path from unnest($1::uuid[]) with ordinality u(id, ord)
+         join public.media_assets a on a.id = u.id order by u.ord`,
+        [ids],
+      )
+    ).map((r) => r.storage_path);
+
+  it('se arma solo con una exportación de cada página de la versión, en el orden de las páginas', async () => {
+    const p = await piece({ format: 'carousel', exports: 3 });
+    // En orden: armada.
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    // Desordenada: en espera.
+    const moved = await userCall<Pub>(editor, 'save_publication', {
+      p_publication_id: pub.id,
+      p_content_id: p.contentId,
+      p_scheduled_at: inAnHour(),
+      p_social_account_id: cuenta,
+      p_media_asset_ids: [p.assets[1], p.assets[0], p.assets[2]],
+    });
+    expect(moved).toMatchObject({ status: 'planned', hold_reason: 'invalid_media' });
+  });
+
+  it('falta una página, sobra una, se repite o es de otra versión: no se arma', async () => {
+    const tresPaginas = await piece({ format: 'carousel', exports: 2, pages: 3 });
+    expect((await schedule(tresPaginas.contentId, tresPaginas.assets)).hold_reason).toBe('invalid_media');
+
+    const repetida = await piece({ format: 'carousel', exports: 2 });
+    expect((await schedule(repetida.contentId, [repetida.assets[0]!, repetida.assets[0]!])).hold_reason).toBe(
+      'invalid_media',
+    );
+
+    // Exportaciones sin número de página (las de antes del documento v4) no valen para un carrusel.
+    const sinPagina = await piece({ format: 'carousel', exports: 0, pages: 2 });
+    const viejas = [await exportOf(marca, sinPagina.contentId, 1), await exportOf(marca, sinPagina.contentId, 1)];
+    expect((await schedule(sinPagina.contentId, viejas)).hold_reason).toBe('invalid_media');
+
+    // Una tanda de páginas que dice tener 3 en un documento de 2.
+    const otraTanda = await piece({ format: 'carousel', exports: 0, pages: 2 });
+    const mal = [
+      await exportOf(marca, otraTanda.contentId, 1, 'image/jpeg', { page: 1, count: 3 }),
+      await exportOf(marca, otraTanda.contentId, 1, 'image/jpeg', { page: 2, count: 3 }),
+    ];
+    expect((await schedule(otraTanda.contentId, mal)).hold_reason).toBe('invalid_media');
+
+    // Páginas de otra versión.
+    const otraVersion = await piece({ format: 'carousel', exports: 0, pages: 2 });
+    const deLaDos = [
+      await exportOf(marca, otraVersion.contentId, 2, 'image/jpeg', { page: 1, count: 2 }),
+      await exportOf(marca, otraVersion.contentId, 2, 'image/jpeg', { page: 2, count: 2 }),
+    ];
+    expect((await schedule(otraVersion.contentId, deLaDos)).hold_reason).toBe('invalid_media');
+  });
+
+  it('un post con un documento de varias páginas no se arma; uno de una página sí', async () => {
+    const varias = await piece({ format: 'post', exports: 0, pages: 2 });
+    const portada = await exportOf(marca, varias.contentId, 1, 'image/jpeg', { page: 1, count: 2 });
+    expect((await schedule(varias.contentId, [portada])).hold_reason).toBe('invalid_media');
+    const una = await piece({ format: 'post' });
+    expect((await schedule(una.contentId, una.assets)).status).toBe('scheduled');
+  });
+
+  it('el publicador envía las imágenes en el orden de las páginas', async () => {
+    const p = await piece({ format: 'carousel', exports: 4 });
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    await makeDue(pub.id);
+    const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
+    expect(r).toMatchObject({ outcome: 'published' });
+    expect(graph.published).toHaveLength(1);
+    expect(graph.published[0]).toMatchObject({ kind: 'CAROUSEL' });
+    const expected = (await pathsOf(p.assets)).map((path) => `https://almacen.pruebas.invalid/firmada/${path}`);
+    expect(graph.published[0]!.mediaUrls).toEqual(expected);
+  });
+
+  it('el SQL para el integrador une 4 versiones (una diapositiva cada una) en una versión de 4 páginas', async () => {
+    const layer = (id: string, color: string) => ({
+      id,
+      type: 'shape',
+      shape: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      fill: color,
+      groupId: 'g1',
+    });
+    const slide = (n: number) => ({
+      ...DOC(`Diapositiva ${n}`),
+      schemaVersion: 3,
+      layers: [layer('fondo', '#111111'), layer('titulo', `#00000${n}`)],
+    });
+    const [item] = await as<{ id: string }>(
+      db,
+      editor,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Carrusel por versiones', 'instagram', 'carousel') returning id`,
+      [marca, org],
+    );
+    for (let n = 1; n <= 4; n++) {
+      await as(db, ana, `select public.save_content_version($1, $2::jsonb, 3)`, [item!.id, JSON.stringify(slide(n))]);
+    }
+    const template = await readFile(path.join(import.meta.dirname, '../../scripts/unir-versiones-en-carrusel.sql'), 'utf8');
+    // Sin rellenar, no hace nada.
+    await expect(db.exec(template)).rejects.toThrow(/uuid/);
+    await db.exec('rollback').catch(() => undefined);
+    await db.exec(
+      template
+        .replace("'<content_id de la pieza>'", `'${item!.id}'`)
+        .replace("'<user_id de un editor de la marca>'", `'${editor.id}'`),
+    );
+    const [saved] = await db.query<{ version: number; schema_version: number; data: unknown; created_by: string }>(
+      `select version, schema_version, data, created_by from public.content_versions
+       where content_id = $1 order by version desc limit 1`,
+      [item!.id],
+    );
+    expect(saved).toMatchObject({ version: 5, schema_version: 4, created_by: editor.id });
+    const checked = validateDocument(saved!.data);
+    if (!checked.ok) throw new Error(JSON.stringify(checked.issues));
+    expect(checked.document.pages.map((p) => p.layers.map((l) => l.id))).toEqual([
+      ['s1-fondo', 's1-titulo'],
+      ['s2-fondo', 's2-titulo'],
+      ['s3-fondo', 's3-titulo'],
+      ['s4-fondo', 's4-titulo'],
+    ]);
+    expect(checked.document.pages[2]!.layers[0]!.groupId).toBe('s3-g1');
+    expect(checked.document.copy.caption).toBe('Diapositiva 4');
+    // Con sus 4 exportaciones en orden y aprobada, se programa.
+    const assets: string[] = [];
+    for (let n = 1; n <= 4; n++) {
+      assets.push(await exportOf(marca, item!.id, 5, 'image/jpeg', { page: n, count: 4 }));
+    }
+    await as(db, ana, `select public.set_content_status($1, 'approved', 5)`, [item!.id]);
+    expect((await schedule(item!.id, assets)).status).toBe('scheduled');
+    // Ya convertida, no se puede convertir otra vez (las versiones 1 a 4 siguen siendo v3, pero la lista pide la 5).
+    await expect(
+      db.exec(
+        template
+          .replace("'<content_id de la pieza>'", `'${item!.id}'`)
+          .replace("'<user_id de un editor de la marca>'", `'${editor.id}'`)
+          .replace('array[1, 2, 3, 4]', 'array[4, 5]'),
+      ),
+    ).rejects.toThrow(/ya tiene páginas/);
+    await db.exec('rollback').catch(() => undefined);
+  });
+
+  it('«publicar ahora» con las páginas en orden publica; desordenadas, se niega y no deja nada', async () => {
+    const p = await piece({ format: 'carousel', exports: 3 });
+    const args = {
+      p_content_id: p.contentId,
+      p_social_account_id: cuenta,
+      p_content_version: 1,
+    };
+    await expect(
+      userCall<Pub>(editor, 'publish_publication_now', {
+        ...args,
+        p_media_asset_ids: [p.assets[2], p.assets[1], p.assets[0]],
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await db.query(`select 1 from public.scheduled_publications where content_id = $1`, [p.contentId])).length,
+    ).toBe(0);
+
+    const pub = await userCall<Pub>(editor, 'publish_publication_now', { ...args, p_media_asset_ids: p.assets });
+    expect(pub.status).toBe('scheduled');
+    const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
+    expect(r).toMatchObject({ outcome: 'published' });
+    const expected = (await pathsOf(p.assets)).map((path) => `https://almacen.pruebas.invalid/firmada/${path}`);
+    expect(graph.published.at(-1)!.mediaUrls).toEqual(expected);
   });
 });
 

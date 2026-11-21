@@ -2568,6 +2568,19 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
     await denied(db, ana, deliver, [marcaA1, template('https://ig.invalid/inventada')], /ejemplo/);
     // Un recurso de otra marca no vale en el documento.
     await denied(db, ana, deliver, [marcaA1, template(importadaA1, assetB1)], /recurso/);
+    // Tampoco escondido en otra página de un documento v4 (carrusel).
+    const paged = JSON.parse(template(importadaA1)) as { document: Record<string, unknown> }[];
+    const v3 = doc(assetB1);
+    paged[0]!.document = {
+      schemaVersion: 4,
+      canvas: v3.canvas,
+      pages: [
+        { id: 'p1', layers: [] },
+        { id: 'p2', layers: v3.layers },
+      ],
+      copy: v3.copy,
+    };
+    await denied(db, ana, deliver, [marcaA1, JSON.stringify(paged)], /recurso/);
     // Entregarla otra vez la actualiza, no la duplica.
     await as(db, editorA, deliver, [marcaA1, template(importadaA1, assetA1)]);
     expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toHaveLength(

@@ -369,7 +369,7 @@ describe('el motor: plan aceptado → borradores', () => {
       [campaign.id],
     );
     expect(links.map((l) => l.piece_index)).toEqual([0, 1, 2, 3]);
-    const [version] = await db.query<{ data: { copy: { caption: string; hashtags: string[] }; layers: unknown[] } }>(
+    const [version] = await db.query<{ data: { copy: { caption: string; hashtags: string[] }; pages: { layers: unknown[] }[] } }>(
       `select v.data from public.content_versions v join public.campaign_contents l on l.content_id = v.content_id
        where l.campaign_id = $1 and l.piece_index = 0`,
       [campaign.id],
@@ -379,7 +379,7 @@ describe('el motor: plan aceptado → borradores', () => {
       hashtags: ['CocinaDeMercado'],
     });
     // La foto sugerida entra como capa de imagen.
-    expect(version!.data.layers).toHaveLength(1);
+    expect(version!.data.pages[0]!.layers).toHaveLength(1);
 
     // No se puede aceptar dos veces.
     await denied(
