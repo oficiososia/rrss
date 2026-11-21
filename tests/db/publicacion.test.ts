@@ -55,6 +55,9 @@ type Pub = {
   external_url: string | null;
   container_id: string | null;
   last_error_code: string | null;
+  scheduled_at: string;
+  social_account_id: string | null;
+  media_asset_ids: string[];
   generation: number;
   attempt_count: number;
 };
@@ -932,6 +935,37 @@ describe('carrusel: una versión con varias páginas', () => {
       ),
     ).rejects.toThrow(/ya tiene páginas/);
     await db.exec('rollback').catch(() => undefined);
+  });
+
+  it('un carrusel que cambia de versión se rearma con las páginas de la versión aprobada, conservando fecha y cuenta', async () => {
+    const p = await piece({ format: 'carousel', exports: 3 });
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    // Otra versión de 3 páginas, aprobada: la publicación espera con «content_changed».
+    await as(db, editor, `select public.save_content_version($1, $2::jsonb, 1)`, [
+      p.contentId,
+      JSON.stringify(PAGED_DOC(3, 'Otra tanda')),
+    ]);
+    await as(db, ana, `select public.set_content_status($1, 'approved', 2)`, [p.contentId]);
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'planned', hold_reason: 'content_changed' });
+
+    // Lo que hace el botón «Usar la versión aprobada»: la misma RPC, con la fecha y la cuenta de siempre.
+    const nuevas: string[] = [];
+    for (let page = 1; page <= 3; page++) {
+      nuevas.push(await exportOf(marca, p.contentId, 2, 'image/jpeg', { page, count: 3 }));
+    }
+    const rearmada = await userCall<Pub>(editor, 'save_publication', {
+      p_publication_id: pub.id,
+      p_content_id: p.contentId,
+      p_scheduled_at: pub.scheduled_at,
+      p_social_account_id: pub.social_account_id,
+      p_media_asset_ids: nuevas,
+      p_content_version: 2,
+    });
+    expect(rearmada).toMatchObject({ status: 'scheduled', hold_reason: null, content_version: 2 });
+    expect(rearmada.media_asset_ids).toEqual(nuevas);
+    expect(new Date(rearmada.scheduled_at).getTime()).toBe(new Date(pub.scheduled_at).getTime());
+    expect(rearmada.social_account_id).toBe(pub.social_account_id);
   });
 
   it('«publicar ahora» con las páginas en orden publica; desordenadas, se niega y no deja nada', async () => {

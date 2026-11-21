@@ -8,10 +8,9 @@ import { abrir, aviso, dato, sinErrores, sql } from './apoyo';
 // Ana crea un carrusel (empieza con 2 páginas), añade una tercera, pone algo
 // distinto en cada una, guarda UNA versión, exporta el carrusel (una imagen
 // JPEG por página, con su número en la procedencia), lo aprueba y pulsa
-// «Publicar ahora». Se comprueba que la publicación lleva las exportaciones en
-// el orden de las páginas y que Instagram (simulado) recibió los hijos del
-// carrusel en ese orden: importando lo publicado, la simulada devuelve como
-// dirección de cada hijo la que se le envió al crearlo.
+// «Publicar ahora». Se comprueba que la publicación sale como publicada y lleva
+// las exportaciones en el orden de las páginas (el orden de los hijos en la Graph
+// API simulada se prueba en tests/db: cada función tiene su propia simulada).
 //
 // Parte de lo que dejaron los archivos anteriores: la cuenta de Instagram
 // simulada conectada a La Espiga Obrador (13-publicacion-calendario.spec.ts).
@@ -101,32 +100,13 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   expect(fila!.ids).toEqual(exportaciones.map((e) => e.id));
   await page.getByTestId('publish-now-close').click();
 
-  // Instagram (simulado) recibió los hijos en ese orden: se importa lo publicado
-  // (sin copiar imágenes) y se mira la dirección de cada hijo.
-  await page.goto(`${marca()}/marca`);
-  await page.getByRole('tab', { name: 'Datos de la marca' }).click();
-  const panel = page.getByTestId('social-accounts').getByTestId('social-import');
-  await panel.getByTestId('social-import-copy').uncheck();
-  await panel.getByTestId('social-import-start').click();
-  await expect(panel.getByTestId('social-import-done')).toBeVisible({ timeout: 120_000 });
-  const [importada] = await sql<{ media_type: string; hijos: string[] }>(
-    `select media_type, array(select c->>'media_url' from jsonb_array_elements(children) with ordinality x(c, o)
-                              order by o) as hijos
-     from public.social_imported_media where brand_id = $1 and external_id = $2`,
-    [dato('marcaA2'), fila!.external_id],
-  );
-  expect(importada!.media_type).toBe('CAROUSEL_ALBUM');
-  const rutas = await sql<{ storage_path: string }>(
-    `select a.storage_path from unnest($1::uuid[]) with ordinality u(id, o) join public.media_assets a on a.id = u.id
-     order by u.o`,
-    [fila!.ids],
-  );
-  expect(importada!.hijos).toHaveLength(3);
-  importada!.hijos.forEach((url, i) => {
-    // La dirección firmada lleva el nombre del objeto de su página.
-    const archivo = rutas[i]!.storage_path.split('/').pop()!;
-    expect(decodeURIComponent(url)).toContain(archivo);
-  });
+  // El orden de los hijos que recibe Instagram no se mira aquí: la Graph API simulada
+  // vive en la memoria de cada función (`social-publish` y `social-import` son
+  // procesos distintos), así que la importación no ve lo publicado. Ese orden queda
+  // probado en tests/db con la simulada (el publicador crea un contenedor por imagen
+  // en el orden de `media_asset_ids`), y aquí, que `media_asset_ids` lleva las
+  // exportaciones en el orden de las páginas.
+  expect(fila!.external_id).toBeTruthy();
 
   sinErrores(s);
   await s.context.close();
