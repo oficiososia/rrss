@@ -44,13 +44,13 @@ const ORDEN_MAS = 'Difumina más la foto.';
 type Capa = { type: string; text?: string; blur?: number; color?: string; assetId?: string; y: number };
 
 async function versionGuardada(piezaId: string): Promise<{ version: number; layers: Capa[] }> {
-  const [fila] = await sql<{ version: number; data: { layers: Capa[] } }>(
+  const [fila] = await sql<{ version: number; data: { pages: { layers: Capa[] }[] } }>(
     `select v.version, v.data from public.content_items c
        join public.content_versions v on v.content_id = c.id and v.version = c.current_version
       where c.id = $1`,
     [piezaId],
   );
-  return { version: fila!.version, layers: fila!.data.layers };
+  return { version: fila!.version, layers: fila!.data.pages[0]!.layers };
 }
 
 async function guardar(page: Page, nota: string) {

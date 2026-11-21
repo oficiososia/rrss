@@ -250,11 +250,11 @@ test('editar la pieza (texto y una capa), guardar otra versión y ver el histori
   await expect(historial.getByRole('listitem').nth(1)).toContainText('Texto redactado con IA');
   await page.keyboard.press('Escape');
 
-  const [guardada] = await sql<{ data: { layers: { type: string; text?: string }[]; copy: { caption: string } } }>(
+  const [guardada] = await sql<{ data: { pages: { layers: { type: string; text?: string }[] }[]; copy: { caption: string } } }>(
     `select data from public.content_versions where content_id = $1 and version = 2`,
     [dato('piezaA')],
   );
-  expect(guardada?.data.layers.some((l) => l.type === 'text' && l.text === 'Hogazas de otoño')).toBe(true);
+  expect(guardada?.data.pages[0]?.layers.some((l) => l.type === 'text' && l.text === 'Hogazas de otoño')).toBe(true);
   expect(guardada?.data.copy.caption).toContain('Ahora más barato.');
   sinErrores(s);
   await s.context.close();

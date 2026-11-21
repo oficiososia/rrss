@@ -384,7 +384,10 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
             data: Array.from({ length: kids }, (_, i) => ({
               id: `${m.id}${i}`,
               media_type: 'IMAGE',
-              media_url: cdn(`${m.id}-${i}`),
+              // Un carrusel publicado aquí devuelve, como dirección de cada hijo, la
+              // que se le dio al crearlo (Meta devolvería la de su CDN): así la prueba
+              // de extremo a extremo comprueba el ORDEN en que se enviaron las páginas.
+              media_url: m.previous ? cdn(`${m.id}-${i}`) : (m.mediaUrls[i] ?? cdn(`${m.id}-${i}`)),
             })),
           };
         }

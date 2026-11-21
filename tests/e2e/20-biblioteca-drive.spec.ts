@@ -96,7 +96,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
     capas: { type: string; source?: { kind: string; assetId?: string } }[];
     recurso: string;
   }>(
-    `select v.data -> 'layers' as capas,
+    `select v.data #> '{pages,0,layers}' as capas,
             (select a.id::text from public.media_assets a where a.brand_id = $2 and a.file_name = $3) as recurso
      from public.content_versions v where v.content_id = $1 and v.version = 1`,
     [contenido, dato('marcaA'), FOTO],
