@@ -8,6 +8,7 @@ import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/f
 // el navegador manda los valores al guardar y nunca recibe un secreto de vuelta.
 
 const SECRET = 'token-de-prueba-del-tunel-9f8e';
+const WORKER_TOKEN = `rrss_wgt_${'q'.repeat(43)}`;
 
 /** Servidor simulado de `platform-integrations` con estado: se comporta como la función real. */
 function serveIntegrations() {
@@ -55,6 +56,20 @@ function serveIntegrations() {
           checks: [{ name: 'ComfyUI', ok: true, message: 'ComfyUI 0.9.1 responde.' }],
         },
       };
+    } else if (body.action === 'generate_worker_token') {
+      // Como la función: guarda la huella y devuelve el token una sola vez.
+      const at = settings.findIndex((s) => s.setting_key === 'WORKER_GATEWAY_TOKEN');
+      if (at >= 0) settings.splice(at, 1);
+      settings.push({
+        setting_key: 'WORKER_GATEWAY_TOKEN',
+        integration: 'media_worker',
+        is_secret: true,
+        value: null,
+        hint: '…beef',
+        updated_at: '2026-11-21T10:00:00Z',
+        updated_by_email: 'yo@example.com',
+      });
+      reply = { status: 200, body: { token: WORKER_TOKEN } };
     } else reply = { status: 400, body: { error: { message: 'Acción desconocida.' } } };
     responses.push(reply.body);
     return reply;
@@ -63,6 +78,27 @@ function serveIntegrations() {
 }
 
 describe('Plataforma → Integraciones', () => {
+  it('el token del trabajador se genera, se enseña una vez y se puede revocar', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    const server = serveIntegrations();
+    const { user } = renderApp('/plataforma/integraciones');
+    await user.click(await screen.findByRole('tab', { name: 'Trabajador de medios (Fly.io)' }));
+    const card = await screen.findByTestId('integration-media_worker');
+    const zone = within(card).getByTestId('setting-WORKER_GATEWAY_TOKEN');
+    expect(within(zone).getByText('Sin generar')).toBeInTheDocument();
+    // No hay campo para pegarlo a mano.
+    expect(within(zone).queryByRole('textbox')).toBeNull();
+    await user.click(within(zone).getByTestId('integration-generate-worker-token'));
+    expect(await within(zone).findByTestId('worker-token-value')).toHaveValue(WORKER_TOKEN);
+    expect(within(zone).getByText(/no se volverá a ver/)).toBeInTheDocument();
+    expect(await within(zone).findByText('Generado')).toBeInTheDocument();
+    // Revocar: borra el ajuste (con confirmación).
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(within(zone).getByTestId('integration-revoke-worker-token'));
+    await waitFor(() => expect(server.settings.find((r) => r.setting_key === 'WORKER_GATEWAY_TOKEN')).toBeUndefined());
+    expect(within(zone).queryByTestId('worker-token-value')).toBeNull();
+  });
+
   it('quien no es superadministrador no la ve', async () => {
     seedWorkspace({ orgRole: 'owner' });
     renderApp('/plataforma/integraciones');

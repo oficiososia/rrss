@@ -2169,6 +2169,28 @@ describe('despertador del trabajador de medios (20261208010000)', () => {
   });
 });
 
+describe('intermediario del trabajador de medios (20261210010000)', () => {
+  it('ni personas ni anónimos llaman a sus funciones ni ven su contador; la clave de servicio, solo por las funciones', async () => {
+    const hash = '0'.repeat(64);
+    const statements = [
+      `select * from public.worker_gateway_claim('${hash}', 'w', null, 1, 60)`,
+      `select public.worker_gateway_complete('${hash}', 'w', gen_random_uuid(), '{}')`,
+      `select public.worker_gateway_authorize_path('${hash}', 'w', gen_random_uuid(), 'a/b/c', false)`,
+      `select private.worker_gateway_identity('${hash}', 'w')`,
+      `select * from private.worker_gateway_calls`,
+      `delete from private.worker_gateway_calls`,
+    ];
+    for (const user of [ana, adminA, superadmin, ajeno, null]) {
+      for (const sql of statements) await denied(db, user, sql, [], /permission denied/);
+    }
+    for (const sql of statements.slice(3)) {
+      await expect(asService(db, sql)).rejects.toThrow(/permission denied/);
+    }
+    // Sin token configurado, la clave de servicio tampoco reclama nada por aquí.
+    await expect(asService(db, statements[0]!)).rejects.toThrow(/no es válido/);
+  });
+});
+
 describe('Plataforma → Integraciones (20261120010000)', () => {
   const ADMIN_CALLS: Array<[string, unknown[]]> = [
     [`select * from public.admin_integration_settings()`, []],

@@ -3,6 +3,7 @@
 // andamiaje), que solo ve y escribe un superadministrador; la función
 // `platform-integrations` con servicios simulados; la configuración efectiva
 // (base de datos y, si no, entorno) y conectar Instagram pegando un token.
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { computeAvailability } from '../../supabase/functions/_shared/integrations/availability.ts';
@@ -720,6 +721,50 @@ describe('función platform-integrations', () => {
     // Y no vuelve al navegador.
     const status = await post('t-root', { action: 'status' });
     expect(JSON.stringify(status.body)).not.toContain(Buffer.alloc(32, 9).toString('base64'));
+  });
+
+  it('el token del trabajador: se genera, sale una vez, solo se guarda su huella y se revoca', async () => {
+    expect((await post('t-ana', { action: 'generate_worker_token' })).status).toBe(403);
+    // A mano no se pone (ni por la función ni directamente en la base de datos).
+    const manual = await post('t-root', {
+      action: 'save',
+      integration: 'media_worker',
+      values: { WORKER_GATEWAY_TOKEN: `rrss_wgt_${'x'.repeat(43)}` },
+    });
+    expect(manual.status).toBe(400);
+    await expect(
+      as(
+        db,
+        root,
+        `select public.admin_set_integration_setting('WORKER_GATEWAY_TOKEN', 'sb_secret_pegada_a_mano_000')`,
+      ),
+    ).rejects.toThrow(/Generar token/);
+
+    const r = await post('t-root', { action: 'generate_worker_token' });
+    expect(r.status).toBe(200);
+    const token = r.body.token as string;
+    expect(token).toMatch(/^rrss_wgt_[A-Za-z0-9_-]{43}$/);
+    const [row] = await asService<{ data: Record<string, string> }>(
+      db,
+      `select public.integration_settings_for_service() as data`,
+    );
+    expect(row!.data.WORKER_GATEWAY_TOKEN).toBe(`sha256:${createHash('sha256').update(token).digest('hex')}`);
+    const status = await post('t-root', { action: 'status' });
+    expect(JSON.stringify(status.body)).not.toContain(token);
+    // Rotar da otro distinto; revocar lo borra.
+    const again = await post('t-root', { action: 'generate_worker_token' });
+    expect(again.body.token).not.toBe(token);
+    const revoked = await post('t-root', {
+      action: 'save',
+      integration: 'media_worker',
+      values: { WORKER_GATEWAY_TOKEN: null },
+    });
+    expect(revoked.status).toBe(200);
+    const [after] = await asService<{ data: Record<string, string> }>(
+      db,
+      `select public.integration_settings_for_service() as data`,
+    );
+    expect(after!.data.WORKER_GATEWAY_TOKEN).toBeUndefined();
   });
 });
 

@@ -410,7 +410,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Editor: sin ajuste a guías al mover varias capas; zonas seguras solo para 9:16 y orientativas.
 - Fase 4: lotes, coordinador y automatizaciones.
 - Avisos de encargos por sondeo (60 s), sin tiempo real ni correo.
-- El trabajador usa la clave de servicio; falta un rol de Postgres limitado.
+- ~~El trabajador usa la clave de servicio~~: resuelto con el intermediario `worker-gateway` (abajo); falta aplicarlo en staging.
 - Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `AI_TEXT_EDITOR_COPILOT_*` y las de Drive.
 - Copiloto por voz: falta un aviso en el propio copiloto antes del primer dictado (el audio va a Google o Microsoft; la política de privacidad ya lo dice).
 - Integraciones: tokens de «inicio de sesión de Instagram» (IG…) no admitidos; el vídeo con IA sigue solo por variables.
@@ -424,6 +424,18 @@ Implementado y probado en local; **nada desplegado ni aplicado en staging** (no 
 - Token: uno **de despliegue de la app** del trabajador (el de menor permiso documentado que arranca su máquina).
 - Despliegue: panel de Fly («Deploy from GitHub», directorio `worker`, configuración `fly.toml`). Alternativas sin ejecutar: GitHub Actions (`worker-fly.yml`, `worker-fly-preparar.yml`) y `worker/scripts/fly-preparar.mjs` (probado solo en modo «solo enseñar»; `flyctl` está bloqueado por Windows en el ordenador del dueño).
 - Para llevarlo a staging: aplicar la migración, volver a desplegar `platform-integrations` (y, para el mismo catálogo, las demás funciones que lo importan) y, con el trabajador probado, `VITE_MEDIA_WORKER_ENABLED=true` en Vercel.
+
+## Trabajador sin la clave de servicio (rama `f12/worker-sin-clave`, 21/11/2026)
+
+El dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly. Implementado y probado en local; **sin aplicar ni desplegar en staging**. Detalle, opciones valoradas y pasos en `docs/alojamiento.md` §5.
+
+- Elegida la opción del intermediario: Edge Function `worker-gateway` (`verify_jwt = false`) con las operaciones exactas del trabajador (reclamar, renovar, terminar, fallar, devolver, URL firmadas de lectura y subida de una ruta). La clave de servicio se queda en Supabase. Descartado el rol de Postgres con JWT propio: no se puede revocar al momento y con las claves nuevas no está claro que Supabase lo admita.
+- Migración `20261210010000_worker_gateway.sql` (con vuelta atrás): ajuste `WORKER_GATEWAY_TOKEN` (solo la huella SHA-256, en Vault; un disparador impide guardar otra cosa), funciones `worker_gateway_*` solo para la clave de servicio, que comprueban token, trabajo reservado por ese trabajador, tipos del trabajador y ruta de la organización y marca del trabajo, y tope de 1.200 llamadas por minuto (`private.worker_gateway_calls`).
+- Plataforma → Integraciones → Trabajador de medios: «Generar token» (sale una vez para pegarlo en Fly), «Generar uno nuevo (rotar)» y «Revocar». «Probar conexión» avisa si falta.
+- Trabajador: modo `gateway` por defecto (`worker/src/gateway.ts`); `service-key` solo pidiéndolo (local y CI); en Fly no arranca si encuentra la clave. `fly-preparar.mjs` y `worker-fly-preparar.yml` ya ponen el token y quitan la clave si quedaba.
+- En Fly solo van `SUPABASE_URL` y `WORKER_GATEWAY_TOKEN`.
+- E2E del reel y de un recorte por el intermediario del stack local escrita (`tests/e2e/11-reels.spec.ts`) y **sin ejecutar** (Docker parado).
+- Para llevarlo a staging: aplicar la migración y desplegar `worker-gateway` y `platform-integrations`; después, el dueño genera el token y lo pega en Fly.
 
 ## Pulido (rama `f6/pulido`, en `f6/integracion`, 20/11/2026)
 

@@ -9,24 +9,24 @@
 //
 // Pasos (con --aplicar):
 //   1. crea la app en Fly si no existe;
-//   2. pide la clave secreta de staging a la API de gestión de Supabase con el
-//      token de rrss (~/.supabase-rrss/token, o RRSS_SUPABASE_TOKEN_FILE) y la
-//      pone, con SUPABASE_URL, como secretos de la app (`flyctl secrets import`
-//      por la entrada estándar). Elige la clave que usan las funciones
-//      (SUPABASE_SERVICE_ROLE_KEY de las Edge Functions, comparando huellas
-//      SHA-256, nunca valores); si no se puede saber, la clave secreta nueva
-//      «sb_secret_…», que es la que usan las funciones de este proyecto;
+//   2. pone como secretos de la app SUPABASE_URL y WORKER_GATEWAY_TOKEN, el
+//      token del trabajador que se genera en Plataforma → Integraciones →
+//      Trabajador de medios («Generar token») y se pasa a este script en la
+//      variable de entorno WORKER_GATEWAY_TOKEN (`flyctl secrets import` por
+//      la entrada estándar). La clave de servicio de Supabase NO va a Fly
+//      (docs/alojamiento.md, §5): si la app tenía SUPABASE_SERVICE_ROLE_KEY de
+//      antes, se quita;
 //   3. despliega con el constructor remoto (`flyctl deploy --remote-only`);
 //   4. crea un token de despliegue de la app (el de menor permiso que puede
 //      arrancar su máquina) y guarda token, app y máquina en el Vault de
 //      staging (`rrss_fly_api_token`, `rrss_fly_app`, `rrss_fly_machine_id`),
 //      de donde los lee `private.media_worker_wake()` si no están en
 //      Plataforma → Integraciones.
-// Nunca imprime ni escribe en disco la clave ni el token: viven solo en la
-// memoria del proceso y en la entrada estándar de flyctl o en la petición HTTPS
-// a Supabase. El proyecto de Supabase está fijado aquí (staging).
+// El token de rrss para Supabase (~/.supabase-rrss/token, o
+// RRSS_SUPABASE_TOKEN_FILE) solo se usa en el paso 4.
+// Nunca imprime ni escribe en disco los tokens: viven solo en la memoria del
+// proceso y en la entrada estándar de flyctl o en la petición HTTPS a Supabase. El proyecto de Supabase está fijado aquí (staging).
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -40,6 +40,8 @@ const WORKER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const APP_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MACHINE_RE = /^[a-z0-9]{6,32}$/;
 const FLY_TOKEN_RE = /FlyV1 fm\d_[A-Za-z0-9_+/=-]+(?:,fm\d_[A-Za-z0-9_+/=-]+)*/;
+/** Token del trabajador para worker-gateway (supabase/functions/_shared/integrations/catalog.ts). */
+export const WORKER_GATEWAY_TOKEN_RE = /^rrss_wgt_[A-Za-z0-9_-]{43}$/;
 
 export class UsageError extends Error {}
 
@@ -65,34 +67,6 @@ export function parseArgs(argv) {
   if (!APP_RE.test(options.org)) throw new UsageError('Organización no válida.');
   if (!/^\d{1,5}h$/.test(options.expiry)) throw new UsageError('Caducidad no válida (horas, por ejemplo 4320h).');
   return options;
-}
-
-const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-
-/**
- * Elige la clave que tiene que llevar el trabajador entre las de la API de
- * gestión (`/api-keys?reveal=true`): la que coincide con la huella del secreto
- * SUPABASE_SERVICE_ROLE_KEY de las funciones (`/secrets`, que da SHA-256, no
- * valores) y, si no se puede saber, la secreta nueva. Devuelve la clave y una
- * descripción sin el valor.
- */
-export function chooseServiceKey(keys, functionSecrets) {
-  const list = Array.isArray(keys) ? keys.filter((k) => typeof k?.api_key === 'string' && k.api_key) : [];
-  const candidates = list.filter((k) => k.type === 'secret' || k.name === 'service_role');
-  const digest = Array.isArray(functionSecrets)
-    ? functionSecrets.find((s) => s?.name === 'SUPABASE_SERVICE_ROLE_KEY')?.value
-    : undefined;
-  const describe = (k) =>
-    k.type === 'secret' ? `clave secreta «${k.name ?? 'default'}» (sb_secret_…)` : 'clave service_role antigua (JWT)';
-  if (typeof digest === 'string' && /^[0-9a-f]{64}$/i.test(digest)) {
-    const match = candidates.find((k) => sha256(k.api_key) === digest.toLowerCase());
-    if (match) return { key: match.api_key, description: `${describe(match)}, la misma que usan las funciones` };
-  }
-  const secret = candidates.find((k) => k.type === 'secret' && k.api_key.startsWith('sb_secret_'));
-  if (secret) {
-    return { key: secret.api_key, description: `${describe(secret)} (no se pudo comparar con la de las funciones)` };
-  }
-  return null;
 }
 
 /** Id de la máquina de `flyctl machines list --json` (la de Fráncfort si hay varias). */
@@ -134,8 +108,8 @@ export function describePlan(options) {
   const a = options.app;
   return [
     `flyctl status --app ${a}  →  si no existe: flyctl apps create ${a} --org ${options.org}`,
-    `GET ${MANAGEMENT_API}/v1/projects/${STAGING_REF}/api-keys?reveal=true y /secrets (token de rrss; la clave no se muestra)`,
-    `flyctl secrets import --app ${a} --stage  ←  SUPABASE_URL=${SUPABASE_URL}, SUPABASE_SERVICE_ROLE_KEY=•••• (por la entrada estándar)`,
+    `flyctl secrets import --app ${a} --stage  ←  SUPABASE_URL=${SUPABASE_URL}, WORKER_GATEWAY_TOKEN=•••• (de la variable de entorno, por la entrada estándar)`,
+    `flyctl secrets unset SUPABASE_SERVICE_ROLE_KEY --app ${a} --stage  (si quedaba de antes: la clave de servicio no va a Fly)`,
     `(en worker/) flyctl deploy . --config fly.toml --app ${a} --remote-only --ha=false --strategy immediate --smoke-checks=false --yes`,
     `flyctl machines list --app ${a} --json  →  id de la máquina`,
     `flyctl tokens create deploy --app ${a} --name rrss-despertador --expiry ${options.expiry}  →  token (no se muestra)`,
@@ -177,6 +151,14 @@ export async function run(options, deps = {}) {
   );
   log(`worker/fly.toml: ${existsSync(path.join(WORKER_DIR, 'fly.toml')) ? 'encontrado' : 'NO ENCONTRADO'}`);
   log(`Token de rrss para Supabase: ${token.exists ? 'presente' : `falta (${token.file})`}`);
+  const workerToken = env.WORKER_GATEWAY_TOKEN?.trim() ?? '';
+  log(
+    `Token del trabajador (WORKER_GATEWAY_TOKEN): ${
+      WORKER_GATEWAY_TOKEN_RE.test(workerToken)
+        ? 'presente'
+        : 'falta: genéralo en Plataforma → Integraciones → Trabajador de medios'
+    }`,
+  );
   if (!options.apply) {
     log('Modo «solo enseñar»: no se ejecuta flyctl ni se llama a ninguna API. Pasos:');
     describePlan(options).forEach((step, i) => log(`  ${i + 1}. ${step}`));
@@ -185,6 +167,11 @@ export async function run(options, deps = {}) {
   }
 
   if (!token.exists) throw new Error(`Falta el token de rrss en ${token.file}`);
+  if (!WORKER_GATEWAY_TOKEN_RE.test(workerToken)) {
+    throw new Error(
+      'Falta WORKER_GATEWAY_TOKEN (o no tiene la forma rrss_wgt_…): genéralo en Plataforma → Integraciones → Trabajador de medios.',
+    );
+  }
   if (exec(['version'], { capture: true }).status !== 0) throw new Error('flyctl no responde');
 
   // 1. App
@@ -194,19 +181,23 @@ export async function run(options, deps = {}) {
     throw new Error('No se pudo crear la app');
   } else log(`1. App ${options.app} creada.`);
 
-  // 2. Clave de Supabase → secretos de la app
-  const auth = { headers: { Authorization: `Bearer ${token.read()}` } };
-  const keysRes = await doFetch(`${MANAGEMENT_API}/v1/projects/${STAGING_REF}/api-keys?reveal=true`, auth);
-  if (!keysRes.ok) throw new Error(`Supabase no dio las claves (HTTP ${keysRes.status})`);
-  const secretsRes = await doFetch(`${MANAGEMENT_API}/v1/projects/${STAGING_REF}/secrets`, auth);
-  const chosen = chooseServiceKey(await keysRes.json(), secretsRes.ok ? await secretsRes.json() : null);
-  if (!chosen) throw new Error('Supabase no trae ninguna clave secreta (sb_secret_…)');
+  // 2. URL y token del trabajador → secretos de la app (nunca la clave de servicio)
   const imported = exec(['secrets', 'import', '--app', options.app, '--stage'], {
-    input: `SUPABASE_URL=${SUPABASE_URL}\nSUPABASE_SERVICE_ROLE_KEY=${chosen.key}\n`,
+    input: `SUPABASE_URL=${SUPABASE_URL}\nWORKER_GATEWAY_TOKEN=${workerToken}\n`,
     capture: true,
   });
   if (imported.status !== 0) throw new Error('flyctl no pudo guardar los secretos');
-  log(`2. Secretos puestos en Fly: SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY (${chosen.description}).`);
+  const listed = exec(['secrets', 'list', '--app', options.app, '--json'], { capture: true });
+  if (listed.status === 0 && /"SUPABASE_SERVICE_ROLE_KEY"/.test(listed.stdout)) {
+    const unset = exec(['secrets', 'unset', 'SUPABASE_SERVICE_ROLE_KEY', '--app', options.app, '--stage'], {
+      capture: true,
+    });
+    if (unset.status !== 0) {
+      throw new Error('No se pudo quitar SUPABASE_SERVICE_ROLE_KEY de Fly: quítala a mano (la app → Secrets)');
+    }
+    log('2. Quitada SUPABASE_SERVICE_ROLE_KEY, que quedaba de antes en Fly.');
+  }
+  log('2. Secretos puestos en Fly: SUPABASE_URL y WORKER_GATEWAY_TOKEN.');
 
   // 3. Despliegue
   // Desde worker/ (cwd de flyctl): fly.toml y el Dockerfile son relativos a esa carpeta.
@@ -219,6 +210,7 @@ export async function run(options, deps = {}) {
   log(`3. Desplegado. Máquina ${machine.id}${machine.total > 1 ? ` (hay ${machine.total}: se usa la de fra)` : ''}.`);
 
   // 4. Token de despliegue de la app → Vault de staging
+  const auth = { headers: { Authorization: `Bearer ${token.read()}` } };
   const created = exec(
     ['tokens', 'create', 'deploy', '--app', options.app, '--name', 'rrss-despertador', '--expiry', options.expiry],
     { capture: true },

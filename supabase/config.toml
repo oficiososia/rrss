@@ -430,6 +430,12 @@ verify_jwt = false
 [functions.media-storage]
 verify_jwt = false
 
+# Intermediario del trabajador de medios (Fly.io): entra con su token propio
+# (rrss_wgt_…), que no es un JWT; lo comprueba la base de datos por su huella
+# (migración 20261210010000). El trabajador no tiene la clave de servicio.
+[functions.worker-gateway]
+verify_jwt = false
+
 [analytics]
 enabled = false
 port = 55327

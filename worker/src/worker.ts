@@ -226,7 +226,8 @@ export function createWorker(options: WorkerOptions): Worker {
       controller.signal.throwIfAborted();
       await mkdir(tmpRoot, { recursive: true });
       workDir = await mkdtemp(path.join(tmpRoot, 'job-'));
-      const result = await handler.run({ job, signal: controller.signal, storage, workDir, log: logger });
+      const jobStorage = storage.forJob ? storage.forJob(job, workerId) : storage;
+      const result = await handler.run({ job, signal: controller.signal, storage: jobStorage, workDir, log: logger });
       // Un manejador que ignora la señal no puede cerrar fuera de plazo. Si lo
       // que llegó fue el apagado y aun así terminó, su resultado vale.
       if (controller.signal.reason instanceof LeaseTimeoutError) throw controller.signal.reason;

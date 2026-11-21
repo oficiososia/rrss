@@ -3,6 +3,8 @@
 // entorno del proceso hijo (ni se imprime ni se guarda).
 //
 //   node scripts/run-supabase.ts local     # stack local (`supabase start`)
+//   node scripts/run-supabase.ts local-gateway  # stack local por worker-gateway,
+//                                               # con WORKER_GATEWAY_TOKEN y sin la clave
 //   node scripts/run-supabase.ts staging   # proyecto de staging de rrss
 //
 // Desde `worker/`: `npm run start:local` y `npm run start:staging`. Las
@@ -78,12 +80,37 @@ async function stagingTarget(): Promise<{ url: string; serviceKey: string }> {
 
 async function main(): Promise<void> {
   const target = process.argv[2];
-  if (target !== 'local' && target !== 'staging') {
-    fail('Uso: node scripts/run-supabase.ts local|staging');
+  if (target !== 'local' && target !== 'staging' && target !== 'local-gateway') {
+    fail('Uso: node scripts/run-supabase.ts local|local-gateway|staging');
+  }
+  if (target === 'local-gateway') {
+    // Como en Fly: por el intermediario `worker-gateway` del stack local, con
+    // el token del trabajador (WORKER_GATEWAY_TOKEN del entorno) y SIN la
+    // clave de servicio.
+    const { url } = localTarget();
+    if (!process.env.WORKER_GATEWAY_TOKEN) fail('local-gateway necesita WORKER_GATEWAY_TOKEN en el entorno.');
+    const env: NodeJS.ProcessEnv = { ...process.env, SUPABASE_URL: url, WORKER_SUPABASE_ACCESS: 'gateway' };
+    delete env.SUPABASE_SERVICE_ROLE_KEY;
+    delete env.RRSS_SUPABASE_TOKEN_FILE;
+    process.stdout
+      .write(`Trabajador de medios contra local por worker-gateway (${url}), modo ${env.WORKER_MODE ?? 'drain'}
+`);
+    const child = spawn(process.execPath, ['src/main.ts'], { cwd: WORKER_DIR, env, stdio: 'inherit' });
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => child.kill(signal));
+    child.on('exit', (code) => process.exit(code ?? 0));
+    return;
   }
   const { url, serviceKey } = target === 'local' ? localTarget() : await stagingTarget();
 
-  const env: NodeJS.ProcessEnv = { ...process.env, SUPABASE_URL: url, SUPABASE_SERVICE_ROLE_KEY: serviceKey };
+  // Modo explícito con la clave de servicio: el de por defecto (el
+  // intermediario) es el de Fly; aquí se arranca a mano o en las pruebas.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    SUPABASE_URL: url,
+    SUPABASE_SERVICE_ROLE_KEY: serviceKey,
+    WORKER_SUPABASE_ACCESS: 'service-key',
+  };
+  delete env.WORKER_GATEWAY_TOKEN;
   delete env.RRSS_SUPABASE_TOKEN_FILE;
   process.stdout.write(`Trabajador de medios contra ${target} (${url}), modo ${env.WORKER_MODE ?? 'drain'}\n`);
 

@@ -3,8 +3,7 @@
 // que tocan secretos (elegir la clave, leer el token, el SQL de Vault) no los
 // sacan nunca por pantalla.
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,7 +19,6 @@ interface Options {
 }
 interface Module {
   parseArgs(argv: string[]): Options;
-  chooseServiceKey(keys: unknown, secrets: unknown): { key: string; description: string } | null;
   parseMachineId(json: string): { id: string; total: number } | null;
   parseFlyToken(output: string): string | null;
   vaultUpsertSql(name: string, value: string): string;
@@ -84,25 +82,33 @@ describe('fly-preparar', () => {
     expect(r.stdout).toMatch(/falta/);
   });
 
-  it('elige la clave que usan las funciones comparando huellas, sin decir cuál es', () => {
-    const legacy = 'eyJhbGciOiJIUzI1NiJ9.legacy.firma';
-    const nueva = 'sb_secret_0123456789abcdefghij';
-    const keys = [
-      { name: 'anon', type: 'legacy', api_key: 'eyJ.anon' },
-      { name: 'service_role', type: 'legacy', api_key: legacy },
-      { name: 'default', type: 'publishable', api_key: 'sb_publishable_x' },
-      { name: 'default', type: 'secret', api_key: nueva },
-    ];
-    const digest = (v: string) => createHash('sha256').update(v).digest('hex');
-    const conLaNueva = mod.chooseServiceKey(keys, [{ name: 'SUPABASE_SERVICE_ROLE_KEY', value: digest(nueva) }]);
-    expect(conLaNueva?.key).toBe(nueva);
-    expect(conLaNueva?.description).toMatch(/la misma que usan las funciones/);
-    expect(conLaNueva?.description).not.toContain(nueva);
-    const conLaAntigua = mod.chooseServiceKey(keys, [{ name: 'SUPABASE_SERVICE_ROLE_KEY', value: digest(legacy) }]);
-    expect(conLaAntigua?.key).toBe(legacy);
-    // Sin huella: la secreta nueva.
-    expect(mod.chooseServiceKey(keys, null)?.key).toBe(nueva);
-    expect(mod.chooseServiceKey([{ name: 'anon', api_key: 'x' }], null)).toBeNull();
+  it('a Fly va el token del trabajador, nunca la clave de servicio', async () => {
+    const lines: string[] = [];
+    const never = () => {
+      throw new Error('no debería llamarse');
+    };
+    await mod.run(mod.parseArgs([]), {
+      log: (l) => lines.push(l),
+      exec: never,
+      fetch: never,
+      env: { RRSS_SUPABASE_TOKEN_FILE: path.join(home, 'no-existe') },
+    });
+    const text = lines.join('\n');
+    expect(text).toMatch(/WORKER_GATEWAY_TOKEN=••••/);
+    expect(text).toMatch(/Token del trabajador \(WORKER_GATEWAY_TOKEN\): falta/);
+    expect(text).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY=/);
+    expect(text).toMatch(/secrets unset SUPABASE_SERVICE_ROLE_KEY/);
+    // Con --aplicar y sin un token del trabajador válido, no hace nada.
+    const tokenFile = path.join(home, 'token');
+    await writeFile(tokenFile, 'sbp_de_pruebas');
+    await expect(
+      mod.run(mod.parseArgs(['--aplicar']), {
+        log: () => undefined,
+        exec: never,
+        fetch: never,
+        env: { RRSS_SUPABASE_TOKEN_FILE: tokenFile, WORKER_GATEWAY_TOKEN: 'sb_secret_no_vale' },
+      }),
+    ).rejects.toThrow(/WORKER_GATEWAY_TOKEN/);
   });
 
   it('saca la máquina de Fráncfort y el token de la salida de flyctl', () => {

@@ -5,7 +5,8 @@
 // variable (settings.ts). El mismo catálogo vive en la migración
 // 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
 // y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI y en
-// 20261208010000 con el trabajador de medios en Fly.io)
+// 20261208010000 con el trabajador de medios en Fly.io, y en 20261210010000
+// con el token de su intermediario `worker-gateway`)
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -99,6 +100,10 @@ export const FLY_TOKEN_PATTERN =
 /** Mismas formas que admite `private.media_worker_wake()` (van en la URL de la API). */
 export const FLY_APP_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 export const FLY_MACHINE_PATTERN = /^[a-z0-9]{6,32}$/;
+/** Token del trabajador para `worker-gateway`: «rrss_wgt_» y 32 bytes en base64url. */
+export const WORKER_GATEWAY_TOKEN_PATTERN = /^rrss_wgt_[A-Za-z0-9_-]{43}$/;
+/** Lo que se guarda de él: su huella SHA-256. */
+export const WORKER_GATEWAY_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   // Meta
@@ -295,6 +300,14 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     integration: 'media_worker',
     secret: false,
     validate: pattern(FLY_MACHINE_PATTERN, 'El ID de la máquina: minúsculas y cifras (por ejemplo, 148e21dc7d0189).'),
+  },
+  // Token del trabajador para `worker-gateway` (20261210010000): solo se
+  // guarda su huella («sha256:…») y solo con «Generar token».
+  {
+    key: 'WORKER_GATEWAY_TOKEN',
+    integration: 'media_worker',
+    secret: true,
+    validate: pattern(WORKER_GATEWAY_HASH_PATTERN, 'Solo se genera con «Generar token».'),
   },
 ];
 

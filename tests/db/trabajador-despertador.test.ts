@@ -328,7 +328,14 @@ describe('Probar conexión del trabajador (API de Fly simulada)', () => {
     const machine = { state: 'started', region: 'ams', config: { restart: { policy: 'always' }, services: [{}] } };
     const r = await probeIntegration('media_worker', env, { fetch: fly(200, machine) });
     expect(r.ok).toBe(true);
-    expect(r.checks.map((c) => c.name)).toEqual(['Máquina', 'Reinicio', 'Región', 'Puertos']);
+    // Sin el token del trabajador (20261210010000), también lo avisa.
+    expect(r.checks.map((c) => c.name)).toEqual(['Máquina', 'Reinicio', 'Región', 'Puertos', 'Acceso a Supabase']);
+    const withToken = await probeIntegration(
+      'media_worker',
+      { ...env, WORKER_GATEWAY_TOKEN: `sha256:${'0'.repeat(64)}` },
+      { fetch: fly(200, machine) },
+    );
+    expect(withToken.checks.map((c) => c.name)).toEqual(['Máquina', 'Reinicio', 'Región', 'Puertos']);
   });
 
   it('token rechazado, máquina que no existe, sin red y configuración incompleta', async () => {

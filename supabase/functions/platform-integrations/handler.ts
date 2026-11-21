@@ -13,6 +13,10 @@
 //   test                superadministrador: «Probar conexión» (probes.ts).
 //   generate_token_key  superadministrador: añade una clave nueva de cifrado de los
 //                       tokens de las redes y la deja como la que cifra lo nuevo.
+//   generate_worker_token  superadministrador: token nuevo del trabajador de medios
+//                       para `worker-gateway`. Se guarda SOLO su huella SHA-256
+//                       (WORKER_GATEWAY_TOKEN, cifrada en Vault) y el token sale
+//                       una única vez en la respuesta, para pegarlo en Fly.
 //
 // El permiso lo impone la base de datos: las RPC de escritura se llaman con la
 // sesión del usuario y rechazan a quien no es superadministrador. Ninguna
@@ -25,6 +29,7 @@ import {
   INTEGRATION_SETTINGS,
   settingSpec,
   validateSetting,
+  WORKER_GATEWAY_TOKEN_PATTERN,
   type IntegrationId,
 } from '../_shared/integrations/catalog.ts';
 import type { ProbeResult } from '../_shared/integrations/probes.ts';
@@ -45,6 +50,8 @@ export interface PlatformIntegrationsDeps {
   probe(id: IntegrationId, env: Env): Promise<ProbeResult>;
   /** 32 bytes aleatorios en base64 (clave nueva de cifrado de los tokens). */
   randomKey?: () => string;
+  /** Token nuevo del trabajador («rrss_wgt_» + 32 bytes en base64url). */
+  randomWorkerToken?: () => string;
   now?: () => Date;
   allowedOrigin?: string;
   log?: (event: string, data: Record<string, unknown>) => void;
@@ -58,6 +65,19 @@ function defaultRandomKey(): string {
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary);
+}
+
+function defaultWorkerToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return `rrss_wgt_${btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`;
+}
+
+/** Huella que se guarda del token del trabajador: «sha256:<hex>». */
+export async function workerTokenHash(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export function createPlatformIntegrationsHandler(
@@ -155,6 +175,10 @@ export function createPlatformIntegrationsHandler(
         if (key === 'SOCIAL_TOKEN_KEYS') {
           return fail(400, 'invalid', 'Las claves de cifrado de los tokens solo se generan con «Generar clave».');
         }
+        // Revocarlo (null) sí; ponerlo a mano, no.
+        if (key === 'WORKER_GATEWAY_TOKEN' && value !== null) {
+          return fail(400, 'invalid', 'El token del trabajador solo se genera con «Generar token».');
+        }
         if (value !== null && typeof value !== 'string') return fail(400, 'invalid', `Valor no válido en ${key}.`);
         if (typeof value === 'string') {
           const problem = validateSetting(key, value);
@@ -219,6 +243,20 @@ export function createPlatformIntegrationsHandler(
       deps.settings.invalidate();
       deps.log?.('token_key_generated', { keyId });
       return json(200, { keyId });
+    }
+
+    if (body.action === 'generate_worker_token') {
+      const token = (deps.randomWorkerToken ?? defaultWorkerToken)();
+      if (!WORKER_GATEWAY_TOKEN_PATTERN.test(token)) return fail(500, 'internal', 'No se ha podido generar el token.');
+      const r = await asUser('admin_set_integration_setting', {
+        p_key: 'WORKER_GATEWAY_TOKEN',
+        p_value: `sha256:${await workerTokenHash(token)}`,
+      });
+      deps.settings.invalidate();
+      if (r.error) return rpcFailure(r.error);
+      deps.log?.('worker_token_generated', {});
+      // La única vez que sale: no se guarda ni se registra.
+      return json(200, { token });
     }
 
     return fail(400, 'bad_request', 'Acción desconocida.');
