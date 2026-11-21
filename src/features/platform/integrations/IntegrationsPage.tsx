@@ -132,6 +132,12 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       live: status.availability.publishing,
       flag: 'VITE_SOCIAL_PUBLISHING_ENABLED',
     },
+    {
+      label: 'Botón «Conectar con Meta» (sin él, solo con token)',
+      build: socialPublishingEnabled(),
+      live: status.availability.socialOAuth,
+      flag: 'VITE_SOCIAL_PUBLISHING_ENABLED',
+    },
     { label: 'IA de texto', build: aiTextEnabled(), live: status.availability.aiText, flag: 'VITE_AI_TEXT_ENABLED' },
     {
       label: 'IA de imagen',

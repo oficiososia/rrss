@@ -454,10 +454,26 @@ describe('Probar conexión (servicios simulados)', () => {
 
   it('Meta: reconoce la aplicación con el token de aplicación (Graph API simulada)', async () => {
     const graph = createSimulatedGraph();
-    const env = { META_APP_ID: '1234567890', META_APP_SECRET: SECRET, SOCIAL_TOKEN_KEYS: keys };
+    const env = {
+      META_APP_ID: '1234567890',
+      META_APP_SECRET: SECRET,
+      SOCIAL_TOKEN_KEYS: keys,
+      SUPABASE_URL: 'https://proyecto.supabase.test',
+      SOCIAL_APP_URL: 'https://app.test',
+    };
     const good = await probeIntegration('meta', env, { fetch: fake({}), graphFetch: graph.fetch });
     expect(good).toMatchObject({ ok: true });
     expect(good.message).toContain('Aplicación simulada');
+    expect(good.message).toContain('Conectar con Meta');
+    // Meta reconoce la aplicación, pero sin la dirección de la aplicación no sale el botón de OAuth:
+    // la prueba lo dice en vez de dar «Funciona».
+    const noAppUrl = await probeIntegration(
+      'meta',
+      { ...env, SOCIAL_APP_URL: '' },
+      { fetch: fake({}), graphFetch: graph.fetch },
+    );
+    expect(noAppUrl.ok).toBe(false);
+    expect(noAppUrl.message).toMatch(/SOCIAL_APP_URL/);
     const bad = await probeIntegration(
       'meta',
       { ...env, META_APP_SECRET: 'malsecreto0123456789' },
