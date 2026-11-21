@@ -10,6 +10,20 @@ export type DocumentMigration = (document: Record<string, unknown>) => Record<st
  * aquí la función que adapta los documentos guardados (los antiguos no se
  * reescriben: se migran al leer).
  */
+/** Campos de capa que llegan con la versión 5. */
+const V5_LAYER_FIELDS = [
+  'adjust',
+  'turn',
+  'flipX',
+  'flipY',
+  'straighten',
+  'crop',
+  'backdrop',
+  'shadow',
+  'outline',
+  'background',
+] as const;
+
 export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
   // 1 → 2: llegan los grupos de capas. Un documento de la 1 no tiene ninguno; si
   // alguna capa trajera ya un `groupId` (no debería), se quita para que no se
@@ -48,6 +62,27 @@ export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
     delete rest.layers;
     delete rest.pages;
     return { ...rest, pages: [{ id: 'p1', name: '', layers }] };
+  },
+  // 4 → 5: llegan las ediciones sencillas (ajustes, giro, recorte, fondo,
+  // sombra, contorno y fondo del texto). Un documento de la 4 no tiene ninguna;
+  // si alguna capa trajera ya alguno de esos campos (no debería), se quita para
+  // no editar nada que la persona no editó.
+  4: (document) => {
+    const pages = Array.isArray(document.pages)
+      ? document.pages.map((page: unknown) => {
+          if (typeof page !== 'object' || page === null || !Array.isArray((page as { layers?: unknown }).layers)) {
+            return page;
+          }
+          const layers = (page as { layers: unknown[] }).layers.map((layer: unknown) => {
+            if (typeof layer !== 'object' || layer === null) return layer;
+            const rest = { ...(layer as Record<string, unknown>) };
+            for (const field of V5_LAYER_FIELDS) delete rest[field];
+            return rest;
+          });
+          return { ...(page as Record<string, unknown>), layers };
+        })
+      : document.pages;
+    return { ...document, pages };
   },
 };
 

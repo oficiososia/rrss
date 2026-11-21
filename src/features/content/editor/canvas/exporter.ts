@@ -5,6 +5,8 @@ import { Text } from 'konva/lib/shapes/Text';
 import { fetchImageObjectUrl } from '../../../../lib/corsImage';
 import type { PageView } from '../../document';
 import { EXPORT_FORMATS, exportErrors, exportSize, layerLabel, type ExportOptions } from '../../export/options';
+import { editKey } from '../imageEffects/imageEdit';
+import { EXPORT_BITMAP_SIDE, prepareBitmap } from '../imageEffects/prepare';
 import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
 import { describeDocument, type ImageLookup, type NodeSpec } from './nodes';
 
@@ -96,9 +98,28 @@ async function loadImages(urls: string[]): Promise<{ images: Map<string, HTMLIma
   return { images, failed };
 }
 
-function createNode(spec: NodeSpec, images: ReadonlyMap<string, HTMLImageElement>): Shape {
-  const url = spec.kind === 'image' ? spec.url : null;
-  const image: LoadedImage = url ? images.get(url) : undefined;
+/**
+ * La foto de una capa lista para dibujar: tal cual, o ya editada (girada,
+ * recortada, con luz y color) con el mismo código que usa el editor.
+ */
+function bitmapFor(
+  spec: NodeSpec,
+  images: ReadonlyMap<string, HTMLImageElement>,
+  cache: Map<string, HTMLCanvasElement>,
+): LoadedImage {
+  if (spec.kind !== 'image' || !spec.url) return undefined;
+  const base = images.get(spec.url);
+  if (!base || !spec.edit) return base;
+  const key = `${spec.url}|${editKey(spec.edit)}`;
+  let bitmap = cache.get(key);
+  if (!bitmap) {
+    bitmap = prepareBitmap(base, spec.edit, EXPORT_BITMAP_SIDE);
+    cache.set(key, bitmap);
+  }
+  return bitmap;
+}
+
+function createNode(spec: NodeSpec, image: LoadedImage): Shape {
   const node: Shape =
     spec.kind === 'text'
       ? new Text({ id: spec.id, listening: false })
@@ -161,7 +182,8 @@ export async function renderDocument(
   try {
     const layer = new Konva.Layer();
     layer.add(new Rect({ x: 0, y: 0, width: canvas.width, height: canvas.height, fill: canvas.backgroundColor }));
-    for (const spec of specs) layer.add(createNode(spec, images));
+    const bitmaps = new Map<string, HTMLCanvasElement>();
+    for (const spec of specs) layer.add(createNode(spec, bitmapFor(spec, images, bitmaps)));
     stage.add(layer);
     layer.draw();
 

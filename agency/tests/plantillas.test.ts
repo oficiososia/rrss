@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { DOCUMENT_SCHEMA_VERSION } from '../../src/features/content/document/index.ts';
 import { run } from '../src/cli.ts';
 import { createClient, type SupabaseClient } from '../src/supabase.ts';
 import { checkTemplatesFile, deliverTemplates, firstImage, importedBrands, importedContext } from '../src/templates.ts';
@@ -134,7 +135,7 @@ describe('comprobar y entregar', () => {
     const checked = await checkTemplatesFile(EXAMPLE);
     expect(checked.templates).toHaveLength(1);
     // El ejemplo está escrito con la versión 3 (sin páginas): se entrega ya en la vigente, con una página.
-    expect(checked.templates[0]!.document.schemaVersion).toBe(4);
+    expect(checked.templates[0]!.document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
     expect(checked.templates[0]!.document.pages).toHaveLength(1);
   });
 

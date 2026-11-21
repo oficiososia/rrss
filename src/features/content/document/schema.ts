@@ -19,7 +19,16 @@ import { z } from 'zod';
 //      versión. Todas comparten el lienzo (misma proporción y color de fondo) y
 //      el texto de la publicación (`copy`, uno por pieza). Un documento de la 3
 //      se lee como uno de una sola página con las mismas capas.
-export const DOCUMENT_SCHEMA_VERSION = 4;
+//   5  ediciones sencillas, todas opcionales y sin cambiar el original: en las
+//      imágenes, ajustes de luz y color (`adjust`), girar, voltear, enderezar y
+//      recortar (`turn`, `flipX`, `flipY`, `straighten`, `crop`), fondo
+//      (`backdrop`) y sombra (`shadow`); en los textos, contorno (`outline`),
+//      sombra y fondo del texto (`background`); en las formas, sombra y más
+//      figuras (triángulo, estrella, corazón, flecha, destello, globo y línea).
+//      Un documento de la 4 se lee igual. Se sube la versión por la misma
+//      razón que en la 3: una aplicación anterior no debe abrir (y al guardar
+//      perder) lo que no sabe dibujar.
+export const DOCUMENT_SCHEMA_VERSION = 5;
 
 /** Desenfoque máximo de una imagen (intensidad, en %). */
 export const MAX_IMAGE_BLUR = 100;
@@ -128,6 +137,99 @@ export const imageSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('generation'), generationId: z.string().uuid() }),
 ]);
 
+
+// ── Ediciones sencillas (versión 5) ──────────────────────────────────────
+
+/** Filtros rápidos de una foto (ver editor/imageEffects/filters.ts). */
+export const IMAGE_FILTERS = ['bw', 'sepia', 'vivid', 'warm', 'cool', 'fade', 'drama'] as const;
+export type ImageFilter = (typeof IMAGE_FILTERS)[number];
+
+const slider = z.number().finite().min(-100).max(100);
+
+/**
+ * Ajustes de luz y color de una foto: de -100 a 100 (la nitidez, de 0 a 100) y
+ * 0 es «sin cambio». Un valor a 0 y sin filtro no se guarda (ver `isNeutralAdjust`).
+ */
+export const imageAdjustSchema = z.object({
+  brightness: slider.default(0),
+  contrast: slider.default(0),
+  saturation: slider.default(0),
+  temperature: slider.default(0),
+  sharpness: z.number().finite().min(0).max(100).default(0),
+  filter: z.enum(IMAGE_FILTERS).optional(),
+});
+export type ImageAdjust = z.infer<typeof imageAdjustSchema>;
+
+export function isNeutralAdjust(adjust: ImageAdjust | undefined): boolean {
+  return (
+    !adjust ||
+    (adjust.brightness === 0 &&
+      adjust.contrast === 0 &&
+      adjust.saturation === 0 &&
+      adjust.temperature === 0 &&
+      adjust.sharpness === 0 &&
+      !adjust.filter)
+  );
+}
+
+/** Máximo de grados que se puede enderezar una foto, a cada lado. */
+export const MAX_STRAIGHTEN = 45;
+
+/** Menor lado de un recorte, como fracción de la foto: así no se llega a un recorte de un píxel. */
+export const MIN_CROP_SIDE = 0.02;
+
+/**
+ * Recorte de la foto, como fracciones (0–1) de la foto YA girada, volteada y
+ * enderezada (no de la original): así vale igual con cualquier resolución.
+ */
+export const cropSchema = z
+  .object({
+    x: z.number().finite().min(0).max(1),
+    y: z.number().finite().min(0).max(1),
+    width: z.number().finite().min(MIN_CROP_SIDE).max(1),
+    height: z.number().finite().min(MIN_CROP_SIDE).max(1),
+  })
+  .superRefine((crop, ctx) => {
+    if (crop.x + crop.width > 1.0001 || crop.y + crop.height > 1.0001) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'El recorte se sale de la foto' });
+    }
+  });
+export type ImageCrop = z.infer<typeof cropSchema>;
+
+/**
+ * Sombra de una capa. Las medidas van en unidades del lienzo, como el resto
+ * del documento, y la opacidad de 0 a 1.
+ */
+export const shadowSchema = z.object({
+  color,
+  blur: z.number().finite().min(0).max(500),
+  offsetX: z.number().finite().min(-2000).max(2000).default(0),
+  offsetY: z.number().finite().min(-2000).max(2000).default(0),
+  opacity: z.number().min(0).max(1).default(0.4),
+});
+export type LayerShadow = z.infer<typeof shadowSchema>;
+
+/**
+ * Fondo de una imagen, detrás de ella y dentro de su caja: un color, un
+ * degradado o la propia foto desenfocada llenando la caja. No referencia
+ * ningún recurso más (así la base de datos no tiene nada nuevo que comprobar).
+ */
+export const backdropSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('color'), color }),
+  z.object({
+    kind: z.literal('gradient'),
+    from: color,
+    to: color,
+    /** Grados: 0 = de arriba abajo; 90 = de izquierda a derecha. */
+    angle: z.number().finite().min(0).max(360).default(180),
+  }),
+  z.object({
+    kind: z.literal('blur'),
+    blur: z.number().finite().min(1).max(MAX_IMAGE_BLUR).default(60),
+  }),
+]);
+export type ImageBackdrop = z.infer<typeof backdropSchema>;
+
 const imageLayerSchema = z.object({
   ...layerBase,
   type: z.literal('image'),
@@ -143,6 +245,18 @@ const imageLayerSchema = z.object({
    * cualquier tamaño y en los reels. Sin desenfoque, el campo no está.
    */
   blur: z.number().finite().min(0).max(MAX_IMAGE_BLUR).optional(),
+  /** Ajustes de luz y color y filtro rápido (versión 5). Sin ellos, el campo no está. */
+  adjust: imageAdjustSchema.optional(),
+  /** Giro de la foto en múltiplos de 90° en sentido horario (versión 5). */
+  turn: z.union([z.literal(90), z.literal(180), z.literal(270)]).optional(),
+  flipX: z.literal(true).optional(),
+  flipY: z.literal(true).optional(),
+  /** Enderezar: giro fino de la foto en grados, de -45 a 45 (versión 5). */
+  straighten: z.number().finite().min(-MAX_STRAIGHTEN).max(MAX_STRAIGHTEN).optional(),
+  crop: cropSchema.optional(),
+  backdrop: backdropSchema.optional(),
+  /** Sombra de lo que se ve de la foto (útil en un recorte sin fondo). */
+  shadow: shadowSchema.optional(),
 });
 
 /**
@@ -168,6 +282,18 @@ const textLayerSchema = z.object({
   align: z.enum(['left', 'center', 'right']).default('left'),
   /** Interlineado como múltiplo del cuerpo de letra. */
   lineHeight: z.number().min(0.5).max(4).default(1.2),
+  /** Contorno de las letras (versión 5). */
+  outline: z.object({ color, width: z.number().finite().positive().max(200) }).optional(),
+  shadow: shadowSchema.optional(),
+  /** Fondo tras el texto, como una etiqueta (versión 5): relleno con margen y esquinas redondeadas. */
+  background: z
+    .object({
+      color,
+      opacity: z.number().min(0).max(1).default(1),
+      padding: z.number().finite().min(0).max(1000).default(16),
+      radius: z.number().finite().min(0).max(1000).default(0),
+    })
+    .optional(),
 });
 
 /** Logotipo de la marca (un recurso de la biblioteca). Se dibuja siempre entero, sin deformar, dentro de su caja. */
@@ -177,10 +303,17 @@ const logoLayerSchema = z.object({
   assetId: z.string().uuid(),
 });
 
+/**
+ * Figuras: rectángulo y elipse (de siempre) y las sencillas que se usan como
+ * pegatinas (versión 5). La línea solo lleva borde.
+ */
+export const SHAPE_KINDS = ['rectangle', 'ellipse', 'triangle', 'star', 'heart', 'arrow', 'burst', 'speech', 'line'] as const;
+export type ShapeKind = (typeof SHAPE_KINDS)[number];
+
 const shapeLayerSchema = z.object({
   ...layerBase,
   type: z.literal('shape'),
-  shape: z.enum(['rectangle', 'ellipse']),
+  shape: z.enum(SHAPE_KINDS),
   fill: color.nullable().default(null),
   stroke: z
     .object({ color, width: z.number().finite().positive().max(1000) })
@@ -188,6 +321,7 @@ const shapeLayerSchema = z.object({
     .default(null),
   /** Radio de las esquinas (solo rectángulos). */
   cornerRadius: z.number().finite().min(0).max(100_000).default(0),
+  shadow: shadowSchema.optional(),
 });
 
 export const layerSchema = z.discriminatedUnion('type', [

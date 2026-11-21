@@ -10,7 +10,10 @@ import type { Rect as Bounds } from '../../safeZones';
 import { layersInRect, normalizeRect, snapBox, snapTargets } from '../arrange';
 import { layerToNodeBox, nodeToLayerBox, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
-import { applySpecAttrs, drawSpecShape } from './draw';
+import { ImageStore } from './imageStore';
+import { editKey, editNeedsPixels } from '../imageEffects/imageEdit';
+import { BitmapCache, EDITOR_BITMAP_SIDE, prepareBitmap } from '../imageEffects/prepare';
+import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
 import type { NodeSpec } from './nodes';
 import type { SafeZoneOverlay, SelectOptions } from './types';
 
@@ -82,7 +85,8 @@ export class Scene {
   private marqueeStart: { x: number; y: number; additive: boolean } | null = null;
   private nodes = new Map<string, AnyNode>();
   private specs = new Map<string, NodeSpec>();
-  private images = new Map<string, HTMLImageElement | 'error'>();
+  private images = new ImageStore(() => this.content.batchDraw());
+  private bitmaps = new BitmapCache();
   private input: SceneInput | null = null;
   private pendingEmit = false;
 
@@ -188,6 +192,8 @@ export class Scene {
     this.stage.destroy();
     this.nodes.clear();
     this.specs.clear();
+    this.bitmaps.clear();
+    this.images.destroy();
   }
 
   // ── Selección y zona segura ────────────────────────────────────────────
@@ -298,26 +304,32 @@ export class Scene {
 
   private apply(node: AnyNode, spec: NodeSpec): void {
     applySpecAttrs(node, spec);
-    if (spec.kind === 'image' && spec.url) this.loadImage(spec.url);
   }
 
   private drawShape(context: Context, shape: Shape): void {
     const spec = this.specs.get(shape.id());
     if (!spec) return;
-    drawSpecShape(context, shape, spec, spec.kind === 'image' && spec.url ? this.images.get(spec.url) : undefined);
+    drawSpecShape(context, shape, spec, this.imageFor(spec));
   }
 
-  private loadImage(url: string): void {
-    if (this.images.has(url)) return;
-    const image = new window.Image();
-    image.crossOrigin = 'anonymous';
-    this.images.set(url, image);
-    image.onload = () => this.content.batchDraw();
-    image.onerror = () => {
-      this.images.set(url, 'error');
-      this.content.batchDraw();
-    };
-    image.src = url;
+  /** La foto de la capa: tal cual, o ya editada con el mismo código que usa la exportación. */
+  private imageFor(spec: NodeSpec): LoadedImage {
+    if (spec.kind !== 'image' || !spec.url) return undefined;
+    const base = this.images.get(spec.url);
+    if (!(base instanceof HTMLImageElement) || !spec.edit) return base;
+    if (editNeedsPixels(spec.edit) && !this.images.isReadable(spec.url)) return base;
+    const key = `${spec.url}|${editKey(spec.edit)}`;
+    let bitmap = this.bitmaps.get(key);
+    if (!bitmap) {
+      try {
+        bitmap = prepareBitmap(base, spec.edit, EDITOR_BITMAP_SIDE);
+      } catch {
+        // El navegador no deja leer la foto: se ve sin editar (la exportación avisará).
+        return base;
+      }
+      this.bitmaps.set(key, bitmap);
+    }
+    return bitmap;
   }
 
   // ── Interacción ────────────────────────────────────────────────────────
@@ -329,7 +341,22 @@ export class Scene {
     queueMicrotask(() => {
       this.pendingEmit = false;
     });
-    this.callbacks.onChange(nodes.map((node) => ({ id: node.id(), patch: boxOf(node) })));
+    // Al soltar, la posición y el tamaño quedan en números enteros (sin 12,3456 en el panel).
+    this.callbacks.onChange(
+      nodes.map((node) => {
+        const box = boxOf(node);
+        return {
+          id: node.id(),
+          patch: {
+            ...box,
+            x: Math.round(box.x),
+            y: Math.round(box.y),
+            width: Math.max(1, Math.round(box.width)),
+            height: Math.max(1, Math.round(box.height)),
+          },
+        };
+      }),
+    );
   }
 
   private pointer(): { x: number; y: number } | null {

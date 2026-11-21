@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 21/11/2026 (editor de reels en la rama `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 21/11/2026 (ediciones sencillas del editor en la rama `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -22,10 +22,10 @@ y las funciones desplegadas sin proveedores.
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 876 pasan (21/11/2026, rama `f11/editor-reels`; incluye el editor de reels) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db`  | 858 pasan, 2 omitidas (21/11/2026, rama `f11/editor-reels`; incluye editor de reels y subtítulos automáticos) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `npm test`         | 987 pasan (21/11/2026, rama `f13/edicion-sencilla`; incluye las ediciones sencillas del editor) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db`  | 909 pasan, 2 omitidas (21/11/2026, rama `f13/edicion-sencilla`; incluye el documento v5) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
 | `worker/`          | 90 pasan (21/11/2026, rama `f11/editor-reels`) | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
-| `agency/`          | 49 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
+| `agency/`          | 54 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
 | `npm run test:e2e` | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
 | CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -370,6 +370,35 @@ después en `energym-demo-datos/capturas/tanda2/f13-*`.
   `social/avisosResolubles.test.tsx`, `status.test.ts`, `holdAdvice.test.ts`, caso
   nuevo en `tests/db/integraciones.test.ts`; e2e 09, 11, 13, 20, 21 y 27 abren «⋯»
   con `accionDelMenu` (`tests/e2e/apoyo.ts`), **sin ejecutar** la tanda e2e.
+
+### Ediciones sencillas del editor (rama `f13/edicion-sencilla`, 21/11/2026)
+
+Detalle y límites en `docs/edicion-fotos.md`, sección 10.
+
+- **Implementado y probado (unidad, componentes y base de datos):** ajustes de
+  foto (brillo, contraste, saturación, temperatura, nitidez) y 7 filtros
+  rápidos; girar, voltear, enderezar y recortar (libre o por proporción);
+  fondo detrás de la foto (color, degradado, foto desenfocada) y sombra bajo el
+  plato; quitar el fondo y desenfocar el fondo del plato (foto nueva, en el
+  navegador); contorno, sombra y fondo del texto; sombra de las formas; 7
+  figuras y pegatinas nuevas. Todo se guarda en la capa (documento **v5**), se
+  deshace con Ctrl+Z, es por página en carruseles y el lienzo y la exportación
+  lo dibujan con el mismo código.
+- **Migración** `20261211010000_templates_document_v5.sql` (con vuelta atrás y
+  prueba en `tests/db/edicion-sencilla.test.ts`): la tabla de plantillas acepta
+  la v5. **No aplicada en staging ni en producción.**
+- **IA:** solo «Cambiar el fondo con IA…» (OpenAI, ya existente, tras su
+  interruptor); sin proveedor, el botón no sale. El resto es del navegador.
+- **Quitar el fondo** queda detrás de `photo-edit/cutout/remover.ts` para
+  cambiar de motor (otro agente compara alternativas a IS-Net).
+- **Arreglo incluido:** el lienzo carga las imágenes como la exportación
+  (`canvas/imageStore.ts`), lo que evita «Imagen no disponible» al insertar
+  desde el selector; barra «Añadir» con desplazamiento en móvil; posición y
+  tamaño enteros al soltar.
+- **Sin probar:** a mano en un navegador (dibujo con Konva, recorte arrastrando
+  el marco, descarga del modelo de recorte) ni en e2e de Playwright.
+- **Pendiente:** prueba e2e del editor con las ediciones; decidir el motor de
+  recorte definitivo.
 
 ## Sin probar contra el servicio real
 

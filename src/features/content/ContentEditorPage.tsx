@@ -58,8 +58,9 @@ import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
-import { canEditPhoto } from '@/features/photo-edit/api';
+import { canEditPhoto, canEditWithAi, useAiEditOptions } from '@/features/photo-edit/api';
 import { PhotoEditDialog } from '@/features/photo-edit/PhotoEditDialog';
+import type { PhotoToolsContext } from './editor/panels/PhotoPanel';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
 import { orderFontOptions } from '@/features/brand/fonts';
@@ -97,6 +98,7 @@ import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { assetIdsOf } from './editor/canvas/nodes';
 import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { activePageIndex, editorReducer, initEditor } from './editor/history';
+import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { ArrangeControls, MultiSelectionPanel } from './editor/panels/ArrangeControls';
 import { CopyPanel } from './editor/panels/CopyPanel';
@@ -255,6 +257,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
   const [photoEditing, setPhotoEditing] = useState(false);
+  const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai'>('enhance');
   const [templateOpen, setTemplateOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -366,6 +369,30 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     const row = (assets.data ?? []).find((asset) => asset.id === assetId);
     return row && canEditPhoto(row) ? { layerId: selected.id, row, url: images.get(row.id) } : null;
   }, [selected, assets.data, images]);
+
+  // Ediciones de foto de la capa elegida que crean una foto nueva (quitar el fondo…) y, si el
+  // servidor tiene IA para ello, «Cambiar el fondo con IA». Sin IA configurada, ese botón no sale.
+  const aiPhotoOptions = useAiEditOptions(brand.id, Boolean(editablePhoto) && canEditWithAi(editablePhoto!.row));
+  const aiBackgroundAvailable = Boolean(aiPhotoOptions.data?.some((choice) => choice.operation === 'replace_background'));
+  const photoTools: PhotoToolsContext | undefined = editablePhoto
+    ? {
+        row: editablePhoto.row,
+        url: editablePhoto.url,
+        onUseResult: (row, fit) =>
+          dispatch({
+            type: 'update',
+            id: editablePhoto.layerId,
+            patch: { source: { kind: 'asset', assetId: row.id }, fit },
+          }),
+        onAiBackground:
+          aiBackgroundAvailable && editablePhoto.url
+            ? () => {
+                setPhotoEditTab('ai');
+                setPhotoEditing(true);
+              }
+            : undefined,
+      }
+    : undefined;
 
   // Marca de contenido generado con IA: la calcula la base de datos al guardar
   // (`item.ai_generated`); aquí se adelanta con lo que hay en pantalla.
@@ -972,7 +999,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
       {/* Barra de herramientas */}
       {!readOnly && (
-        <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Herramientas del editor">
+        <div
+          className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 [&>*]:shrink-0"
+          role="toolbar"
+          aria-label="Herramientas del editor"
+        >
           <span className="mr-1 text-xs font-medium text-muted">Añadir</span>
           <Button
             variant="secondary"
@@ -1055,6 +1086,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <Circle className="h-4 w-4" aria-hidden />
             Elipse
           </Button>
+          <AddStickerSelect
+            disabled={full}
+            onAdd={(shape) =>
+              dispatch({
+                type: 'add',
+                layer: newShapeLayer(canvas, everyLayer, shape, brandStyle.palette[1]?.hex),
+              })
+            }
+          />
           {voiceCopilot && (
             <Button
               variant={copilotOpen ? 'primary' : 'secondary'}
@@ -1219,7 +1259,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                     brandStyle={brandStyle}
                     allowedRatios={allowed?.ratios ?? null}
                     textRef={textRef}
-                    onEditPhoto={editablePhoto?.url ? () => setPhotoEditing(true) : undefined}
+                    onEditPhoto={
+                      editablePhoto?.url
+                        ? () => {
+                            setPhotoEditTab('enhance');
+                            setPhotoEditing(true);
+                          }
+                        : undefined
+                    }
+                    photoTools={photoTools}
                   />
                   {selected && !readOnly && !selected.locked && (
                     <ArrangeControls layers={[selected]} dispatch={dispatch} />
@@ -1423,6 +1471,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           )}
           {photoEditing && editablePhoto && (
             <PhotoEditDialog
+              initialTab={photoEditTab}
               asset={editablePhoto.row}
               url={editablePhoto.url}
               open
