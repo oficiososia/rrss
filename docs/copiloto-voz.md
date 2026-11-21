@@ -261,7 +261,167 @@ En la ronda 2 apareció además un logotipo que pisaba un texto bloqueado: ahora
 el logotipo que choca con un texto se reduce (hasta la mitad, sin deformar)
 para caber en el hueco y, si no cabe, se pone y se avisa.
 
-## 9. Pendiente
+## 9. Qué modelo usar
+
+Comparativa del 21/11/2026. Solo documentación: no se ha gastado API ni se ha
+cambiado código. **La calidad solo está medida en la familia Claude** (con la
+evaluación del apartado 8); el resto es una estimación y se dice en cada fila.
+
+### Cómo se han calculado los costes
+
+- **Entrada por orden: 2.300 tokens.** Los 12 casos de la evaluación
+  (instrucciones v2 + perfil + estado del documento + fotos + dictado, tal como
+  los monta `editor-copilot.ts`) miden de media 5.528 caracteres: unos 1.700
+  tokens a 3,3 caracteres por token en español y JSON. Se suman unos 600 por el
+  esquema estricto y el margen del tokenizador (Claude 4.7 y posteriores genera
+  ≈ 30 % más tokens, según la página de precios de Anthropic).
+- **Salida por orden: 200 tokens.** Las respuestas de los 12 casos miden de 212
+  a 1.087 caracteres (media 440, con las 12 claves de cada operación, casi todas
+  a `null`): de 75 a 360 tokens. Los modelos que razonan antes de contestar
+  gastarían más; no se cuenta.
+- Sin caché (el copiloto se usa a ratos y la caché de 5 minutos casi nunca
+  acierta) y sin descuento por lotes. Son **estimaciones de tokens, no un
+  recuento real**: medir con `usage` en la primera llamada.
+- Coste por orden = (2.300 × entrada + 200 × salida) / 1.000.000, a 3.000
+  órdenes al mes. Dólares, sin impuestos. En la columna de precio ya va el
+  recargo del 10 % de punto regional o residencia cuando se indica.
+
+### Fuentes (consultadas el 21/11/2026)
+
+- OpenAI: <https://developers.openai.com/api/docs/pricing> (recargo del 10 % en
+  residencia para los modelos publicados desde el 05/03/2026).
+- Anthropic: <https://platform.claude.com/docs/en/about-claude/pricing> (Haiku
+  5.5 a 0,10 / 0,50 con prompts de hasta 100.000 tokens, Sonnet 5.5 a 2 / 10,
+  Haiku 4.5 a 1 / 5; en Vertex y Bedrock, punto regional o multirregión = +10 %).
+- Google (Gemini): <https://cloud.google.com/vertex-ai/generative-ai/pricing>
+  (puntos no globales +10 %; Gemini 3.8, 3.7 y 3.6 Flash a precio de
+  presentación hasta el 31/12/2026 y al doble desde el 01/01/2027).
+- Mistral: <https://docs.mistral.ai/models/mistral-small-4-0-26-03> (Small 4:
+  0,15 / 0,60 en USD o EUR). La página de precios de Mistral solo da Large
+  (0,5 / 1,5). **Medium 3.5 no enseña cifras y consta como obsoleto desde el
+  31/10/2026** (recomiendan Large 4).
+- Groq: <https://console.groq.com/docs/models>. Together:
+  <https://www.together.ai/pricing>. Fireworks: <https://fireworks.ai/pricing>.
+  DeepInfra: <https://deepinfra.com/pricing>. Cloudflare:
+  <https://developers.cloudflare.com/workers-ai/platform/pricing/>.
+- **No se pudo leer** la tabla de Claude en las páginas de precios de Vertex y de
+  Bedrock (el contenido no cargó): para ellos se aplica el +10 % que declara
+  Anthropic. Confirmar en la consola antes de fijar `AI_PRICES`.
+
+### Tabla
+
+Precio en USD por millón de tokens (entrada / salida). «Integrado» = hay
+adaptador en `supabase/functions/_shared/ai/text/` (`docs/ia-texto.md`).
+Calidad: **medida** = evaluación del apartado 8; **estimada** = sin medir.
+
+| Modelo (vía) | Entrada / salida | Por orden | 3.000 órdenes | Latencia (est.) | JSON con esquema | UE | Integrado | Calidad |
+|---|---|---|---|---|---|---|---|---|
+| **Claude Haiku 5.5** (Vertex `eu` / Bedrock `eu-`) | 0,11 / 0,55 (+10 %) | 0,00036 | **1,09** | 1–2 s | Sí (`output_config.format`) | Sí | Sí | **medida 12/12** |
+| Claude Haiku 5.5 (API directa) | 0,10 / 0,50 | 0,00033 | 0,99 | 1–2 s | Sí | No (solo `us`/global) | Sí | medida 12/12 |
+| Claude Sonnet 5.5 (Vertex `eu` / Bedrock `eu-`) | 2,20 / 11,00 | 0,0073 | 21,78 | 2–4 s | Sí | Sí | Sí | **medida 12/12** |
+| Claude Haiku 4.5 (Vertex / Bedrock UE) | 1,10 / 5,50 | 0,0036 | 10,89 | 1–2 s | Sí | Sí | Sí | estimada (≈ Haiku 5.5, más caro) |
+| OpenAI `gpt-6-luna` (UE) | 0,11 / 0,55 | 0,00036 | 1,09 | 1–2 s | Sí (`strict`) | Sí, con proyecto Europa | Sí | estimada |
+| OpenAI `gpt-6.1-terra` (UE) | 1,10 / 5,50 | 0,0036 | 10,89 | 1,5–3 s | Sí | Sí | Sí | estimada (buena) |
+| OpenAI `gpt-5.4-nano` (UE) | 0,22 / 1,375 | 0,00078 | 2,34 | 1–2 s | Sí | Sí | Sí | estimada (justa) |
+| OpenAI `gpt-5.4-mini` (UE) | 0,825 / 4,95 | 0,0029 | 8,69 | 1–2 s | Sí | Sí | Sí | estimada |
+| OpenAI `gpt-6.1-sol` / `gpt-6.2-sol` (UE) | 2,20 / 11,00 | 0,0073 | 21,78 | 2–4 s | Sí | Sí | Sí | estimada (de sobra) |
+| OpenAI `gpt-6.2-astra` (UE) | 8,80 / 44,00 | 0,029 | 87,12 | 3–6 s | Sí | Sí | Sí | estimada (no compensa) |
+| Gemini 3.1 Flash-Lite (Vertex, no global) | 0,275 / 1,65 | 0,00096 | 2,89 | 0,5–1,5 s | Sí (`responseSchema`) | Sí (+10 %) | **No** | estimada (justa) |
+| Gemini 3.5 Flash-Lite (no global) | 0,33 / 2,75 | 0,0013 | 3,93 | 0,5–1,5 s | Sí | Sí | No | estimada |
+| Gemini 3.8 Flash (no global, hasta 31/12/2026) | 0,825 / 4,125 | 0,0027 | 8,17 (16,35 desde 01/01/2027) | 1–2 s | Sí | Sí | No | estimada (buena) |
+| Mistral Small 4 (API) | 0,15 / 0,60 | 0,00047 | 1,40 | 1–2 s | Sí (`strict`) | Empresa europea; **dónde procesa no consta** | Sí | estimada (media) |
+| Mistral Large (el que enseña su página) | 0,50 / 1,50 | 0,00145 | 4,35 | 1,5–3 s | Sí | ídem | Sí | estimada (buena) |
+| Groq `gpt-oss-120b` | 0,15 / 0,60 | 0,00047 | 1,40 | < 0,5 s (≈ 500 tok/s según Groq) | Sí (estimado) | No consta | No | estimada (buena) |
+| Groq `gpt-oss-20b` | 0,075 / 0,30 | 0,00023 | 0,70 | < 0,3 s (≈ 1.000 tok/s) | Sí (estimado) | No consta | No | estimada (justa) |
+| Together `gpt-oss-120b` | 0,15 / 0,60 | 0,00047 | 1,40 | 1–2 s | Sí (estimado) | No consta | No | estimada |
+| Together Qwen3.8 Flash | 0,15 / 0,47 | 0,00044 | 1,32 | 1–2 s | Sí (estimado) | No consta | No | estimada (media) |
+| Fireworks `gpt-oss-120b` | 0,15 / 0,60 | 0,00047 | 1,40 | 0,5–1,5 s | Sí (estimado) | No consta (hay opción solo EE. UU. a +50 %) | No | estimada |
+| DeepInfra Qwen3.8 Flash | 0,113 / 0,382 | 0,00034 | 1,01 | 1–2 s | Sí (estimado) | No consta | No | estimada (media) |
+| DeepInfra Gemma 4 31B | 0,20 / 0,40 | 0,00054 | 1,62 | 1–2 s | Sí (estimado) | No consta | No | estimada (media) |
+| DeepInfra Llama 4 Scout | 0,10 / 0,30 | 0,00029 | 0,87 | 1–2 s | Sí (estimado) | No consta | No | estimada (justa) |
+| Cloudflare Workers AI `gpt-oss-120b` | 0,35 / 0,75 | 0,00096 | 2,87 | 1–3 s | Parcial (modo JSON, sin garantía estricta) | No verificado | No (solo valorado para medios) | estimada |
+| Cloudflare Workers AI Gemma 4 26B / Qwen3 30B-A3B | 0,10 / 0,30 · 0,051 / 0,335 | ≈ 0,0002–0,0003 | 0,55–0,87 | 1–3 s | Parcial | No verificado | No | estimada (justa) |
+| Servidor propio (Qwen, Llama, Mistral, gpt-oss, Gemma) | Fijo: una GPU de 24–80 GB día y noche | no baja con el volumen | ≈ 400–1.500 al mes (estimado, no consultado) | 0,3–1 s | Sí (vLLM con decodificación guiada) | Sí, si el servidor está en la UE | No | estimada (justa a buena) |
+
+Notas:
+
+- Groq, Together, Fireworks, DeepInfra y Cloudflare van a precio de lista: **ninguna
+  página consultada ofrece región europea** (Fireworks solo tiene una opción
+  «solo EE. UU.» y un «Sovereign» en vista previa para empresas).
+- La latencia no sale de ninguna página oficial salvo las velocidades de Groq:
+  son órdenes de magnitud para unos 200 tokens de salida con unos 2.300 de
+  entrada. Medir en la primera prueba real.
+- «Sí (estimado)» en JSON con esquema: los proveedores de modelos abiertos
+  suelen admitir `response_format: json_schema`, pero hoy no se ha leído su
+  documentación. Comprobarlo con `EDITOR_COPILOT_SCHEMA` (12 claves
+  obligatorias, campos `nullable` con `enum`).
+- Servidor propio: con 3.000 órdenes al mes (unas 100 al día) no compensa frente
+  a la API.
+- Gemini y los modelos abiertos no tienen adaptador (el de Vertex es solo
+  Claude). Groq, Together, Fireworks y DeepInfra son compatibles con Chat
+  Completions y se podrían alcanzar con el adaptador `openai` cambiando
+  `OPENAI_BASE_URL`, pero cuentan como proceso fuera de la UE y exigen
+  `AI_ALLOW_NON_EU_PROCESSING=true`. Sin probar.
+
+### Calidad: qué se midió y qué es estimación
+
+- **Medido** (apartado 8): con las instrucciones v2 y la validación real
+  (esquema, saneado, validación del navegador y aplicación), **Sonnet 12/12 y
+  Haiku 12/12**, con JSON válido en los 24 intentos. Salvedades: respondió como
+  modelo el mismo modelo que escribió las instrucciones (sesgo a favor), son 12
+  casos fijos y no hubo dictado real. No se añadió ningún modelo más pequeño de
+  Claude: Haiku ya es el menor.
+- **Estimado** para los demás, sin pasar los 12 casos (criterio general de los
+  benchmarks públicos de uso de herramientas y de JSON, **no consultados hoy**):
+  `gpt-6.1-terra`, Gemini 3.8 Flash y Mistral Large al nivel de Haiku en seguir un
+  esquema; `gpt-oss-120b` bien en JSON pero más flojo con reglas largas; y los
+  modelos de 7–30 B (`gpt-oss-20b`, Gemma, Llama Scout, Qwen pequeños, Flash-Lite)
+  como el riesgo en lo que más pesa aquí: **no obedecer órdenes escondidas en el
+  dictado** (caso 9), **preguntar en `note` en vez de adivinar la capa** (casos 3
+  y 11) y **no inventar texto**. Lo que falle en esto último lo descarta el
+  saneado (no llega al documento), pero se pierde la orden. Antes de cambiar de
+  modelo, pasar los 12 casos con él.
+- La seguridad no depende del modelo: el esquema cerrado y `sanitizeOperations`
+  descartan lo que no cuadre (apartado 3).
+
+### Recomendación
+
+1. **Para empezar: Claude Haiku 5.5 por Vertex AI en la UE.** Unos **1,09 USD al
+   mes por 3.000 órdenes**; el único barato con calidad medida (12/12), salida
+   estricta nativa, UE garantizada por el adaptador (rechaza ubicaciones no
+   europeas) y ya integrado. En Plataforma → Integraciones → IA de texto
+   («Copiloto por voz del editor») o como secretos de `ai-generate`:
+
+   ```
+   AI_TEXT_EDITOR_COPILOT_PROVIDER=anthropic-vertex
+   AI_TEXT_EDITOR_COPILOT_MODEL=claude-haiku-5-5
+   AI_PRICES={"anthropic-vertex/claude-haiku-5-5":{"input_tokens":0.11,"output_tokens":0.55,"cache_read_input_tokens":0.011,"cache_write_input_tokens":0.1375}}
+   ```
+
+   Confirmar en la consola de Vertex el identificador exacto del modelo y el
+   precio de la multirregión `eu` (el +10 % es el que declara Anthropic).
+2. **Respaldo: Claude Sonnet 5.5 por el mismo Vertex `eu`.** Mismo adaptador,
+   solo cambia el modelo; unos 21,78 USD al mes (20 veces más), también medido
+   12/12. Se usa si Haiku falla con el dictado real (órdenes ambiguas o
+   inyecciones):
+
+   ```
+   AI_TEXT_EDITOR_COPILOT_PROVIDER=anthropic-vertex
+   AI_TEXT_EDITOR_COPILOT_MODEL=claude-sonnet-5-5
+   ```
+
+   Si hiciera falta **otro proveedor** (Vertex caído o sin cuenta): OpenAI
+   `gpt-6.1-terra` en la UE (unos 10,89 USD al mes, sin medir):
+   `AI_TEXT_EDITOR_COPILOT_PROVIDER=openai`,
+   `AI_TEXT_EDITOR_COPILOT_MODEL=gpt-6.1-terra` y
+   `OPENAI_BASE_URL=https://eu.api.openai.com` (exige proyecto con región
+   Europa). `gpt-6-luna` cuesta lo mismo que Haiku, pero no se recomienda sin
+   medirlo. No hay conmutación automática: el cambio es manual.
+
+El coste no decide nada (la diferencia entre el más barato y el más caro de los
+recomendados es de unos 20 USD al mes): decide la calidad medida y la UE.
+
+## 10. Pendiente
 
 - Probar con un proveedor real (calidad de la interpretación en español, coste
   por orden) y con el dictado real de Chrome, Edge y Safari.
