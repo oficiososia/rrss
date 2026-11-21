@@ -2,24 +2,65 @@
 //
 //   removeBackgroundInBrowser(foto, onProgreso) → la misma foto con el alfa del modelo.
 //
-// El modelo (IS-Net) corre en un Web Worker con onnxruntime-web; se descarga una
-// vez y queda en Cache Storage. El worker se termina tras un rato sin uso para
-// devolver la memoria.
+// Dos motores, los dos en un Web Worker con onnxruntime-web: BEN2 (calidad alta,
+// solo con WebGPU) e IS-Net (respaldo, calidad básica). Se elige con select.ts y,
+// si BEN2 falla al ejecutarse, se pasa a IS-Net sin romper y se recuerda durante
+// la sesión. El modelo se descarga una vez y queda en Cache Storage. El worker se
+// termina tras un rato sin uso para devolver la memoria.
 import type { Pixels } from '../pixels';
 import type { FromWorker, Provider, ToWorker } from './cutout.worker';
-import { applyMask, normalizeMask, NoSubjectError, toModelInput } from './mask';
-import { cutoutModelUrl, cutoutSimulated, CUTOUT_MODEL_NAME, DEFAULT_CUTOUT_MODEL_BYTES, MODEL_SIDE } from './model';
+import { ModelDownloadError } from './download';
+import { applyMask, ben2Mask, normalizeMask, NoSubjectError, toBen2Input, toModelInput } from './mask';
+import {
+  cutoutSimulated,
+  CUTOUT_MODEL_NAME,
+  DEFAULT_CUTOUT_MODEL_BYTES,
+  engineSpec,
+  MODEL_SIDE,
+  type CutoutEngineId,
+  type CutoutEngineSpec,
+} from './model';
+import { chooseEngine, probeNavigator, type EngineProbe } from './select';
 
 export type CutoutProgress =
-  | { phase: 'downloading'; received: number; total: number }
+  | { phase: 'downloading'; received: number; total: number; engine?: CutoutEngineId }
   | { phase: 'loading' }
   | { phase: 'running' };
 
 export interface CutoutResult {
   pixels: Pixels;
+  /** Nombre del modelo, para la procedencia (`ben2-base-fp16` o `isnet-general-use`). */
   model: string;
+  engine: CutoutEngineId;
+  /** `high` con BEN2; `basic` con el respaldo (la interfaz lo dice). */
+  quality: 'high' | 'basic';
   provider: Provider | 'simulated';
   fromCache: boolean;
+}
+
+/** Lo que devuelve el modelo ya ejecutado (antes de pasarlo a alfa). */
+export interface ModelRun {
+  prediction: Float32Array;
+  provider: Provider;
+  fromCache: boolean;
+}
+
+/** Piezas cambiables (en las pruebas, dobles): qué mira el navegador y cómo se ejecuta un modelo. */
+export interface CutoutDeps {
+  probe: (ben2Failed: boolean) => EngineProbe;
+  runModel: (
+    spec: CutoutEngineSpec,
+    input: Float32Array,
+    onProgress: ((p: CutoutProgress) => void) | undefined,
+    signal: AbortSignal | undefined,
+  ) => Promise<ModelRun>;
+}
+
+export interface CutoutOptions {
+  /** Para cancelar (descarga o recorte en marcha). */
+  signal?: AbortSignal;
+  /** Solo pruebas. */
+  deps?: CutoutDeps;
 }
 
 /** Tras este tiempo sin recortes se termina el worker. */
@@ -57,6 +98,7 @@ export function describeCutoutError(error: unknown): string {
   const message = (error as Error | undefined)?.message ?? '';
   if (error instanceof NoSubjectError || name === 'NoSubjectError') return message;
   if (name === 'ModelDownloadError') return message;
+  if (name === 'AbortError') return '';
   if (name === 'RangeError' || /memory|alloc|out of/i.test(message)) {
     return 'El navegador se ha quedado sin memoria para quitar el fondo. Cierra otras pestañas, prueba con una foto más pequeña o usa un ordenador.';
   }
@@ -64,6 +106,19 @@ export function describeCutoutError(error: unknown): string {
     return 'Este navegador no ha podido preparar el modelo para quitar el fondo (ni con la tarjeta gráfica ni con el procesador). Prueba con otro navegador o con un ordenador.';
   }
   return 'No se ha podido quitar el fondo en el navegador. Vuelve a intentarlo.';
+}
+
+/** BEN2 ya falló en esta sesión (operadores sin soporte, sin memoria…): se usa IS-Net hasta recargar. */
+let ben2Failed = false;
+
+/** Olvida que BEN2 falló (solo para las pruebas). */
+export function resetCutoutSession(): void {
+  ben2Failed = false;
+}
+
+/** ¿Se ha descartado BEN2 en esta sesión? */
+export function ben2FailedThisSession(): boolean {
+  return ben2Failed;
 }
 
 let worker: Worker | null = null;
@@ -94,13 +149,11 @@ function getWorker(): Worker {
   const w = new Worker(new URL('./cutout.worker.ts', import.meta.url), { type: 'module', name: 'recorte-fotos' });
   w.onmessage = (event: MessageEvent<FromWorker>) => {
     const m = event.data;
-    if (m.type === 'download') {
-      pending.forEach((p) => p.onProgress?.({ phase: 'downloading', received: m.received, total: m.total }));
-      return;
-    }
     const p = pending.get(m.id);
     if (!p) return;
-    if (m.type === 'loading') p.onProgress?.({ phase: 'loading' });
+    if (m.type === 'download') {
+      p.onProgress?.({ phase: 'downloading', received: m.received, total: m.total, engine: m.engine });
+    } else if (m.type === 'loading') p.onProgress?.({ phase: 'loading' });
     else if (m.type === 'running') p.onProgress?.({ phase: 'running' });
     else if (m.type === 'mask') {
       pending.delete(m.id);
@@ -136,35 +189,136 @@ function simulatedPrediction(): Float32Array {
   return out;
 }
 
-function runInWorker(input: Float32Array, onProgress?: (p: CutoutProgress) => void) {
+function abortError(): Error {
+  const error = new Error('Recorte cancelado.');
+  error.name = 'AbortError';
+  return error;
+}
+
+/** ¿Lo canceló quien lo pidió? */
+export function isCutoutCancelled(error: unknown): boolean {
+  return (error as Error | undefined)?.name === 'AbortError';
+}
+
+function runInWorker(
+  spec: CutoutEngineSpec,
+  input: Float32Array,
+  onProgress: ((p: CutoutProgress) => void) | undefined,
+  signal: AbortSignal | undefined,
+): Promise<ModelRun> {
   return new Promise<Extract<FromWorker, { type: 'mask' }>>((ok, ko) => {
+    if (signal?.aborted) return ko(abortError());
     const id = nextId++;
-    pending.set(id, { ok, ko, onProgress });
-    const message: ToWorker = { type: 'run', id, modelUrl: cutoutModelUrl(), input };
+    const cancel = () => {
+      if (!pending.delete(id)) return;
+      // El worker trabaja en serie: terminarlo es lo único que corta una descarga o una inferencia en marcha.
+      if (pending.size === 0 && worker) {
+        worker.terminate();
+        worker = null;
+      }
+      ko(abortError());
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    pending.set(id, {
+      ok: (m) => {
+        signal?.removeEventListener('abort', cancel);
+        ok(m);
+      },
+      ko: (e) => {
+        signal?.removeEventListener('abort', cancel);
+        ko(e);
+      },
+      onProgress,
+    });
+    const message: ToWorker = {
+      type: 'run',
+      id,
+      engine: spec.id,
+      modelUrl: spec.url,
+      modelBytes: spec.bytes,
+      side: spec.side,
+      input,
+    };
     getWorker().postMessage(message, [input.buffer]);
-  }).finally(() => {
-    if (pending.size === 0) idleTimer = setTimeout(releaseCutoutWorker, WORKER_IDLE_MS);
-  });
+  })
+    .then(({ prediction, provider, fromCache }) => ({ prediction, provider, fromCache }))
+    .finally(() => {
+      if (pending.size === 0) idleTimer = setTimeout(releaseCutoutWorker, WORKER_IDLE_MS);
+    });
+}
+
+const defaultDeps: CutoutDeps = {
+  probe: (failed) => probeNavigator(undefined, failed),
+  runModel: runInWorker,
+};
+
+async function runEngine(
+  id: CutoutEngineId,
+  image: Pixels,
+  onProgress: ((p: CutoutProgress) => void) | undefined,
+  options: CutoutOptions,
+): Promise<CutoutResult> {
+  const deps = options.deps ?? defaultDeps;
+  const spec = engineSpec(id);
+  const input = id === 'ben2' ? toBen2Input(image, spec.side) : toModelInput(image, spec.side);
+  const run = await deps.runModel(spec, input, onProgress, options.signal);
+  const pixels =
+    id === 'ben2'
+      ? applyMask(image, ben2Mask(run.prediction), spec.side, 'none')
+      : applyMask(image, normalizeMask(run.prediction), spec.side);
+  return {
+    pixels,
+    model: spec.name,
+    engine: id,
+    quality: spec.quality,
+    provider: run.provider,
+    fromCache: run.fromCache,
+  };
 }
 
 /**
  * Foto → la misma foto con el fondo transparente. Lanza `NoSubjectError` si no
- * encuentra nada que recortar y `ModelDownloadError` si no puede bajar el modelo.
+ * encuentra nada que recortar, `ModelDownloadError` si no puede bajar el modelo
+ * y un `AbortError` si se cancela (`isCutoutCancelled`).
+ *
+ * Motor: BEN2 con WebGPU; si no hay WebGPU o memoria, o BEN2 falla al ejecutarse,
+ * IS-Net (y no se vuelve a intentar BEN2 en esta sesión, salvo que fuera solo un
+ * corte de red al bajarlo).
  */
 export async function removeBackgroundInBrowser(
   image: Pixels,
   onProgress?: (p: CutoutProgress) => void,
+  options: CutoutOptions = {},
 ): Promise<CutoutResult> {
   const support = cutoutSupport();
   if (!support.ok) throw new Error(support.reason);
-  const input = toModelInput(image);
+  if (options.signal?.aborted) throw abortError();
   if (cutoutSimulated()) {
     onProgress?.({ phase: 'downloading', received: DEFAULT_CUTOUT_MODEL_BYTES, total: DEFAULT_CUTOUT_MODEL_BYTES });
     onProgress?.({ phase: 'running' });
-    const mask = normalizeMask(simulatedPrediction());
-    return { pixels: applyMask(image, mask), model: CUTOUT_MODEL_NAME, provider: 'simulated', fromCache: true };
+    return {
+      pixels: applyMask(image, normalizeMask(simulatedPrediction())),
+      model: CUTOUT_MODEL_NAME,
+      engine: 'isnet',
+      quality: 'basic',
+      provider: 'simulated',
+      fromCache: true,
+    };
   }
-  const result = await runInWorker(input, onProgress);
-  const pixels = applyMask(image, normalizeMask(result.prediction));
-  return { pixels, model: CUTOUT_MODEL_NAME, provider: result.provider, fromCache: result.fromCache };
+  const deps = options.deps ?? defaultDeps;
+  const choice = await chooseEngine(deps.probe(ben2Failed));
+  if (choice.engine === 'ben2') {
+    try {
+      return await runEngine('ben2', image, onProgress, options);
+    } catch (error) {
+      if (isCutoutCancelled(error) || error instanceof NoSubjectError) throw error;
+      // Un corte de red no dice nada de BEN2 (solo esta vez); operadores, memoria o GPU, sí.
+      if ((error as Error)?.name !== 'ModelDownloadError' && !(error instanceof ModelDownloadError)) {
+        ben2Failed = true;
+      }
+      console.warn('[recorte] BEN2 no ha funcionado, se usa IS-Net', error);
+      if (!options.deps) releaseCutoutWorker();
+    }
+  }
+  return runEngine('isnet', image, onProgress, options);
 }

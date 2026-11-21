@@ -101,7 +101,7 @@ export function PhotoPanel({
         edit,
         save: (input) => save.mutateAsync(input),
         onProgress: (progress) => {
-          if (progress.phase === 'downloading') setBusy('Descargando el recortador (solo la primera vez)…');
+          if (progress.phase === 'downloading') setBusy(`Descargando el modelo de recorte (${Math.round(progress.total / 1_000_000)} MB, solo la primera vez)…`);
           else if (progress.phase === 'running') setBusy(working);
         },
       });

@@ -22,7 +22,7 @@ y las funciones desplegadas sin proveedores.
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 1015 pasan (21/11/2026, rama `f16/editor-tanda2`; incluye plantillas del editor, atajos y menú lateral) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm test`         | 1041 pasan (21/11/2026, rama `f17/recorte-ben2`; incluye motores de recorte BEN2 e IS-Net, plantillas del editor, atajos y menú lateral) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
 | `npm run test:db`  | 910 pasan, 2 omitidas (21/11/2026, rama `f16/editor-tanda2`; incluye plantillas guardadas desde el editor) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
 | `npm run test:layout` | 23 pasan (21/11/2026, rama `f16/editor-tanda2`) | Navegador real (Chromium de Playwright) **sin Supabase**: la aplicación con el cliente simulado de `src/test`. Editor sin scroll de página en 1920×1080, 1366×768, 1024×768 y 375×812 (lienzos 4:5, 9:16 y 16:9), lienzo entero, hoja inferior en móvil, zoom, menú lateral, y exportación PNG/JPEG comparada píxel a píxel con el lienzo (texto, fotos, filtros, recorte, giro, fondos, sombras) |
 | `worker/`          | 90 pasan (21/11/2026, rama `f11/editor-reels`) | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
@@ -262,6 +262,14 @@ escribir él; el original tiene que ser de la misma marca).
   con sus pasos. Sin COOP/COEP (romperían las fotos de otros orígenes). Detalle en
   `docs/edicion-fotos.md` §7. Probado: unitarias y componentes; e2e escrita y sin
   ejecutar; **sin probar el modelo real en un navegador**.
+- **Quitar el fondo con BEN2** (rama `f17/recorte-ben2`, 21/11/2026): decisión
+  del dueño tras comparar 12 fotos reales. BEN2 base fp16 (219 MB, MIT) en el
+  navegador **solo con WebGPU**; sin WebGPU, sin memoria o si falla, vuelve a
+  IS-Net («calidad básica») y lo recuerda en la sesión. Descarga con progreso,
+  caché y botón «Cancelar»; el motor usado queda en la procedencia
+  (`ben2-base-fp16` / `isnet-general-use`). Paridad con la referencia: IoU
+  ≥ 0,9998 en 4 fotos. **Sin probar BEN2 con WebGPU real** (esta máquina no
+  tiene adaptador). Detalle en `docs/edicion-fotos.md` §7.
 - Quitar el fondo en el trabajador sin GPU (BiRefNet o IS-Net con
   `onnxruntime-node`): valorado y documentado como alternativa, **sin descargar
   pesos** (falta el «sí»).
@@ -449,7 +457,7 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 | Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
 | Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
 | Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
-| Quitar el fondo en el navegador (IS-Net, onnxruntime-web) | Lógica y flujo probados con el worker simulado; modelo real solo comprobado en CPU de Node; sin probar en un navegador (WebGPU/WASM, tiempos, calidad) | `docs/edicion-fotos.md` §7 |
+| Quitar el fondo en el navegador (BEN2 con WebGPU; IS-Net de respaldo; onnxruntime-web) | Lógica, elección de motor y caída probadas con dobles; BEN2 en CPU de Node con paridad IoU ≥ 0,9998 frente a la referencia; IS-Net y la caída probados en Chromium real (WASM); **BEN2 con WebGPU real sin probar** | `docs/edicion-fotos.md` §7 |
 | Subtítulos automáticos con OpenAI (`gpt-transcribe`) | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave | `docs/editor-reels.md` |
 | IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar | `docs/ia-medios.md` §13 |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |

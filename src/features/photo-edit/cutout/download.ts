@@ -55,27 +55,37 @@ export async function loadModelBytes(options: {
   const total = known ?? expectedBytes;
 
   const reader = response.body.getReader();
+  // Con la longitud conocida se escribe directo en un único buffer: con 219 MB
+  // no conviene tener los trozos y la copia juntos en memoria.
+  let bytes = new Uint8Array(known ?? 0);
   const chunks: Uint8Array[] = [];
   let received = 0;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
+      if (known !== null) {
+        if (received + value.length > known) throw new RangeError('longitud');
+        bytes.set(value, received);
+      } else chunks.push(value);
       received += value.length;
       onProgress?.(received, Math.max(total, received));
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof RangeError)
+      throw new ModelDownloadError('El modelo ha llegado con más datos de los esperados. Vuelve a intentarlo.');
     throw new ModelDownloadError('Se ha cortado la descarga del modelo. Vuelve a intentarlo.');
   }
   if (known !== null && received !== known) {
     throw new ModelDownloadError('El modelo ha llegado incompleto. Vuelve a intentarlo.');
   }
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
+  if (known === null) {
+    bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
   }
   try {
     await cache?.put(url, new Response(bytes, { headers: { 'Content-Type': 'application/octet-stream' } }));

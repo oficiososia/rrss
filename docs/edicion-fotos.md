@@ -217,8 +217,85 @@ tiempo y calidad con 20–30 fotos reales de la marca, y el tamaño de máquina.
 ## 7. Quitar el fondo en el navegador (sin IA, sin coste)
 
 Rama `f7/recorte-navegador`. Mismo enfoque que el panel del restaurante
-(IS-Net en un Web Worker con `onnxruntime-web`, WebGPU si hay y WASM si no),
-genérico y sin nada de ningún cliente. Código en `src/features/photo-edit/cutout/`.
+(un modelo en un Web Worker con `onnxruntime-web`), genérico y sin nada de
+ningún cliente. Código en `src/features/photo-edit/cutout/`.
+
+### Motores: BEN2 (principal) e IS-Net (respaldo) — rama `f17/recorte-ben2`, 21/11/2026
+
+Decisión del dueño tras comparar 12 fotos reales (botellas, cócteles, platos):
+el recorte pasa a **BEN2 base fp16**, con el IS-Net de antes como respaldo.
+
+| | BEN2 (principal) | IS-Net (respaldo) |
+| --- | --- | --- |
+| Modelo | `onnx-community/BEN2-ONNX`, `onnx/model_fp16.onnx` | `imgly/isnet-general-onnx`, `onnx/model_fp16.onnx` |
+| Peso | 219 121 675 bytes (**219 MB**) | 88 152 708 bytes (84 MB) |
+| Licencia | **MIT** (ficha del modelo); `onnxruntime-web` MIT | MIT (ficha) / Apache-2.0 (DIS) |
+| Entrada y salida | `pixel_values` 1×3×1024×1024, normalización ImageNet · `alphas` 1×1×1024×1024 ya entre 0 y 1 | `input` 1×3×1024×1024 (÷ máximo − 0,5) · salida en cualquier rango (se normaliza) |
+| Dónde corre | **Solo WebGPU** | WebGPU o, si no, WASM (CPU) |
+| Calidad que se dice | Alta | «Calidad básica» |
+| Dirección | `VITE_CUTOUT_BEN2_URL` o Hugging Face | `VITE_CUTOUT_MODEL_URL` o Hugging Face |
+
+- **Por qué solo WebGPU.** En CPU nativa BEN2 pide ~4,6 GB de memoria; en WASM de
+  32 bits (el de los navegadores, máximo 4 GB) no cabe. Con WebGPU los pesos van a
+  la tarjeta gráfica. Por eso, sin WebGPU, el motor es IS-Net.
+- **Cómo se elige** (`cutout/select.ts`, `engine.ts`): BEN2 si el navegador tiene
+  `navigator.gpu` **y** un adaptador que responde (`requestAdapter()`), la memoria
+  que declara el navegador (`deviceMemory`) es de 4 GB o más (o no la declara) y
+  BEN2 no ha fallado ya en esta sesión. En cualquier otro caso, IS-Net.
+- **Caída al respaldo.** Si con BEN2 falla la sesión (operadores sin soporte,
+  sin memoria de GPU, máscara vacía o NaN), `engine.ts` repite con IS-Net sin
+  romper, termina el worker (suelta la GPU) y **recuerda el fallo hasta recargar
+  la página**. Un corte de red al descargar BEN2 usa IS-Net solo esa vez (no dice
+  nada de BEN2). Si no hay sujeto (`NoSubjectError`) o se cancela, no hay caída.
+- **Descarga.** Misma mecánica que IS-Net (`cutout/download.ts`): CORS comprobado
+  el 21/11/2026 contra `huggingface.co/onnx-community/BEN2-ONNX` (redirige a su
+  CDN, que responde `access-control-allow-origin: *`), sin clave, con progreso
+  («Descargando el modelo de recorte (219 MB, solo la primera vez)…» y MB
+  recibidos), guardado en Cache Storage (`rrss-cutout-model-v1`, por dirección) y
+  **cancelable** (botón «Cancelar»; también al cerrar el diálogo): cancelar
+  termina el worker, que corta la descarga o la inferencia en marcha. Con la
+  longitud conocida se escribe en un único buffer (sin duplicar 219 MB). **El
+  modelo no está en el repositorio.**
+- **Escala.** La foto se encaja (deformándola) a 1024×1024 **promediando el área**
+  al encogerla (`resizeAreaChannel`, como `INTER_AREA`; interpola al agrandar), se
+  divide entre 255 y se normaliza con la media y desviación de ImageNet. La
+  máscara de 1024×1024 se reescala al tamaño de la foto con el mismo
+  remuestreo. Con BEN2 el alfa **se usa tal cual** (sin normalizar entre
+  mínimo y máximo y sin la curva que endurece la máscara de IS-Net): conserva
+  los medios tonos de los bordes. No lleva sombra conservada, matting por trimap
+  ni filtro guiado (empeoraban o no aportaban, según la comparativa).
+- **Procedencia.** El paso `remove_background` guarda `model`: `ben2-base-fp16` o
+  `isnet-general-use` (el resultado sabe con qué motor se hizo).
+- **Interfaz.** Si se usó el respaldo, bajo el recorte sale «Calidad básica: este
+  navegador no tiene aceleración gráfica (WebGPU) suficiente…». El texto previo a
+  descargar dice «de 85 a 220 MB según tu navegador».
+- **Medido** (21/11/2026, esta máquina, sin GPU utilizable):
+  - BEN2 fp16 en CPU nativa con `onnxruntime-node` 1.22: ≈ 7,0–7,4 s por foto
+    de ~1,5 MP (la comparativa en Python midió ≈ 9,7 s de mediana y 4,6 GB de
+    memoria máxima). IS-Net: ≈ 1,2 s y 1,9 GB.
+  - Preprocesado TS ≈ 50–70 ms y postprocesado ≈ 35–40 ms por foto.
+  - **Paridad con la referencia de la comparativa** (preproceso/postproceso en
+    TypeScript + `onnxruntime-node` frente a las máscaras de `run_engine.py`,
+    4 fotos: botella de cristal, cecina, coulant, pulpo): IoU de la máscara
+    (alfa > 127) **0,9998–1,0000**, error medio del alfa 0,007–0,019 sobre 255.
+  - Navegador real (Chromium de Playwright, WASM de 1 hilo, sin WebGPU):
+    IS-Net ≈ 8–9,4 s por foto de 1479×1183 (carga incluida la primera vez); BEN2
+    no se elige, y forzando la elección (adaptador falso) se descarga y cae a
+    IS-Net sin romper, sin reintentar BEN2 en la segunda foto.
+- **Sin probar:** BEN2 con **WebGPU real** en un navegador (ni esta máquina ni su
+  Chromium ofrecen adaptador WebGPU): operadores de BEN2 en el proveedor `webgpu`
+  de onnxruntime-web 1.30, uso de memoria de GPU, tiempos con tarjeta gráfica y
+  tamaño máximo de buffer en tarjetas integradas. Hasta probarlo en un equipo con
+  GPU, la caída a IS-Net es la red de seguridad. Tampoco probada la variante de
+  768 px (`square-zero-labs/BEN2-ONNX`, 208 MB), que sería la opción si la memoria
+  de GPU se queda corta.
+- **Reproducir la paridad:** instalar `onnxruntime-node` fuera del repositorio
+  (`npm i onnxruntime-node` en una carpeta aparte), descargar `model_fp16.onnx` y
+  ejecutar con `vite-node` un script que llame a `toBen2Input`, `ben2Mask` y
+  `applyMask(…, 'none')` de `cutout/mask.ts` y compare con la máscara de
+  referencia.
+
+El resto de esta sección describe IS-Net, que sigue siendo el respaldo.
 
 - **Modelo:** IS-Net «general use» (DIS), ONNX con pesos en float16 y entrada y
   salida en float32, de `imgly/isnet-general-onnx` en Hugging Face
@@ -237,8 +314,10 @@ genérico y sin nada de ningún cliente. Código en `src/features/photo-edit/cut
   sirve nuestro despliegue. Para alojarlo en el propio despliegue (más fiable y
   sin depender de Hugging Face): copiar el `.onnx` a `public/models/` y poner
   `VITE_CUTOUT_MODEL_URL=/models/<archivo>.onnx` (sirve también la versión
-  cuantizada a uint8 de 46,7 MB del panel, mismas entradas y salidas). Cambiar
-  de modelo = cambiar `CUTOUT_MODEL_CACHE` en `cutout/model.ts`.
+  cuantizada a uint8 de 46,7 MB del panel, mismas entradas y salidas). Con BEN2
+  igual: `VITE_CUTOUT_BEN2_URL=/models/<archivo>.onnx` (el servidor debe dar
+  `Content-Length` y CORS). Cambiar de modelo = cambiar `CUTOUT_MODEL_CACHE` en
+  `cutout/model.ts`.
 - **Caché:** la primera vez se baja entero (con progreso) y se guarda en Cache
   Storage (`rrss-cutout-model-v1`); después se lee de ahí sin red. Si el
   navegador no deja guardar, funciona igual y vuelve a descargar. El motor de
@@ -257,8 +336,7 @@ genérico y sin nada de ningún cliente. Código en `src/features/photo-edit/cut
   botón (si hay IA en el servidor, queda esa). Fallos al recortar (sin red,
   memoria, sin WebGPU ni WASM, nada que recortar) se explican en claro y se puede
   reintentar. WebGPU que falle o dé una máscara vacía se repite en WASM.
-- **Calidad de la máscara:** el alfa sale de la máscara del modelo escalada con
-  interpolación bilineal y una curva suave; **no** lleva el filtro guiado del
+- **Calidad de la máscara (IS-Net):** el alfa sale de la máscara del modelo escalada y una curva suave; **no** lleva el filtro guiado del
   panel (que conserva mejor antenas, patas y cristal fino). Para platos y
   productos basta; si hiciera falta más, es el siguiente paso.
 - **Rendimiento (medido solo en CPU de Node, no en un navegador):** el modelo
@@ -304,6 +382,12 @@ navegador (lectura de píxeles, codificación PNG/JPEG, CORS de R2 y de Drive) y
 la prueba e2e.
 
 Quitar el fondo en el navegador (§7):
+- Unitarias (`cutout/engine.test.ts`, motores): preprocesado de BEN2 (ImageNet,
+  transparencia sobre blanco, promedio de área), postprocesado (alfa tal cual,
+  sin sujeto), elección de motor (WebGPU, adaptador, memoria, fallo previo),
+  caída a IS-Net con dobles (fallo → respaldo y recuerdo; corte de red → solo
+  esa vez; sin sujeto y cancelar no caen) y progreso con el motor. Componentes:
+  procedencia con BEN2, aviso de «calidad básica» y cancelar.
 - Unitarias (`cutout/cutout.test.ts`): entrada y máscara del modelo, composición
   (color, imagen, tamaño, sombra debajo del sujeto y suave, opacidad), descarga
   con progreso y caché, errores de descarga y procedencia.
