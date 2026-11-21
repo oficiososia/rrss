@@ -478,3 +478,11 @@ lienzo y al exportar.
 - No probado a mano en un navegador real en esta rama: solo pruebas de unidad,
   de componentes y de base de datos (el dibujo con Konva y el recorte arrastrando
   no se ejercitan en jsdom).
+
+## 11. Pantalla del editor, exportación y atajos (rama `f16/editor-tanda2`, 21/11/2026)
+
+- **Sin scroll de página.** El editor usa el «modo de trabajo» del menú (`layout/workspace.tsx`): la página mide justo la ventana, sin pie legal, y solo hacen scroll el panel derecho (o la hoja inferior en móvil). `npm run test:layout` lo vigila en cuatro tamaños (`tests/layout/editor-sin-scroll.spec.ts`).
+- **Panel.** Las secciones de foto y de efectos son plegables (`Section`, un `details` nativo): abiertas por defecto «Posición y tamaño» y «Luz y color»; los deslizadores llevan el valor al lado.
+- **Exportación = lienzo.** `tests/layout/exportar-pixeles.spec.ts` dibuja una escena con el lienzo (`Scene.snapshot`) y con `renderDocument` y compara los píxeles; con filtros, luz y color, recorte, giro, volteo, enderezado, fondos, sombras y contorno de texto la diferencia media es 0 en PNG y menor de 0,5 de 255 en JPEG. Una imagen que no carga detiene la exportación con un aviso que la nombra.
+- **Atajos** del editor: Ctrl/Cmd+Z deshace, Ctrl+Mayús+Z o Ctrl+Y rehacen, Ctrl+S abre «Guardar versión», Supr borra, flechas mueven 1 px (Mayús, 10 px), Ctrl+G agrupa (con Mayús, desagrupa) y Esc suelta. Funcionan aunque el foco esté en la página (tras cerrar un diálogo); no actúan con un diálogo abierto ni escribiendo en un campo.
+- **Banco de maquetación** (`layout.html`, `exportar.html`, `vite.layout.config.ts`, `playwright.layout.config.ts`): la aplicación real con el cliente de Supabase simulado de `src/test`, servida con Vite para pruebas en un navegador real sin Docker ni Supabase. Solo para pruebas, no entra en la compilación.

@@ -2829,7 +2829,7 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
   });
 
   it('una plantilla guardada desde el editor la entrega quien edita, con tope por marca, y no cruza organizaciones', async () => {
-    const delEditor = (key: string, analysis: object = {}) =>
+    const delEditor = (key: string, analysis: Record<string, unknown> = {}) =>
       JSON.stringify([{ ...JSON.parse(manualTemplate(analysis, key))[0], source: 'editor', name: 'Mi plantilla' }]);
     const [row] = await as<{ source: string; created_by: string }>(
       db,

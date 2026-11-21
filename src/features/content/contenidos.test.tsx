@@ -542,6 +542,7 @@ describe('Editor: una sola acción principal según el estado', () => {
       'Enviar a revisión',
       'Nombre y red',
       'Desde una plantilla',
+      'Guardar como plantilla…',
       'Devolver a idea',
       'Archivar',
     ]);
