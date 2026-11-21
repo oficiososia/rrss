@@ -1,5 +1,5 @@
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ExternalLink, MessageSquare, XCircle } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge, Button, ConfirmDialog, ErrorState, Notice, Skeleton, Spinner } from '@/components/ui';
@@ -56,6 +56,7 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
   const [confirmAccept, setConfirmAccept] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const closeSheet = useCallback(() => setSelected(null), []);
 
   const check = useMemo(() => (draft ? validatePlan(draft, campaign) : null), [draft, campaign]);
   const issues = useMemo(() => (check && !check.ok ? check.issues : []), [check]);
@@ -294,7 +295,7 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
               assetNames={assetNames}
               onChange={updatePiece}
               onRemove={removePiece}
-              onClose={() => setSelected(null)}
+              onClose={closeSheet}
             />
           )}
         </section>

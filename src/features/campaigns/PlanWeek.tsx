@@ -2,7 +2,8 @@ import { AlertCircle, ExternalLink, Trash2, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Field, Input, Textarea } from '@/components/ui';
-import { contentPaths, targetLabel } from '@/features/content/labels';
+import { contentPaths, networkLabel, targetLabel } from '@/features/content/labels';
+import { getFormatSpec } from '@/features/content/networks';
 import { STATUS_LABEL, STATUS_TONE } from '@/features/content/status';
 import { cn } from '@/lib/utils';
 import type { CampaignPieceLink } from './api';
@@ -30,6 +31,8 @@ export interface WeekPiece {
 }
 
 export const PIECE_PANEL_ID = 'campaign-piece-panel';
+
+const formatLabel = (network: string, format: string) => getFormatSpec(network, format)?.label ?? format;
 
 export function WeekStrip({
   start,
@@ -64,7 +67,7 @@ export function WeekStrip({
     <ol
       className={cn(
         // En el móvil, una tira que se desliza; desde tableta, la semana en siete columnas.
-        '-mx-4 grid snap-x snap-mandatory auto-cols-[minmax(7.5rem,42%)] grid-flow-col gap-2 overflow-x-auto px-4 pb-2',
+        '-mx-4 grid snap-x snap-mandatory scroll-px-4 auto-cols-[minmax(7.5rem,42%)] grid-flow-col gap-2 overflow-x-auto px-4 pb-2',
         'sm:mx-0 sm:auto-cols-auto sm:grid-flow-row sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-7',
       )}
       aria-label="Piezas por día"
@@ -73,7 +76,12 @@ export function WeekStrip({
       {columns.map(({ key, day, items }) => {
         const parts = day ? dayParts(day) : null;
         return (
-          <li key={key} className="flex min-w-0 snap-start flex-col gap-2" data-testid="campaign-day">
+          // En el móvil los días sin piezas no ocupan sitio en la tira.
+          <li
+            key={key}
+            className={cn('min-w-0 snap-start flex-col gap-2', items.length ? 'flex' : 'hidden sm:flex')}
+            data-testid="campaign-day"
+          >
             <h3 className="flex items-baseline gap-1.5 px-0.5 text-sm" aria-label={day ? longDayLabel(day) : 'Sin fecha'}>
               {parts ? (
                 <>
@@ -142,8 +150,9 @@ function PieceTile({
         <PiecePreview source={preview} format={item.format} />
       </span>
       <span className="block space-y-1 px-2 py-1.5">
-        <span className="block truncate text-xs font-medium">{targetLabel(item.network, item.format)}</span>
-        <span className="sr-only">: {item.title}.</span>
+        <span className="block truncate text-xs font-medium">{formatLabel(item.network, item.format)}</span>
+        <span className="block truncate text-[11px] text-muted">{networkLabel(item.network)}</span>
+        <span className="sr-only">, {item.title}</span>
         {status ? (
           <Badge tone={STATUS_TONE[status]} className="px-2 py-0 text-[11px]">
             <span data-testid="campaign-piece-status">{STATUS_LABEL[status]}</span>
@@ -186,6 +195,14 @@ export function PieceSheet({
   useEffect(() => {
     ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }, [item.key]);
+  // Escape cierra la ficha, esté el foco en ella o en la pieza de la tira.
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
+    };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [onClose]);
 
   const { piece, content, planIndex } = item;
   const canEdit = editable && piece !== null && planIndex !== null;
@@ -198,9 +215,6 @@ export function PieceSheet({
       aria-label={`Ficha: ${heading}`}
       className="scroll-mt-4 rounded-xl border border-border bg-surface shadow-card"
       data-testid="campaign-piece-panel"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') onClose();
-      }}
     >
       <div className="grid gap-4 p-4 sm:grid-cols-[9rem_1fr] sm:p-5">
         <div className="mx-auto aspect-[4/5] w-32 overflow-hidden rounded-lg border border-border sm:w-full">
