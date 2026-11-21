@@ -2,8 +2,10 @@ import { ChevronLeft, ChevronRight, Copy, Plus, Trash2 } from 'lucide-react';
 import { useState, type Dispatch, type DragEvent } from 'react';
 import { Button } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { pageLabel, type Canvas, type ContentDocument, type Layer, type PageLimits } from '../../document';
+import { pageLabel, type ContentDocument, type PageLimits } from '../../document';
+import type { ImageLookup } from '../canvas/nodes';
 import type { EditorAction } from '../history';
+import { PageThumb } from './PageThumb';
 
 interface PageStripProps {
   document: ContentDocument;
@@ -11,60 +13,19 @@ interface PageStripProps {
   /** Cuántas páginas admite el formato (un carrusel de Instagram, de 2 a 10). */
   limits: PageLimits;
   readOnly: boolean;
+  /** Direcciones firmadas de las imágenes de la biblioteca, para dibujar las fotos en las miniaturas. */
+  images?: ImageLookup;
   dispatch: Dispatch<EditorAction>;
 }
 
 const DRAG_TYPE = 'application/x-rrss-page';
-
-/** Color con que se esboza una capa en la miniatura (no es el dibujo real: es un esquema ligero). */
-function sketchColor(layer: Layer): string {
-  if (layer.type === 'shape') return layer.fill ?? 'transparent';
-  if (layer.type === 'text') return layer.color;
-  if (layer.type === 'logo') return '#9CA3AF';
-  return '#CBD5E1';
-}
-
-/**
- * Esquema de una página: el fondo del lienzo y una caja por capa visible (las
- * imágenes en gris, los textos como una franja de su color). Es HTML puro, sin
- * Konva: se dibuja al momento y en las pruebas, y no carga imágenes.
- */
-function PageSketch({ canvas, layers }: { canvas: Canvas; layers: Layer[] }) {
-  return (
-    <span
-      className="relative block w-full overflow-hidden rounded"
-      style={{ aspectRatio: `${canvas.width} / ${canvas.height}`, background: canvas.backgroundColor }}
-      aria-hidden
-    >
-      {layers
-        .filter((layer) => layer.visible && layer.opacity > 0)
-        .map((layer) => (
-          <span
-            key={layer.id}
-            className="absolute"
-            style={{
-              left: `${(layer.x / canvas.width) * 100}%`,
-              top: `${(layer.y / canvas.height) * 100}%`,
-              width: `${(layer.width / canvas.width) * 100}%`,
-              height: `${(layer.type === 'text' ? Math.min(layer.height, layer.fontSize * 1.2) : layer.height) / canvas.height * 100}%`,
-              transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
-              opacity: layer.type === 'text' ? Math.min(1, layer.opacity) * 0.8 : layer.opacity,
-              background: sketchColor(layer),
-              borderRadius: layer.type === 'shape' && layer.shape === 'ellipse' ? '9999px' : undefined,
-              border: layer.type === 'shape' && layer.stroke ? `1px solid ${layer.stroke.color}` : undefined,
-            }}
-          />
-        ))}
-    </span>
-  );
-}
 
 /**
  * Tira de miniaturas de las páginas: elegir la página que se edita, añadir,
  * duplicar, borrar y reordenar (arrastrando o con los botones de mover, que
  * también sirven con teclado). Cada cambio es un paso de deshacer.
  */
-export function PageStrip({ document, activePageId, limits, readOnly, dispatch }: PageStripProps) {
+export function PageStrip({ document, activePageId, limits, readOnly, images, dispatch }: PageStripProps) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const count = document.pages.length;
@@ -195,7 +156,7 @@ export function PageStrip({ document, activePageId, limits, readOnly, dispatch }
                 data-testid="page-thumb"
                 data-page-id={page.id}
               >
-                <PageSketch canvas={document.canvas} layers={page.layers} />
+                <PageThumb canvas={document.canvas} layers={page.layers} images={images} />
               </button>
               <span className="block text-center text-[11px] text-muted">{index + 1}</span>
             </li>

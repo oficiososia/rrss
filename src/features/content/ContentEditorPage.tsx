@@ -1049,6 +1049,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               activePageId={state.activePageId}
               limits={pageRange}
               readOnly={readOnly}
+              images={images}
               dispatch={dispatch}
             />
           )}
