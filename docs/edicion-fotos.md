@@ -399,3 +399,82 @@ suave, proporción) y la e2e `tests/e2e/26-cambiar-fondo-ia.spec.ts`
 (actualizada para el recorte simulado del worker y la procedencia
 `photo_edit`/`ai_background`; **escrita, sin ejecutar**: el Supabase local de esta máquina lo usaba otro proyecto).
 **Sin probar:** contra OpenAI real (ver `docs/ia-medios.md`, §13), el recorte real del plato en un navegador y el borde de la recomposición a ojo.
+
+## 10. Ediciones sencillas dentro del editor (rama `f13/edicion-sencilla`, 21/11/2026)
+
+Lo de «Editar foto» (secciones 1 a 9) crea siempre una **foto nueva** en la
+biblioteca. Esto es distinto y complementario: ediciones **que se guardan en la
+capa del diseño** (documento v5), sin tocar la foto ni crear archivos, que se
+deshacen con Ctrl+Z, funcionan por página en los carruseles y salen igual en el
+lienzo y al exportar.
+
+### Qué hay y dónde
+
+| Edición | Dónde | Se guarda como | Con IA |
+|---|---|---|---|
+| Brillo, contraste, saturación, temperatura, nitidez | Panel «Diseño» de una capa de imagen → «Luz y color» | `adjust` de la capa | No |
+| Filtros rápidos (blanco y negro, sepia, vivo, cálido, frío, desvaído, dramático) | «Luz y color» → «Filtros rápidos» | `adjust.filter` | No |
+| Girar 90°, voltear ↔ ↕, enderezar (±45°) | «Girar y recortar» | `turn`, `flipX`, `flipY`, `straighten` | No |
+| Recorte libre o por proporción (como la capa, 1:1, 4:5, 9:16, 16:9, 3:2) | «Recortar…» (ventana con marco arrastrable) | `crop` (fracciones de la foto ya girada) y la caja de la capa toma la proporción del recorte sin crecer | No |
+| Fondo detrás de la foto: color, degradado o la misma foto desenfocada | «Fondo» → «Poner detrás de la foto» | `backdrop` | No |
+| Sombra bajo la foto o el plato (sigue la silueta si hay transparencia) | «Fondo» → «Sombra» | `shadow` | No |
+| Quitar el fondo | «Fondo» → «Quitar el fondo» | **foto nueva** (carpeta «Ediciones») y la capa pasa a usarla | No (navegador) |
+| Desenfocar el fondo y dejar el plato nítido | «Fondo» → «Desenfocar el fondo…» | **foto nueva**; la capa pasa a usarla | No (navegador) |
+| Cambiar el fondo con IA | «Fondo» → «Cambiar el fondo con IA…» (abre «Editar foto» en su pestaña de IA) | foto nueva | **Sí**, OpenAI |
+| Contorno, sombra y fondo del texto | Panel de un texto → «Efectos del texto» | `outline`, `shadow`, `background` | No |
+| Sombra de las formas | Panel de una forma | `shadow` | No |
+| Figuras y pegatinas: triángulo, estrella, corazón, flecha, destello, globo de texto y línea | Barra «Añadir» → «Figuras…» | capa de forma con `shape` nuevo | No |
+
+### Qué usa IA y qué no
+
+- **Todo es del navegador, gratis y sin clave**, salvo un botón: «Cambiar el
+  fondo con IA…». Sale **solo** si el despliegue tiene
+  `VITE_AI_PHOTO_EDIT_ENABLED=true`, el servidor tiene un modelo para
+  `replace_background` (OpenAI, sección 8) y la foto es de nuestro almacenamiento.
+  Sin eso el botón no existe; no se simula nada. Reutiliza el diálogo y el cupo
+  de la sección 8 tal cual.
+- **Quitar el fondo** pasa por una única función, `photo-edit/cutout/remover.ts`
+  (`removeBackground`: foto → foto con alfa). Hoy usa IS-Net (sección 7), cuyo
+  resultado el dueño considera flojo; cambiar el motor solo exige tocar ese
+  archivo y `engine.ts`, no el panel ni el diálogo «Editar foto».
+- La carga de imágenes del lienzo usa ahora `src/lib/corsImage.ts` como la
+  exportación (`canvas/imageStore.ts`): arregla «Imagen no disponible» al
+  insertar desde el selector, causado por la copia en caché sin CORS.
+
+### Cómo está hecho
+
+- **Documento v5** (`content/document/schema.ts`): campos opcionales por capa.
+  Un documento v4 se lee igual (`migrate.ts`, 4 → 5, que además quita lo que
+  no debería traer). Una edición que no cambia nada (ajustes a 0, recorte
+  entero, enderezado 0) no se guarda (`applyLayerPatch`).
+- **Orden de aplicación** de una foto: girar 90° → voltear → enderezar (con la
+  ampliación justa para no dejar esquinas) → recortar → luz y color. Todo en una
+  sola pasada de lienzo + una de píxeles (`editor/imageEffects/prepare.ts`); la
+  luz y el color son el mismo cálculo que «Mejorar» (`photo-edit/pixels.ts`).
+  Girar o voltear después de recortar mueve el recorte con la foto
+  (`imageEdit.ts`).
+- **Mismo resultado en lienzo y exportación:** ambos usan `canvas/draw.ts`
+  (dibujo de cada capa), `prepareBitmap` y `stickers.ts` (contornos de las
+  figuras). Solo cambia el tamaño de la foto preparada (1280 px en el editor,
+  2400 al exportar); con la nitidez, la diferencia es la propia de la
+  resolución. Las sombras y desenfoques se escalan con el zoom y con la
+  resolución de exportación.
+- **Texto:** el contorno es el de Konva (su grosor es lo que se ve por fuera);
+  el fondo del texto se dibuja ajustado a las líneas escritas, no a toda la caja.
+- **Base de datos:** la tabla de plantillas de marca solo aceptaba documentos
+  v3 y v4; la migración `20261211010000_templates_document_v5.sql` (con su
+  vuelta atrás) añade la v5. Ningún campo nuevo referencia recursos, así que la
+  comprobación de recursos de la marca no cambia. Prueba: `tests/db/edicion-sencilla.test.ts`.
+
+### Límites conocidos
+
+- Luz y color necesitan leer los píxeles: si el almacén no responde a CORS, la
+  foto se ve sin esos ajustes y la exportación avisa (como ya hacía).
+- El filtro «foto desenfocada» difumina la propia foto; para desenfocar el
+  fondo **detrás del plato** hay que usar «Desenfocar el fondo…», que crea una
+  foto nueva (necesita el recorte del navegador).
+- Las figuras no cambian de forma al estirarlas: se deforman con la caja. La
+  línea se dibuja horizontal en el centro de su caja; para inclinarla, gírala.
+- No probado a mano en un navegador real en esta rama: solo pruebas de unidad,
+  de componentes y de base de datos (el dibujo con Konva y el recorte arrastrando
+  no se ejercitan en jsdom).
