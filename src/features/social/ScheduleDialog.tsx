@@ -30,6 +30,8 @@ interface ScheduleDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Día en el que se abrió (a las 10:00 si no trae hora). */
   initialDate?: Date | null;
+  /** Pieza ya elegida (al programar desde el editor). */
+  initialContentId?: string;
 }
 
 /**
@@ -37,13 +39,13 @@ interface ScheduleDialogProps {
  * «Programada» (aprobada, con su exportación y una cuenta) o en espera, y dice
  * por qué: aquí solo se ayuda a elegir bien.
  */
-export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: ScheduleDialogProps) {
+export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initialContentId }: ScheduleDialogProps) {
   const contents = useSchedulableContents(brandId, open);
   const accounts = useSocialAccounts(brandId);
   const media = usePublishableMedia(brandId, open);
   const save = useSavePublication(brandId);
 
-  const [contentId, setContentId] = useState('');
+  const [contentId, setContentId] = useState(initialContentId ?? '');
   const [when, setWhen] = useState(() => toLocalInput(defaultScheduleDate(initialDate)));
   // null = la primera cuenta conectada de la red de la pieza.
   const [accountChoice, setAccountChoice] = useState<string | null>(null);

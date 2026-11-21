@@ -7,6 +7,7 @@ import { createEmptyDocument, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
 import * as libraryApi from '@/features/library/api';
 import { ExportError, exportErrors } from './export/options';
+import { chooseEditorAction } from '@/test/moreMenu';
 
 // Exportar imagen desde el editor: el diálogo, las opciones, el aviso de cambios
 // sin guardar y la procedencia que se guarda en la biblioteca. El lienzo de Konva
@@ -110,7 +111,7 @@ async function openEditor(role: Parameters<typeof seed>[0]) {
 }
 
 async function openDialog(user: Awaited<ReturnType<typeof openEditor>>['user']) {
-  await user.click(screen.getByTestId('editor-export'));
+  await chooseEditorAction(user, 'editor-export');
   return within(await screen.findByRole('dialog'));
 }
 

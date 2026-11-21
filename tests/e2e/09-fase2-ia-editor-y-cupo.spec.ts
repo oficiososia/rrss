@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, aviso, dato, guardarEstado, ORG_B, sinErrores, sql, type Alias } from './apoyo';
+import { abrir, aviso, dato, guardarEstado, ORG_B, sinErrores, sql, type Alias, accionDelMenu } from './apoyo';
 
 // Aceptación de la Fase 2 (docs/04-plan-por-fases.md) contra el Supabase local,
 // con la función `ai-generate` servida en local y el proveedor SIMULADO de
@@ -243,7 +243,7 @@ test('editar la pieza (texto y una capa), guardar otra versión y ver el histori
   await aviso(page, 'Versión 2 guardada');
   await expect(page.getByTestId('editor-version')).toHaveText('Versión 2');
 
-  await page.getByTestId('editor-history').click();
+  await accionDelMenu(page, 'editor-more', 'editor-history');
   const historial = page.getByTestId('versions-list');
   await expect(historial.getByRole('listitem')).toHaveCount(2);
   await expect(historial.getByRole('listitem').nth(0)).toContainText('Titular en el lienzo y retoque del pie');

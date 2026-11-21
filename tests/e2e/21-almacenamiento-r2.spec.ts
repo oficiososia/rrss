@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, png, sinErrores, sql } from './apoyo';
+import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } from './apoyo';
 import { arrancarMinio, MINIO, objetoEnMinio, pararMinio } from './minio';
 
 // Almacenamiento en Cloudflare R2 de extremo a extremo, contra el Supabase
@@ -128,7 +128,7 @@ test('usar la foto de R2 en el editor y exportar la pieza: la exportación tambi
   await aviso(page, 'Versión 1 guardada');
 
   // Exportar lee el lienzo: con una imagen de R2 sin CORS, el lienzo quedaría «manchado» y fallaría.
-  await page.getByTestId('editor-export').click();
+  await accionDelMenu(page, 'editor-more', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();

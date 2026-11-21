@@ -18,6 +18,7 @@ import type { CanvasViewProps } from './editor/canvas/types';
 import { settingsChanges } from './editor/pieceSettings';
 import { captionPreview, previewFrameOf, showsCaption } from './editor/preview/frames';
 import { getFormatSpec } from './networks';
+import { chooseEditorAction } from '@/test/moreMenu';
 
 // Selección múltiple, texto sobre el lienzo, zonas seguras, vista previa y
 // nombre y red. El lienzo de Konva se sustituye por un doble: cada capa es un
@@ -330,7 +331,7 @@ describe('Editor: vista previa por red', () => {
   it('enseña la pieza en el muro con el pie cortado en «ver más» y dice que es aproximada', async () => {
     const caption = 'a'.repeat(200);
     const { user } = await openEditor({ caption });
-    await user.click(screen.getByTestId('editor-preview'));
+    await chooseEditorAction(user, 'editor-preview');
     const preview = await screen.findByTestId('network-preview');
     expect(preview).toHaveAttribute('data-frame', 'feed');
     expect(await within(preview).findByRole('img')).toHaveAttribute('src', 'blob:vista-previa');
@@ -341,7 +342,7 @@ describe('Editor: vista previa por red', () => {
 
   it('una historia va a pantalla completa y sin pie', async () => {
     const { user } = await openEditor({ format: 'story', ratio: '9:16', caption: 'Pie' });
-    await user.click(screen.getByTestId('editor-preview'));
+    await chooseEditorAction(user, 'editor-preview');
     const preview = await screen.findByTestId('network-preview');
     expect(preview).toHaveAttribute('data-frame', 'vertical');
     expect(within(preview).queryByTestId('preview-caption')).not.toBeInTheDocument();
@@ -370,7 +371,7 @@ describe('Vista previa: lógica pura', () => {
 describe('Editor: nombre, red y formato', () => {
   it('renombra la pieza sin tocar su estado', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('editor-settings'));
+    await chooseEditorAction(user, 'editor-settings');
     const title = screen.getByTestId('piece-title');
     await user.clear(title);
     await user.type(title, 'Menú de invierno');
@@ -382,7 +383,7 @@ describe('Editor: nombre, red y formato', () => {
 
   it('si está aprobada, avisa de que cambiar red o formato la devuelve a borrador', async () => {
     const { user } = await openEditor({ status: 'approved' });
-    await user.click(screen.getByTestId('editor-settings'));
+    await chooseEditorAction(user, 'editor-settings');
     await user.selectOptions(screen.getByTestId('piece-format'), 'story');
     expect(screen.getByTestId('piece-back-to-draft')).toBeInTheDocument();
     // El diseño es 1:1 y la historia no da margen de proporciones: no se avisa de lo que no se sabe.

@@ -6,6 +6,7 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/te
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument, type Layer } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
 import * as libraryApi from '@/features/library/api';
+import { chooseEditorAction } from '@/test/moreMenu';
 
 // Carruseles en el editor: tira de páginas (elegir, añadir, duplicar, borrar,
 // reordenar arrastrando o con los botones), deshacer por página y en general,
@@ -211,7 +212,7 @@ describe('Editor de carruseles: páginas', () => {
 
   it('vista previa de carrusel con flechas, como en Instagram', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('editor-preview'));
+    await chooseEditorAction(user, 'editor-preview');
     const preview = await screen.findByTestId('network-preview');
     await waitFor(() => expect(renderDocument).toHaveBeenCalledTimes(3));
     expect(within(preview).getByTestId('preview-counter')).toHaveTextContent('1/3');
@@ -227,7 +228,7 @@ describe('Editor de carruseles: páginas', () => {
 
   it('«Exportar» un carrusel dibuja todas las páginas en JPEG y las guarda con su número de página', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('editor-export'));
+    await chooseEditorAction(user, 'editor-export');
     expect(await screen.findByTestId('export-pages-notice')).toHaveTextContent('3 páginas');
     expect(screen.queryByTestId('export-format-png')).not.toBeInTheDocument();
     await user.click(screen.getByTestId('export-download'));

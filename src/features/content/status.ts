@@ -77,3 +77,35 @@ export function statusChangedMessage(to: ContentStatus): string {
       return 'Aprobada';
   }
 }
+
+/**
+ * La acción principal del editor: una sola, según el estado de la pieza.
+ *   archivada        → Recuperar
+ *   idea / borrador  → Aprobar (si se puede) o Enviar a revisión
+ *   en revisión      → Aprobar
+ *   aprobada         → Publicar ahora (si la red y el formato se publican solos) o Programar
+ * Los demás cambios de estado (Devolver a idea, Devolver a borrador, Retirar la
+ * aprobación…) van al menú «⋯».
+ */
+export type EditorPrimary =
+  { kind: 'status'; action: StatusAction } | { kind: 'publishNow' } | { kind: 'schedule' } | { kind: 'restore' };
+
+const FORWARD: ContentStatus[] = ['approved', 'in_review'];
+
+export function editorPrimaryAction(
+  item: Pick<ContentItemRow, 'status' | 'archived_at'>,
+  actions: StatusAction[],
+  can: { edit: boolean; publishNow: boolean; schedule: boolean },
+): EditorPrimary | null {
+  if (item.archived_at) return can.edit ? { kind: 'restore' } : null;
+  if (item.status === 'approved') {
+    if (can.publishNow) return { kind: 'publishNow' };
+    if (can.schedule) return { kind: 'schedule' };
+    return null;
+  }
+  for (const to of FORWARD) {
+    const action = actions.find((a) => a.to === to);
+    if (action) return { kind: 'status', action };
+  }
+  return null;
+}

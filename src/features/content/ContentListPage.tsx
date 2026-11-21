@@ -1,7 +1,18 @@
-import { Archive, ChevronRight, FileText, Lightbulb, Plus, Search } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, FileText, FilterX, Lightbulb, Plus, Search } from 'lucide-react';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from '@/components/ui';
+import {
+  ActionNotice,
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Input,
+  PageHeader,
+  Select,
+  Skeleton,
+} from '@/components/ui';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { ContentStatus } from '@/lib/database.types';
 import { formatDateTime } from '@/lib/utils';
@@ -30,6 +41,11 @@ export function ContentListPage() {
   const items = useContentItems(brand.id, filters);
   const rows = useMemo(() => items.data?.pages.flat() ?? [], [items.data]);
   const filtering = Boolean(status || network || deferredSearch.trim());
+  const clearFilters = () => {
+    setStatus('');
+    setNetwork('');
+    setSearch('');
+  };
 
   return (
     <>
@@ -44,9 +60,27 @@ export function ContentListPage() {
             </Button>
           )
         }
+        more={[
+          archived
+            ? {
+                id: 'live',
+                label: 'Ver las que están en curso',
+                icon: ArchiveRestore,
+                onSelect: () => setArchived(false),
+                testId: 'content-show-live',
+              }
+            : {
+                id: 'archived',
+                label: 'Ver las archivadas',
+                icon: Archive,
+                onSelect: () => setArchived(true),
+                testId: 'content-show-archived',
+              },
+        ]}
+        moreTestId="content-more"
       />
 
-      <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid gap-2 sm:grid-cols-3">
         <div className="relative">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
@@ -88,16 +122,22 @@ export function ContentListPage() {
             </option>
           ))}
         </Select>
-        <Select
-          aria-label="Vivas o archivadas"
-          value={archived ? 'archived' : 'live'}
-          onChange={(e) => setArchived(e.target.value === 'archived')}
-          data-testid="content-archived-filter"
-        >
-          <option value="live">En curso</option>
-          <option value="archived">Archivadas</option>
-        </Select>
       </div>
+
+      {archived && (
+        <ActionNotice
+          tone="info"
+          icon={Archive}
+          className="mb-4"
+          title="Estás viendo las archivadas"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => setArchived(false)} data-testid="content-back-live">
+              Volver a las que están en curso
+            </Button>
+          }
+          data-testid="content-archived-notice"
+        />
+      )}
 
       {items.isPending ? (
         <div className="space-y-2">
@@ -130,13 +170,18 @@ export function ContentListPage() {
                     : 'Cuando el equipo prepare publicaciones, aparecerán aquí.'
             }
             action={
-              !archived &&
-              !filtering &&
-              canEdit && (
-                <Button onClick={() => setCreating(true)}>
-                  <Plus className="h-4 w-4" aria-hidden />
-                  Nueva idea
+              filtering ? (
+                <Button variant="secondary" onClick={clearFilters} data-testid="content-clear-filters">
+                  <FilterX className="h-4 w-4" aria-hidden />
+                  Quitar filtros
                 </Button>
+              ) : archived ? null : (
+                canEdit && (
+                  <Button onClick={() => setCreating(true)} data-testid="content-empty-new">
+                    <Plus className="h-4 w-4" aria-hidden />
+                    Nueva idea
+                  </Button>
+                )
               )
             }
           />

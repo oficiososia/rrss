@@ -395,3 +395,12 @@ export function idDeUrl(url: string, segmento: 'o' | 'm'): string {
   if (!id) throw new Error(`La URL ${url} no contiene /${segmento}/<id>.`);
   return id;
 }
+
+/**
+ * Pulsa una acción secundaria de la cabecera de una página: están en el menú
+ * «⋯» (`editor-more`, `library-more`, `calendar-more`…), no a la vista.
+ */
+export async function accionDelMenu(page: Page, menu: string, accion: string): Promise<void> {
+  await page.getByTestId(menu).click();
+  await page.getByRole('menu').getByTestId(accion).click();
+}

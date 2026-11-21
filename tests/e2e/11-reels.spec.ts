@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, png, sinErrores, sql } from './apoyo';
+import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } from './apoyo';
 
 // Reels de punta a punta contra el Supabase LOCAL: subir dos fotos, encargar
 // un reel desde la biblioteca, arrancar el trabajador de medios de verdad
@@ -87,7 +87,7 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   await expect(page.getByTestId('upload-item-done')).toHaveCount(2);
 
   // 2. Reels: plantilla, las dos fotos en orden y un texto.
-  await page.getByTestId('library-reels').click();
+  await accionDelMenu(page, 'library-more', 'library-reels');
   await expect(page.getByRole('heading', { name: 'Reels' })).toBeVisible();
   const plantillas = page.getByTestId('reel-templates');
   for (const nombre of ['Fundido suave', 'Corte rítmico', 'Pase lateral']) {

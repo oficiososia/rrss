@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace, renderApp } from '@/test/fixtures';
+import { chooseMoreAction } from '@/test/moreMenu';
 
 const asset = (id: string, kind: string, fileName: string, mime: string, durationMs: number | null = null) => ({
   id,
@@ -69,6 +70,7 @@ describe('Reels en la biblioteca', () => {
     renderApp(`${BRAND_BASE}/biblioteca`);
     await screen.findByTestId('library-grid');
     expect(screen.queryByTestId('library-reels')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('library-more')).not.toBeInTheDocument();
   });
 
   it('sin trabajador, entrar por la dirección devuelve a la biblioteca', async () => {
@@ -89,7 +91,7 @@ describe('Reels en la biblioteca', () => {
       return created;
     });
     const { user } = renderApp(`${BRAND_BASE}/biblioteca`);
-    await user.click(await screen.findByTestId('library-reels'));
+    await chooseMoreAction(user, 'library-more', 'library-reels');
     expect(await screen.findByRole('heading', { name: 'Reels' })).toBeInTheDocument();
 
     // Las tres plantillas de ejemplo, con su nombre y descripción.
@@ -146,7 +148,7 @@ describe('Reels en la biblioteca', () => {
       return created;
     });
     const { user } = renderApp(`${BRAND_BASE}/biblioteca`);
-    await user.click(await screen.findByTestId('library-reels'));
+    await chooseMoreAction(user, 'library-more', 'library-reels');
     await user.click(await screen.findByRole('button', { name: 'Añadir «plato.jpg»' }));
     await user.click(screen.getByRole('button', { name: 'Añadir «cocina.mp4»' }));
     expect(screen.queryByLabelText('Desenfoque de la pieza 2')).not.toBeInTheDocument();
