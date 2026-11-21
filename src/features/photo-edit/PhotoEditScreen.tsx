@@ -1,5 +1,8 @@
-// «Editar foto», desde la ficha de la biblioteca o desde una capa de imagen del
-// editor (docs/edicion-fotos.md). Cuatro pestañas:
+// «Editar foto» a PANTALLA COMPLETA dentro de la propia página (no es una
+// ventana emergente), desde la ficha de la biblioteca o desde una capa de imagen
+// del editor (docs/edicion-fotos.md, §11). La foto, lo más grande posible, y los
+// controles en una columna (debajo en el móvil, con las pestañas fijas y la foto
+// siempre a la vista). Cuatro pestañas:
 //   · Mejorar   luz, color y nitidez (automático o a mano) y encuadre, SIN IA;
 //   · Recortes  1:1, 4:5 y 9:16 con encuadre inteligente, SIN IA;
 //   · Fondo     quitar el fondo (en el navegador, gratis; o con IA si el
@@ -8,18 +11,32 @@
 //   · Ampliar   ×2 o ×4 (IA).
 // Lo de IA solo sale con `VITE_AI_PHOTO_EDIT_ENABLED` y si el servidor tiene
 // modelo para esa acción. Cada resultado es un recurso NUEVO de la biblioteca,
-// con su procedencia; la foto original no se toca nunca.
-import { Crop, Eraser, ImagePlus, Maximize2, Sparkles, Wand2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// con su procedencia; la foto original no se toca nunca. Desde el editor, el
+// botón principal es «Aplicar a la capa» (la capa pasa a usar la copia y se
+// deshace con Ctrl+Z); desde la biblioteca, «Guardar copia», con «Deshacer».
+import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Eraser, Eye, ImagePlus, Maximize2, Sparkles, Undo2, Wand2 } from 'lucide-react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
-import { Badge, Button, Dialog, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { Badge, Button, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { useGenerationProgress } from '@/features/ai/imageApi';
 import { formatMicros } from '@/features/ai/money';
 import { useActiveProfile } from '@/features/brand/api';
 import { parseProfile } from '@/features/brand/profile';
 import { ImagePickerDialog } from '@/features/content/editor/AssetPickerDialog';
-import { deleteAssets, useSignedUrls } from '@/features/library/api';
+import { assetKeys, deleteAssets, useSignedUrls } from '@/features/library/api';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
@@ -46,6 +63,7 @@ import {
   NETWORK_ASPECT_LABEL,
   NETWORK_ASPECTS,
   smartCrop,
+  type Box,
   type NetworkAspect,
 } from './framing';
 import {
@@ -66,13 +84,18 @@ import { editedFileName, photoEditProvenance, type PhotoEditStep } from './prove
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
 
-interface PhotoEditDialogProps {
+export interface PhotoEditScreenProps {
   asset: MediaAssetRow;
   /** Dirección firmada de la foto (si ya se tiene). */
   url?: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Qué hacer con un resultado: abrirlo en la biblioteca o usarlo en el diseño. */
+  /** Vuelve a lo que había antes (la ficha o el editor). */
+  onClose: () => void;
+  /**
+   * Desde el editor: la capa pasa a usar la foto editada. Si se da, el botón
+   * principal es «Aplicar a la capa» y quien llama cierra esta pantalla.
+   */
+  onApply?: (row: MediaAssetRow) => void;
+  /** Desde la biblioteca: qué hacer con un resultado (abrirlo en la biblioteca). */
   onResult?: (asset: MediaAssetRow) => void;
   resultLabel?: string;
   /**
@@ -90,7 +113,8 @@ interface PhotoEditDialogProps {
   initialTab?: Tab;
 }
 
-const PREVIEW_SIDE = 480;
+/** Lado mayor de la vista previa: se ve grande y los ajustes siguen siendo instantáneos. */
+const PREVIEW_SIDE = 1000;
 const SLIDERS: Array<{
   key: 'exposure' | 'contrast' | 'saturation' | 'warmth' | 'sharpness';
   label: string;
@@ -103,13 +127,38 @@ const SLIDERS: Array<{
   { key: 'sharpness', label: 'Nitidez', min: 0 },
 ];
 
+/** Cuadrícula de ajedrez para que se note lo transparente. */
+const CHECKER_STYLE = {
+  backgroundImage:
+    'linear-gradient(45deg, rgba(128,128,128,.28) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.28) 75%), linear-gradient(45deg, rgba(128,128,128,.28) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.28) 75%)',
+  backgroundSize: '16px 16px',
+  backgroundPosition: '0 0, 8px 8px',
+} as const;
+
 /** Lienzo que pinta unos píxeles (vista previa). */
-function PixelsCanvas({ pixels, className, testId }: { pixels: Pixels | null; className?: string; testId?: string }) {
+function PixelsCanvas({
+  pixels,
+  className,
+  testId,
+  checker,
+}: {
+  pixels: Pixels | null;
+  className?: string;
+  testId?: string;
+  checker?: boolean;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (ref.current && pixels) paint(ref.current, pixels);
   }, [pixels]);
-  return <canvas ref={ref} className={cn('block h-auto max-w-full', className)} data-testid={testId} />;
+  return (
+    <canvas
+      ref={ref}
+      className={cn('block h-auto max-w-full', className)}
+      style={checker ? CHECKER_STYLE : undefined}
+      data-testid={testId}
+    />
+  );
 }
 
 /** Formato del resultado: PNG si hay transparencia o el original lo era; si no, JPEG. */
@@ -122,16 +171,87 @@ function outputFormat(
     : { mime: 'image/jpeg', ext: 'jpg' };
 }
 
-export function PhotoEditDialog({
+// ─────────────────────── Lo que comparten la pantalla y sus pestañas ───────────────────────
+
+/** Lo que la pestaña activa ofrece al botón principal de la barra de arriba. */
+interface CommitState {
+  disabled: boolean;
+  /** Hay cambios sin guardar: pedir confirmación antes de salir. */
+  dirty: boolean;
+  busy: boolean;
+  run: () => Promise<void>;
+  /** Descarta lo que se lleva hecho en la pestaña. */
+  reset: () => void;
+}
+
+interface ScreenContextValue {
+  /** Donde se pinta la foto grande. */
+  stage: HTMLElement | null;
+  /** Se mantiene pulsado «Ver la original». */
+  comparing: boolean;
+  /** La foto original, en el tamaño de la vista previa. */
+  before: Pixels;
+  setCommit: (commit: CommitState | null) => void;
+}
+
+const ScreenContext = createContext<ScreenContextValue | null>(null);
+
+function useScreen(): ScreenContextValue {
+  const value = useContext(ScreenContext);
+  if (!value) throw new Error('Falta la pantalla de edición');
+  return value;
+}
+
+/** La pestaña activa dice qué hace el botón principal y si hay cambios sin guardar. */
+function useCommit(commit: CommitState) {
+  const { setCommit } = useScreen();
+  const latest = useRef(commit);
+  useEffect(() => {
+    latest.current = commit;
+  });
+  const { disabled, dirty, busy } = commit;
+  useEffect(() => {
+    setCommit({
+      disabled,
+      dirty,
+      busy,
+      run: () => latest.current.run(),
+      reset: () => latest.current.reset(),
+    });
+    return () => setCommit(null);
+  }, [disabled, dirty, busy, setCommit]);
+}
+
+/** La foto grande: se pinta en el escenario de la pantalla; mantener «Ver la original» enseña la de antes. */
+function Stage({ pixels, testId, checker }: { pixels: Pixels | null; testId?: string; checker?: boolean }) {
+  const { stage, comparing, before } = useScreen();
+  if (!stage) return null;
+  return createPortal(
+    <PixelsCanvas
+      pixels={comparing ? before : (pixels ?? before)}
+      className="h-full w-full object-contain"
+      testId={testId}
+      checker={checker}
+    />,
+    stage,
+  );
+}
+
+/** Guarda lo hecho y lo entrega (aplicar a la capa o dejarlo como copia en la biblioteca). */
+type SaveEditResult = (pixels: Pixels, steps: PhotoEditStep[], copyMessage: string) => Promise<MediaAssetRow>;
+
+// ─────────────────────────────── La pantalla ───────────────────────────────
+
+export function PhotoEditScreen({
   asset: initial,
   url: initialUrl,
-  open,
-  onOpenChange,
+  onClose,
+  onApply,
   onResult,
   resultLabel,
   getSubjectMask,
   initialTab,
-}: PhotoEditDialogProps) {
+}: PhotoEditScreenProps) {
   // Se puede pasar a editar un resultado (p. ej., la foto sin fondo para ponerle otro).
   const [asset, setAsset] = useState(initial);
   const signed = useSignedUrls(initialUrl && asset.id === initial.id ? [] : [asset.storage_path]);
@@ -146,13 +266,34 @@ export function PhotoEditDialog({
   const loaded = load && load.url === url ? (load.result ?? null) : null;
   const loadError = load && load.url === url ? (load.error ?? null) : null;
   const [tab, setTab] = useState<Tab>(initialTab ?? 'enhance');
-  const [results, setResults] = useState<MediaAssetRow[]>([]);
+  const [results, setResults] = useState<Array<{ row: MediaAssetRow; undoable: boolean }>>([]);
+  const [commit, setCommit] = useState<CommitState | null>(null);
+  const [stage, setStage] = useState<HTMLElement | null>(null);
+  const [comparing, setComparing] = useState(false);
+  const [askDiscard, setAskDiscard] = useState(false);
+  // El recorte del fondo vive aquí para no perderlo al cambiar de pestaña.
+  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string } | null>(null);
   const save = useSaveEdit(asset.brand_id);
-  const aiOptions = useAiEditOptions(asset.brand_id, open && canEditWithAi(asset));
+  const queryClient = useQueryClient();
+  const aiOptions = useAiEditOptions(asset.brand_id, canEditWithAi(asset));
   const aiChoice = (operation: AiPhotoOperation) => aiOptions.data?.find((c) => c.operation === operation);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const applyMode = Boolean(onApply);
+
+  // Pantalla propia: lo de debajo no recibe foco ni lectores de pantalla; al volver, el foco regresa donde estaba.
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const app = document.getElementById('root');
+    if (app) app.inert = true;
+    rootRef.current?.focus();
+    return () => {
+      if (app) app.inert = false;
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
 
   useEffect(() => {
-    if (!open || !url) return;
+    if (!url) return;
     let alive = true;
     loadPixels(url).then(
       (result) => alive && setLoad({ url, result: { pixels: result.pixels, reduced: result.reduced } }),
@@ -166,22 +307,22 @@ export function PhotoEditDialog({
     return () => {
       alive = false;
     };
-  }, [open, url]);
+  }, [url]);
 
   const stats = useMemo(() => (loaded ? analyzeImage(loaded.pixels) : null), [loaded]);
   const preview = useMemo(() => (loaded ? downscale(loaded.pixels, PREVIEW_SIDE) : null), [loaded]);
   const map = useMemo(() => (loaded ? interestMap(loaded.pixels) : null), [loaded]);
 
-  const addResult = (row: MediaAssetRow) => {
-    setResults((current) => [row, ...current.filter((r) => r.id !== row.id)]);
+  const addResult = (row: MediaAssetRow, undoable = false) => {
+    setResults((current) => [{ row, undoable }, ...current.filter((r) => r.row.id !== row.id)]);
   };
 
   /** Codifica y guarda en la biblioteca un resultado hecho en el navegador. */
-  async function store(pixels: Pixels, steps: PhotoEditStep[]) {
+  const store = async (pixels: Pixels, steps: PhotoEditStep[]) => {
     const transparent = analyzeImage(pixels).transparent;
     const format = outputFormat(transparent, asset.mime_type);
     const blob = await encodePixels(pixels, format.mime);
-    const row = await save.mutateAsync({
+    return save.mutateAsync({
       source: asset,
       blob,
       fileName: editedFileName(asset.file_name, steps, format.ext),
@@ -189,132 +330,298 @@ export function PhotoEditDialog({
       height: pixels.height,
       provenance: photoEditProvenance({ sourceAssetId: asset.id, steps, width: pixels.width, height: pixels.height }),
     });
-    addResult(row);
+  };
+
+  const commitEdit: SaveEditResult = async (pixels, steps, copyMessage) => {
+    const row = await store(pixels, steps);
+    if (onApply) {
+      // La copia queda también en «Ediciones»; la capa pasa a usarla.
+      onApply(row);
+    } else {
+      addResult(row, true);
+      toast.success(copyMessage);
+    }
     return row;
+  };
+
+  async function undoResult(row: MediaAssetRow) {
+    try {
+      await deleteAssets([row.id]);
+      setResults((current) => current.filter((r) => r.row.id !== row.id));
+      await queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
+      toast.success('Copia deshecha: ya no está en la biblioteca. La original no ha cambiado.');
+    } catch (error) {
+      toast.error(translateError(error));
+    }
   }
 
   const switchTo = (row: MediaAssetRow) => {
     setAsset(row);
+    setCutout(null);
     setTab('background');
   };
 
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Editar foto"
-      description={`${asset.file_name}. La foto original no cambia: cada resultado se guarda aparte en la carpeta «Ediciones».`}
-      size="lg"
-      footer={
-        <Button variant="secondary" onClick={() => onOpenChange(false)}>
-          Cerrar
-        </Button>
-      }
-    >
-      <div className="space-y-4" data-testid="photo-edit">
-        {loadError ? (
-          <Notice tone="warning">{loadError}</Notice>
-        ) : !loaded || !stats || !preview || !map ? (
-          <Spinner label="Abriendo la foto…" />
-        ) : (
-          <>
-            {loaded.reduced && (
-              <Notice tone="warning">
-                La foto es muy grande: se edita reducida a {loaded.pixels.width} × {loaded.pixels.height} px.
-              </Notice>
-            )}
-            <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-              <TabsList label="Ediciones">
-                <TabsTrigger value="enhance">Mejorar</TabsTrigger>
-                <TabsTrigger value="crops">Recortes</TabsTrigger>
-                <TabsTrigger value="background">Fondo</TabsTrigger>
-                {(aiChoice('replace_background') || aiChoice('enhance')) && (
-                  <TabsTrigger value="ai">Fondo con IA</TabsTrigger>
-                )}
-                {aiChoice('upscale') && <TabsTrigger value="upscale">Ampliar</TabsTrigger>}
-              </TabsList>
-              <TabsContent value="enhance" className="pt-4">
-                <EnhanceTab
-                  pixels={loaded.pixels}
-                  preview={preview}
-                  stats={stats}
-                  map={map}
-                  saving={save.isPending}
-                  onSave={(pixels, steps) => store(pixels, steps)}
-                />
-              </TabsContent>
-              <TabsContent value="crops" className="pt-4">
-                <CropsTab pixels={loaded.pixels} preview={preview} map={map} saving={save.isPending} onSave={store} />
-              </TabsContent>
-              <TabsContent value="background" className="pt-4">
-                <BackgroundTab
-                  key={asset.id}
-                  asset={asset}
-                  pixels={loaded.pixels}
-                  transparent={stats.transparent}
-                  saving={save.isPending}
-                  onSave={store}
-                  ai={aiChoice('remove_background')}
-                  onAiResult={(row) => {
-                    addResult(row);
-                    switchTo(row);
-                  }}
-                />
-              </TabsContent>
-              {(aiChoice('replace_background') || aiChoice('enhance')) && (
-                <TabsContent value="ai" className="space-y-6 pt-4">
-                  {aiChoice('replace_background') && (
-                    <AiAction
-                      asset={asset}
-                      operation="replace_background"
-                      choice={aiChoice('replace_background')!}
-                      onDone={addResult}
-                      getSubjectMask={getSubjectMask}
-                      pixels={loaded.pixels}
-                    />
-                  )}
-                  {aiChoice('enhance') && (
-                    <AiAction asset={asset} operation="enhance" choice={aiChoice('enhance')!} onDone={addResult} />
-                  )}
-                </TabsContent>
-              )}
-              {aiChoice('upscale') && (
-                <TabsContent value="upscale" className="pt-4">
-                  <AiAction asset={asset} operation="upscale" choice={aiChoice('upscale')!} onDone={addResult} />
-                </TabsContent>
-              )}
-            </Tabs>
-          </>
-        )}
+  const requestClose = () => {
+    if (commit?.dirty) setAskDiscard(true);
+    else onClose();
+  };
 
-        {results.length > 0 && (
-          <section
-            className="space-y-2 rounded-lg border border-border p-3"
-            aria-label="Resultados"
-            data-testid="photo-edit-results"
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    // Lo que se teclea aquí no es del editor de debajo (Ctrl+Z, Supr, flechas…).
+    event.stopPropagation();
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      event.preventDefault();
+      requestClose();
+    }
+  };
+
+  const context = useMemo<ScreenContextValue | null>(
+    () => (preview ? { stage, comparing, before: preview, setCommit } : null),
+    [stage, comparing, preview],
+  );
+  const resultAction = onApply ?? onResult;
+  const busy = Boolean(commit?.busy) || save.isPending;
+
+  const body = (
+    <div
+      ref={rootRef}
+      role="region"
+      aria-label="Editar foto"
+      tabIndex={-1}
+      className="fixed inset-0 z-[45] flex flex-col bg-bg text-fg outline-none"
+      data-testid="photo-edit"
+      onKeyDown={onKeyDown}
+    >
+      <header className="flex flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2">
+        <Button variant="ghost" size="sm" onClick={requestClose} data-testid="photo-edit-back" title="Volver (Esc)">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Volver
+        </Button>
+        <div className="hidden min-w-0 flex-1 sm:block">
+          <h2 className="truncate text-sm font-semibold">Editar foto · {asset.file_name}</h2>
+          <p className="truncate text-xs text-muted">
+            {applyMode
+              ? 'Al aplicar, la capa usa la foto editada (se deshace con Ctrl+Z). La original no cambia.'
+              : 'La original no cambia: cada resultado se guarda aparte en la carpeta «Ediciones».'}
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-2 sm:ml-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => commit?.reset()}
+            disabled={!commit?.dirty || busy}
+            data-testid="photo-edit-cancel"
           >
-            <h3 className="text-sm font-medium">Guardado en la biblioteca</h3>
-            <ul className="space-y-1">
-              {results.map((row) => (
-                <li
-                  key={row.id}
-                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
-                  data-testid="photo-edit-result"
-                >
-                  <span className="min-w-0 truncate">{row.file_name}</span>
-                  {onResult && (
-                    <Button size="sm" variant="ghost" onClick={() => onResult(row)} data-testid="photo-edit-use">
-                      {resultLabel ?? 'Abrir'}
+            Cancelar
+          </Button>
+          {commit && (
+            <Button
+              size="sm"
+              onClick={() => void commit.run()}
+              disabled={commit.disabled}
+              loading={busy}
+              data-testid="photo-edit-save"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden />
+              {applyMode ? 'Aplicar a la capa' : 'Guardar copia'}
+            </Button>
+          )}
+        </div>
+      </header>
+
+      {askDiscard && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 border-b border-border bg-subtle px-3 py-2 text-sm"
+          data-testid="photo-edit-discard"
+        >
+          <span className="mr-auto">Hay cambios sin guardar. ¿Quieres salir y descartarlos?</span>
+          <Button size="sm" variant="secondary" onClick={() => setAskDiscard(false)}>
+            Seguir editando
+          </Button>
+          <Button size="sm" onClick={onClose} data-testid="photo-edit-discard-confirm">
+            Descartar y volver
+          </Button>
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <section
+          className="max-h-24 space-y-1 overflow-y-auto border-b border-border bg-primary-soft px-3 py-2"
+          aria-label="Guardado en la biblioteca"
+          data-testid="photo-edit-results"
+        >
+          <ul className="space-y-1">
+            {results.map(({ row, undoable }) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                data-testid="photo-edit-result"
+              >
+                <span className="min-w-0 truncate">
+                  <span className="text-muted">Guardado en la biblioteca: </span>
+                  {row.file_name}
+                </span>
+                <span className="flex gap-1">
+                  {resultAction && (
+                    <Button size="sm" variant="ghost" onClick={() => resultAction(row)} data-testid="photo-edit-use">
+                      {onApply ? 'Usar en la capa' : (resultLabel ?? 'Abrir')}
                     </Button>
                   )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+                  {undoable && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void undoResult(row)}
+                      title="Borra esta copia de la biblioteca"
+                      data-testid="photo-edit-undo-save"
+                    >
+                      <Undo2 className="h-4 w-4" aria-hidden />
+                      Deshacer
+                    </Button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div className="relative h-[38dvh] shrink-0 bg-subtle lg:h-auto lg:flex-1">
+          <div
+            ref={setStage}
+            className="absolute inset-3 flex items-center justify-center"
+            data-testid="photo-edit-stage"
+          />
+          {context && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="absolute bottom-3 left-3 touch-none select-none"
+                aria-pressed={comparing}
+                onPointerDown={() => setComparing(true)}
+                onPointerUp={() => setComparing(false)}
+                onPointerLeave={() => setComparing(false)}
+                onPointerCancel={() => setComparing(false)}
+                onBlur={() => setComparing(false)}
+                onKeyDown={(event) => {
+                  if (event.key === ' ' || event.key === 'Enter') setComparing(true);
+                }}
+                onKeyUp={(event) => {
+                  if (event.key === ' ' || event.key === 'Enter') setComparing(false);
+                }}
+                data-testid="photo-edit-compare"
+              >
+                <Eye className="h-4 w-4" aria-hidden />
+                Ver la original (mantén pulsado)
+              </Button>
+              {comparing && (
+                <span
+                  className="absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white"
+                  role="status"
+                >
+                  Original
+                </span>
+              )}
+            </>
+          )}
+          {!loadError && !context && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Spinner label="Abriendo la foto…" />
+            </div>
+          )}
+        </div>
+
+        <aside
+          className="flex min-h-0 flex-1 flex-col border-t border-border bg-surface lg:w-[24rem] lg:flex-none lg:border-l lg:border-t-0"
+          aria-label="Controles"
+        >
+          {loadError ? (
+            <div className="p-4">
+              <Notice tone="warning">{loadError}</Notice>
+            </div>
+          ) : !loaded || !stats || !preview || !map || !context ? null : (
+            <ScreenContext.Provider value={context}>
+              <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} className="flex min-h-0 flex-1 flex-col">
+                <div className="shrink-0 px-2">
+                  <TabsList label="Ediciones">
+                    <TabsTrigger value="enhance">Mejorar</TabsTrigger>
+                    <TabsTrigger value="crops">Recortes</TabsTrigger>
+                    <TabsTrigger value="background">Fondo</TabsTrigger>
+                    {(aiChoice('replace_background') || aiChoice('enhance')) && (
+                      <TabsTrigger value="ai">Fondo con IA</TabsTrigger>
+                    )}
+                    {aiChoice('upscale') && <TabsTrigger value="upscale">Ampliar</TabsTrigger>}
+                  </TabsList>
+                </div>
+                {/* Una sola zona de desplazamiento: los controles. */}
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+                  {loaded.reduced && (
+                    <div className="pt-3">
+                      <Notice tone="warning">
+                        La foto es muy grande: se edita reducida a {loaded.pixels.width} × {loaded.pixels.height} px.
+                      </Notice>
+                    </div>
+                  )}
+                  <TabsContent value="enhance" className="pt-4">
+                    <EnhanceTab pixels={loaded.pixels} preview={preview} stats={stats} map={map} onSave={commitEdit} />
+                  </TabsContent>
+                  <TabsContent value="crops" className="pt-4">
+                    <CropsTab pixels={loaded.pixels} preview={preview} map={map} onSave={commitEdit} />
+                  </TabsContent>
+                  <TabsContent value="background" className="pt-4">
+                    <BackgroundTab
+                      key={asset.id}
+                      asset={asset}
+                      pixels={loaded.pixels}
+                      transparent={stats.transparent}
+                      onSave={commitEdit}
+                      cutout={cutout}
+                      setCutout={setCutout}
+                      ai={aiChoice('remove_background')}
+                      onAiResult={(row) => {
+                        addResult(row);
+                        switchTo(row);
+                      }}
+                    />
+                  </TabsContent>
+                  {(aiChoice('replace_background') || aiChoice('enhance')) && (
+                    <TabsContent value="ai" className="space-y-6 pt-4">
+                      <Stage pixels={null} />
+                      {aiChoice('replace_background') && (
+                        <AiAction
+                          asset={asset}
+                          operation="replace_background"
+                          choice={aiChoice('replace_background')!}
+                          onDone={addResult}
+                          getSubjectMask={getSubjectMask}
+                          pixels={loaded.pixels}
+                        />
+                      )}
+                      {aiChoice('enhance') && (
+                        <AiAction asset={asset} operation="enhance" choice={aiChoice('enhance')!} onDone={addResult} />
+                      )}
+                    </TabsContent>
+                  )}
+                  {aiChoice('upscale') && (
+                    <TabsContent value="upscale" className="pt-4">
+                      <Stage pixels={null} />
+                      <AiAction asset={asset} operation="upscale" choice={aiChoice('upscale')!} onDone={addResult} />
+                    </TabsContent>
+                  )}
+                </div>
+              </Tabs>
+            </ScreenContext.Provider>
+          )}
+        </aside>
       </div>
-    </Dialog>
+    </div>
   );
+
+  return createPortal(body, document.body);
 }
 
 // ─────────────────────────────── Mejorar ───────────────────────────────
@@ -324,108 +631,132 @@ function EnhanceTab({
   preview,
   stats,
   map,
-  saving,
   onSave,
 }: {
   pixels: Pixels;
   preview: Pixels;
   stats: ReturnType<typeof analyzeImage>;
   map: ReturnType<typeof interestMap>;
-  saving: boolean;
-  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<unknown>;
+  onSave: SaveEditResult;
 }) {
   const [adjustments, setAdjustments] = useState<Adjustments>(NEUTRAL_ADJUSTMENTS);
+  /** La mejora automática está puesta (y no se ha tocado a mano). */
   const [auto, setAuto] = useState(false);
+  /** Lo que había antes de pulsar «Mejorar automáticamente», para volver en un clic. */
+  const [beforeAuto, setBeforeAuto] = useState<Adjustments | null>(null);
   const [framing, setFraming] = useState<NetworkAspect | ''>('');
-  const adjusted = useMemo(() => applyAdjustments(preview, adjustments), [preview, adjustments]);
+  const [busy, setBusy] = useState(false);
+  // Los controles responden al instante; la foto grande se rehace en cuanto puede.
+  const live = useDeferredValue(adjustments);
+  const adjusted = useMemo(() => applyAdjustments(preview, live), [preview, live]);
+  const box = useMemo(() => (framing ? smartCrop(pixels, framing, map) : null), [pixels, map, framing]);
+  const shown = useMemo(() => {
+    if (!box) return adjusted;
+    const scale = preview.width / pixels.width;
+    return cropPixels(adjusted, {
+      x: box.x * scale,
+      y: box.y * scale,
+      width: box.width * scale,
+      height: box.height * scale,
+    });
+  }, [adjusted, box, preview.width, pixels.width]);
   const unchanged = isNeutral(adjustments) && !framing;
 
+  const reset = useCallback(() => {
+    setAdjustments(NEUTRAL_ADJUSTMENTS);
+    setAuto(false);
+    setBeforeAuto(null);
+    setFraming('');
+  }, []);
+
+  function toggleAuto() {
+    if (auto) {
+      setAdjustments(beforeAuto ?? NEUTRAL_ADJUSTMENTS);
+      setBeforeAuto(null);
+      setAuto(false);
+    } else {
+      setBeforeAuto(adjustments);
+      setAdjustments(autoAdjustments(stats));
+      setAuto(true);
+    }
+  }
+
   async function submit() {
+    setBusy(true);
     try {
       let result = applyAdjustments(pixels, adjustments);
       const steps: PhotoEditStep[] = [];
       if (!isNeutral(adjustments)) steps.push({ kind: 'adjust', adjustments, auto });
-      if (framing) {
-        const box = smartCrop(result, framing, map);
+      if (framing && box) {
         result = cropPixels(result, box);
         steps.push({ kind: 'crop', aspect: framing, box, smart: true });
       }
-      await onSave(result, steps);
-      toast.success('Foto mejorada guardada en la biblioteca. La original no ha cambiado.');
+      await onSave(result, steps, 'Foto mejorada guardada en la biblioteca. La original no ha cambiado.');
+      // La siguiente edición parte de cero: nada se arrastra de esta.
+      reset();
     } catch (error) {
       toast.error(translateError(error));
+    } finally {
+      setBusy(false);
     }
   }
 
+  useCommit({ run: submit, disabled: unchanged, dirty: !unchanged, busy, reset });
+
   return (
-    <div className="grid gap-4 md:grid-cols-[1fr_16rem]">
-      <div className="space-y-2">
-        <PixelsCanvas pixels={adjusted} className="rounded-lg border border-border" testId="photo-edit-preview" />
-        <p className="text-xs text-muted">Vista previa reducida. Se guarda a tamaño completo.</p>
-      </div>
-      <div className="space-y-3">
-        <Button
-          variant="secondary"
-          onClick={() => {
-            setAdjustments(autoAdjustments(stats));
-            setAuto(true);
-          }}
-          data-testid="photo-edit-auto"
-        >
-          <Wand2 className="h-4 w-4" aria-hidden />
-          Mejorar automáticamente
-        </Button>
-        {SLIDERS.map((slider) => (
-          <label key={slider.key} className="block text-xs">
-            <span className="flex justify-between">
-              {slider.label}
-              <span className="tabular-nums text-muted">{adjustments[slider.key]}</span>
-            </span>
-            <input
-              type="range"
-              min={slider.min}
-              max={100}
-              value={adjustments[slider.key]}
-              onChange={(e) => setAdjustments((current) => ({ ...current, [slider.key]: Number(e.target.value) }))}
-              className="w-full"
-              data-testid={`photo-edit-${slider.key}`}
-            />
-          </label>
-        ))}
-        <label className="block text-xs">
-          Encuadre
-          <select
-            className="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1 text-sm"
-            value={framing}
-            onChange={(e) => setFraming(e.target.value as NetworkAspect | '')}
-            data-testid="photo-edit-framing"
-          >
-            <option value="">Como está</option>
-            {NETWORK_ASPECTS.map((aspect) => (
-              <option key={aspect} value={aspect}>
-                {NETWORK_ASPECT_LABEL[aspect]}, encuadre inteligente
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setAdjustments(NEUTRAL_ADJUSTMENTS);
+    <div className="space-y-4">
+      <Stage pixels={shown} testId="photo-edit-preview" />
+      <Button
+        variant={auto ? 'primary' : 'secondary'}
+        onClick={toggleAuto}
+        aria-pressed={auto}
+        className="w-full"
+        data-testid="photo-edit-auto"
+      >
+        {auto ? <Undo2 className="h-4 w-4" aria-hidden /> : <Wand2 className="h-4 w-4" aria-hidden />}
+        {auto ? 'Quitar la mejora automática' : 'Mejorar automáticamente'}
+      </Button>
+      {SLIDERS.map((slider) => (
+        <label key={slider.key} className="block text-sm">
+          <span className="flex justify-between">
+            {slider.label}
+            <span className="tabular-nums text-muted">{adjustments[slider.key]}</span>
+          </span>
+          <input
+            type="range"
+            min={slider.min}
+            max={100}
+            value={adjustments[slider.key]}
+            onChange={(e) => {
+              setAdjustments((current) => ({ ...current, [slider.key]: Number(e.target.value) }));
+              // A mano ya no es la mejora automática tal cual.
               setAuto(false);
-              setFraming('');
             }}
-          >
-            Deshacer cambios
-          </Button>
-          <Button onClick={() => void submit()} disabled={unchanged} loading={saving} data-testid="photo-edit-save">
-            <Sparkles className="h-4 w-4" aria-hidden />
-            Guardar copia
-          </Button>
-        </div>
-      </div>
+            className="mt-1 w-full"
+            data-testid={`photo-edit-${slider.key}`}
+          />
+        </label>
+      ))}
+      <label className="block text-sm">
+        Encuadre
+        <select
+          className="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+          value={framing}
+          onChange={(e) => setFraming(e.target.value as NetworkAspect | '')}
+          data-testid="photo-edit-framing"
+        >
+          <option value="">Como está</option>
+          {NETWORK_ASPECTS.map((aspect) => (
+            <option key={aspect} value={aspect}>
+              {NETWORK_ASPECT_LABEL[aspect]}, encuadre inteligente
+            </option>
+          ))}
+        </select>
+      </label>
+      <Button variant="ghost" size="sm" onClick={reset} disabled={unchanged} data-testid="photo-edit-reset">
+        Deshacer cambios
+      </Button>
+      <p className="text-xs text-muted">Vista previa reducida. Se guarda a tamaño completo.</p>
     </div>
   );
 }
@@ -436,35 +767,30 @@ function CropsTab({
   pixels,
   preview,
   map,
-  saving,
   onSave,
 }: {
   pixels: Pixels;
   preview: Pixels;
   map: ReturnType<typeof interestMap>;
-  saving: boolean;
-  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<unknown>;
+  onSave: SaveEditResult;
 }) {
-  const [aspects, setAspects] = useState<NetworkAspect[]>([...NETWORK_ASPECTS]);
+  const [aspect, setAspect] = useState<NetworkAspect>(NETWORK_ASPECTS[0]!);
   const [smart, setSmart] = useState(true);
   const [busy, setBusy] = useState(false);
   const boxes = useMemo(
     () =>
       Object.fromEntries(
-        NETWORK_ASPECTS.map((aspect) => [
-          aspect,
-          smart ? smartCrop(pixels, aspect, map) : centeredCrop(pixels, aspect),
-        ]),
-      ) as Record<NetworkAspect, ReturnType<typeof smartCrop>>,
+        NETWORK_ASPECTS.map((a) => [a, smart ? smartCrop(pixels, a, map) : centeredCrop(pixels, a)]),
+      ) as Record<NetworkAspect, Box>,
     [pixels, map, smart],
   );
   const previews = useMemo(() => {
     const scale = preview.width / pixels.width;
     return Object.fromEntries(
-      NETWORK_ASPECTS.map((aspect) => {
-        const box = boxes[aspect];
+      NETWORK_ASPECTS.map((a) => {
+        const box = boxes[a];
         return [
-          aspect,
+          a,
           cropPixels(preview, {
             x: box.x * scale,
             y: box.y * scale,
@@ -475,16 +801,20 @@ function CropsTab({
       }),
     ) as Record<NetworkAspect, Pixels>;
   }, [preview, pixels.width, boxes]);
+  const thumbs = useMemo(
+    () =>
+      Object.fromEntries(NETWORK_ASPECTS.map((a) => [a, downscale(previews[a], 220)])) as Record<NetworkAspect, Pixels>,
+    [previews],
+  );
 
   async function submit() {
     setBusy(true);
     try {
-      for (const aspect of aspects) {
-        const box = boxes[aspect];
-        await onSave(cropPixels(pixels, box), [{ kind: 'crop', aspect, box, smart }]);
-      }
-      toast.success(
-        `${aspects.length === 1 ? 'Recorte guardado' : `${aspects.length} recortes guardados`} en la biblioteca. La original no ha cambiado.`,
+      const box = boxes[aspect];
+      await onSave(
+        cropPixels(pixels, box),
+        [{ kind: 'crop', aspect, box, smart }],
+        'Recorte guardado en la biblioteca. La original no ha cambiado.',
       );
     } catch (error) {
       toast.error(translateError(error));
@@ -493,11 +823,23 @@ function CropsTab({
     }
   }
 
+  useCommit({
+    run: submit,
+    disabled: false,
+    dirty: false,
+    busy,
+    reset: () => {
+      setAspect(NETWORK_ASPECTS[0]!);
+      setSmart(true);
+    },
+  });
+
   return (
     <div className="space-y-4">
+      <Stage pixels={previews[aspect]} testId="photo-edit-crop-preview" />
       <p className="text-sm text-muted">
         El recorte más grande que cabe en cada formato, colocado donde hay más detalle y color (sin IA: no reconoce
-        objetos; con fondos muy cargados, mira la vista previa).
+        objetos; con fondos muy cargados, mira la vista previa). Elige un formato; para guardar otro, repite.
       </p>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -508,72 +850,65 @@ function CropsTab({
         />
         Encuadre inteligente (si no, centrado)
       </label>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {NETWORK_ASPECTS.map((aspect) => {
-          const checked = aspects.includes(aspect);
-          const box = boxes[aspect];
+      <fieldset className="grid grid-cols-3 gap-2">
+        <legend className="sr-only">Formato del recorte</legend>
+        {NETWORK_ASPECTS.map((a) => {
+          const checked = aspect === a;
+          const box = boxes[a];
           return (
             <label
-              key={aspect}
+              key={a}
               className={cn(
-                'flex cursor-pointer flex-col gap-2 rounded-lg border p-2 text-xs',
+                'flex cursor-pointer flex-col items-center gap-2 rounded-lg border p-2 text-xs',
                 checked ? 'border-primary bg-primary-soft' : 'border-border',
               )}
             >
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5">
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name="crop-aspect"
                   checked={checked}
-                  onChange={() =>
-                    setAspects((current) =>
-                      checked
-                        ? current.filter((a) => a !== aspect)
-                        : NETWORK_ASPECTS.filter((a) => a === aspect || current.includes(a)),
-                    )
-                  }
-                  data-testid={`photo-edit-crop-${aspect}`}
+                  onChange={() => setAspect(a)}
+                  data-testid={`photo-edit-crop-${a}`}
                 />
-                {NETWORK_ASPECT_LABEL[aspect]}
+                {NETWORK_ASPECT_LABEL[a]}
               </span>
-              <PixelsCanvas pixels={previews[aspect]} className="max-h-40 rounded" />
+              <PixelsCanvas pixels={thumbs[a]} className="max-h-24 rounded" />
               <span className="text-muted">
                 {box.width} × {box.height} px
               </span>
             </label>
           );
         })}
-      </div>
-      <Button
-        onClick={() => void submit()}
-        disabled={aspects.length === 0}
-        loading={busy || saving}
-        data-testid="photo-edit-crops-save"
-      >
-        <Crop className="h-4 w-4" aria-hidden />
-        {aspects.length === 0
-          ? 'Elige al menos un formato'
-          : `Guardar ${aspects.length === 1 ? 'el recorte' : `${aspects.length} recortes`}`}
-      </Button>
+      </fieldset>
     </div>
   );
 }
 
 // ─────────────────────────────── Fondo ───────────────────────────────
 
+/** Qué se pone detrás del plato. */
+type BackgroundChoice =
+  | { type: 'none' }
+  | { type: 'color'; hex: string }
+  | { type: 'asset'; asset: MediaAssetRow; cover: Pixels };
+
 function BackgroundTab({
   asset,
   pixels,
   transparent,
-  saving,
   onSave,
+  cutout,
+  setCutout,
   ai,
   onAiResult,
 }: {
   asset: MediaAssetRow;
   pixels: Pixels;
   transparent: boolean;
-  saving: boolean;
-  onSave: (pixels: Pixels, steps: PhotoEditStep[]) => Promise<MediaAssetRow>;
+  onSave: SaveEditResult;
+  cutout: { pixels: Pixels; model: string } | null;
+  setCutout: (cutout: { pixels: Pixels; model: string } | null) => void;
   ai: AiEditChoice | undefined;
   onAiResult: (row: MediaAssetRow) => void;
 }) {
@@ -588,13 +923,12 @@ function BackgroundTab({
   );
   const support = useMemo(() => removalSupport(), []);
   const [engine, setEngine] = useState<'browser' | 'ai'>(support.ok || !ai ? 'browser' : 'ai');
-  // El recorte hecho en el navegador (todavía sin guardar).
-  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string } | null>(null);
   const [progress, setProgress] = useState<CutoutProgress | null>(null);
   const [cutting, setCutting] = useState(false);
   const [cutError, setCutError] = useState<string | null>(null);
   const [shadow, setShadow] = useState(false);
   const [color, setColor] = useState('#FFFFFF');
+  const [choice, setChoice] = useState<BackgroundChoice>({ type: 'color', hex: '#FFFFFF' });
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -602,10 +936,17 @@ function BackgroundTab({
   const subject = transparent ? pixels : (cutout?.pixels ?? null);
   const prefix: PhotoEditStep[] =
     !transparent && cutout ? [{ kind: 'remove_background', engine: 'browser', model: cutout.model }] : [];
-  const preview = useMemo(
-    () => (subject ? composeCutout(downscale(subject, 360), { kind: 'color', hex: color }, { shadow }) : null),
-    [subject, color, shadow],
-  );
+  const small = useMemo(() => (subject ? downscale(subject, PREVIEW_SIDE) : null), [subject]);
+  // La vista previa enseña lo ELEGIDO (color, imagen o transparente), no un fondo fijo.
+  const shown = useMemo(() => {
+    if (!small) return null;
+    if (choice.type === 'none') return small;
+    const backdrop =
+      choice.type === 'color'
+        ? ({ kind: 'color', hex: choice.hex } as const)
+        : ({ kind: 'image', pixels: downscale(choice.cover, PREVIEW_SIDE) } as const);
+    return composeCutout(small, backdrop, { shadow });
+  }, [small, choice, shadow]);
 
   async function cut() {
     setCutting(true);
@@ -622,32 +963,16 @@ function BackgroundTab({
     }
   }
 
-  async function apply(
-    background: { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; url: string },
-  ) {
+  function chooseColor(hex: string) {
+    setColor(hex);
+    setChoice({ type: 'color', hex });
+  }
+
+  async function chooseImage(row: MediaAssetRow, url: string) {
     if (!subject) return;
     setBusy(true);
     try {
-      const backdrop =
-        background.type === 'color'
-          ? ({ kind: 'color', hex: background.hex } as const)
-          : ({
-              kind: 'image',
-              pixels: await loadCoverPixels(background.url, subject.width, subject.height),
-            } as const);
-      const result = composeCutout(subject, backdrop, { shadow });
-      await onSave(result, [
-        ...prefix,
-        {
-          kind: 'background',
-          background:
-            background.type === 'color'
-              ? { type: 'color', hex: background.hex }
-              : { type: 'asset', assetId: background.asset.id },
-          ...(shadow ? { shadow: true } : {}),
-        },
-      ]);
-      toast.success('Foto con fondo nuevo guardada en la biblioteca. La original no ha cambiado.');
+      setChoice({ type: 'asset', asset: row, cover: await loadCoverPixels(url, subject.width, subject.height) });
     } catch (error) {
       toast.error(error instanceof PhotoLoadError ? error.message : translateError(error));
     } finally {
@@ -655,23 +980,63 @@ function BackgroundTab({
     }
   }
 
-  async function saveCutout() {
+  async function submit() {
     if (!subject) return;
     setBusy(true);
     try {
-      await onSave(subject, prefix);
-      toast.success('Foto sin fondo guardada en la biblioteca (PNG transparente). La original no ha cambiado.');
+      if (choice.type === 'none') {
+        await onSave(
+          subject,
+          prefix,
+          'Foto sin fondo guardada en la biblioteca (PNG transparente). La original no ha cambiado.',
+        );
+        return;
+      }
+      const backdrop =
+        choice.type === 'color'
+          ? ({ kind: 'color', hex: choice.hex } as const)
+          : ({ kind: 'image', pixels: choice.cover } as const);
+      await onSave(
+        composeCutout(subject, backdrop, { shadow }),
+        [
+          ...prefix,
+          {
+            kind: 'background',
+            background:
+              choice.type === 'color' ? { type: 'color', hex: choice.hex } : { type: 'asset', assetId: choice.asset.id },
+            ...(shadow ? { shadow: true } : {}),
+          },
+        ],
+        'Foto con fondo nuevo guardada en la biblioteca. La original no ha cambiado.',
+      );
     } catch (error) {
-      toast.error(translateError(error));
+      toast.error(error instanceof PhotoLoadError ? error.message : translateError(error));
     } finally {
       setBusy(false);
     }
   }
 
+  const reset = useCallback(() => {
+    setCutout(null);
+    setChoice({ type: 'color', hex: '#FFFFFF' });
+    setColor('#FFFFFF');
+    setShadow(false);
+  }, [setCutout]);
+
+  useCommit({
+    run: submit,
+    // Ya sin fondo y sin elegir otro: no hay nada que guardar.
+    disabled: !subject || (choice.type === 'none' && !cutout),
+    dirty: Boolean(cutout) && !transparent,
+    busy,
+    reset,
+  });
+
   return (
     <div className="space-y-4">
       {!subject && (
         <div className="space-y-3" data-testid="photo-edit-cutout">
+          <Stage pixels={null} />
           <p className="text-sm">Para cambiar el fondo, primero hay que quitarlo.</p>
           {ai && (
             <fieldset className="space-y-1 text-sm">
@@ -727,83 +1092,73 @@ function BackgroundTab({
       )}
       {subject && (
         <div className="space-y-3" data-testid="photo-edit-backgrounds">
+          <Stage pixels={shown} testId="photo-edit-cutout-preview" checker={choice.type === 'none'} />
           <p className="text-sm">
             {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA):
           </p>
-          <div className="grid gap-3 md:grid-cols-[14rem_1fr]">
-            <PixelsCanvas
-              pixels={preview}
-              className="rounded-lg border border-border"
-              testId="photo-edit-cutout-preview"
-            />
-            <div className="space-y-3">
-              {brandColors.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {brandColors.map((c) => (
-                    <button
-                      key={c.hex}
-                      type="button"
-                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-subtle"
-                      onClick={() => void apply({ type: 'color', hex: c.hex })}
-                      disabled={busy || saving}
-                      data-testid="photo-edit-brand-color"
-                    >
-                      <span
-                        className="h-4 w-4 rounded border border-border"
-                        style={{ backgroundColor: c.hex }}
-                        aria-hidden
-                      />
-                      {c.name || c.hex}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 text-xs">
-                  Color liso
-                  <input
-                    type="color"
-                    value={color}
-                    onChange={(e) => setColor(e.target.value.toUpperCase())}
-                    data-testid="photo-edit-color"
+          {brandColors.length > 0 && (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Colores de la marca">
+              {brandColors.map((c) => (
+                <button
+                  key={c.hex}
+                  type="button"
+                  className={cn(
+                    'flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-subtle',
+                    choice.type === 'color' && choice.hex === c.hex ? 'border-primary bg-primary-soft' : 'border-border',
+                  )}
+                  aria-pressed={choice.type === 'color' && choice.hex === c.hex}
+                  onClick={() => chooseColor(c.hex)}
+                  disabled={busy}
+                  data-testid="photo-edit-brand-color"
+                >
+                  <span
+                    className="h-4 w-4 rounded border border-border"
+                    style={{ backgroundColor: c.hex }}
+                    aria-hidden
                   />
-                </label>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void apply({ type: 'color', hex: color })}
-                  loading={busy || saving}
-                  data-testid="photo-edit-color-apply"
-                >
-                  Poner este color
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy || saving}>
-                  <ImagePlus className="h-4 w-4" aria-hidden />
-                  Imagen de la biblioteca
-                </Button>
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={shadow}
-                  onChange={(e) => setShadow(e.target.checked)}
-                  data-testid="photo-edit-shadow"
-                />
-                Sombra suave (para que no parezca flotar)
-              </label>
-              {cutout && !transparent && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => void saveCutout()}
-                  disabled={busy || saving}
-                  data-testid="photo-edit-cutout-save"
-                >
-                  Guardar solo sin fondo (PNG transparente)
-                </Button>
-              )}
+                  {c.name || c.hex}
+                </button>
+              ))}
             </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              Color liso
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => chooseColor(e.target.value.toUpperCase())}
+                data-testid="photo-edit-color"
+              />
+            </label>
+            <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy}>
+              <ImagePlus className="h-4 w-4" aria-hidden />
+              Imagen de la biblioteca
+            </Button>
+            {choice.type === 'asset' && <Badge tone="neutral">{choice.asset.file_name}</Badge>}
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={shadow}
+              onChange={(e) => setShadow(e.target.checked)}
+              disabled={choice.type === 'none'}
+              data-testid="photo-edit-shadow"
+            />
+            Sombra suave (para que no parezca flotar)
+          </label>
+          {cutout && !transparent && (
+            <Button
+              size="sm"
+              variant={choice.type === 'none' ? 'primary' : 'ghost'}
+              aria-pressed={choice.type === 'none'}
+              onClick={() => setChoice({ type: 'none' })}
+              disabled={busy}
+              data-testid="photo-edit-cutout-save"
+            >
+              Dejarlo sin fondo (PNG transparente)
+            </Button>
+          )}
           <BackgroundPicker
             brandId={asset.brand_id}
             organizationId={asset.organization_id}
@@ -811,7 +1166,7 @@ function BackgroundTab({
             onOpenChange={setPicking}
             onPick={(row, url) => {
               setPicking(false);
-              void apply({ type: 'asset', asset: row, url });
+              void chooseImage(row, url);
             }}
           />
         </div>

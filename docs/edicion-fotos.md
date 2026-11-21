@@ -368,7 +368,7 @@ y permitido para ellas (misma regla que «Ampliar»).
     24 MP) y al tamaño del resultado de la IA (~1,5 MP). El plato sale con la
     resolución del resultado, no la de la foto original.
 - **Interfaz «máscara del sujeto opcional» (para el integrador).**
-  `PhotoEditDialog` sigue aceptando
+  `PhotoEditScreen` sigue aceptando
   `getSubjectMask?: (asset) => Promise<Blob | null>` (mismo convenio: PNG con
   las medidas de la foto, plato opaco). Si se pasa, **sustituye** al recorte del
   navegador y, como no hay recorte propio, **no** se vuelve a pegar el plato ni
@@ -478,3 +478,72 @@ lienzo y al exportar.
 - No probado a mano en un navegador real en esta rama: solo pruebas de unidad,
   de componentes y de base de datos (el dibujo con Konva y el recorte arrastrando
   no se ejercitan en jsdom).
+
+## 11. «Editar foto» a pantalla completa (rama `f15/editar-foto-pantalla`, 21/11/2026)
+
+La ventana emergente (`PhotoEditDialog`) dejó la foto pequeña, con doble barra
+de desplazamiento y controles cortados. Ahora «Editar foto» es una **pantalla
+propia dentro de la página** (`photo-edit/PhotoEditScreen.tsx`), no un modal.
+
+### Cómo se ve y se usa
+
+- **Foto grande** a la izquierda (arriba en el móvil, a ~38 % del alto, siempre
+  visible mientras se mueven los deslizadores) y **una columna de controles** a
+  la derecha (debajo en el móvil) con las pestañas fijas. Solo se desplaza esa
+  columna.
+- **Barra superior:** «Volver» (también la tecla Esc; si hay cambios sin
+  guardar pregunta antes de descartarlos), «Cancelar» (descarta lo que llevas
+  en la pestaña) y el botón principal: **«Aplicar a la capa»** desde el editor,
+  **«Guardar copia»** desde la biblioteca.
+- **Ver la original:** mantener pulsado «Ver la original» (puntero o
+  Espacio/Intro) enseña la foto de antes.
+- Mientras está abierta, lo de debajo no recibe foco (`inert` sobre la raíz de
+  la aplicación) y las teclas no llegan al editor (Ctrl+Z no toca el diseño).
+
+### Desde el editor: aplicar, deshacer y volver a la original
+
+1. **Aplicar a la capa** guarda la copia en «Ediciones» (la original no se toca)
+   y, en la misma acción, cambia la capa para que use esa copia: el lienzo la
+   enseña al momento y la pantalla se cierra. Un aviso ofrece «Deshacer».
+2. **Deshacer / Rehacer** del editor (botones y Ctrl+Z / Ctrl+Mayús+Z)
+   recorren el cambio como cualquier otro del diseño.
+3. **«Volver a la foto original»** (panel de la capa, bajo «Editar foto») aparece
+   si la foto de la capa es una edición: sigue la procedencia
+   (`provenance.source_asset_id`, hasta 25 saltos, `useOriginalAsset`) hasta la
+   primera foto que no sale de otra y que sigue en la biblioteca. Funciona en
+   cualquier momento, aunque se hayan hecho otros cambios después, y también
+   se deshace. La copia queda en «Ediciones»; la original no se borra nunca.
+
+Desde la biblioteca se mantiene **guardar como copia nueva**, y tras guardar
+sale «Guardado en la biblioteca: …» con **Deshacer** (borra esa copia recién
+hecha, no la original) y «Abrir».
+
+### Arreglos de paso
+
+- La vista previa de «Fondo» enseña lo **elegido** (color de la marca, color
+  liso, imagen de la biblioteca o «Dejarlo sin ssombra/transparente» sobre
+  cuadrícula), no un fondo blanco fijo. Elegir ya no guarda: se guarda con el
+  botón principal.
+- «Mejorar automáticamente» es un interruptor: otro clic lo quita y devuelve lo
+  que había. Al tocar un deslizador deja de contar como automático, y tras
+  guardar una copia todo vuelve a cero (no se arrastra a la siguiente).
+- Los ajustes se ven al momento: vista previa de 1000 px (antes 480) con los
+  controles desacoplados de la repintada (`useDeferredValue`).
+- «Recortes» elige **un** formato (antes marcaba tres y guardaba tres copias);
+  para otro formato se repite. El recorte del fondo ya no se pierde al cambiar
+  de pestaña.
+- Sin cambios en el motor del recorte (`cutout/remover.ts`, `engine.ts`).
+
+### Pruebas y límites
+
+- `photo-edit/editarFoto.test.tsx`: ciclo editar → aplicar → deshacer →
+  rehacer → volver a la original → deshacer; Ctrl+Z y Esc dentro de la pantalla;
+  descartar con confirmación; mejora automática reversible y sin arrastre;
+  vista previa del fondo con el color elegido; comparar; deshacer una copia de
+  la biblioteca. Los E2E de Playwright (22, 25, 26) se ajustaron al botón
+  principal pero **no se han ejecutado** en esta rama.
+- **No probado a mano en un navegador real**: el dibujo del lienzo (tamaño de la
+  foto, comparar, diseño en móvil a 375 px) solo está cubierto por pruebas de
+  componentes en jsdom; queda por revisar con la aplicación abierta.
+- «Según edita» no se ve en el lienzo: la capa solo puede apuntar a una foto
+  guardada, así que el cambio llega al pulsar «Aplicar».

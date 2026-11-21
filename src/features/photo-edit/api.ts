@@ -10,7 +10,7 @@ import { signStoragePaths } from '@/features/storage/api';
 import type { Json, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
-import { EDIT_TAG, EDITS_FOLDER } from './provenance';
+import { EDIT_TAG, EDITS_FOLDER, sourceAssetIdOf } from './provenance';
 
 export type AiPhotoOperation = 'remove_background' | 'upscale' | 'replace_background' | 'enhance';
 
@@ -203,5 +203,33 @@ export function useSaveEdit(brandId: string) {
       });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) }),
+  });
+}
+
+/** Tope de ediciones encadenadas que se siguen hacia atrás (por si hubiese un ciclo). */
+const MAX_EDIT_CHAIN = 25;
+
+/**
+ * La foto original de una foto editada (edición de una edición…): la primera de
+ * la cadena que no sale de otra y que sigue en la biblioteca. `null` si esta
+ * foto ya es la original o si la original ya no está.
+ */
+export function useOriginalAsset(brandId: string, row: Pick<MediaAssetRow, 'id' | 'provenance'> | null) {
+  const firstParent = row ? sourceAssetIdOf(row.provenance) : null;
+  return useQuery({
+    queryKey: [...assetKeys.all(brandId), 'original', row?.id ?? null, firstParent],
+    enabled: Boolean(row && firstParent),
+    queryFn: async (): Promise<MediaAssetRow | null> => {
+      let found: MediaAssetRow | null = null;
+      let parentId = firstParent;
+      for (let hops = 0; parentId && hops < MAX_EDIT_CHAIN; hops += 1) {
+        if (parentId === row?.id || parentId === found?.id) break;
+        const parent = await fetchAsset(brandId, parentId);
+        if (!parent) break;
+        found = parent;
+        parentId = sourceAssetIdOf(parent.provenance);
+      }
+      return found;
+    },
   });
 }

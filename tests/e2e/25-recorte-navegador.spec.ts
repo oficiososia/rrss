@@ -80,7 +80,7 @@ test('quitar el fondo en el navegador crea un recurso nuevo y la foto original n
   // Fondo liso con sombra suave.
   await editor.getByTestId('photo-edit-shadow').check();
   await editor.getByTestId('photo-edit-color').fill('#336699');
-  await editor.getByTestId('photo-edit-color-apply').click();
+  await editor.getByTestId('photo-edit-save').click();
   await expect(editor.getByTestId('photo-edit-result')).toContainText(`Fondo nuevo · ${NOMBRE}`);
 
   const ediciones = await sql<Fila>(

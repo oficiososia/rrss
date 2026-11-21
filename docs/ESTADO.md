@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 21/11/2026 (ediciones sencillas del editor en la rama `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 21/11/2026 («Editar foto» a pantalla completa en la rama `f15/editar-foto-pantalla`; ediciones sencillas del editor en la rama `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -22,7 +22,7 @@ y las funciones desplegadas sin proveedores.
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 987 pasan (21/11/2026, rama `f13/edicion-sencilla`; incluye las ediciones sencillas del editor) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm test`         | 992 pasan (21/11/2026, rama `f15/editar-foto-pantalla`; incluye «Editar foto» a pantalla completa) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
 | `npm run test:db`  | 909 pasan, 2 omitidas (21/11/2026, rama `f13/edicion-sencilla`; incluye el documento v5) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
 | `worker/`          | 90 pasan (21/11/2026, rama `f11/editor-reels`) | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
 | `agency/`          | 54 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
@@ -287,7 +287,7 @@ conexión» comprueba también que la clave vea un modelo `gpt-image…`. Detall
 fuentes, precio y límites en `docs/ia-medios.md` §13 y `docs/edicion-fotos.md` §7.
 - Precio: OpenAI cobra por tokens; el registro lleva una **cota por megapíxel** (70.000 micros de salida, 14.000 de entrada). Los modelos nacen inactivos y sin precio verificado: hay que activarlos en Plataforma.
 - Fuera de la UE: `AI_MEDIA_ALLOW_NON_EU=true` (o proyecto europeo con `OPENAI_BASE_URL=https://eu.api.openai.com`).
-- Interfaz para el integrador: `PhotoEditDialog` acepta `getSubjectMask` (PNG con las medidas de la foto, plato opaco). Nadie la pasa todavía: sin ella se avisa de que la IA puede retocar el plato. La máscara de OpenAI es orientativa: no garantiza el plato intacto.
+- Interfaz para el integrador: `PhotoEditScreen` acepta `getSubjectMask` (PNG con las medidas de la foto, plato opaco). Nadie la pasa todavía: sin ella se avisa de que la IA puede retocar el plato. La máscara de OpenAI es orientativa: no garantiza el plato intacto.
 - Pruebas: `tests/db/ia-openai-imagen.test.ts`, casos nuevos en `edicion-fotos.test.ts` y `editarFoto.test.tsx`; e2e `26-cambiar-fondo-ia.spec.ts` escrita **sin ejecutar** (el Supabase local lo usaba otro proyecto).
 - Para llevarla a staging: migración `20261202010000_openai_image.sql` (vuelta atrás en `supabase/rollbacks/`) y redesplegar `ai-media`, `ai-media-poll`, `ai-media-webhook` y `platform-integrations` (código compartido). Sin probar contra OpenAI real.
 
@@ -370,6 +370,17 @@ después en `energym-demo-datos/capturas/tanda2/f13-*`.
   `social/avisosResolubles.test.tsx`, `status.test.ts`, `holdAdvice.test.ts`, caso
   nuevo en `tests/db/integraciones.test.ts`; e2e 09, 11, 13, 20, 21 y 27 abren «⋯»
   con `accionDelMenu` (`tests/e2e/apoyo.ts`), **sin ejecutar** la tanda e2e.
+
+### «Editar foto» a pantalla completa (rama `f15/editar-foto-pantalla`, 21/11/2026)
+
+Implementado y probado en componentes (992 pasan): «Editar foto» ya no es una
+ventana emergente sino una pantalla propia con la foto grande y una columna de
+controles; desde el editor, «Aplicar a la capa» cambia la capa al momento (se
+deshace/rehace con el editor) y «Volver a la foto original» recupera la original
+en cualquier momento; desde la biblioteca, «Guardar copia» con «Deshacer». Arregla
+la vista previa del fondo, la mejora automática reversible y la vista previa
+grande. Pendiente: revisión a mano en navegador (escritorio y 375 px) y ejecutar
+los E2E 22, 25 y 26 (ajustados, no ejecutados). Detalle en `docs/edicion-fotos.md` §11.
 
 ### Ediciones sencillas del editor (rama `f13/edicion-sencilla`, 21/11/2026)
 

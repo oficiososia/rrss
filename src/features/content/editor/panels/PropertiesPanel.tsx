@@ -1,4 +1,4 @@
-import { BringToFront, SendToBack, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { BringToFront, SendToBack, SlidersHorizontal, Trash2, Undo2 } from 'lucide-react';
 import type { Dispatch, Ref } from 'react';
 import { Button } from '@/components/ui';
 import {
@@ -35,6 +35,8 @@ interface PropertiesPanelProps {
   textRef: Ref<HTMLTextAreaElement>;
   /** Abre «Editar foto» con la imagen de la capa (solo si es de la biblioteca y se puede editar). */
   onEditPhoto?: () => void;
+  /** La capa vuelve a la foto original (si la de ahora es una edición); se deshace con Ctrl+Z. */
+  onRestoreOriginal?: () => void;
   /** Lo que necesitan las ediciones de foto que crean una foto nueva (quitar el fondo…). */
   photoTools?: PhotoToolsContext;
 }
@@ -63,6 +65,7 @@ export function PropertiesPanel({
   allowedRatios,
   textRef,
   onEditPhoto,
+  onRestoreOriginal,
   photoTools,
 }: PropertiesPanelProps) {
   const checkpoint = () => dispatch({ type: 'checkpoint' });
@@ -201,6 +204,18 @@ export function PropertiesPanel({
             >
               <SlidersHorizontal className="h-4 w-4" aria-hidden />
               Editar foto
+            </Button>
+          )}
+          {onRestoreOriginal && !readOnly && layer.source.kind === 'asset' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="col-span-2"
+              onClick={onRestoreOriginal}
+              data-testid="layer-restore-original"
+            >
+              <Undo2 className="h-4 w-4" aria-hidden />
+              Volver a la foto original
             </Button>
           )}
         </div>
