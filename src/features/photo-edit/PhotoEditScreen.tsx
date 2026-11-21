@@ -79,7 +79,13 @@ import {
 } from './pixels';
 import { composeCutout } from './cutout/composition';
 import { alphaOf, restorePlate, sameAspect, subjectMaskPixels } from './cutout/plate';
-import { removalSupport, describeRemovalError, removeBackground, type CutoutProgress } from './cutout/remover';
+import {
+  removalSupport,
+  describeRemovalError,
+  isRemovalCancelled,
+  removeBackground,
+  type CutoutProgress,
+} from './cutout/remover';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
@@ -272,7 +278,7 @@ export function PhotoEditScreen({
   const [comparing, setComparing] = useState(false);
   const [askDiscard, setAskDiscard] = useState(false);
   // El recorte del fondo vive aquí para no perderlo al cambiar de pestaña.
-  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string } | null>(null);
+  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null>(null);
   const save = useSaveEdit(asset.brand_id);
   const queryClient = useQueryClient();
   const aiOptions = useAiEditOptions(asset.brand_id, canEditWithAi(asset));
@@ -907,8 +913,8 @@ function BackgroundTab({
   pixels: Pixels;
   transparent: boolean;
   onSave: SaveEditResult;
-  cutout: { pixels: Pixels; model: string } | null;
-  setCutout: (cutout: { pixels: Pixels; model: string } | null) => void;
+  cutout: { pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null;
+  setCutout: (cutout: { pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null) => void;
   ai: AiEditChoice | undefined;
   onAiResult: (row: MediaAssetRow) => void;
 }) {
@@ -948,20 +954,26 @@ function BackgroundTab({
     return composeCutout(small, backdrop, { shadow });
   }, [small, choice, shadow]);
 
+  const cutAbort = useRef<AbortController | null>(null);
   async function cut() {
+    const abort = new AbortController();
+    cutAbort.current = abort;
     setCutting(true);
     setCutError(null);
     setProgress(null);
     try {
-      const result = await removeBackground(pixels, setProgress);
-      setCutout({ pixels: result.pixels, model: result.model });
+      const result = await removeBackground(pixels, setProgress, abort.signal);
+      setCutout({ pixels: result.pixels, model: result.model, quality: result.quality });
     } catch (error) {
-      setCutError(describeRemovalError(error));
+      if (!isRemovalCancelled(error)) setCutError(describeRemovalError(error));
     } finally {
+      cutAbort.current = null;
       setCutting(false);
       setProgress(null);
     }
   }
+  // Salir del diálogo con el recorte en marcha lo cancela (y corta la descarga).
+  useEffect(() => () => cutAbort.current?.abort(), []);
 
   function chooseColor(hex: string) {
     setColor(hex);
@@ -1068,15 +1080,27 @@ function BackgroundTab({
               {support.ok ? (
                 <>
                   <p className="text-xs text-muted">
-                    Gratis y sin IA externa: la foto no sale de tu navegador. La primera vez descarga un modelo de unos
-                    85 MB (queda guardado); después tarda unos segundos.
+                    Gratis y sin IA externa: la foto no sale de tu navegador. La primera vez descarga el modelo de
+                    recorte (de 85 a 220 MB según tu navegador; queda guardado); después tarda unos segundos.
                   </p>
                   {cutError && <Notice tone="warning">{cutError}</Notice>}
                   {cutting && <CutoutProgressBar progress={progress} />}
-                  <Button onClick={() => void cut()} loading={cutting} data-testid="photo-edit-cutout-run">
-                    <Eraser className="h-4 w-4" aria-hidden />
-                    Quitar el fondo
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void cut()} loading={cutting} data-testid="photo-edit-cutout-run">
+                      <Eraser className="h-4 w-4" aria-hidden />
+                      Quitar el fondo
+                    </Button>
+                    {cutting && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => cutAbort.current?.abort()}
+                        data-testid="photo-edit-cutout-cancel"
+                      >
+                        Cancelar
+                      </Button>
+                    )}
+                  </div>
                 </>
               ) : (
                 <Notice tone="warning">
@@ -1096,6 +1120,13 @@ function BackgroundTab({
           <p className="text-sm">
             {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA):
           </p>
+          {cutout?.quality === 'basic' && !transparent && (
+            <p className="text-xs text-muted" data-testid="photo-edit-cutout-basic">
+              Calidad básica: este navegador no tiene aceleración gráfica (WebGPU) suficiente para el recorte fino, así
+              que se ha usado el modelo ligero. Los bordes de pelo, cristal o salsa pueden salir menos limpios; en
+              Chrome o Edge recientes, con tarjeta gráfica, sale mejor.
+            </p>
+          )}
           {brandColors.length > 0 && (
             <div className="flex flex-wrap gap-2" role="group" aria-label="Colores de la marca">
               {brandColors.map((c) => (
@@ -1182,7 +1213,7 @@ function CutoutProgressBar({ progress }: { progress: CutoutProgress | null }) {
   const downloading = progress?.phase === 'downloading';
   const pct = downloading ? Math.min(100, Math.round((progress.received / Math.max(1, progress.total)) * 100)) : null;
   const label = downloading
-    ? `Descargando el modelo (solo la primera vez): ${megabytes(progress.received)} de ${megabytes(progress.total)} MB`
+    ? `Descargando el modelo de recorte (${megabytes(progress.total)} MB, solo la primera vez): ${megabytes(progress.received)} de ${megabytes(progress.total)} MB`
     : progress?.phase === 'running'
       ? 'Quitando el fondo…'
       : 'Preparando el modelo…';

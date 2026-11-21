@@ -24,13 +24,70 @@ export const CUTOUT_MODEL_CACHE = 'rrss-cutout-model-v1';
 /** Lado fijo de la entrada del modelo (IS-Net: 1×3×1024×1024). */
 export const MODEL_SIDE = 1024;
 
-/** Ficha que se enseña y se guarda en la procedencia. */
+/** Ficha que se enseña y se guarda en la procedencia (motor de respaldo). */
 export const CUTOUT_MODEL_NAME = 'isnet-general-use';
 
-/** Dirección del modelo en este despliegue. */
+/** Dirección del modelo de respaldo (IS-Net) en este despliegue. */
 export function cutoutModelUrl(): string {
   const configured = String(import.meta.env.VITE_CUTOUT_MODEL_URL ?? '').trim();
   return configured || DEFAULT_CUTOUT_MODEL_URL;
+}
+
+// ── Motor principal: BEN2 base (fp16), solo con WebGPU ─────────────────────
+
+/** Motores de recorte: `ben2` (calidad alta, WebGPU) e `isnet` (respaldo, calidad básica). */
+export type CutoutEngineId = 'ben2' | 'isnet';
+
+/**
+ * BEN2 base en ONNX con pesos float16 (entrada y salida float32), de
+ * `onnx-community/BEN2-ONNX` (licencia MIT; Hugging Face con CORS abierto, sin
+ * clave). 219 121 675 bytes. Se descarga EN EL NAVEGADOR la primera vez y queda
+ * en Cache Storage; el repositorio no lleva el modelo. Con otra dirección (por
+ * ejemplo alojado en el propio despliegue): `VITE_CUTOUT_BEN2_URL`.
+ */
+export const DEFAULT_BEN2_MODEL_URL =
+  'https://huggingface.co/onnx-community/BEN2-ONNX/resolve/main/onnx/model_fp16.onnx';
+export const DEFAULT_BEN2_MODEL_BYTES = 219_121_675;
+export const BEN2_MODEL_NAME = 'ben2-base-fp16';
+
+/** Memoria (GB, `navigator.deviceMemory`) por debajo de la cual no se intenta BEN2 (pide ~4,6 GB en CPU; en GPU, menos). */
+export const BEN2_MIN_MEMORY_GB = 4;
+
+export function ben2ModelUrl(): string {
+  const configured = String(import.meta.env.VITE_CUTOUT_BEN2_URL ?? '').trim();
+  return configured || DEFAULT_BEN2_MODEL_URL;
+}
+
+export interface CutoutEngineSpec {
+  id: CutoutEngineId;
+  /** Nombre que se guarda en la procedencia. */
+  name: string;
+  url: string;
+  bytes: number;
+  /** Lado de la entrada del modelo (1×3×lado×lado). */
+  side: number;
+  /** `high` = calidad alta (BEN2); `basic` = respaldo. */
+  quality: 'high' | 'basic';
+}
+
+export function engineSpec(id: CutoutEngineId): CutoutEngineSpec {
+  return id === 'ben2'
+    ? {
+        id,
+        name: BEN2_MODEL_NAME,
+        url: ben2ModelUrl(),
+        bytes: DEFAULT_BEN2_MODEL_BYTES,
+        side: MODEL_SIDE,
+        quality: 'high',
+      }
+    : {
+        id,
+        name: CUTOUT_MODEL_NAME,
+        url: cutoutModelUrl(),
+        bytes: DEFAULT_CUTOUT_MODEL_BYTES,
+        side: MODEL_SIDE,
+        quality: 'basic',
+      };
 }
 
 /** Solo en las pruebas de punta a punta: sin modelo real, una máscara simulada (ver engine.ts). */

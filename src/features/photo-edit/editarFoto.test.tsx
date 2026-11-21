@@ -244,14 +244,14 @@ describe('Editar foto desde la biblioteca', () => {
       onProgress?.({ phase: 'downloading', received: 42_000_000, total: 84_000_000 });
       await gate;
       onProgress?.({ phase: 'running' });
-      return { pixels: pixels(120, 90, 0), model: 'isnet-general-use', provider: 'wasm', fromCache: false };
+      return { pixels: pixels(120, 90, 0), model: 'isnet-general-use', provider: 'wasm', engine: 'isnet', quality: 'basic', fromCache: false };
     });
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
     const progress = await dialog.findByTestId('photo-edit-cutout-progress');
-    expect(progress).toHaveTextContent('Descargando el modelo (solo la primera vez): 42 de 84 MB');
+    expect(progress).toHaveTextContent('Descargando el modelo de recorte (84 MB, solo la primera vez): 42 de 84 MB');
     expect(within(progress).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     finish();
 
@@ -278,11 +278,67 @@ describe('Editar foto desde la biblioteca', () => {
     expect(fake.calls.filter((c) => c.kind === 'function' && c.name === 'ai-media')).toEqual([]);
   });
 
+  it('con BEN2 guarda ese motor en la procedencia y no avisa de calidad básica; con el respaldo, sí avisa', async () => {
+    const spy = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValueOnce({
+      pixels: pixels(120, 90, 0),
+      model: 'ben2-base-fp16',
+      provider: 'webgpu',
+      engine: 'ben2',
+      quality: 'high',
+      fromCache: true,
+    });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    await dialog.findByTestId('photo-edit-backgrounds');
+    expect(dialog.queryByTestId('photo-edit-cutout-basic')).not.toBeInTheDocument();
+    await user.click(dialog.getByTestId('photo-edit-cutout-save'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    expect((uploaded[0]!.provenance as { steps: unknown[] }).steps).toEqual([
+      { kind: 'remove_background', engine: 'browser', model: 'ben2-base-fp16' },
+    ]);
+    spy.mockRestore();
+  });
+
+  it('con el respaldo (sin WebGPU) dice «calidad básica» y el recorte en marcha se puede cancelar', async () => {
+    let signal: AbortSignal | undefined;
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser')
+      .mockImplementationOnce(
+        (_image, _progress, options) =>
+          new Promise((_ok, ko) => {
+            signal = options?.signal;
+            signal?.addEventListener('abort', () => ko(Object.assign(new Error('x'), { name: 'AbortError' })));
+          }),
+      )
+      .mockResolvedValueOnce({
+        pixels: pixels(120, 90, 0),
+        model: 'isnet-general-use',
+        provider: 'wasm',
+        engine: 'isnet',
+        quality: 'basic',
+        fromCache: true,
+      });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-cancel'));
+    await waitFor(() => expect(dialog.queryByTestId('photo-edit-cutout-progress')).not.toBeInTheDocument());
+    expect(signal?.aborted).toBe(true);
+    expect(dialog.queryByText(/No se ha podido quitar el fondo/)).not.toBeInTheDocument(); // cancelar no es un error
+    await user.click(dialog.getByTestId('photo-edit-cutout-run'));
+    expect(await dialog.findByTestId('photo-edit-cutout-basic')).toHaveTextContent(/Calidad básica/);
+  });
+
   it('se puede guardar solo el recorte (PNG transparente) sin elegir fondo', async () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValue({
       pixels: pixels(120, 90, 0),
       model: 'isnet-general-use',
       provider: 'webgpu',
+      engine: 'isnet',
+      quality: 'basic',
       fromCache: true,
     });
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
@@ -434,7 +490,7 @@ describe('Editar foto desde la biblioteca', () => {
       return {
         pixels: { data: out, width: image.width, height: image.height },
         model: 'isnet-test',
-        provider: 'wasm',
+        provider: 'wasm', engine: 'isnet', quality: 'basic',
         fromCache: true,
       };
     });
@@ -487,7 +543,7 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm',
+      provider: 'wasm', engine: 'isnet', quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
@@ -512,7 +568,7 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm',
+      provider: 'wasm', engine: 'isnet', quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
