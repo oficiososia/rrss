@@ -1,7 +1,7 @@
 import { LayoutTemplate } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
+import { Badge, EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { assetIdsOf } from '../editor/canvas/nodes';
 import { PageThumb } from '../editor/panels/PageThumb';
@@ -88,8 +88,13 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }:
                 <PageThumb canvas={document.canvas} layers={first.layers} images={images} />
               </span>
               <span className="min-w-0 space-y-0.5">
-                <span className="block text-sm font-medium" data-testid="template-name">
-                  {template.name}
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <span data-testid="template-name">{template.name}</span>
+                  {template.source === 'manual' && (
+                    <Badge tone="neutral" className="shrink-0">
+                      Manual
+                    </Badge>
+                  )}
                 </span>
                 <span className="block text-xs text-muted">
                   {targetLabel(template.network, template.format)}

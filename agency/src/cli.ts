@@ -40,10 +40,11 @@ const HELP = `Herramienta de la agencia (rrss)
                                       Con marca: deja en la carpeta de trabajo lo importado, su resumen,
                                       el perfil y la biblioteca (y con --descargar, las imágenes
                                       más recientes) para sacar sus plantillas de diseño
-  comprobar-plantillas <plantillas.json>
+  comprobar-plantillas <plantillas.json> [--manual]
                                       Valida las plantillas (documento v3, formato, análisis), sin red
-  entregar-plantillas <marca> <plantillas.json>
-                                      Las guarda como plantillas de la marca
+  entregar-plantillas <marca> <plantillas.json> [--manual]
+                                      Las guarda como plantillas de la marca. --manual: para una marca
+                                      sin cuenta conectada; llevan «references» en vez de «examples»
   comentar <id> <texto>               Añade un comentario al encargo
   soltar <id>                         Devuelve un encargo tomado a la cola
 
@@ -222,7 +223,7 @@ export async function run(
       case 'comprobar-plantillas': {
         const file = positional[0];
         if (!file) throw new CommandError('Indica el archivo de plantillas.');
-        const checked = await checkTemplatesFile(path.resolve(file));
+        const checked = await checkTemplatesFile(path.resolve(file), { manual: flags.has('manual') });
         out.log(
           `Plantillas válidas: ${checked.templates.map((t) => `${t.key} (${t.network}/${t.format})`).join(', ')}.`,
         );
@@ -232,7 +233,9 @@ export async function run(
         const brandId = checkId(positional[0]);
         const file = positional[1];
         if (!file) throw new CommandError('Indica el archivo de plantillas.');
-        const result = await deliverTemplates(await signedInClient(env), brandId, path.resolve(file));
+        const result = await deliverTemplates(await signedInClient(env), brandId, path.resolve(file), {
+          manual: flags.has('manual'),
+        });
         out.log(
           `Plantillas guardadas en la marca: ${result.delivered.map((t) => `${t.template_key} («${t.name}»)`).join(', ')}.`,
         );

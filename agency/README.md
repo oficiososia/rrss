@@ -66,7 +66,7 @@ npm run agencia -- comprobar-plan <carpeta>/plan.json [--contexto <carpeta>]
 npm run agencia -- entregar-plan <id> <carpeta>/plan.json
 npm run agencia -- importadas [<marca>] [--descargar] [--limite N]
 npm run agencia -- comprobar-plantillas <plantillas.json>
-npm run agencia -- entregar-plantillas <marca> <plantillas.json>
+npm run agencia -- entregar-plantillas <marca> <plantillas.json> [--manual]
 npm run agencia -- comentar <id> "texto"
 npm run agencia -- soltar <id>
 ```

@@ -12,6 +12,7 @@ import { AGENCY_USER, ANON_KEY, PASSWORD, startFakeSupabase, type FakeSupabase }
 
 const BRAND = '22222222-2222-4222-8222-222222222222';
 const EXAMPLE = fileURLToPath(new URL('../ejemplos/plantillas.json', import.meta.url));
+const EXAMPLE_MANUAL = fileURLToPath(new URL('../ejemplos/plantillas-manual.json', import.meta.url));
 const PNG = Uint8Array.from([137, 80, 78, 71]);
 
 let fake: FakeSupabase;
@@ -178,6 +179,83 @@ describe('comprobar y entregar', () => {
   });
 });
 
+describe('plantillas manuales', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function manual(patch: (t: Record<string, any>, raw: Record<string, any>) => void): Promise<string> {
+    const raw = JSON.parse(await readFile(EXAMPLE_MANUAL, 'utf8'));
+    patch(raw.templates[0], raw);
+    const file = path.join(workDir, 'manual.json');
+    await writeFile(file, JSON.stringify(raw), 'utf8');
+    return file;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function imported(patch: (t: Record<string, any>) => void): Promise<string> {
+    const raw = JSON.parse(await readFile(EXAMPLE, 'utf8'));
+    patch(raw.templates[0]);
+    const file = path.join(workDir, 'importada.json');
+    await writeFile(file, JSON.stringify(raw), 'utf8');
+    return file;
+  }
+  const ref = (url: string, note = 'nota') => ({ url, note });
+
+  it('el ejemplo manual es válido, sin ejemplos importados, y sale con origen manual', async () => {
+    const checked = await checkTemplatesFile(EXAMPLE_MANUAL);
+    expect(checked.templates[0]!.source).toBe('manual');
+    expect(checked.templates[0]!.analysis.examples).toEqual([]);
+    expect(checked.templates[0]!.analysis.references).toHaveLength(2);
+  });
+
+  it('--manual da el origen a un archivo que no lo indica; sin él, una plantilla sin ejemplos se rechaza', async () => {
+    const file = await manual((_t, raw) => {
+      delete raw.source;
+    });
+    await expect(checkTemplatesFile(file)).rejects.toThrow(/2 a 3 examples/);
+    expect((await checkTemplatesFile(file, { manual: true })).templates[0]!.source).toBe('manual');
+  });
+
+  it('una importada sin ejemplos o con referencias se rechaza', async () => {
+    await expect(checkTemplatesFile(await imported((t) => (t.analysis.examples = [])))).rejects.toThrow(/examples/);
+    await expect(
+      checkTemplatesFile(await imported((t) => (t.analysis.references = [ref('https://instagram.com/p/a/')]))),
+    ).rejects.toThrow(/solo las plantillas manuales/);
+  });
+
+  it('valida las referencias: máximo 10, solo https de instagram, facebook o la web de la marca, con nota', async () => {
+    await expect(
+      checkTemplatesFile(
+        await manual(
+          (t) => (t.analysis.references = Array.from({ length: 11 }, () => ref('https://instagram.com/p/a/'))),
+        ),
+      ),
+    ).rejects.toThrow(/references/);
+    await expect(
+      checkTemplatesFile(await manual((t) => (t.analysis.references = [ref('http://instagram.com/p/a/')]))),
+    ).rejects.toThrow(/references/);
+    await expect(
+      checkTemplatesFile(await manual((t) => (t.analysis.references = [ref('https://instagram.com/p/a/', '')]))),
+    ).rejects.toThrow(/note/);
+    await expect(
+      checkTemplatesFile(await manual((t) => (t.analysis.references = [ref('https://user:pw@instagram.com/p/a/')]))),
+    ).rejects.toThrow(/references/);
+    // Con la web de la marca conocida (la entrega la consulta), otro dominio no vale y el propio sí.
+    const other = await manual((t) => (t.analysis.references = [ref('https://otra.example/menu')]));
+    expect((await checkTemplatesFile(other)).templates).toHaveLength(1); // sin red no se conoce la web
+    await expect(checkTemplatesFile(other, { brandWebsite: 'https://www.marca.example' })).rejects.toThrow(
+      /la web de la marca/,
+    );
+    await expect(checkTemplatesFile(other, { brandWebsite: null })).rejects.toThrow(/la web de la marca/);
+    const own = await manual((t) => (t.analysis.references = [ref('https://marca.example/carta')]));
+    expect((await checkTemplatesFile(own, { brandWebsite: 'https://www.marca.example' })).templates).toHaveLength(1);
+  });
+
+  it('entrega con source manual a la función', async () => {
+    fake.tables.brands = [{ id: BRAND, name: 'Marca cliente', website: 'https://marca.example' }];
+    await deliverTemplates(client, BRAND, EXAMPLE_MANUAL);
+    const call = fake.seen.find((s) => s.path.endsWith('/rpc/deliver_design_templates'))!;
+    expect((call.body as { p_templates: Array<{ source: string }> }).p_templates[0]!.source).toBe('manual');
+  });
+});
+
 describe('órdenes', () => {
   async function runCli(args: string[]) {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'rrss-agencia-cred-'));
@@ -204,5 +282,9 @@ describe('órdenes', () => {
     expect(delivered.code).toBe(0);
     expect(delivered.text).toContain('titular-sobre-foto');
     expect((await runCli(['entregar-plantillas', 'no-es-un-id', EXAMPLE])).code).toBe(2);
+    expect((await runCli(['comprobar-plantillas', EXAMPLE_MANUAL])).text).toContain('titular-sobre-foto');
+    const manualDelivered = await runCli(['entregar-plantillas', BRAND, EXAMPLE_MANUAL, '--manual']);
+    expect(manualDelivered.code).toBe(0);
+    expect(manualDelivered.text).toContain('titular-sobre-foto');
   });
 });
