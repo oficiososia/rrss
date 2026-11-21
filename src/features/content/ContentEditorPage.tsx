@@ -325,6 +325,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
+  // Escape sin foco en ningún campo (p. ej. tras pulsar en el panel): quita la selección.
+  // Lo que llega desde un diálogo (portal) o desde un campo de texto no cuenta.
+  const hasSelection = state.selectedIds.length > 0;
+  useEffect(() => {
+    if (!hasSelection) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || isTypingTarget(event.target)) return;
+      const target = event.target as Node | null;
+      if (target !== document.body && !rootRef.current?.contains(target)) return;
+      dispatch({ type: 'select', id: null });
+      setPanel('layer');
+    };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  }, [hasSelection]);
+
   // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
   // contenido se monta después de este efecto.
   useEffect(() => {
@@ -377,8 +393,13 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }
 
   // ── Lienzo (el envoltorio guarda estas funciones en una referencia: no hace falta memorizarlas) ──
+  /** Quita la selección y enseña las opciones del documento (proporción, fondo) en el panel «Diseño». */
+  const deselect = () => {
+    dispatch({ type: 'select', id: null });
+    setPanel('layer');
+  };
   const onSelect: CanvasViewProps['onSelect'] = (id, options) =>
-    dispatch({ type: 'select', id, toggle: options?.toggle });
+    id === null ? deselect() : dispatch({ type: 'select', id, toggle: options?.toggle });
   const onSelectMany: CanvasViewProps['onSelectMany'] = (ids, additive) =>
     dispatch({ type: 'selectMany', ids, additive });
   const onChange: CanvasViewProps['onChange'] = (changes) => dispatch({ type: 'updateMany', changes });
@@ -426,7 +447,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
     if (state.selectedIds.length === 0) return;
     if (event.key === 'Escape') {
-      dispatch({ type: 'select', id: null });
+      deselect();
       return;
     }
     if (readOnly) return;
@@ -967,6 +988,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         <section
           ref={canvasRef}
           tabIndex={0}
+          // Un clic en el margen del lienzo (fuera del documento) quita la selección.
+          onPointerDown={(event) => event.target === event.currentTarget && deselect()}
           aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él."
           className="flex h-[55dvh] min-h-[16rem] flex-col rounded-xl bg-subtle p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary lg:h-auto"
         >
@@ -990,7 +1013,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               )}
             </div>
           )}
-          <div className="min-h-0 flex-1">
+          <div
+            className="min-h-0 flex-1"
+            onPointerDown={(event) => event.target === event.currentTarget && deselect()}
+          >
             {brandFonts.status === 'loading' ? (
               <Spinner label="Cargando las tipografías de la marca…" />
             ) : (

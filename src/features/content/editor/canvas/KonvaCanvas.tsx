@@ -76,7 +76,12 @@ export default function KonvaCanvas({
   }, [nodes, document.canvas, selectedIds, editingTextId, safeZone, readOnly, scale]);
 
   return (
-    <div ref={frameRef} className="flex h-full w-full items-center justify-center overflow-hidden">
+    <div
+      ref={frameRef}
+      className="flex h-full w-full items-center justify-center overflow-hidden"
+      // El margen alrededor del documento también quita la selección.
+      onPointerDown={(event) => event.target === event.currentTarget && callbacks.current.onSelect(null)}
+    >
       <div className="relative shadow-pop ring-1 ring-border">
         <div ref={stageRef} role="img" aria-label={label} data-testid="editor-stage" />
         {editing?.type === 'text' && !readOnly && (

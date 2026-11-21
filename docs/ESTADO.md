@@ -236,6 +236,13 @@ fuentes, precio y límites en `docs/ia-medios.md` §13 y `docs/edicion-fotos.md`
 - Pruebas: `tests/db/ia-openai-imagen.test.ts`, casos nuevos en `edicion-fotos.test.ts` y `editarFoto.test.tsx`; e2e `26-cambiar-fondo-ia.spec.ts` escrita **sin ejecutar** (el Supabase local lo usaba otro proyecto).
 - Para llevarla a staging: migración `20261202010000_openai_image.sql` (vuelta atrás en `supabase/rollbacks/`) y redesplegar `ai-media`, `ai-media-poll`, `ai-media-webhook` y `platform-integrations` (código compartido). Sin probar contra OpenAI real.
 
+### Valoración de Cloudflare Workers AI (rama `f8/workers-ai`, 20/11/2026)
+
+Solo documentación (`docs/ia-medios.md` §14), sin código: Workers AI cubre generar
+imagen (FLUX.2 klein 9B ≈ 0,015 USD el primer megapíxel) y texto, pero no quitar el
+fondo, ampliar ni editar fotos de platos (entradas menores de 512×512, sin máscara,
+inpainting obsoleto desde el 20/11/2026) ni garantiza la UE. No sustituye al Colab.
+
 ## Sin probar contra el servicio real
 
 | Servicio | Estado | Detalle |

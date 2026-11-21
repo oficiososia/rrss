@@ -121,6 +121,7 @@ function seed({ orgRole = 'owner', brandRole }: { orgRole?: OrgRole; brandRole?:
       kind: 'image',
       mime_type: 'image/jpeg',
       file_name: 'exportada-v1.jpg',
+      storage_path: `${ORG_ID}/${BRAND_ID}/media/exportada-v1.jpg`,
       provenance: { type: 'export', content_id: 'c-new', version: 1, unsaved_changes: false },
       created_at: '2026-11-18T09:00:00Z',
     },
@@ -252,5 +253,60 @@ describe('Calendario', () => {
       p_media_asset_ids: ['asset-1'],
       p_content_version: 1,
     });
+  });
+
+  it('la ficha enseña la imagen elegida y el texto que se publicará (pie más hashtags), con «Ver más» si es largo', async () => {
+    seed();
+    const longCaption = `Menú de otoño. ${'Producto de temporada y cocina de siempre. '.repeat(8)}#otoño`;
+    fake.tables.content_versions = [
+      {
+        id: 'v-1',
+        content_id: 'c-prog',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        version: 1,
+        data: { copy: { caption: longCaption, hashtags: ['otoño', '#cocina'] } },
+      },
+    ];
+    fake.storage.from = () =>
+      ({
+        createSignedUrls: async (paths: string[]) => ({
+          data: paths.map((path) => ({ path, signedUrl: `https://example.test/${path}` })),
+          error: null,
+        }),
+      }) as never;
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    await user.click(await entry('Pieza c-prog'));
+    const dialog = await screen.findByTestId('publication-dialog');
+    const text = await within(dialog).findByTestId('publication-text');
+    // Largo: recortado, con «Ver más».
+    expect(text.textContent!.endsWith('…')).toBe(true);
+    await user.click(within(dialog).getByTestId('publication-text-more'));
+    // Misma regla que el publicador: #otoño ya estaba en el pie y no se repite; #cocina va al final.
+    expect(within(dialog).getByTestId('publication-text').textContent).toBe(`${longCaption}
+
+#cocina`);
+    expect(within(dialog).getByTestId('publication-text-more')).toHaveTextContent('Ver menos');
+    const image = await waitFor(() => {
+      const found = within(within(dialog).getByTestId('publication-preview')).getByRole('presentation', {
+        hidden: true,
+      });
+      return found;
+    });
+    expect(image).toHaveAttribute('src', expect.stringContaining('exportada-v1.jpg'));
+  });
+
+  it('el calendario enseña una miniatura pequeña en la publicación que tiene medio', async () => {
+    seed();
+    fake.storage.from = () =>
+      ({
+        createSignedUrls: async (paths: string[]) => ({
+          data: paths.map((path) => ({ path, signedUrl: `https://example.test/${path}` })),
+          error: null,
+        }),
+      }) as never;
+    renderApp(`${BRAND_BASE}/calendario`);
+    const chip = await entry('Pieza c-prog');
+    await waitFor(() => expect(within(chip).getByTestId('calendar-entry-thumb').querySelector('img')).not.toBeNull());
   });
 });

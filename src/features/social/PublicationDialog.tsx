@@ -29,6 +29,7 @@ import {
   toLocalInput,
 } from './calendar';
 import { useFeature } from '@/features/platform/integrations/useFeature';
+import { PublicationPreview } from './preview';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
   started: 'En curso',
@@ -118,6 +119,8 @@ export function PublicationDialog({
             </Link>
           )}
         </div>
+
+        {content && <PublicationPreview brandId={brandId} entry={entry} />}
 
         {entry.status === 'published' && entry.external_id && (
           <Notice>

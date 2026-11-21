@@ -399,3 +399,34 @@ describe('Editor: nombre, red y formato', () => {
     });
   });
 });
+
+describe('Editor: quitar la selección', () => {
+  it('Escape, aunque el foco esté fuera del lienzo, y un clic en el margen del lienzo vuelven a las opciones del documento', async () => {
+    const { user } = await openEditor();
+    await user.click(screen.getByTestId('stub-a'));
+    expect(stub()).toHaveAttribute('data-selected', 'a');
+    expect(screen.queryByRole('combobox', { name: 'Proporción' })).toBeNull();
+
+    // Sin foco en ningún campo (p. ej. tras pulsar en un texto del panel).
+    (document.activeElement as HTMLElement | null)?.blur();
+    await user.keyboard('{Escape}');
+    expect(stub()).toHaveAttribute('data-selected', '');
+    expect(await screen.findByRole('combobox', { name: 'Proporción' })).toBeInTheDocument();
+
+    // Desde otra pestaña, un clic en el margen del lienzo también quita la selección y enseña «Diseño».
+    await user.click(screen.getByTestId('stub-b'));
+    await user.click(screen.getByRole('tab', { name: /Capas/ }));
+    fireEvent.pointerDown(screen.getByLabelText(/^Lienzo\./));
+    expect(stub()).toHaveAttribute('data-selected', '');
+    expect(await screen.findByRole('combobox', { name: 'Proporción' })).toBeInTheDocument();
+  });
+
+  it('Escape dentro de un campo de texto no quita la selección', async () => {
+    const { user } = await openEditor();
+    await user.click(screen.getByTestId('stub-a'));
+    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
+    await user.click(await screen.findByLabelText(/Pie de foto|Texto de la publicación|Pie/));
+    await user.keyboard('{Escape}');
+    expect(stub()).toHaveAttribute('data-selected', 'a');
+  });
+});

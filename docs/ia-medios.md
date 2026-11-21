@@ -426,3 +426,122 @@ clave no se carga y «Probar conexión» lo dice con el nombre de la variable.
 comprueba que la lista incluya algún `gpt-image…`; si no, avisa (sin darlo por
 fallo: la clave sirve para texto) de que puede hacer falta verificar la
 organización o dar acceso al proyecto.
+
+## 14. Valoración: Cloudflare Workers AI (20/11/2026)
+
+**Resultado: no se programa el adaptador.** Workers AI cubre bien generar
+imagen (y texto), pero no ninguna edición de foto que sirva a este producto, y
+la regla de la plataforma es que el plato no se toca. Se deja documentado para
+reabrirlo si cambian los modelos.
+
+**Fuentes (consultadas el 20/11/2026):**
+`developers.cloudflare.com/workers-ai/models/` (catálogo),
+`…/workers-ai/platform/pricing/`, `…/workers-ai/platform/limits/`,
+`…/workers-ai/platform/data-usage/`, las fichas y avisos de cambios de
+`flux-2-klein-4b` y `flux-2-klein-9b`, la ficha de
+`stable-diffusion-v1-5-inpainting` y la tabla de compatibilidad de la
+Data Localization Suite (`…/data-localization/compatibility`).
+
+### Catálogo de imagen
+
+| Operación | Qué hay en Workers AI | Valoración |
+|---|---|---|
+| Generar | FLUX.1 schnell, FLUX.2 dev, **FLUX.2 klein 4B y 9B** (Black Forest Labs), Lucid Origin y Phoenix 1.0 (Leonardo), SDXL base y lightning, DreamShaper 8 LCM | **Cubre bien**, barato. |
+| Editar con referencias | FLUX.2 klein 4B/9B y dev aceptan hasta 4 imágenes de entrada (`input_image_0…3`) y un prompt | **No sirve para fotos de platos**: ver abajo. |
+| Inpainting (editar por zonas) | Solo `stable-diffusion-v1-5-inpainting` (beta), **marcado obsoleto con fecha 20/11/2026** | **No**: modelo antiguo y en retirada. |
+| Quitar el fondo | Ninguno en el catálogo | **No cubre** (ya se hace en el navegador, gratis). |
+| Ampliar (upscale) | Ninguno | **No cubre.** |
+| Segmentación | Ninguno | **No cubre.** |
+
+**Por qué la edición con FLUX.2 klein no vale aquí:**
+- Las imágenes de entrada deben ser **menores de 512×512** (aviso de cambios de
+  la 4B, repetido en la 9B; si es máximo estricto no lo aclara). Una foto de
+  plato a ese tamaño pierde casi todo el detalle.
+- No hay máscara: la edición es «regenerar con referencia» y el modelo puede
+  cambiar el plato. Es peor que GPT Image con máscara (§13), que ya es solo
+  orientativa.
+- La salida se pide por ancho y alto entre 256 y 1920; no conserva el original.
+- Los pasos están fijos en 4 (modelo destilado): rápido, pero sin ajuste fino.
+
+Como edición solo serviría para estilizar o crear variantes desde una
+referencia pequeña, no para «cambiar el fondo» ni «mejorar luz» sin tocar el plato.
+
+### Formato de la API (para quien lo retome)
+
+`POST https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-9b`,
+`Authorization: Bearer {token}`, **siempre `multipart/form-data`** (aunque solo
+haya prompt): `prompt`, `width`/`height` (256–1920), `seed`, `guidance`,
+`input_image_0…3`. Respuesta con sobre `{result, success, errors, messages}`; la
+imagen sale en base64 (`result.image`). El token necesita los permisos
+**Workers AI – Read y Workers AI – Edit**. La documentación de la API REST
+**no** documenta un endpoint para listar modelos; si hubiera que implementar
+«Probar conexión» gratuita, habría que comprobar si sirve
+`GET …/accounts/{id}/ai/models/search` (no confirmado) o verificar el token con
+`GET /client/v4/user/tokens/verify`.
+
+### Precios (neuronas)
+
+Gratis: 10.000 neuronas al día (se reinicia a las 00:00 UTC). Por encima, solo
+con Workers Paid: **0,011 USD por 1.000 neuronas**.
+
+| Modelo | Neuronas | Equivale a (cálculo propio) |
+|---|---|---|
+| `flux-1-schnell` | 4,80 por tesela de 512×512 y 9,60 por paso | muy barato |
+| `flux-2-klein-4b` | 5,37 por tesela de entrada, 26,05 por tesela de salida | ≈ 0,001 USD por imagen de 1 MP, si la tesela es de 512×512 (no confirmado) |
+| `flux-2-klein-9b` | 1.363,64 el primer MP, 181,82 cada MP más y por MP de entrada | **0,015 USD el primer MP**, 0,002 cada MP más |
+| `flux-2-dev` | 18,75 por tesela de entrada y paso; 37,50 por tesela de salida y paso | por calcular |
+| `lucid-origin` / `phoenix-1.0` | 636 / 530 por tesela de 512×512 | 0,007 / 0,006 USD por tesela |
+
+### Límites y datos
+
+- **Límite de ritmo:** texto a imagen, 720 peticiones por minuto; generación de
+  texto, 300 por minuto (20 por minuto los modelos que exigen plan de pago, 50
+  con créditos prepagados de AI Gateway). La página no da límites de tamaño.
+- **Región: sin garantía de UE.** La tabla de compatibilidad de la Data
+  Localization Suite marca Workers AI como **sin Regional Services** (solo con
+  Customer Metadata Boundary), y la suite es de pago y Enterprise. Un anuncio de
+  «regiones personalizadas» habla de regionalizar la inferencia, pero no hay
+  fecha. Aquí valdría `AI_MEDIA_ALLOW_NON_EU=true`, igual que OpenAI sin región
+  europea; el adaptador declararía `global`.
+- **Datos:** Cloudflare dice que no conserva entradas ni salidas de la
+  inferencia estándar y que **no entrena** con el contenido de los clientes
+  (`trains_on_inputs: no`, a confirmar en el contrato). Los modelos de BFL
+  figuran como «socio, sin retención de datos». Licencias según cada modelo.
+- **Obsolescencia:** el único modelo de inpainting ya está retirado a efectos
+  prácticos; el catálogo cambia deprisa (esta valoración puede quedar vieja en meses).
+
+### Comparación
+
+| | Workers AI | OpenAI (§13) | ComfyUI en Colab (§11) |
+|---|---|---|---|
+| Generar | Sí, FLUX.2 klein 9B ≈ 0,015 USD/MP | Sí, ≈ cota 0,07 USD/MP | Sí, FLUX.2 klein 4B, coste = GPU |
+| Cambiar el fondo con máscara | **No** | Sí (máscara orientativa) | Sí (grafo propio) |
+| Mejorar luz y color | **No** fiable | Sí | Sí |
+| Quitar el fondo | No | Sí (PNG transparente) | Sí (nodo propio) |
+| Ampliar | No | No | Sí (si se carga el modelo) |
+| Región UE | No garantizada | Sí con `eu.api.openai.com` | La que elijas |
+| Quién mantiene la GPU | Cloudflare | OpenAI | Tú (sesión de Colab que caduca) |
+| Texto | Sí (ver abajo) | Sí | No |
+
+### Conclusión
+
+- **Cubre bien:** generar imagen barata con la misma cuenta que R2 y la API
+  estándar de Cloudflare. FLUX.2 klein 4B es el mismo modelo que el cuaderno de
+  Colab, ya alojado.
+- **No cubre:** quitar el fondo, ampliar, segmentar, inpainting vivo y editar
+  fotos de platos sin tocarlos. Para eso siguen OpenAI (con máscara) y ComfyUI.
+  Así que **Workers AI no sustituye al Colab** para lo que el dueño necesita
+  (ediciones); solo sustituiría la parte de «generar» que ya cubren OpenAI y ComfyUI.
+- **Texto:** el catálogo es amplio (Llama 3.3 70B, Gemma 4, GPT-OSS 120B/20B,
+  Qwen3, Mistral Small 3.1, EuroLLM 9B y otros, además de DeepSeek, GLM y Kimi).
+  Precio en neuronas por millón de tokens, p. ej. `gpt-oss-20b` 18.182 de
+  entrada y 27.273 de salida (≈ 0,20 y 0,30 USD) y `llama-3.3-70b` 26.668 y
+  204.805 (≈ 0,29 y 2,25 USD). Apuntado como **mejora futura**: un proveedor de
+  texto sobre `…/ai/run/@cf/…` (o la ruta compatible con OpenAI de Cloudflare)
+  sería sencillo, pero no se ha hecho porque el trabajo pedía imagen y la
+  residencia sigue sin garantía.
+- **Si se retoma:** reabrir si Cloudflare añade un modelo de edición con
+  máscara o admite entradas de tamaño normal; el adaptador seguiría el patrón
+  de `openai-image.ts` (multipart con `fetch`, base64 en la respuesta). En
+  Integraciones valdría reutilizar `R2_ACCOUNT_ID` si es la misma cuenta y un
+  secreto nuevo `CLOUDFLARE_AI_API_TOKEN` (Workers AI Read + Edit).
