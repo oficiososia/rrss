@@ -409,3 +409,18 @@ Si el navegador sube a R2 con la URL firmada y después falla el alta del recurs
 
 Los provisionales caducados los borra `purge_provisional_assets`, que anota el
 archivo en la cola de limpieza; no se solapa con esto.
+
+## Miniaturas (21/11/2026, migración 20261209010000)
+
+Al subir una imagen, el navegador genera una miniatura WebP de unos 400 px y la
+sube junto al original por el mismo camino (`<org>/<marca>/thumbs/<id>.webp`,
+mismo almacén); su ruta queda en `media_assets.thumb_path`. La biblioteca, los
+selectores de imagen, el calendario, Campañas y la tira del carrusel firman y
+pintan la miniatura (`previewPath()` en `src/features/library/api.ts`); editar,
+exportar y publicar usan siempre el original. Las URL firmadas se reutilizan
+mientras duran (`src/features/storage/signedUrlCache.ts`).
+
+Imágenes que ya existían: `node scripts/miniaturas-biblioteca.ts` (en seco por
+defecto, solo lee) y `--apply` para generarlas (necesita `npm install --no-save
+sharp`, `SUPABASE_URL`, la clave de servicio —se pide en el momento— y las
+variables de R2). **Sin ejecutar contra ningún entorno.**

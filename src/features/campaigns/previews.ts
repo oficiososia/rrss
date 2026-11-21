@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { migrateDocument, type Canvas, type ContentDocument, type Layer } from '@/features/content/document';
 import type { ImageLookup } from '@/features/content/editor/canvas/nodes';
 import { useImageLookup } from '@/features/content/templates/useImageLookup';
-import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { campaignKeys } from './api';
@@ -33,6 +33,7 @@ export type PiecePreviewSource =
 interface ExportRow {
   id: string;
   storage_path: string;
+  thumb_path?: string | null;
   provenance: unknown;
   created_at: string;
 }
@@ -49,7 +50,7 @@ function pickExports(rows: ExportRow[], wanted: Map<string, number>): Map<string
     const current = best.get(contentId);
     if (!current || row.created_at > current.created_at) best.set(contentId, row);
   }
-  return new Map([...best].map(([id, row]) => [id, row.storage_path]));
+  return new Map([...best].map(([id, row]) => [id, previewPath(row)]));
 }
 
 function assetIdsOfLayers(layers: Layer[]): string[] {
@@ -78,7 +79,7 @@ function useContentSources(brandId: string, requests: PreviewRequest[]) {
       const exportRows = unwrap(
         await supabase
           .from('media_assets')
-          .select('id, storage_path, provenance, created_at')
+          .select('id, storage_path, thumb_path, provenance, created_at')
           .eq('brand_id', brandId)
           .eq('provenance->>type', 'export')
           .in('provenance->>content_id', ids)
@@ -142,7 +143,7 @@ export function usePiecePreviews(brandId: string, requests: PreviewRequest[]): M
   );
   const fallbackAssets = useAssetsByIds(brandId, fallbackIds);
   const fallbackPaths = useMemo(
-    () => (fallbackAssets.data ?? []).map((a) => a.storage_path).sort(),
+    () => (fallbackAssets.data ?? []).map(previewPath).sort(),
     [fallbackAssets.data],
   );
   const fallbackUrls = useSignedUrls(fallbackPaths, { variant: 'thumb' });
@@ -173,7 +174,7 @@ export function usePiecePreviews(brandId: string, requests: PreviewRequest[]): M
         map.set(r.key, { kind: 'video', label: `Vídeo sugerido: ${asset.file_name}` });
         continue;
       }
-      const assetUrl = asset ? fallbackUrls.data?.get(asset.storage_path) : undefined;
+      const assetUrl = asset ? fallbackUrls.data?.get(previewPath(asset)) : undefined;
       if (asset && assetUrl) map.set(r.key, { kind: 'image', url: assetUrl, label: `Foto sugerida: ${asset.file_name}` });
     }
     return map;

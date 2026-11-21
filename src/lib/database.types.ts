@@ -127,6 +127,12 @@ export type MediaAssetRow = {
    * Cloudflare R2 (migración 20261124010000). Lo fija el servidor.
    */
   storage_backend?: StorageBackend;
+  /**
+   * Miniatura ligera (WebP de unos 400 px) en el mismo almacén que el original
+   * (migración 20261209010000). Null si no se generó. Solo para mostrar en
+   * cuadrículas: editar, exportar y publicar usan siempre el original.
+   */
+  thumb_path?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -1621,6 +1627,7 @@ export type Database = {
           tags?: string[];
           rights?: Json;
           provenance?: Json;
+          thumb_path?: string | null;
         },
         { kind?: AssetKind; file_name?: string; folder?: string; tags?: string[]; rights?: Json }
       >;

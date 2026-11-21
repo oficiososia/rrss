@@ -61,7 +61,7 @@ import { loadBrandFonts, useBrandFontFaces } from '@/features/brand/fontsApi';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
-import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { ContentStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -298,6 +298,18 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
     return map;
   }, [assets.data, signed.data]);
+
+  // La tira de páginas solo pinta miniaturas: firma las ligeras (el lienzo usa los originales).
+  const stripPaths = useMemo(() => (assets.data ?? []).map(previewPath).sort(), [assets.data]);
+  const stripSigned = useSignedUrls(stripPaths);
+  const stripImages = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const asset of assets.data ?? []) {
+      const url = stripSigned.data?.get(previewPath(asset));
+      if (url) map.set(asset.id, url);
+    }
+    return map;
+  }, [assets.data, stripSigned.data]);
 
   // «Esta foto» para el copiloto: la imagen elegida en el lienzo, si la hay.
   const selectedImage = useMemo(() => {
@@ -1064,7 +1076,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               activePageId={state.activePageId}
               limits={pageRange}
               readOnly={readOnly}
-              images={images}
+              images={stripImages}
               dispatch={dispatch}
             />
           )}

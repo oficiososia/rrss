@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { publishedText } from '@/features/brandcheck/text';
-import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import type { CalendarEntry } from './api';
@@ -44,12 +44,12 @@ export function useEntryThumbs(brandId: string, entries: CalendarEntry[]) {
     [entries],
   );
   const assets = useAssetsByIds(brandId, ids);
-  const paths = useMemo(() => (assets.data ?? []).map((a) => a.storage_path), [assets.data]);
+  const paths = useMemo(() => (assets.data ?? []).map(previewPath), [assets.data]);
   const urls = useSignedUrls(paths, { variant: 'thumb' });
   return useMemo(() => {
     const map = new Map<string, { url?: string; video: boolean }>();
     for (const a of assets.data ?? []) {
-      const url = urls.data?.get(a.storage_path);
+      const url = urls.data?.get(previewPath(a));
       map.set(a.id, { ...(url ? { url } : {}), video: a.mime_type.startsWith('video/') });
     }
     return map;

@@ -1,6 +1,6 @@
 import { Film } from 'lucide-react';
 import { useState } from 'react';
-import { useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { ThumbImage } from '@/features/library/ThumbImage';
 import type { CalendarEntry } from './api';
 import { usePublicationText } from './previewData';
@@ -35,8 +35,8 @@ export function PublicationPreview({ brandId, entry }: { brandId: string; entry:
   const assetId = entry.media_asset_ids[0] ?? null;
   const assets = useAssetsByIds(brandId, assetId ? [assetId] : []);
   const asset = assets.data?.[0] ?? null;
-  const urls = useSignedUrls(asset ? [asset.storage_path] : []);
-  const url = asset ? urls.data?.get(asset.storage_path) : undefined;
+  const urls = useSignedUrls(asset ? [previewPath(asset)] : []);
+  const url = asset ? urls.data?.get(previewPath(asset)) : undefined;
   const text = usePublicationText(brandId, entry);
   const [expanded, setExpanded] = useState(false);
   const full = text.data ?? '';

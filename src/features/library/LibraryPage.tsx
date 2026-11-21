@@ -9,7 +9,15 @@ import { useBrand, useOrg } from '@/features/orgs/context';
 import { useFeature } from '@/features/platform/integrations/useFeature';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { formatBytes } from '@/lib/utils';
-import { useAssetFacets, useAssets, useAssetsByIds, useSignedUrls, useStorageCleanup, type AssetFilters } from './api';
+import {
+  previewPath,
+  useAssetFacets,
+  useAssets,
+  useAssetsByIds,
+  useSignedUrls,
+  useStorageCleanup,
+  type AssetFilters,
+} from './api';
 import { AssetDialog } from './AssetDialog';
 import { ASSET_KIND_LABEL, ASSET_KINDS } from './labels';
 import { ThumbImage } from './ThumbImage';
@@ -69,8 +77,8 @@ export function LibraryPage() {
   const selected = rows.find((a) => a.id === selectedId) ?? outside.data?.find((a) => a.id === selectedId) ?? null;
   const previewPaths = useMemo(
     () => [
-      ...rows.filter((a) => a.mime_type.startsWith('image/') || a.id === selectedId).map((a) => a.storage_path),
-      ...(selected && !inRows ? [selected.storage_path] : []),
+      ...rows.filter((a) => a.mime_type.startsWith('image/') || a.id === selectedId).map(previewPath),
+      ...(selected && !inRows ? [previewPath(selected)] : []),
     ],
     [rows, selectedId, selected, inRows],
   );
