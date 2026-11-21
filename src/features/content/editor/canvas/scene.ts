@@ -105,7 +105,7 @@ export class Scene {
       flipEnabled: false,
       borderStroke: SELECTION,
       anchorStroke: SELECTION,
-      anchorSize: 10,
+      anchorSize: typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? 22 : 10,
       rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315],
       boundBoxFunc: (oldBox, newBox) => (Math.abs(newBox.width) < 4 || Math.abs(newBox.height) < 4 ? oldBox : newBox),
     });

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { readLocal, writeLocal } from '@/lib/localStore';
 
 // Estado de la barra lateral de la app (plegada o no) y «modo de trabajo» de las
@@ -42,7 +42,7 @@ function isTyping(target: EventTarget | null) {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [working, setWorking] = useState(false);
+  const [working, setWorkingState] = useState(false);
   const [preferred, setPreferred] = useState<boolean>(() => readLocal<boolean>(KEY, false) === true);
   // Si la persona pliega o despliega en el editor, su elección manda sobre el plegado automático.
   const [manual, setManual] = useState(false);
@@ -53,9 +53,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  useEffect(() => {
-    if (!working) setManual(false);
-  }, [working]);
+  const setWorking = useCallback((next: boolean) => {
+    setWorkingState(next);
+    if (!next) setManual(false);
+  }, []);
 
   const collapsed = manual || !working || !narrow ? preferred : true;
 
@@ -66,7 +67,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       writeLocal(KEY, !collapsed);
     };
     return { working, setWorking, collapsed, toggle };
-  }, [working, collapsed]);
+  }, [working, setWorking, collapsed]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

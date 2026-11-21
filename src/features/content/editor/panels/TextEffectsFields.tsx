@@ -1,6 +1,6 @@
 import type { TextLayer } from '../../document';
 import type { LayerPatch } from '../history';
-import { CheckInput, ColorInput, RangeInput } from './controls';
+import { CheckInput, ColorInput, RangeInput, Section } from './controls';
 import { ShadowFields } from './ShadowFields';
 
 /** Contorno, sombra y fondo de un texto. */
@@ -21,9 +21,7 @@ export function TextEffectsFields({
   const outline = layer.outline;
   const background = layer.background;
   return (
-    <section className="space-y-4" data-testid="text-effects">
-      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Efectos del texto</h4>
-
+    <Section title="Efectos del texto" testId="text-effects">
       <div className="space-y-3">
         <CheckInput
           label="Contorno de las letras"
@@ -126,6 +124,6 @@ export function TextEffectsFields({
           </>
         )}
       </div>
-    </section>
+    </Section>
   );
 }

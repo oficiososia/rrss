@@ -14,7 +14,7 @@ import {
 } from '../../document';
 import type { EditorAction, LayerPatch } from '../history';
 import { FALLBACK_FONTS, LAYER_TYPE_LABEL, layerLabel } from '../layers';
-import { CheckInput, ColorInput, Labeled, NumberInput, SelectInput } from './controls';
+import { CheckInput, ColorInput, Labeled, NumberInput, Section, SelectInput } from './controls';
 import { PhotoPanel, type PhotoToolsContext } from './PhotoPanel';
 import { ShadowFields } from './ShadowFields';
 import { TextEffectsFields } from './TextEffectsFields';
@@ -163,7 +163,15 @@ export function PropertiesPanel({
               { value: 'contain', label: 'Entera' },
             ]}
           />
-          <div />
+          <NumberInput
+            label="Desenfoque (%)"
+            value={layer.blur ?? 0}
+            min={0}
+            max={MAX_IMAGE_BLUR}
+            disabled={readOnly}
+            onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
+            onCommit={checkpoint}
+          />
           <NumberInput
             label="Punto de interés X (%)"
             value={layer.focus.x * 100}
@@ -180,15 +188,6 @@ export function PropertiesPanel({
             max={100}
             disabled={readOnly}
             onChange={(v) => update({ focus: { ...layer.focus, y: v / 100 } }, 'focus')}
-            onCommit={checkpoint}
-          />
-          <NumberInput
-            label="Desenfoque (%)"
-            value={layer.blur ?? 0}
-            min={0}
-            max={MAX_IMAGE_BLUR}
-            disabled={readOnly}
-            onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
             onCommit={checkpoint}
           />
           {onEditPhoto && !readOnly && layer.source.kind === 'asset' && (
@@ -217,8 +216,7 @@ export function PropertiesPanel({
         />
       )}
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Posición y tamaño</h4>
+      <Section title="Posición y tamaño" defaultOpen>
         <div className="grid grid-cols-2 gap-3">
           <NumberInput
             label="X"
@@ -283,10 +281,9 @@ export function PropertiesPanel({
             onChange={(locked) => update({ locked })}
           />
         </div>
-      </section>
+      </Section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Al cambiar de proporción</h4>
+      <Section title="Al cambiar de proporción">
         <div className="grid grid-cols-2 gap-3">
           <SelectInput
             label="Horizontal: conserva"
@@ -303,7 +300,7 @@ export function PropertiesPanel({
             options={ANCHORS_Y.map((value) => ({ value, label: ANCHOR_Y_LABEL[value] }))}
           />
         </div>
-      </section>
+      </Section>
 
       {!readOnly && (
         <section className="space-y-2">

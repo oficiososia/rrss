@@ -50,10 +50,10 @@ export function PageStrip({ document, activePageId, limits, readOnly, images, di
   };
 
   return (
-    <div className="mt-2 space-y-1.5" data-testid="page-strip">
+    <div className="mt-1 space-y-1" data-testid="page-strip">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-xs font-medium text-muted">Páginas</span>
-        <span className="text-xs text-muted" data-testid="page-status">
+        <span className="text-xs text-muted max-sm:sr-only" data-testid="page-status">
           {status}
         </span>
         {!readOnly && (
@@ -67,7 +67,7 @@ export function PageStrip({ document, activePageId, limits, readOnly, images, di
               data-testid="page-add"
             >
               <Plus className="h-4 w-4" aria-hidden />
-              Añadir
+              <span className="max-sm:sr-only">Añadir</span>
             </Button>
             <Button
               variant="ghost"
@@ -78,7 +78,7 @@ export function PageStrip({ document, activePageId, limits, readOnly, images, di
               data-testid="page-duplicate"
             >
               <Copy className="h-4 w-4" aria-hidden />
-              Duplicar
+              <span className="max-sm:sr-only">Duplicar</span>
             </Button>
             <Button
               variant="ghost"
@@ -111,19 +111,22 @@ export function PageStrip({ document, activePageId, limits, readOnly, images, di
               data-testid="page-remove"
             >
               <Trash2 className="h-4 w-4" aria-hidden />
-              Borrar
+              <span className="max-sm:sr-only">Borrar</span>
             </Button>
           </span>
         )}
       </div>
-      <ol className="flex gap-2 overflow-x-auto pb-1" aria-label="Páginas del carrusel" data-testid="page-list">
+      <ol className="flex gap-1.5 overflow-x-auto pb-0.5" aria-label="Páginas del carrusel" data-testid="page-list">
         {document.pages.map((page, index) => {
           const active = page.id === activePageId;
           const label = pageLabel(page, index);
           return (
             <li
               key={page.id}
-              className={cn('w-16 shrink-0', over === index && dragging !== page.id && 'border-l-2 border-primary pl-1')}
+              className={cn(
+                'w-16 shrink-0',
+                over === index && dragging !== page.id && 'border-l-2 border-primary pl-1',
+              )}
               onDragOver={(event) => {
                 if (readOnly || !dragging) return;
                 event.preventDefault();
@@ -158,7 +161,7 @@ export function PageStrip({ document, activePageId, limits, readOnly, images, di
               >
                 <PageThumb canvas={document.canvas} layers={page.layers} images={images} />
               </button>
-              <span className="block text-center text-[11px] text-muted">{index + 1}</span>
+              <span className="block text-center text-[10px] text-muted">{index + 1}</span>
             </li>
           );
         })}
