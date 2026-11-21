@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 20/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 21/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -22,10 +22,10 @@ y las funciones desplegadas sin proveedores.
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 750 pasan (20/11/2026, rama `f6/integracion`) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db`  | 818 pasan, 2 omitidas (20/11/2026, rama `f7/importar-publicaciones`; incluye importar publicaciones) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
-| `worker/`          | 81 pasan (20/11/2026) | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
-| `agency/`          | 45 pasan (20/11/2026; incluye plantillas de diseño) | Herramienta de la agencia contra un Supabase simulado |
+| `npm test`         | 826 pasan (21/11/2026, rama `f8/carrusel-paginas` con `claude/focused-noether-hk502p` unida) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db`  | 843 pasan, 2 omitidas (21/11/2026, rama `f8/carrusel-paginas`; incluye carruseles de varias páginas) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `worker/`          | 81 pasan (21/11/2026) | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
+| `agency/`          | 49 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
 | `npm run test:e2e` | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
 | CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -65,6 +65,31 @@ momento (`social-publish/now`, con la sesión de la persona) y enseña el progre
 y el enlace. Migración `20261130010000` (dos RPC, sin tablas) con su vuelta
 atrás; hay que desplegar la migración y `social-publish`. Probado en base de
 datos, componentes y e2e (`23-publicar-ahora.spec.ts`).
+
+**Carruseles de varias páginas** (rama `f8/carrusel-paginas`): un carrusel es una
+pieza con varias páginas en UNA versión. El documento pasa a la **versión 4**
+(`pages`, de 1 a 10, mismo lienzo y mismo texto; un documento v3 se lee como uno
+de una página). Editor con tira de miniaturas (añadir, duplicar, borrar,
+reordenar arrastrando o con botones), deshacer que vuelve a la página de cada
+paso, copiloto sobre la página activa y vista previa con flechas; «Exportar el
+carrusel» saca un JPEG por página con `page`/`page_count` en la procedencia;
+programar y «Publicar ahora» usan las exportaciones de cada página en orden; la
+base de datos lo exige (migración `20261203010000`, con vuelta atrás) y el
+publicador ya enviaba los hijos en ese orden. Verificador, marca de IA, campañas,
+plantillas y `agency/` leen las páginas. Detalle y cómo convertir un carrusel
+hecho con varias versiones (la demo de EnerGym) en `docs/publicacion.md`
+(«Carruseles»; script `scripts/unir-versiones-en-carrusel.sql`, probado en PGlite,
+**sin ejecutar** en staging).
+- Pruebas: unitarias (esquema, migración, páginas, verificador, exportación),
+  componentes (`editorPaginas.test.tsx`, programar y «Publicar ahora» un
+  carrusel), base de datos (regla con varias exportaciones en orden, publicador
+  con la Graph API simulada, IA y plantillas con páginas) y `agency/`. La e2e
+  `27-carrusel-paginas.spec.ts` está **escrita y sin ejecutar** (el 21/11/2026
+  Docker no estaba arrancado y no había Supabase local).
+- Para llevarla a staging: migración `20261203010000_carousel_pages.sql`; ninguna
+  función que desplegar (el cambio de la Graph API simulada solo cuenta en local).
+  Ojo: un carrusel ya programado con exportaciones sin número de página queda
+  detenido («invalid_media») hasta exportar sus páginas.
 
 ### Fase 4 · Campañas (primera parte)
 

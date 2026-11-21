@@ -45,7 +45,16 @@ export function PublicationPreview({ brandId, entry }: { brandId: string; entry:
   return (
     <section aria-label="Lo que se publicará" className="flex gap-3" data-testid="publication-preview">
       {assetId && (
-        <div className="h-28 w-28 shrink-0 overflow-hidden rounded-lg border border-border bg-subtle">
+        <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-lg border border-border bg-subtle">
+          {entry.media_asset_ids.length > 1 && (
+            // Un carrusel: se ve la primera página y cuántas lleva (en el orden en que se publican).
+            <span
+              className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-[11px] text-white"
+              data-testid="publication-pages"
+            >
+              1/{entry.media_asset_ids.length}
+            </span>
+          )}
           {asset?.mime_type.startsWith('video/') ? (
             url ? (
               <video src={url} controls preload="metadata" className="h-full w-full object-cover" />
