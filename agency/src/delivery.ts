@@ -9,10 +9,17 @@
 //     "title": "Nombre interno de la pieza (opcional)",
 //     "copy": { caption, hashtags, mentions, altText, callToAction },
 //     "variants": [ { caption, hashtags, … } ],          // opcional, hasta 5
-//     "document": { schemaVersion, canvas, layers }      // opcional
+//     "document": { schemaVersion: 4, canvas, pages: [ { id, layers } ] }   // opcional
 //   }
 // `copy` es el texto de la publicación; si hay `document`, su texto se
 // sustituye por `copy`. Las variantes viajan como comentario del encargo.
+//
+// Páginas (documento v4): un carrusel es UNA pieza con varias páginas (de 2 a
+// 10 en Instagram), todas con el mismo lienzo y el mismo `copy`; un post, una.
+// El formato de la entrega no cambia (sigue en la versión 1): el documento dice
+// su propia versión, y uno de las versiones 1 a 3 (`layers` sin páginas) se
+// convierte en uno de una sola página. Cuántas páginas admite el formato lo
+// comprueba el verificador de marca (comprobación `pages`, bloqueante).
 import {
   createEmptyDocument,
   postCopySchema,

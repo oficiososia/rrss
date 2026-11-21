@@ -29,7 +29,10 @@ describe('parseDelivery', () => {
     expect(delivery.variants).toHaveLength(1);
     // El documento lleva el texto de `copy`, normalizado como en el editor.
     expect(delivery.document?.copy.caption).toMatch(/guiso de la casa/);
-    expect(delivery.document?.layers.map((l) => l.id)).toEqual(['foto', 'franja', 'titular']);
+    // Escrito con la versión 1 del documento (sin páginas): queda en una sola página.
+    expect(delivery.document?.schemaVersion).toBe(4);
+    expect(delivery.document?.pages).toHaveLength(1);
+    expect(delivery.document?.pages[0]!.layers.map((l) => l.id)).toEqual(['foto', 'franja', 'titular']);
   });
 
   it('normaliza el texto igual que el editor: hashtags y menciones sin símbolo', () => {
@@ -88,7 +91,7 @@ describe('buildDocument', () => {
       currentDocument: null,
     });
     expect(reel.canvas.aspectRatio).toBe('9:16');
-    expect(reel.layers).toEqual([]);
+    expect(reel.pages).toEqual([{ id: 'p1', name: '', layers: [] }]);
     expect(reel.copy.caption).toBe('Solo texto');
   });
 
@@ -134,5 +137,71 @@ describe('checkDelivery con el verificador de marca', () => {
     ]);
     expect(comment).toContain('Variante 2:\nOtra\n#a');
     expect(variantsComment([])).toBe('');
+  });
+});
+
+describe('carruseles: documentos con páginas', () => {
+  const carousel = async () =>
+    JSON.parse(await readFile(new URL('../ejemplos/entrega-carrusel.json', import.meta.url), 'utf8')) as {
+      document: { pages: unknown[] };
+    } & Record<string, unknown>;
+
+  it('el ejemplo de carrusel es válido: tres páginas en orden, un solo texto', async () => {
+    const delivery = ok(await carousel());
+    expect(delivery.document?.pages.map((p) => p.id)).toEqual(['portada', 'setas', 'cierre']);
+    expect(delivery.document?.pages.map((p) => p.layers.length)).toEqual([2, 3, 1]);
+    expect(delivery.document?.copy.caption).toMatch(/Desliza/);
+  });
+
+  it('pasa el verificador como carrusel de Instagram y no como post', async () => {
+    const delivery = ok(await carousel());
+    const document = buildDocument(delivery, {
+      network: 'instagram',
+      format: 'carousel',
+      mediaKind: 'image',
+      currentDocument: null,
+    });
+    const asCarousel = checkDelivery(document, [], 'instagram', 'carousel', null);
+    expect(asCarousel.main.findings.filter((f) => f.check === 'pages')).toEqual([]);
+    const asPost = checkDelivery(document, [], 'instagram', 'post', null);
+    expect(asPost.main.findings.find((f) => f.check === 'pages')).toMatchObject({
+      code: 'PAGES_TOO_MANY',
+      severity: 'block',
+    });
+    expect(asPost.main.verdict).toBe('fail');
+  });
+
+  it('un carrusel de una sola página se bloquea; uno de 11 no es un documento válido', async () => {
+    const one = await carousel();
+    one.document.pages = one.document.pages.slice(0, 1);
+    const document = buildDocument(ok(one), {
+      network: 'instagram',
+      format: 'carousel',
+      mediaKind: 'image',
+      currentDocument: null,
+    });
+    expect(checkDelivery(document, [], 'instagram', 'carousel', null).main.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'PAGES_TOO_FEW', severity: 'block' })]),
+    );
+
+    const eleven = await carousel();
+    eleven.document.pages = Array.from({ length: 11 }, (_, i) => ({ id: `p${i}`, layers: [] }));
+    const parsed = parseDelivery(eleven);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.issues.map((i) => i.path)).toContain('document.pages');
+  });
+
+  it('capas repetidas entre páginas o un documento v4 con `layers` suelto: no es válido', async () => {
+    const repeated = await carousel();
+    const pages = repeated.document.pages as { layers: { id: string }[] }[];
+    pages[2]!.layers[0]!.id = 'portada-foto';
+    const parsed = parseDelivery(repeated);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.issues[0]?.path).toBe('document.pages.2.layers.0.id');
+
+    const loose = await carousel();
+    (loose.document as Record<string, unknown>).layers = [];
+    const looseParsed = parseDelivery(loose);
+    expect(looseParsed.ok).toBe(false);
   });
 });

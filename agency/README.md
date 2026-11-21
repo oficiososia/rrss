@@ -105,13 +105,25 @@ Ejemplo completo: [`ejemplos/entrega.json`](./ejemplos/entrega.json).
   "variants": [                   // opcional, hasta 5: otras propuestas de texto
     { "caption": "…", "hashtags": ["…"] }
   ],
-  "document": {                   // opcional: documento por capas del editor
-    "schemaVersion": 1,
+  "document": {                   // opcional: documento por páginas y capas del editor (v4)
+    "schemaVersion": 4,
     "canvas": { "aspectRatio": "4:5", "width": 1080, "height": 1350, "backgroundColor": "#FFFFFF" },
-    "layers": [ /* image (source.assetId de la biblioteca), text, logo, shape */ ]
+    "pages": [                    // una en un post; de 2 a 10 en un carrusel, en el orden en que se publican
+      { "id": "portada", "name": "Portada", "layers": [ /* image (source.assetId de la biblioteca), text, logo, shape */ ] }
+    ]
   }
 }
 ```
+
+- **Carruseles:** una sola pieza con varias páginas en el mismo documento, todas
+  con el mismo lienzo y el mismo `copy` (ejemplo:
+  [`ejemplos/entrega-carrusel.json`](./ejemplos/entrega-carrusel.json)). Los
+  identificadores de capa son únicos en todo el documento. `comprobar` y
+  `entregar` bloquean un carrusel con menos de 2 o más de 10 páginas, y un post
+  con más de una (comprobación `pages` del verificador).
+- Un documento de las versiones 1 a 3 (`layers` en el documento, sin `pages`)
+  se sigue aceptando: se convierte en uno de una sola página. El formato de la
+  entrega no cambia de versión (`"version": 1`): el documento lleva la suya.
 
 - Sin `document`, si el encargo es sobre una pieza existente se conserva su
   lienzo y sus capas y se cambia el texto; si no, se crea un lienzo vacío con la

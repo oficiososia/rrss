@@ -132,7 +132,9 @@ describe('comprobar y entregar', () => {
   it('el ejemplo de la herramienta es válido', async () => {
     const checked = await checkTemplatesFile(EXAMPLE);
     expect(checked.templates).toHaveLength(1);
-    expect(checked.templates[0]!.document.schemaVersion).toBe(3);
+    // El ejemplo está escrito con la versión 3 (sin páginas): se entrega ya en la vigente, con una página.
+    expect(checked.templates[0]!.document.schemaVersion).toBe(4);
+    expect(checked.templates[0]!.document.pages).toHaveLength(1);
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

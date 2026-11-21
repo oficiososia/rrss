@@ -5,7 +5,7 @@
 //
 //   importadas [<marca>]   lista lo importado (o las marcas con algo importado) y
 //                          deja en la carpeta de trabajo el material para analizar
-//   comprobar-plantillas   valida el archivo sin red (documento v3, formato, análisis)
+//   comprobar-plantillas   valida el archivo sin red (documento v3 o v4, formato, análisis)
 //   entregar-plantillas    lo valida otra vez contra la marca y llama a
 //                          `deliver_design_templates`
 //
@@ -210,7 +210,7 @@ export async function importedContext(
   await write('biblioteca.json', {
     logotipos: logoIds,
     notice:
-      'Un documento v3 solo puede usar recursos de esta marca (assetId). Los de «Instagram / Publicadas» son copias de sus publicaciones; el enlace de origen va en `origen`.',
+      'El documento solo puede usar recursos de esta marca (assetId). Los de «Instagram / Publicadas» son copias de sus publicaciones; el enlace de origen va en `origen`.',
     recursos: library.map((a) => ({
       assetId: a.id,
       archivo: a.file_name,
@@ -227,7 +227,7 @@ export async function importedContext(
     note: `Plantillas sacadas de ${rows.length} publicaciones importadas`,
     templates: [] as TemplateInput[],
     reglas: [
-      `Entre 1 y ${MAX_TEMPLATES} plantillas; cada una con key, name, network, format, document (esquema v3, schemaVersion 3) y analysis.`,
+      `Entre 1 y ${MAX_TEMPLATES} plantillas; cada una con key, name, network, format, document (esquema v4 con «pages», o v3 con «layers»: se convierte a v4) y analysis. Un carrusel lleva de 2 a 10 páginas.`,
       'analysis: summary, layers (rol y posición, de abajo arriba), typography (aproximada), colors (#RRGGBB), logo, photo, tone, recurrence (cuántas de cuántas revisadas) y de 2 a 3 examples con el enlace de publicaciones importadas de esta marca.',
       'El documento solo usa recursos de biblioteca.json; si una imagen de ejemplo no está copiada, usa una capa de forma como marcador.',
     ],
