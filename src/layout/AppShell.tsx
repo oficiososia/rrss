@@ -14,6 +14,8 @@ import {
   Monitor,
   Moon,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   ShieldCheck,
@@ -41,6 +43,7 @@ import { MobileNav } from './MobileNav';
 import { NavBadge, type NavItem } from './nav';
 import { useTheme, type ThemeChoice } from './theme';
 import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useWorkspace, WorkspaceProvider } from './workspace';
 
 interface AppShellProps {
   orgs: MyOrganization[];
@@ -223,12 +226,50 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
   );
 }
 
-export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) {
+export function AppShell(props: AppShellProps) {
+  return (
+    <WorkspaceProvider>
+      <Shell {...props} />
+    </WorkspaceProvider>
+  );
+}
+
+function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const label = collapsed ? 'Mostrar menú' : 'Ocultar menú';
+  const Icon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      aria-controls="menu-lateral"
+      aria-label={label}
+      aria-keyshortcuts="Control+B"
+      title={`${label} (Ctrl+B)`}
+      data-testid="sidebar-toggle"
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-subtle hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+    >
+      <Icon className="h-5 w-5" aria-hidden />
+    </button>
+  );
+}
+
+function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
   const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
   const aiText = useFeature('aiText');
+  const { working, collapsed, toggle } = useWorkspace();
   const items = navItems(org, brand, unread.data?.length ?? 0, aiText);
   return (
-    <div className="min-h-dvh lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
+    <div
+      className={cn(
+        'min-h-dvh lg:grid',
+        collapsed ? 'lg:grid-cols-[3.75rem_minmax(0,1fr)]' : 'lg:grid-cols-[17rem_minmax(0,1fr)]',
+        // Pantalla de trabajo: la página mide justo la ventana y no se desplaza.
+        working && 'h-dvh overflow-hidden',
+      )}
+      data-testid="app-shell"
+      data-sidebar={collapsed ? 'collapsed' : 'expanded'}
+    >
       <a
         href="#contenido"
         className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:text-sm"
@@ -236,28 +277,39 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
         Saltar al contenido
       </a>
 
-      {/* Escritorio: barra lateral */}
-      <aside className="sticky top-0 hidden h-dvh flex-col gap-4 border-r border-border bg-surface p-4 lg:flex">
-        <div className="flex items-center gap-2.5 px-1">
+      {/* Escritorio: barra lateral (completa o plegada a los iconos) */}
+      <aside
+        id="menu-lateral"
+        className={cn(
+          'sticky top-0 hidden h-dvh flex-col gap-4 border-r border-border bg-surface lg:flex',
+          collapsed ? 'items-center p-2' : 'p-4',
+        )}
+      >
+        <div className={cn('flex items-center gap-2.5', collapsed ? 'flex-col' : 'px-1')}>
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-fg">
             {APP_NAME.charAt(0)}
           </span>
-          <span className="text-base font-semibold tracking-tight">{APP_NAME}</span>
+          {!collapsed && <span className="flex-1 text-base font-semibold tracking-tight">{APP_NAME}</span>}
+          <SidebarToggle collapsed={collapsed} onToggle={toggle} />
         </div>
-        <div className="space-y-2">
-          <OrgSwitcher orgs={orgs} org={org} />
-          <BrandSwitcher org={org} brands={brands} brand={brand} />
-        </div>
-        <nav aria-label="Principal" className="flex-1 space-y-1 overflow-y-auto">
+        {!collapsed && (
+          <div className="space-y-2">
+            <OrgSwitcher orgs={orgs} org={org} />
+            <BrandSwitcher org={org} brands={brands} brand={brand} />
+          </div>
+        )}
+        <nav aria-label="Principal" className="w-full flex-1 space-y-1 overflow-y-auto">
           {items.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
+              title={collapsed ? label : undefined}
               data-testid={`nav-${label.toLowerCase()}`}
               className={({ isActive }) =>
                 cn(
-                  'relative flex min-h-[2.75rem] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
+                  'relative flex min-h-[2.75rem] items-center rounded-lg text-sm font-medium transition-colors',
+                  collapsed ? 'justify-center' : 'gap-3 px-3',
                   // La sección activa la decide solo la ruta (aria-current lo pone NavLink):
                   // fondo, color y una raya a la izquierda, para no confundirla con el
                   // fondo de «pasar por encima» de la entrada que se acaba de pulsar.
@@ -268,19 +320,19 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
               }
             >
               <Icon className="h-4 w-4" aria-hidden />
-              {label}
-              <NavBadge count={badge} />
+              <span className={collapsed ? 'sr-only' : undefined}>{label}</span>
+              <NavBadge count={badge} compact={collapsed} />
             </NavLink>
           ))}
         </nav>
         <div className="border-t border-border pt-3">
-          <UserMenu />
+          <UserMenu compact={collapsed} />
         </div>
       </aside>
 
-      <div className="min-w-0">
+      <div className={cn('min-w-0', working && 'flex h-dvh min-h-0 flex-col')}>
         {/* Móvil y tablet: cabecera con los selectores */}
-        <header className="sticky top-0 z-30 flex items-center gap-2 border-b border-border bg-surface/95 px-3 py-2 backdrop-blur lg:hidden">
+        <header className="sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 py-2 backdrop-blur lg:hidden">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
             <OrgSwitcher orgs={orgs} org={org} />
             <BrandSwitcher org={org} brands={brands} brand={brand} />
@@ -288,10 +340,20 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
           <UserMenu compact />
         </header>
 
-        <main id="contenido" className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6 lg:px-10 lg:pb-12 lg:pt-10">
-          {children}
-          <LegalFooter className="mt-12" />
-        </main>
+        {working ? (
+          // Pantalla de trabajo: sin pie legal ni margen de sobra; en móvil deja sitio al menú inferior.
+          <main
+            id="contenido"
+            className="flex min-h-0 w-full flex-1 flex-col px-3 pb-[calc(3.5rem+env(safe-area-inset-bottom))] pt-2 sm:px-4 lg:px-5 lg:pb-3"
+          >
+            {children}
+          </main>
+        ) : (
+          <main id="contenido" className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6 lg:px-10 lg:pb-12 lg:pt-10">
+            {children}
+            <LegalFooter className="mt-12" />
+          </main>
+        )}
 
         {/* Móvil y tablet: 4 secciones fijas y «Más» con el resto */}
         <MobileNav items={items} brandName={brand?.name} />
