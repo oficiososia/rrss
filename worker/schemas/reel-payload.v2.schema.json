@@ -621,6 +621,7 @@
                         "maximum": 2
                       },
                       "box": {
+                        "default": null,
                         "anyOf": [
                           {
                             "type": "object",
@@ -653,6 +654,7 @@
                         ]
                       },
                       "outline": {
+                        "default": null,
                         "anyOf": [
                           {
                             "type": "object",
@@ -690,8 +692,6 @@
                       "marginRatio",
                       "maxWidthRatio",
                       "lineHeight",
-                      "box",
-                      "outline",
                       "fadeSeconds"
                     ],
                     "additionalProperties": false
@@ -760,6 +760,7 @@
                       "maximum": 2
                     },
                     "box": {
+                      "default": null,
                       "anyOf": [
                         {
                           "type": "object",
@@ -792,6 +793,7 @@
                       ]
                     },
                     "outline": {
+                      "default": null,
                       "anyOf": [
                         {
                           "type": "object",
@@ -829,8 +831,6 @@
                     "marginRatio",
                     "maxWidthRatio",
                     "lineHeight",
-                    "box",
-                    "outline",
                     "fadeSeconds"
                   ],
                   "additionalProperties": false
