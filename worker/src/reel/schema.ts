@@ -212,8 +212,11 @@ export const textStyleSchema = z.strictObject({
       opacity: z.number().min(0).max(1),
       paddingRatio: z.number().min(0).max(1),
     })
-    .nullable(),
-  outline: z.strictObject({ color: hexColor, widthRatio: z.number().min(0).max(0.2) }).nullable(),
+    // `request_media_job` pasa la petición por jsonb_strip_nulls: «sin franja» llega
+    // como campo ausente, no como null. Ausente = null.
+    .nullable()
+    .default(null),
+  outline: z.strictObject({ color: hexColor, widthRatio: z.number().min(0).max(0.2) }).nullable().default(null),
   fadeSeconds: z.number().min(0).max(1),
 });
 export type ReelTextStyle = z.output<typeof textStyleSchema>;

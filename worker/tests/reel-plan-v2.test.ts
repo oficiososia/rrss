@@ -155,3 +155,47 @@ describe('plan v2 (sin FFmpeg)', () => {
     );
   });
 });
+
+describe('plan v2 tal como lo guarda la base de datos', () => {
+  it('acepta un texto sin contorno ni franja: request_media_job quita los null (jsonb_strip_nulls)', () => {
+    // Encargo real que falló en staging el 21/11/2026 con «plan: Invalid input».
+    const payload = {
+      plan: {
+        version: 2,
+        clips: [
+          { id: 'c1', type: 'photo', path: 'org/brand/media/foto.jpg', seconds: 2.5, transition: { type: 'fade', seconds: 0.5 } },
+        ],
+        texts: [
+          {
+            id: 't1',
+            text: 'Texto',
+            start: 0,
+            end: 2,
+            position: 'bottom',
+            style: {
+              color: '#394147',
+              sizeRatio: 0.06,
+              lineHeight: 1.45,
+              fadeSeconds: 0.3,
+              marginRatio: 0.22,
+              maxWidthRatio: 0.8,
+              box: { color: '#000000', opacity: 0.55, paddingRatio: 0.35 },
+            },
+          },
+        ],
+      },
+      output: { path: 'org/brand/reels/salida.mp4' },
+      content: { id: '3f9f60de-72da-479e-98dc-0ce92e4056cd', version: 1 },
+      template: { id: 'fundido-suave' },
+    };
+    const parsed = reelPayloadSchema.safeParse(payload);
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+    const plan = parsed.data!.plan as { texts: Array<{ style: { outline: unknown; box: unknown } }> };
+    expect(plan.texts[0]!.style.outline).toBeNull();
+    const sinFranja = structuredClone(payload);
+    delete (sinFranja.plan.texts[0]!.style as { box?: unknown }).box;
+    const parsed2 = reelPayloadSchema.safeParse(sinFranja);
+    expect(parsed2.success).toBe(true);
+    expect((parsed2.data!.plan as typeof plan).texts[0]!.style.box).toBeNull();
+  });
+});
