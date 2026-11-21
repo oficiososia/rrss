@@ -3,6 +3,7 @@ import {
   ArchiveRestore,
   CalendarPlus,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   Circle,
   Download,
@@ -28,11 +29,11 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
-  type KeyboardEvent,
   type MouseEvent,
 } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -45,7 +46,7 @@ import {
   EmptyState,
   ErrorState,
   Notice,
-  PageHeader,
+  MoreMenu,
   Spinner,
   Tabs,
   TabsContent,
@@ -111,6 +112,7 @@ import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
 import { ApplyTemplateDialog } from './templates/ApplyTemplateDialog';
+import { SaveTemplateDialog } from './templates/SaveTemplateDialog';
 import { PublishNowDialog } from '@/features/social/PublishNowDialog';
 import { ScheduleDialog } from '@/features/social/ScheduleDialog';
 import { EXPORT_PARAM } from '@/features/social/links';
@@ -129,6 +131,8 @@ import {
   type StatusAction,
 } from './status';
 import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useWorkspaceMode } from '@/layout/workspace';
+import { cn } from '@/lib/utils';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
@@ -219,6 +223,8 @@ export function ContentEditorPage() {
  */
 function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () => void }) {
   const initial = content;
+  // Pantalla de trabajo: la página mide justo la ventana y solo hacen scroll los paneles.
+  useWorkspaceMode();
   const { org } = useOrg();
   const { brand, can, role } = useBrand();
   const navigate = useNavigate();
@@ -259,6 +265,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [photoEditing, setPhotoEditing] = useState(false);
   const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai'>('enhance');
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  /** En pantallas estrechas, los paneles son una hoja inferior que se abre con las pestañas. */
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
@@ -379,7 +388,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     return originalQuery.data ? { layerId: editablePhoto.layerId, assetId: originalQuery.data.id } : null;
   }, [editablePhoto, originalQuery.data]);
   const aiPhotoOptions = useAiEditOptions(brand.id, Boolean(editablePhoto) && canEditWithAi(editablePhoto!.row));
-  const aiBackgroundAvailable = Boolean(aiPhotoOptions.data?.some((choice) => choice.operation === 'replace_background'));
+  const aiBackgroundAvailable = Boolean(
+    aiPhotoOptions.data?.some((choice) => choice.operation === 'replace_background'),
+  );
   const photoTools: PhotoToolsContext | undefined = editablePhoto
     ? {
         row: editablePhoto.row,
@@ -412,22 +423,6 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
-
-  // Escape sin foco en ningún campo (p. ej. tras pulsar en el panel): quita la selección.
-  // Lo que llega desde un diálogo (portal) o desde un campo de texto no cuenta.
-  const hasSelection = state.selectedIds.length > 0;
-  useEffect(() => {
-    if (!hasSelection) return;
-    const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || isTypingTarget(event.target)) return;
-      const target = event.target as Node | null;
-      if (target !== document.body && !rootRef.current?.contains(target)) return;
-      dispatch({ type: 'select', id: null });
-      setPanel('layer');
-    };
-    document.addEventListener('keydown', onEscape);
-    return () => document.removeEventListener('keydown', onEscape);
-  }, [hasSelection]);
 
   // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
   // contenido se monta después de este efecto.
@@ -511,9 +506,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   };
 
   // ── Teclado: deshacer, rehacer, guardar y, con una capa elegida, mover, borrar y soltar ──
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    // Lo que llega desde un diálogo (portal) no es del editor.
-    if (!rootRef.current?.contains(event.target as Node)) return;
+  // Se escucha en el documento y no solo en el editor: tras cerrar un diálogo (elegir o editar una foto)
+  // el foco puede quedar en la página y los atajos deben seguir funcionando. Lo que llega desde un
+  // diálogo abierto (portal) o desde fuera del editor (menú lateral) no es del editor.
+  function onKeyDown(event: globalThis.KeyboardEvent) {
+    const origin = event.target as Node | null;
+    if (origin !== document.body && !rootRef.current?.contains(origin)) return;
     const mod = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     if (mod && (key === 'z' || key === 'y')) {
@@ -563,6 +561,16 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       dispatch({ type: 'nudgeSelection', dx: move[0], dy: move[1] });
     }
   }
+
+  const keyHandler = useRef(onKeyDown);
+  useLayoutEffect(() => {
+    keyHandler.current = onKeyDown;
+  });
+  useEffect(() => {
+    const listener = (event: globalThis.KeyboardEvent) => keyHandler.current(event);
+    document.addEventListener('keydown', listener);
+    return () => document.removeEventListener('keydown', listener);
+  }, []);
 
   // ── Guardar, restaurar y estados ──
   function handleConflictOr(error: unknown) {
@@ -729,7 +737,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         return (
           <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="editor-archive">
             <ArchiveRestore className="h-4 w-4" aria-hidden />
-            Recuperar
+            <span className="max-sm:sr-only">Recuperar</span>
           </Button>
         );
       case 'publishNow':
@@ -742,14 +750,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             data-testid="editor-publish-now"
           >
             <Send className="h-4 w-4" aria-hidden />
-            Publicar ahora
+            <span className="max-sm:sr-only">Publicar ahora</span>
           </Button>
         );
       case 'schedule':
         return (
           <Button size="sm" disabled={dirty} onClick={() => setScheduleOpen(true)} data-testid="editor-schedule">
             <CalendarPlus className="h-4 w-4" aria-hidden />
-            Programar
+            <span className="max-sm:sr-only">Programar</span>
           </Button>
         );
       case 'status': {
@@ -769,7 +777,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             ) : (
               <SendHorizontal className="h-4 w-4" aria-hidden />
             )}
-            {action.label}
+            <span className="max-sm:sr-only">{action.label}</span>
           </Button>
         );
       }
@@ -852,6 +860,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       hint: 'Sustituir el diseño por una plantilla de la marca',
       testId: 'editor-from-template',
     }),
+    ...when<MoreAction>(!readOnly, {
+      id: 'save-template',
+      label: 'Guardar como plantilla…',
+      icon: LayoutTemplate,
+      onSelect: () => setSaveTemplateOpen(true),
+      hint: 'Guardar este diseño para empezar otras piezas con él',
+      disabled: allLayers(state.document).length === 0,
+      testId: 'editor-save-template',
+    }),
     null,
     ...backward.map(statusItem),
     ...when<MoreAction>(canEdit && !item.archived_at, {
@@ -899,67 +916,66 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }
 
   return (
-    <div ref={rootRef} onKeyDown={onKeyDown} className="flex flex-col gap-3 lg:h-[calc(100dvh-6rem)]">
-      {/* Cabecera: dónde estoy, estado y UNA acción principal; lo demás, en «⋯» */}
-      <PageHeader
-        compact
-        back={
-          <Link
-            to={paths.list}
-            onClick={leave}
-            className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
-            data-testid="editor-back"
-          >
-            <ChevronLeft className="h-4 w-4" aria-hidden />
-            Contenidos
-          </Link>
-        }
-        title={item.title}
-        titleTestId="editor-title"
-        meta={
-          <>
-            <span>{targetLabel(item.network, item.format)}</span>
-            <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
-            {item.archived_at && <Badge tone="warning">Archivada</Badge>}
-            {aiLabel && (
-              <span
-                title={describeAiReasons(aiReasons) || 'Lleva contenido generado con IA.'}
-                data-testid="editor-ai-label"
-              >
-                <Badge tone="primary">Generado con IA</Badge>
-              </span>
-            )}
-            <ContentRequestOrigin item={item} />
-            <span data-testid="editor-version">
-              {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar todavía'}
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-2" data-testid="editor-root">
+      {/* Cabecera en una línea: dónde estoy, estado y versión; a la derecha, guardar, la acción principal y «⋯» */}
+      <header className="flex shrink-0 items-center gap-2" data-testid="editor-header">
+        <Link
+          to={paths.list}
+          onClick={leave}
+          className="inline-flex shrink-0 items-center gap-0.5 text-sm text-muted hover:text-fg"
+          data-testid="editor-back"
+          aria-label="Volver a Contenidos"
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden />
+          <span className="max-md:sr-only">Contenidos</span>
+        </Link>
+        <h1 className="min-w-0 shrink truncate text-base font-semibold" data-testid="editor-title">
+          {item.title}
+        </h1>
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-muted">
+          <span className="hidden md:inline">{targetLabel(item.network, item.format)}</span>
+          <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
+          {item.archived_at && <Badge tone="warning">Archivada</Badge>}
+          {aiLabel && (
+            <span
+              title={describeAiReasons(aiReasons) || 'Lleva contenido generado con IA.'}
+              data-testid="editor-ai-label"
+              className="hidden sm:inline"
+            >
+              <Badge tone="primary">Generado con IA</Badge>
             </span>
-            {dirty && (
-              <span className="font-medium text-warning" data-testid="editor-dirty">
-                · Cambios sin guardar
-              </span>
-            )}
-          </>
-        }
-        secondary={
-          !readOnly && (
+          )}
+          <span className="hidden lg:inline">
+            <ContentRequestOrigin item={item} />
+          </span>
+          <span data-testid="editor-version" className="hidden sm:inline">
+            {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar todavía'}
+          </span>
+          {dirty && (
+            <span className="font-medium text-warning" data-testid="editor-dirty">
+              · Cambios sin guardar
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5" data-testid="page-actions">
+          {!readOnly && (
             <Button
               variant="secondary"
               size="sm"
+              className="h-8 px-2.5"
               onClick={() => setSaveOpen(true)}
               disabled={!dirty && expectedVersion > 0}
-              title={!dirty && expectedVersion > 0 ? 'No hay cambios que guardar' : undefined}
+              title={!dirty && expectedVersion > 0 ? 'No hay cambios que guardar' : 'Guardar versión (Ctrl+S)'}
               data-testid="editor-save"
             >
               <Save className="h-4 w-4" aria-hidden />
-              Guardar<span className="max-sm:sr-only"> versión</span>
+              <span className="max-sm:sr-only">Guardar versión</span>
             </Button>
-          )
-        }
-        action={primaryButton}
-        more={moreActions}
-        moreLabel="Más acciones de la pieza"
-        moreTestId="editor-more"
-      />
+          )}
+          {primaryButton}
+          <MoreMenu items={moreActions} label="Más acciones de la pieza" testId="editor-more" size="sm" />
+        </div>
+      </header>
 
       {conflict && (
         <div
@@ -1006,7 +1022,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       {/* Barra de herramientas */}
       {!readOnly && (
         <div
-          className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0 [&>*]:shrink-0"
+          className="flex shrink-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
           role="toolbar"
           aria-label="Herramientas del editor"
         >
@@ -1014,6 +1030,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="secondary"
             size="sm"
+            className="h-8 px-2.5"
             disabled={full}
             onClick={() =>
               dispatch({
@@ -1032,6 +1049,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="secondary"
             size="sm"
+            className="h-8 px-2.5"
             disabled={full}
             onClick={() => setImagePicker(true)}
             data-testid="add-image"
@@ -1043,6 +1061,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <Button
               variant="secondary"
               size="sm"
+              className="h-8 px-2.5"
               disabled={full}
               onClick={() => setImageAi(true)}
               data-testid="add-image-ai"
@@ -1055,6 +1074,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="secondary"
             size="sm"
+            className="h-8 px-2.5"
             disabled={full}
             onClick={() => setLogoPicker(true)}
             data-testid="add-logo"
@@ -1065,6 +1085,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="secondary"
             size="sm"
+            className="h-8 px-2.5"
             disabled={full}
             onClick={() =>
               dispatch({
@@ -1080,6 +1101,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="secondary"
             size="sm"
+            className="h-8 px-2.5"
             disabled={full}
             onClick={() =>
               dispatch({
@@ -1105,6 +1127,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <Button
               variant={copilotOpen ? 'primary' : 'secondary'}
               size="sm"
+              className="h-8 px-2.5"
               aria-pressed={copilotOpen}
               onClick={() => setCopilotOpen((open) => !open)}
               data-testid="copilot-open"
@@ -1118,6 +1141,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="ghost"
             size="icon"
+            className="h-8 w-8"
             aria-label="Deshacer"
             title="Deshacer (Ctrl+Z)"
             disabled={state.past.length === 0}
@@ -1129,6 +1153,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Button
             variant="ghost"
             size="icon"
+            className="h-8 w-8"
             aria-label="Rehacer"
             title="Rehacer (Ctrl+Mayús+Z)"
             disabled={state.future.length === 0}
@@ -1169,14 +1194,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         </Suspense>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:grid lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-3">
         <section
           ref={canvasRef}
           tabIndex={0}
           // Un clic en el margen del lienzo (fuera del documento) quita la selección.
           onPointerDown={(event) => event.target === event.currentTarget && deselect()}
           aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él."
-          className="flex h-[55dvh] min-h-[16rem] flex-col rounded-xl bg-subtle p-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary lg:h-auto"
+          className="flex min-h-0 flex-1 flex-col rounded-xl bg-subtle p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
         >
           {safeZone && (
             <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted" data-testid="safe-zone-bar">
@@ -1198,7 +1223,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               )}
             </div>
           )}
-          <div className="min-h-0 flex-1" onPointerDown={(event) => event.target === event.currentTarget && deselect()}>
+          <div
+            className="relative min-h-0 flex-1"
+            onPointerDown={(event) => event.target === event.currentTarget && deselect()}
+          >
             {brandFonts.status === 'loading' ? (
               <Spinner label="Cargando las tipografías de la marca…" />
             ) : (
@@ -1238,122 +1266,176 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         </section>
 
         <aside
-          className="min-h-0 overflow-y-auto rounded-xl border border-border bg-surface p-4"
+          className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-surface px-3 pt-1 lg:shrink lg:px-4"
           aria-label="Paneles del editor"
+          data-testid="editor-panels"
+          data-open={sheetOpen}
         >
-          <Tabs value={panel} onValueChange={setPanel}>
-            <TabsList label="Paneles del editor">
-              <TabsTrigger value="layer">Diseño</TabsTrigger>
-              <TabsTrigger value="layers">Capas ({layers.length})</TabsTrigger>
-              <TabsTrigger value="copy">Publicación</TabsTrigger>
-              {BrandCheck && <TabsTrigger value="brand">Marca</TabsTrigger>}
-            </TabsList>
-            <TabsContent value="layer" className="space-y-5 pt-4">
-              {selectedLayers.length > 1 ? (
-                readOnly ? (
-                  <p className="text-sm text-muted">{selectedLayers.length} capas elegidas.</p>
-                ) : (
-                  <MultiSelectionPanel layers={selectedLayers} dispatch={dispatch} />
-                )
-              ) : (
-                <>
-                  <PropertiesPanel
-                    layer={selected}
-                    canvas={canvas}
-                    readOnly={readOnly}
-                    dispatch={dispatch}
-                    brandStyle={brandStyle}
-                    allowedRatios={allowed?.ratios ?? null}
-                    textRef={textRef}
-                    onEditPhoto={
-                      editablePhoto?.url
-                        ? () => {
-                            setPhotoEditTab('enhance');
-                            setPhotoEditing(true);
-                          }
-                        : undefined
-                    }
-                    photoTools={photoTools}
-                    onRestoreOriginal={
-                      originalPhoto
-                        ? () => {
-                            dispatch({
-                              type: 'update',
-                              id: originalPhoto.layerId,
-                              patch: { source: { kind: 'asset', assetId: originalPhoto.assetId } },
-                            });
-                            toast.success('La capa vuelve a la foto original. Se deshace con Ctrl+Z.');
-                          }
-                        : undefined
-                    }
-                  />
-                  {selected && !readOnly && !selected.locked && (
-                    <ArrangeControls layers={[selected]} dispatch={dispatch} />
+          <Tabs value={panel} onValueChange={setPanel} className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
+                <TabsList label="Paneles del editor">
+                  <TabsTrigger
+                    value="layer"
+                    className="px-2.5 max-lg:min-h-[2.75rem]"
+                    onClick={() => setSheetOpen(true)}
+                  >
+                    Diseño
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="layers"
+                    className="px-2.5 max-lg:min-h-[2.75rem]"
+                    onClick={() => setSheetOpen(true)}
+                  >
+                    Capas ({layers.length})
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="copy"
+                    className="px-2.5 max-lg:min-h-[2.75rem]"
+                    onClick={() => setSheetOpen(true)}
+                  >
+                    Publicación
+                  </TabsTrigger>
+                  {BrandCheck && (
+                    <TabsTrigger
+                      value="brand"
+                      className="px-2.5 max-lg:min-h-[2.75rem]"
+                      onClick={() => setSheetOpen(true)}
+                    >
+                      Marca
+                    </TabsTrigger>
                   )}
-                </>
+                </TabsList>
+              </div>
+              {sheetOpen && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 lg:hidden"
+                  aria-label="Ocultar el panel"
+                  title="Ocultar el panel"
+                  onClick={() => setSheetOpen(false)}
+                  data-testid="editor-panels-close"
+                >
+                  <ChevronDown className="h-4 w-4" aria-hidden />
+                </Button>
               )}
-            </TabsContent>
-            <TabsContent value="layers" className="pt-4">
-              <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
-            </TabsContent>
-            <TabsContent value="copy" className="space-y-4 pt-4">
-              <AskAgencyButton item={item} />
-              {aiEnabled && !readOnly && (
-                <GenerateCaptionDialog
-                  brandId={brand.id}
-                  network={item.network}
-                  format={item.format}
-                  currentCopy={state.document.copy}
-                  // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
-                  onApply={(copy) => {
-                    // Marca de contenido generado con IA (ver content/aiLabel.ts).
-                    dispatch({ type: 'setCopy', patch: { ...copy, aiGenerated: true } });
-                    toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
-                  }}
-                />
+            </div>
+            {/* Solo este bloque se desplaza: en pantallas estrechas es la hoja abierta (40 % del alto), en anchas, la columna entera. */}
+            <div
+              className={cn(
+                'min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3',
+                sheetOpen ? 'max-h-[40dvh] lg:max-h-none' : 'hidden lg:block',
               )}
-              <CopyPanel
-                copy={state.document.copy}
-                spec={spec}
-                networkName={networkLabel(item.network)}
-                readOnly={readOnly}
-                dispatch={dispatch}
-              />
-            </TabsContent>
-            {BrandCheck && (
-              <TabsContent value="brand" className="pt-4">
-                <Suspense fallback={<Spinner label="Cargando el verificador…" />}>
-                  <BrandCheck
-                    document={state.document}
-                    network={item.network}
-                    format={item.format}
-                    brandId={brand.id}
-                    imagePalette={palette.status === 'ready' ? palette.palette : undefined}
-                    onSelectTarget={selectTarget}
-                  />
-                </Suspense>
-                {palette.status === 'unavailable' && (
-                  <div className="mt-3" data-testid="brandcheck-palette-unavailable">
-                    <Notice tone="warning">
-                      No se han podido leer los colores de la imagen (el navegador no lo permite para este archivo): la
-                      comparación con la paleta de la marca se omite.
-                    </Notice>
-                  </div>
-                )}
-                {aiEnabled && (
-                  <div className="mt-6 space-y-2 border-t border-border pt-4">
-                    <h2 className="text-base font-semibold">Tono con IA</h2>
-                    <p className="text-xs text-muted">
-                      Revisa el tono y los temas vetados del texto de la publicación. Ayuda a revisar; no aprueba.
-                    </p>
-                    <AiBrandCheck
-                      brandId={brand.id}
-                      text={publishedText(state.document.copy.caption, state.document.copy.hashtags)}
+              data-testid="editor-panel-scroll"
+            >
+              <TabsContent value="layer" className="space-y-4 pt-3">
+                {selectedLayers.length > 1 ? (
+                  readOnly ? (
+                    <p className="text-sm text-muted">{selectedLayers.length} capas elegidas.</p>
+                  ) : (
+                    <MultiSelectionPanel layers={selectedLayers} dispatch={dispatch} />
+                  )
+                ) : (
+                  <>
+                    <PropertiesPanel
+                      layer={selected}
+                      canvas={canvas}
+                      readOnly={readOnly}
+                      dispatch={dispatch}
+                      brandStyle={brandStyle}
+                      allowedRatios={allowed?.ratios ?? null}
+                      textRef={textRef}
+                      onEditPhoto={
+                        editablePhoto?.url
+                          ? () => {
+                              setPhotoEditTab('enhance');
+                              setPhotoEditing(true);
+                            }
+                          : undefined
+                      }
+                      photoTools={photoTools}
+                      onRestoreOriginal={
+                        originalPhoto
+                          ? () => {
+                              dispatch({
+                                type: 'update',
+                                id: originalPhoto.layerId,
+                                patch: { source: { kind: 'asset', assetId: originalPhoto.assetId } },
+                              });
+                              toast.success('La capa vuelve a la foto original. Se deshace con Ctrl+Z.');
+                            }
+                          : undefined
+                      }
                     />
-                  </div>
+                    {selected && !readOnly && !selected.locked && (
+                      <ArrangeControls layers={[selected]} dispatch={dispatch} />
+                    )}
+                  </>
                 )}
               </TabsContent>
-            )}
+              <TabsContent value="layers" className="pt-4">
+                <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
+              </TabsContent>
+              <TabsContent value="copy" className="space-y-4 pt-4">
+                <AskAgencyButton item={item} />
+                {aiEnabled && !readOnly && (
+                  <GenerateCaptionDialog
+                    brandId={brand.id}
+                    network={item.network}
+                    format={item.format}
+                    currentCopy={state.document.copy}
+                    // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
+                    onApply={(copy) => {
+                      // Marca de contenido generado con IA (ver content/aiLabel.ts).
+                      dispatch({ type: 'setCopy', patch: { ...copy, aiGenerated: true } });
+                      toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
+                    }}
+                  />
+                )}
+                <CopyPanel
+                  copy={state.document.copy}
+                  spec={spec}
+                  networkName={networkLabel(item.network)}
+                  readOnly={readOnly}
+                  dispatch={dispatch}
+                />
+              </TabsContent>
+              {BrandCheck && (
+                <TabsContent value="brand" className="pt-4">
+                  <Suspense fallback={<Spinner label="Cargando el verificador…" />}>
+                    <BrandCheck
+                      document={state.document}
+                      network={item.network}
+                      format={item.format}
+                      brandId={brand.id}
+                      imagePalette={palette.status === 'ready' ? palette.palette : undefined}
+                      onSelectTarget={selectTarget}
+                    />
+                  </Suspense>
+                  {palette.status === 'unavailable' && (
+                    <div className="mt-3" data-testid="brandcheck-palette-unavailable">
+                      <Notice tone="warning">
+                        No se han podido leer los colores de la imagen (el navegador no lo permite para este archivo):
+                        la comparación con la paleta de la marca se omite.
+                      </Notice>
+                    </div>
+                  )}
+                  {aiEnabled && (
+                    <div className="mt-6 space-y-2 border-t border-border pt-4">
+                      <h2 className="text-base font-semibold">Tono con IA</h2>
+                      <p className="text-xs text-muted">
+                        Revisa el tono y los temas vetados del texto de la publicación. Ayuda a revisar; no aprueba.
+                      </p>
+                      <AiBrandCheck
+                        brandId={brand.id}
+                        text={publishedText(state.document.copy.caption, state.document.copy.hashtags)}
+                      />
+                    </div>
+                  )}
+                </TabsContent>
+              )}
+            </div>
           </Tabs>
         </aside>
       </div>
@@ -1451,11 +1533,30 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           open={templateOpen}
           onOpenChange={setTemplateOpen}
           target={{ network: item.network, format: item.format }}
+          currentRatio={canvas.aspectRatio}
+          canDelete={canEdit}
           hasDesign={allLayers(state.document).length > 0}
-          onApply={(document, template) => {
+          onApply={(document, template, changes) => {
             dispatch({ type: 'replace', document });
-            toast.success(`Plantilla «${template.name}» aplicada. Sustituye las fotos y ajusta el texto.`);
+            toast.success(
+              changes.length > 0
+                ? `Plantilla «${template.name}» adaptada y aplicada. Revisa la composición: ${changes.join(' ')}`
+                : `Plantilla «${template.name}» aplicada. Sustituye las fotos y ajusta el texto.`,
+              changes.length > 0 ? { duration: 12_000 } : undefined,
+            );
           }}
+        />
+      )}
+      {!readOnly && saveTemplateOpen && (
+        <SaveTemplateDialog
+          open
+          onOpenChange={setSaveTemplateOpen}
+          brandId={brand.id}
+          defaultName={item.title}
+          network={item.network}
+          format={item.format}
+          document={state.document}
+          onSaved={(name) => toast.success(`Plantilla «${name}» guardada. La verás en «Desde una plantilla».`)}
         />
       )}
       {!readOnly && (

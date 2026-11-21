@@ -19,7 +19,7 @@ import {
 import type { LayerPatch } from '../history';
 import { FILTER_LABEL } from '../imageEffects/filters';
 import { flipPhoto, RESET_EDITS, straightenPatch, turnQuarter } from '../imageEffects/imageEdit';
-import { ColorInput, RangeInput, SelectInput } from './controls';
+import { ColorInput, RangeInput, SelectInput, Section } from './controls';
 import { CropDialog } from './CropDialog';
 import { ShadowFields } from './ShadowFields';
 
@@ -76,7 +76,8 @@ export function PhotoPanel({
   const backdropKind: BackdropKind = layer.backdrop?.kind ?? 'none';
   const canCut = canRemoveBackground() && tools.row !== null && Boolean(tools.url);
 
-  const setAdjust = (patch: Partial<ImageAdjust>, field = 'adjust') => update({ adjust: { ...adjust, ...patch } }, field);
+  const setAdjust = (patch: Partial<ImageAdjust>, field = 'adjust') =>
+    update({ adjust: { ...adjust, ...patch } }, field);
 
   const setBackdropKind = (kind: BackdropKind) => {
     if (kind === 'none') return update({ backdrop: undefined });
@@ -115,8 +116,7 @@ export function PhotoPanel({
 
   return (
     <div className="space-y-6" data-testid="photo-panel">
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Luz y color</h4>
+      <Section title="Luz y color" defaultOpen>
         {SLIDERS.map((slider) => (
           <RangeInput
             key={slider.key}
@@ -158,15 +158,19 @@ export function PhotoPanel({
           </div>
         </div>
         {edited && !readOnly && (
-          <Button variant="ghost" size="sm" onClick={() => update({ adjust: undefined })} data-testid="photo-adjust-reset">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => update({ adjust: undefined })}
+            data-testid="photo-adjust-reset"
+          >
             <Undo2 className="h-4 w-4" aria-hidden />
             Quitar los ajustes de luz y color
           </Button>
         )}
-      </section>
+      </Section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Girar y recortar</h4>
+      <Section title="Girar y recortar">
         <div className="flex flex-wrap gap-1.5">
           <Button
             variant="secondary"
@@ -232,10 +236,9 @@ export function PhotoPanel({
             Quitar giro, volteo y recorte
           </Button>
         )}
-      </section>
+      </Section>
 
-      <section className="space-y-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Fondo</h4>
+      <Section title="Fondo">
         {(canCut || tools.onAiBackground) && !readOnly && (
           <div className="space-y-2">
             {canCut && (
@@ -262,7 +265,9 @@ export function PhotoPanel({
                   size="sm"
                   className="w-full"
                   disabled={busy !== null}
-                  onClick={() => quick({ kind: 'blur_background', amount: blurAmount, shadow: true }, 'Desenfocando el fondo…')}
+                  onClick={() =>
+                    quick({ kind: 'blur_background', amount: blurAmount, shadow: true }, 'Desenfocando el fondo…')
+                  }
                   data-testid="photo-blur-background"
                 >
                   Desenfocar el fondo y dejar el plato nítido
@@ -319,7 +324,9 @@ export function PhotoPanel({
               value={layer.backdrop.from}
               palette={palette}
               disabled={readOnly}
-              onChange={(from) => update({ backdrop: { ...layer.backdrop!, kind: 'gradient', from } as ImageBackdrop }, 'backdrop')}
+              onChange={(from) =>
+                update({ backdrop: { ...layer.backdrop!, kind: 'gradient', from } as ImageBackdrop }, 'backdrop')
+              }
               onCommit={checkpoint}
             />
             <ColorInput
@@ -327,7 +334,9 @@ export function PhotoPanel({
               value={layer.backdrop.to}
               palette={palette}
               disabled={readOnly}
-              onChange={(to) => update({ backdrop: { ...layer.backdrop!, kind: 'gradient', to } as ImageBackdrop }, 'backdrop')}
+              onChange={(to) =>
+                update({ backdrop: { ...layer.backdrop!, kind: 'gradient', to } as ImageBackdrop }, 'backdrop')
+              }
               onCommit={checkpoint}
             />
             <RangeInput
@@ -336,7 +345,9 @@ export function PhotoPanel({
               min={0}
               max={360}
               disabled={readOnly}
-              onChange={(angle) => update({ backdrop: { ...layer.backdrop!, kind: 'gradient', angle } as ImageBackdrop }, 'backdrop')}
+              onChange={(angle) =>
+                update({ backdrop: { ...layer.backdrop!, kind: 'gradient', angle } as ImageBackdrop }, 'backdrop')
+              }
               onCommit={checkpoint}
             />
           </>
@@ -365,7 +376,7 @@ export function PhotoPanel({
           onChange={(shadow, field) => update({ shadow }, field)}
           onCommit={checkpoint}
         />
-      </section>
+      </Section>
 
       {cropping && tools.url && (
         <CropDialog

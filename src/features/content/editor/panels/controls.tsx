@@ -197,26 +197,33 @@ export function RangeInput({
   disabled?: boolean;
   testId?: string;
 }) {
+  const id = useId();
+  const shown = Math.round(value * 100) / 100;
   return (
-    <Labeled label={`${label}: ${Math.round(value * 100) / 100}`}>
-      {(id) => (
-        <input
-          id={id}
-          type="range"
-          className="w-full accent-primary disabled:opacity-60"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          disabled={disabled}
-          data-testid={testId}
-          onChange={(e) => onChange(Number(e.target.value))}
-          onPointerUp={onCommit}
-          onKeyUp={onCommit}
-          onBlur={onCommit}
-        />
-      )}
-    </Labeled>
+    <div className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)_2.75rem] items-center gap-2">
+      <label htmlFor={id} className="truncate text-xs font-medium text-muted" title={label}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="range"
+        className="h-6 w-full accent-primary disabled:opacity-60"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        data-testid={testId}
+        aria-valuetext={String(shown)}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerUp={onCommit}
+        onKeyUp={onCommit}
+        onBlur={onCommit}
+      />
+      <output htmlFor={id} className="text-right font-mono text-xs tabular-nums text-muted">
+        {shown}
+      </output>
+    </div>
   );
 }
 
@@ -242,5 +249,35 @@ export function CheckInput({
       />
       {label}
     </label>
+  );
+}
+
+/**
+ * Sección plegable del panel (nativa, con teclado y lector de pantalla). Las
+ * abiertas por defecto son las de uso más común; la persona abre el resto.
+ */
+export function Section({
+  title,
+  defaultOpen = false,
+  testId,
+  className,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  testId?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <details open={defaultOpen} className={cn('group border-t border-border pt-2', className)} data-testid={testId}>
+      <summary className="flex min-h-[2rem] cursor-pointer list-none items-center justify-between gap-2 rounded text-xs font-semibold uppercase tracking-wide text-muted marker:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden">
+        {title}
+        <span aria-hidden className="text-base leading-none transition-transform group-open:rotate-90">
+          ›
+        </span>
+      </summary>
+      <div className="space-y-3 pb-1 pt-2">{children}</div>
+    </details>
   );
 }

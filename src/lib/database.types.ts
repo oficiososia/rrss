@@ -958,7 +958,7 @@ export type BrandDesignTemplateRow = {
   format: string;
   document: Json;
   analysis: Json;
-  source: 'instagram_import' | 'manual';
+  source: 'instagram_import' | 'manual' | 'editor';
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -972,6 +972,7 @@ type ImportTables = {
 
 type ImportFunctions = {
   delete_design_template: { Args: { p_template_id: string }; Returns: undefined };
+  deliver_design_templates: { Args: { p_brand_id: string; p_templates: Json }; Returns: BrandDesignTemplateRow[] };
 };
 
 type PublicationFunctions = {

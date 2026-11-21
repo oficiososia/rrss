@@ -1,7 +1,10 @@
-import { useState } from 'react';
-import { Button, Dialog } from '@/components/ui';
-import type { ContentDocument } from '../document';
-import type { BrandTemplate } from './api';
+import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
+import { Button, Dialog, Notice } from '@/components/ui';
+import { translateError } from '@/lib/errors';
+import type { AspectRatio, ContentDocument } from '../document';
+import { useDeleteTemplate, type BrandTemplate } from './api';
+import { fitTemplate } from './fit';
 import { TemplatePicker } from './TemplatePicker';
 
 interface ApplyTemplateDialogProps {
@@ -10,22 +13,39 @@ interface ApplyTemplateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   target: { network: string; format: string };
+  /** Proporción del lienzo de la pieza: si la plantilla hay que pasarla a otra, se prefiere esta. */
+  currentRatio?: AspectRatio;
   /** La pieza ya tiene capas: se avisa de que se sustituyen (Ctrl+Z las recupera). */
   hasDesign: boolean;
-  onApply: (document: ContentDocument, template: BrandTemplate) => void;
+  /** Quien edita puede borrar las plantillas que se guardaron desde el editor. */
+  canDelete?: boolean;
+  /** `changes`: lo que se ha adaptado (vacío si la plantilla encajaba tal cual). */
+  onApply: (document: ContentDocument, template: BrandTemplate, changes: string[]) => void;
 }
 
-/** «Empezar desde una plantilla» dentro del editor: sustituye el diseño en un paso que se puede deshacer. */
+/**
+ * «Empezar desde una plantilla» dentro del editor: sustituye el diseño en un paso que se puede deshacer.
+ * Una plantilla de otra proporción o con otro número de páginas se adapta (con los anclajes de sus capas)
+ * y el diálogo dice qué cambia antes de aplicarla.
+ */
 export function ApplyTemplateDialog({
   orgId,
   brandId,
   open,
   onOpenChange,
   target,
+  currentRatio,
   hasDesign,
+  canDelete = false,
   onApply,
 }: ApplyTemplateDialogProps) {
   const [chosen, setChosen] = useState<BrandTemplate | null>(null);
+  const remove = useDeleteTemplate(brandId);
+  const fit = useMemo(
+    () => (chosen ? fitTemplate(chosen, target, currentRatio) : null),
+    [chosen, target, currentRatio],
+  );
+  const adapts = (fit?.changes.length ?? 0) > 0;
   return (
     <Dialog
       open={open}
@@ -39,16 +59,16 @@ export function ApplyTemplateDialog({
             Cancelar
           </Button>
           <Button
-            disabled={!chosen?.document}
+            disabled={!fit}
             onClick={() => {
-              if (!chosen?.document) return;
-              onApply(chosen.document, chosen);
+              if (!chosen || !fit) return;
+              onApply(fit.document, chosen, fit.changes);
               onOpenChange(false);
               setChosen(null);
             }}
             data-testid="template-apply"
           >
-            Usar esta plantilla
+            {adapts ? 'Adaptar y usar esta plantilla' : 'Usar esta plantilla'}
           </Button>
         </>
       }
@@ -59,12 +79,45 @@ export function ApplyTemplateDialog({
             Sustituye el diseño actual por el de la plantilla. Con Ctrl+Z lo recuperas.
           </p>
         )}
+        {chosen && !fit && (
+          <Notice tone="warning">
+            <span data-testid="template-cannot-fit">
+              Esta plantilla no se puede usar en esta pieza: su red o su formato no admiten ninguna proporción del
+              lienzo.
+            </span>
+          </Notice>
+        )}
+        {adapts && (
+          <Notice tone="warning">
+            <span data-testid="template-adapt-notice">
+              Esta plantilla no encaja tal cual y se adaptará:
+              <ul className="mt-1 list-disc pl-5">
+                {fit!.changes.map((change) => (
+                  <li key={change}>{change}</li>
+                ))}
+              </ul>
+              Con Ctrl+Z vuelves a como estaba.
+            </span>
+          </Notice>
+        )}
         <TemplatePicker
           orgId={orgId}
           brandId={brandId}
           target={target}
           selectedId={chosen?.id ?? null}
           onSelect={setChosen}
+          onDelete={
+            canDelete
+              ? (template) =>
+                  remove.mutate(template.id, {
+                    onSuccess: () => {
+                      if (chosen?.id === template.id) setChosen(null);
+                      toast.success(`Plantilla «${template.name}» borrada`);
+                    },
+                    onError: (error) => toast.error(translateError(error)),
+                  })
+              : undefined
+          }
         />
       </div>
     </Dialog>

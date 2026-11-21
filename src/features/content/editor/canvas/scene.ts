@@ -105,7 +105,7 @@ export class Scene {
       flipEnabled: false,
       borderStroke: SELECTION,
       anchorStroke: SELECTION,
-      anchorSize: 10,
+      anchorSize: typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? 22 : 10,
       rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315],
       boundBoxFunc: (oldBox, newBox) => (Math.abs(newBox.width) < 4 || Math.abs(newBox.height) < 4 ? oldBox : newBox),
     });
@@ -186,6 +186,14 @@ export class Scene {
     this.renderSafeZone(input);
     this.content.batchDraw();
     this.overlay.batchDraw();
+  }
+
+  /**
+   * Lo que se ve ahora (sin selección ni guías si no las hay) a una escala dada. Lo usan las pruebas de
+   * navegador para comparar el lienzo con la exportación.
+   */
+  snapshot(pixelRatio = 1): HTMLCanvasElement {
+    return this.stage.toCanvas({ pixelRatio });
   }
 
   destroy(): void {

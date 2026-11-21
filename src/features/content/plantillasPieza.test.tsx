@@ -14,6 +14,7 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
     <div
       data-testid="canvas-stub"
       data-layers={props.document.layers.length}
+      data-ratio={props.document.canvas.aspectRatio}
       data-ids={props.document.layers.map((l) => l.id).join(',')}
     />
   ),
@@ -245,7 +246,7 @@ describe('Empezar desde una plantilla en el editor', () => {
   it('sustituye el diseño de una idea vacía por el de la plantilla en un paso que se puede deshacer', async () => {
     seed({ orgRole: 'member', brandRole: 'editor' }, [
       templateRow(),
-      // Otra proporción que Instagram no admite para una publicación: no se ofrece.
+      // Otra proporción que Instagram no admite para una publicación: se ofrece y se adapta.
       templateRow({
         id: 'tpl-2',
         template_key: 'historia',
@@ -264,18 +265,52 @@ describe('Empezar desde una plantilla en el editor', () => {
     await chooseEditorAction(user, 'editor-from-template');
     const dialog = within(await screen.findByRole('dialog'));
     const options = await dialog.findAllByTestId('template-option');
-    expect(options).toHaveLength(1);
+    expect(options).toHaveLength(2);
     expect(options[0]).toHaveTextContent('Plato del día');
+    expect(within(options[0]!).queryByTestId('template-adapts')).not.toBeInTheDocument();
+    expect(within(options[1]!).getByTestId('template-adapts')).toBeInTheDocument();
     expect(dialog.queryByTestId('template-replace-warning')).not.toBeInTheDocument();
     expect(dialog.getByTestId('template-apply')).toBeDisabled();
 
     await user.click(options[0]!);
+    expect(dialog.queryByTestId('template-adapt-notice')).not.toBeInTheDocument();
+    expect(dialog.getByTestId('template-apply')).toHaveTextContent('Usar esta plantilla');
     await user.click(dialog.getByTestId('template-apply'));
     await waitFor(() =>
       expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-ids', 'foto-plato,titular-plantilla'),
     );
     expect(screen.getByTestId('editor-dirty')).toBeInTheDocument();
 
+    await user.click(screen.getByRole('button', { name: /Deshacer/ }));
+    await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '0'));
+  });
+
+  it('una plantilla de otra proporción se adapta con los anclajes y avisa de lo que cambia', async () => {
+    seed({ orgRole: 'member', brandRole: 'editor' }, [
+      templateRow({
+        id: 'tpl-2',
+        template_key: 'historia',
+        name: 'Historia vertical',
+        document: {
+          ...templateDocument(),
+          canvas: { ...templateDocument().canvas, aspectRatio: '9:16', width: 1080, height: 1920 },
+        } as unknown as BrandDesignTemplateRow['document'],
+      }),
+    ]);
+    fake.tables.content_items = [idea()];
+    const { user } = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+    await chooseEditorAction(user, 'editor-from-template');
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(await dialog.findByTestId('template-option'));
+    const notice = await dialog.findByTestId('template-adapt-notice');
+    expect(notice).toHaveTextContent('La proporción pasa de 9:16 a 1:1');
+    expect(notice).toHaveTextContent('anclaje');
+    expect(dialog.getByTestId('template-apply')).toHaveTextContent('Adaptar y usar esta plantilla');
+    await user.click(dialog.getByTestId('template-apply'));
+    await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-ratio', '1:1'));
+    expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-ids', 'foto-plato,titular-plantilla');
+    // Un solo paso de deshacer.
     await user.click(screen.getByRole('button', { name: /Deshacer/ }));
     await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '0'));
   });
@@ -295,5 +330,148 @@ describe('Empezar desde una plantilla en el editor', () => {
     await screen.findByTestId('editor-title');
     await openMoreMenu(viewer.user, 'editor-more');
     expect(screen.queryByTestId('editor-from-template')).not.toBeInTheDocument();
+  });
+});
+
+describe('Guardar el diseño como plantilla desde el editor', () => {
+  function withDesign() {
+    fake.tables.content_items = [idea({ status: 'draft', current_version: 1, title: 'Chuletón de otoño' })];
+    fake.tables.content_versions = [
+      {
+        id: 'v-1',
+        content_id: 'content-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        version: 1,
+        schema_version: 5,
+        data: templateDocument() as unknown as ContentVersionRowData,
+        change_note: '',
+        restored_from: null,
+        created_by: ME.id,
+        created_at: '2026-11-11T09:00:00Z',
+      },
+    ];
+  }
+  type ContentVersionRowData = import('@/lib/database.types').ContentVersionRow['data'];
+
+  function templateRpcs() {
+    const delivered: Record<string, unknown>[] = [];
+    fake.rpc('deliver_design_templates', (args) => {
+      const draft = (args.p_templates as Record<string, unknown>[])[0]!;
+      delivered.push(draft);
+      const row = {
+        id: `tpl-${delivered.length}`,
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        template_key: draft.key,
+        name: draft.name,
+        network: draft.network,
+        format: draft.format,
+        document: draft.document,
+        analysis: draft.analysis,
+        source: draft.source,
+        created_by: ME.id,
+        created_at: '2026-11-21T09:00:00Z',
+        updated_at: '2026-11-21T09:00:00Z',
+      };
+      fake.rows('brand_design_templates').push(row);
+      return [row];
+    });
+    fake.rpc('delete_design_template', (args) => {
+      fake.tables.brand_design_templates = fake
+        .rows('brand_design_templates')
+        .filter((row) => row.id !== args.p_template_id);
+      return null;
+    });
+    return delivered;
+  }
+
+  it('pide un nombre (el de la pieza), guarda con origen «editor» y la plantilla aparece en «Desde una plantilla»', async () => {
+    seed({ orgRole: 'member', brandRole: 'editor' }, []);
+    withDesign();
+    const delivered = templateRpcs();
+    const { user } = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+
+    await chooseEditorAction(user, 'editor-save-template');
+    const dialog = within(await screen.findByRole('dialog'));
+    const name = dialog.getByTestId('template-name-input') as HTMLInputElement;
+    expect(name.value).toBe('Chuletón de otoño');
+    await user.clear(name);
+    await user.type(name, 'Plato de la semana');
+    await user.click(dialog.getByTestId('template-save'));
+
+    await waitFor(() => expect(delivered).toHaveLength(1));
+    expect(delivered[0]).toMatchObject({
+      name: 'Plato de la semana',
+      network: 'instagram',
+      format: 'post',
+      source: 'editor',
+    });
+    expect(String(delivered[0]!.key)).toMatch(/^editor-plato-de-la-semana-[a-z0-9]{5}$/);
+    const { templateAnalysisSchema } = await import('@/features/brand/templates');
+    expect(templateAnalysisSchema.safeParse(delivered[0]!.analysis).success).toBe(true);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await chooseEditorAction(user, 'editor-from-template');
+    const picker = within(await screen.findByRole('dialog'));
+    const option = await picker.findByTestId('template-option');
+    expect(option).toHaveTextContent('Plato de la semana');
+    expect(option).toHaveTextContent('Guardada aquí');
+    // Sin «en N de M publicaciones»: no viene de publicaciones.
+    expect(option).not.toHaveTextContent('publicaciones');
+    expect(picker.queryByTestId('template-adapts')).not.toBeInTheDocument();
+  });
+
+  it('un diseño vacío no se puede guardar, y quien solo lee no ve la opción', async () => {
+    seed({ orgRole: 'member', brandRole: 'editor' }, []);
+    fake.tables.content_items = [idea()];
+    const first = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+    await openMoreMenu(first.user, 'editor-more');
+    expect(await screen.findByTestId('editor-save-template')).toHaveAttribute('aria-disabled', 'true');
+    first.unmount();
+
+    seed({ orgRole: 'member', brandRole: 'viewer' }, []);
+    withDesign();
+    const viewer = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+    await openMoreMenu(viewer.user, 'editor-more');
+    expect(screen.queryByTestId('editor-save-template')).not.toBeInTheDocument();
+  });
+
+  it('si el servidor lo rechaza (p. ej. tope de plantillas), lo dice y no cierra el diálogo', async () => {
+    seed({ orgRole: 'member', brandRole: 'editor' }, []);
+    withDesign();
+    fake.rpc('deliver_design_templates', () => {
+      throw { message: 'La marca ya tiene 50 plantillas guardadas desde el editor: borra alguna antes' };
+    });
+    const { user } = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+    await chooseEditorAction(user, 'editor-save-template');
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByTestId('template-save'));
+    expect(await dialog.findByTestId('template-save-error')).toHaveTextContent('50 plantillas');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('las plantillas guardadas desde el editor se pueden borrar (con confirmación); las importadas no', async () => {
+    seed({ orgRole: 'member', brandRole: 'editor' }, [
+      templateRow(),
+      templateRow({ id: 'tpl-mia', template_key: 'editor-mia-abcde', name: 'La mía', source: 'editor' }),
+    ]);
+    withDesign();
+    templateRpcs();
+    const { user } = renderApp(`${CONTENT}/content-1`);
+    await screen.findByTestId('editor-title');
+    await chooseEditorAction(user, 'editor-from-template');
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(await dialog.findAllByTestId('template-option')).toHaveLength(2);
+    // Solo la propia tiene «Borrar».
+    expect(dialog.getAllByTestId('template-delete')).toHaveLength(1);
+    await user.click(dialog.getByTestId('template-delete'));
+    await user.click(dialog.getByTestId('template-delete-confirm'));
+    await waitFor(() => expect(dialog.getAllByTestId('template-option')).toHaveLength(1));
+    expect(dialog.getByTestId('template-option')).toHaveTextContent('Plato del día');
   });
 });

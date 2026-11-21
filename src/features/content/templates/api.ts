@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { templateAnalysisSchema, type TemplateAnalysis } from '@/features/brand/templates';
-import type { BrandDesignTemplateRow } from '@/lib/database.types';
+import type { BrandDesignTemplateRow, Json } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { pageLimits, validateDocumentFromAnyVersion, type ContentDocument } from '../document';
 import { allowedCanvasRatios, getFormatSpec } from '../networks';
+import type { TemplateDraft } from './build';
 
 // Plantillas de diseño de la marca (brand_design_templates), vistas desde
 // Contenidos: se listan para crear una pieza que nace con su documento.
@@ -59,6 +60,34 @@ export function useBrandTemplates(brandId: string, enabled = true) {
       );
       return rows.map(parseTemplate);
     },
+  });
+}
+
+/** Guarda una plantilla hecha en el editor (`deliver_design_templates`: solo quien edita la marca). */
+export function useSaveTemplate(brandId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (draft: TemplateDraft): Promise<BrandDesignTemplateRow> => {
+      const rows = unwrap(
+        await supabase.rpc('deliver_design_templates', {
+          p_brand_id: brandId,
+          p_templates: [draft] as unknown as Json,
+        }),
+      );
+      return (rows as BrandDesignTemplateRow[])[0]!;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: templateKeys.list(brandId) }),
+  });
+}
+
+/** Borra una plantilla de la marca (`delete_design_template`: quien edita la marca). */
+export function useDeleteTemplate(brandId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (templateId: string) => {
+      unwrap(await supabase.rpc('delete_design_template', { p_template_id: templateId }));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: templateKeys.list(brandId) }),
   });
 }
 

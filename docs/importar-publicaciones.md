@@ -131,6 +131,12 @@ Migración `20261205010000_manual_templates.sql` (vuelta atrás en `supabase/rol
 npm run agencia -- entregar-plantillas <marca> ejemplos/plantillas-manual.json --manual
 ```
 
+#### Plantillas guardadas desde el editor (origen `editor`)
+
+Quien edita la marca puede guardar el diseño que tiene abierto con **«⋯» → «Guardar como plantilla…»**. Se guarda lo que se ve (aunque no esté guardado como versión) con `deliver_design_templates` y origen `editor` (migración `20261212010000_editor_templates.sql`): el análisis (capas, colores, tipografías, logotipo, textos de muestra) se saca del propio documento, sin ejemplos ni referencias, y en el selector sale con la etiqueta «Guardada aquí» y sin «en N de M publicaciones». Tope de 50 por marca; las propias se borran desde «Desde una plantilla» (`delete_design_template`).
+
+**Usar una plantilla en otra proporción o con otro número de páginas** (`src/features/content/templates/fit.ts`): ya no se rechaza. Si la red no admite la proporción, se pasa a la de la pieza (si la admite) o a la primera que admite, recolocando cada capa según su anclaje (`document/adapt.ts`); si sobran páginas se usan las primeras y si faltan (un carrusel pide 2) se copia la última. El diálogo lo dice antes de aplicar y la aplicación es un solo paso de Ctrl+Z.
+
 ### Cómo se sacan (modo agencia, sin API de IA)
 
 La sesión de Claude Code de la agencia (cuenta normal, ver `agency/README.md`)
