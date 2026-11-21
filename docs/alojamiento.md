@@ -94,6 +94,8 @@ Para **crear la app** desde GitHub Actions hace falta, una sola vez, un token de
 
 ### 4.2 Camino principal: el panel de Fly («Deploy from GitHub»)
 
+> **Aviso (21/11/2026, probado en staging):** el «Deploy from GitHub» del panel de Fly **no respetó** el directorio `worker` ni `worker/fly.toml`: detectó la web de la raíz y construyó una imagen estática (goStatic) con 2 máquinas, puertos 80/443 y reinicio «on-failure». Lo que funcionó fue la Action `.github/workflows/worker-fly.yml` (Actions → «Trabajador de medios · Fly.io» → Run workflow), con el secreto del repositorio `FLY_API_TOKEN` (el mismo token de despliegue que va en Integraciones). Si se usa el panel, hay que desconectar después su despliegue automático desde GitHub para que no vuelva a pisar el trabajador. La cuenta de prueba de Fly para las máquinas a los 5 minutos hasta que se añade una tarjeta.
+
 **Antes (Claude/coordinador):** el panel lee el código de GitHub, así que `worker/fly.toml` tiene que estar en la rama que se elija. Hoy está en `f11/fly-trabajador`; hay que integrarla en `claude/focused-noether-hk502p` (o en `staging`) y subirla antes de que el dueño despliegue.
 
 **Dueño, clic a clic** (la pantalla de Fly puede cambiar de nombres; lo importante son los valores):
