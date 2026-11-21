@@ -19,6 +19,8 @@ export interface IntegrationAvailability {
   drive: boolean;
   /** Archivos de la biblioteca en Cloudflare R2 (docs/almacenamiento-r2.md). */
   mediaStorage: boolean;
+  /** Subtítulos automáticos de los reels con OpenAI (docs/editor-reels.md). */
+  reelSubtitles: boolean;
 }
 
 export interface IntegrationStatus {

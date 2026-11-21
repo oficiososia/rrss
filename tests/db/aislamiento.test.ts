@@ -1068,6 +1068,78 @@ describe('IA y cola de trabajos', () => {
     ).toEqual([]);
   });
 
+  it('editor de reels: un montaje no se une a la pieza ni usa la tipografía de otra marca u organización', async () => {
+    const pathOf = async (id: string) =>
+      (await db.query<{ p: string }>(`select storage_path as p from public.media_assets where id = $1`, [id]))[0]!.p;
+    const fotoA1 = await pathOf(assetA1);
+    // Un reel con versión guardada en la organización B y otro en la marca A2 de la misma organización.
+    const reelPiece = async (user: TestUser, org: string, brand: string) => {
+      const [row] = await as<{ id: string }>(
+        db,
+        user,
+        `insert into public.content_items (brand_id, organization_id, title, network, format)
+         values ($1, $2, 'Reel', 'instagram', 'reel') returning id`,
+        [brand, org],
+      );
+      await as(db, user, `select public.save_content_version($1, $2::jsonb, 2, '')`, [
+        row!.id,
+        JSON.stringify({ kind: 'reel', template: { id: 'fundido-suave' }, plan: { version: 2, clips: [] } }),
+      ]);
+      return row!.id;
+    };
+    const reelB1 = await reelPiece(berta, orgB, marcaB1);
+    const reelA2 = await reelPiece(ana, orgA, marcaA2);
+    const [fontB1] = await as<{ storage_path: string }>(
+      db,
+      berta,
+      `insert into public.brand_fonts (brand_id, organization_id, family, format, storage_path, file_name, mime_type,
+                                       bytes, license_confirmed)
+       values ($1, $2, 'Ajena', 'ttf', $3, 'f.ttf', 'font/ttf', 10, true) returning storage_path`,
+      [marcaB1, orgB, `${orgB}/${marcaB1}/fonts/ajena.ttf`],
+    );
+    const plan = (style: Record<string, unknown> = {}) => ({
+      version: 2,
+      clips: [{ id: 'c1', type: 'photo', path: fotoA1, seconds: 2 }],
+      texts: [
+        {
+          id: 't1',
+          text: 'Hola',
+          start: 0,
+          end: 1,
+          position: 'top',
+          style: {
+            sizeRatio: 0.06,
+            color: '#FFFFFF',
+            marginRatio: 0.2,
+            maxWidthRatio: 0.8,
+            lineHeight: 1.3,
+            box: null,
+            outline: null,
+            fadeSeconds: 0,
+            ...style,
+          },
+        },
+      ],
+    });
+    const encargar = (input: Record<string, unknown>, pattern: RegExp, key: string) =>
+      denied(
+        db,
+        ana,
+        `select public.request_media_job($1, 'media.reel.template', $2::jsonb, $3)`,
+        [marcaA1, JSON.stringify({ template: { id: 'fundido-suave' }, ...input }), key],
+        pattern,
+      );
+    const piezaAjena = /no es un reel de esta marca/;
+    await encargar({ plan: plan(), content: { id: reelB1, version: 1 } }, piezaAjena, 'aislamiento-reel-b1');
+    await encargar({ plan: plan(), content: { id: reelA2, version: 1 } }, piezaAjena, 'aislamiento-reel-a2');
+    await encargar({ plan: plan({ fontPath: fontB1!.storage_path }) }, /tipografía no es/, 'aislamiento-fuente-b1');
+    // Y la otra organización no ve el montaje guardado de B.
+    expect(await as(db, ana, `select 1 from public.content_versions where content_id = $1`, [reelB1])).toEqual([]);
+    // Lo creado aquí no cuenta en las pruebas de contenidos de más abajo.
+    await db.query(`delete from public.content_items where id = any($1::uuid[])`, [[reelB1, reelA2]]);
+    await db.query(`delete from public.brand_fonts where storage_path = $1`, [fontB1!.storage_path]);
+  });
+
   it('cancelar un trabajo de medios: solo de una marca que se edita y solo de medios', async () => {
     const reel = async (org: string, brand: string, key: string) =>
       (

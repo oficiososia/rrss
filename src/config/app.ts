@@ -56,6 +56,17 @@ export function mediaWorkerEnabled(): boolean {
 }
 
 /**
+ * ¿Se ofrecen subtítulos automáticos en el editor de reels? Interruptor propio,
+ * `VITE_REEL_SUBTITLES_ENABLED=true`; además, el servidor tiene que tener
+ * OpenAI configurado (`ai-transcribe`, disponibilidad `reelSubtitles`). Sin
+ * cualquiera de los dos, los botones no salen; los subtítulos escritos a mano
+ * sí (docs/editor-reels.md).
+ */
+export function reelSubtitlesEnabled(): boolean {
+  return import.meta.env.VITE_REEL_SUBTITLES_ENABLED === 'true';
+}
+
+/**
  * ¿Hay publicación en redes en este entorno? Hace falta la aplicación de Meta
  * del producto y las funciones `social-connect` y `social-publish` configuradas
  * (docs/publicacion.md). Sin ella no se enseña conectar cuentas ni programar
