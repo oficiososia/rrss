@@ -32,7 +32,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -115,6 +115,8 @@ import { useFeature } from '@/features/platform/integrations/useFeature';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
+// El editor de reels (piezas de formato reel), aparte: solo se descarga al abrir una.
+const ReelEditor = lazy(() => import('@/features/reels/editor/ReelEditor').then((m) => ({ default: m.ReelEditor })));
 // El copiloto por voz, también aparte: solo se descarga al pulsar «Dictar».
 const VoiceCopilot = lazy(() => import('./copilot/VoiceCopilot').then((m) => ({ default: m.VoiceCopilot })));
 
@@ -150,6 +152,7 @@ export function ContentEditorPage() {
   const paths = contentPaths(org.id, brand.id);
   // Volver a abrir el editor desde cero con los datos ya refrescados (tras restaurar una versión ilegible).
   const [session, setSession] = useState(0);
+  const [searchParams] = useSearchParams();
 
   if (content.isPending) return <Spinner />;
   if (content.isError) {
@@ -171,6 +174,19 @@ export function ContentEditorPage() {
           <ErrorState error={content.error} onRetry={() => void content.refetch()} />
         )}
       </Card>
+    );
+  }
+  // Un reel se monta en el editor de reels; un diseño por capas antiguo se puede abrir con ?editor=imagen.
+  if (content.data.item.format === 'reel' && searchParams.get('editor') !== 'imagen') {
+    return (
+      <Suspense fallback={<Spinner />}>
+        <ReelEditor
+          key={`${contentId}:${session}`}
+          item={content.data.item}
+          version={content.data.current?.row ?? null}
+          onReopen={() => setSession((n) => n + 1)}
+        />
+      </Suspense>
     );
   }
   return <Editor key={`${contentId}:${session}`} content={content.data} onReopen={() => setSession((n) => n + 1)} />;
@@ -1028,10 +1044,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               )}
             </div>
           )}
-          <div
-            className="min-h-0 flex-1"
-            onPointerDown={(event) => event.target === event.currentTarget && deselect()}
-          >
+          <div className="min-h-0 flex-1" onPointerDown={(event) => event.target === event.currentTarget && deselect()}>
             {brandFonts.status === 'loading' ? (
               <Spinner label="Cargando las tipografías de la marca…" />
             ) : (
@@ -1107,12 +1120,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               )}
             </TabsContent>
             <TabsContent value="layers" className="pt-4">
-              <LayersPanel
-                layers={layers}
-                selectedIds={state.selectedIds}
-                readOnly={readOnly}
-                dispatch={dispatch}
-              />
+              <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
             </TabsContent>
             <TabsContent value="copy" className="space-y-4 pt-4">
               <AskAgencyButton item={item} />

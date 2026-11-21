@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ContentItemRow, MediaAssetRow, ScheduledPublicationRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
-import { approvedVersionPlan } from './api';
+import { approvedVersionPlan, reelRenderOf } from './api';
 
 // «Usar la versión aprobada» en la ficha de una publicación detenida porque la
 // pieza cambió (hold_reason content_changed). Las reglas las impone la base de
@@ -71,7 +71,9 @@ const exportada = (id: string, version: number, page: number, count: number, at:
     created_at: at,
   }) as unknown as MediaAssetRow;
 
-function seed(options: { status?: ContentItemRow['status']; exports?: MediaAssetRow[]; role?: 'owner' | 'viewer' } = {}) {
+function seed(
+  options: { status?: ContentItemRow['status']; exports?: MediaAssetRow[]; role?: 'owner' | 'viewer' } = {},
+) {
   if (options.role === 'viewer') seedWorkspace({ orgRole: 'member', brandRole: 'viewer' });
   else seedWorkspace({ orgRole: 'owner' });
   fake.tables.content_items = [piece({ status: options.status ?? 'approved' })];
@@ -166,5 +168,22 @@ describe('approvedVersionPlan', () => {
       mediaAssetIds: ['video-1'],
     });
     expect(approvedVersionPlan({ ...car, format: 'reel' }, [], [])).toMatchObject({ ok: false, reason: 'no_exports' });
+  });
+});
+
+describe('reelRenderOf', () => {
+  it('propone el montaje más reciente de esa pieza y esa versión, nunca el de otra', () => {
+    const video = (id: string, provenance: Record<string, unknown> | null, createdAt: string) =>
+      ({ id, kind: 'video', provenance, created_at: createdAt }) as unknown as MediaAssetRow;
+    const assets = [
+      video('subido', null, '2026-11-21T09:00:00Z'),
+      video('v1', { type: 'media_job', content_id: 'reel-1', content_version: 1 }, '2026-11-21T10:00:00Z'),
+      video('v2-viejo', { type: 'media_job', content_id: 'reel-1', content_version: 2 }, '2026-11-21T11:00:00Z'),
+      video('v2', { type: 'media_job', content_id: 'reel-1', content_version: 2 }, '2026-11-21T12:00:00Z'),
+      video('otro', { type: 'media_job', content_id: 'reel-2', content_version: 2 }, '2026-11-21T13:00:00Z'),
+    ];
+    expect(reelRenderOf(assets, 'reel-1', 2)?.id).toBe('v2');
+    expect(reelRenderOf(assets, 'reel-1', 1)?.id).toBe('v1');
+    expect(reelRenderOf(assets, 'reel-1', 3)).toBeNull();
   });
 });

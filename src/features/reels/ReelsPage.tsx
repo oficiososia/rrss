@@ -7,7 +7,7 @@
 // no existe todavía; cuando exista, podrá encargar reels con la misma función.
 import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2, XCircle } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -28,7 +28,9 @@ import {
 import { mediaWorkerEnabled } from '@/config/app';
 import { ReelFontLine } from '@/features/brand/BrandFontsCard';
 import { useSignedUrls } from '@/features/library/api';
-import { useBrand } from '@/features/orgs/context';
+import { useContentMutations } from '@/features/content/api';
+import { contentPaths } from '@/features/content/labels';
+import { useBrand, useOrg } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
 import { cn, formatBytes, formatDateTime } from '@/lib/utils';
 import { useCancelMediaJob, useReelJobs, useReelSources, useRequestReel, type ReelSourceAsset } from './api';
@@ -76,22 +78,39 @@ export function ReelsPage() {
 }
 
 function ReelsScreen() {
+  const { org } = useOrg();
   const { brand, can } = useBrand();
   const canEdit = can('edit');
+  const navigate = useNavigate();
+  const { create } = useContentMutations(org.id, brand.id);
+  // El editor de reels trabaja sobre una pieza de formato reel (con versiones y aprobación).
+  const openEditor = () =>
+    create
+      .mutateAsync({ title: 'Reel nuevo', network: 'instagram', format: 'reel' })
+      .then((item) => navigate(contentPaths(org.id, brand.id).item(item.id)))
+      .catch((error: unknown) => toast.error(translateError(error)));
   return (
     <>
       <PageHeader
         title="Reels"
         description={`Monta un vídeo vertical con fotos y clips de la biblioteca de ${brand.name}.`}
         action={
-          <Link
-            to=".."
-            relative="path"
-            className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Volver a la biblioteca
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {canEdit && (
+              <Button onClick={() => void openEditor()} loading={create.isPending} data-testid="reels-open-editor">
+                <Clapperboard className="h-4 w-4" aria-hidden />
+                Crear con el editor
+              </Button>
+            )}
+            <Link
+              to=".."
+              relative="path"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+              Volver a la biblioteca
+            </Link>
+          </div>
         }
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">

@@ -287,11 +287,29 @@ export function approvedVersionPlan(
       : { ok: false, reason: 'no_exports', version };
   }
   const found = publishableExportsOf(assets, content.id, version, content.format);
-  return found ? { ok: true, version, mediaAssetIds: found.map((a) => a.id) } : { ok: false, reason: 'no_exports', version };
+  return found
+    ? { ok: true, version, mediaAssetIds: found.map((a) => a.id) }
+    : { ok: false, reason: 'no_exports', version };
 }
 
 export function videosOf(assets: MediaAssetRow[]): MediaAssetRow[] {
   return assets.filter((a) => a.kind === 'video');
+}
+
+/**
+ * El montaje de una versión de un reel hecho en el editor de reels: el vídeo
+ * cuya procedencia dice que sale de esa pieza y esa versión (el más reciente).
+ * La publicación admite cualquier vídeo de la marca; esto solo lo propone.
+ */
+export function reelRenderOf(assets: MediaAssetRow[], contentId: string, version: number): MediaAssetRow | null {
+  return (
+    videosOf(assets)
+      .filter((a) => {
+        const p = (a.provenance ?? {}) as Record<string, unknown>;
+        return p.content_id === contentId && Number(p.content_version) === version;
+      })
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null
+  );
 }
 
 function useCalendarMutation<TInput, TData>(brandId: string, fn: (input: TInput) => Promise<TData>) {
