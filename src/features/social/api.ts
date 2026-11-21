@@ -264,6 +264,32 @@ export function publishableExportsOf(
   return ordered;
 }
 
+/** Qué hace «Usar la versión aprobada» en una publicación detenida por «content_changed». */
+export type ApprovedVersionPlan =
+  | { ok: true; version: number; mediaAssetIds: string[] }
+  | { ok: false; reason: 'not_approved' | 'no_exports'; version: number };
+
+/**
+ * Versión aprobada vigente de la pieza y sus exportaciones (en un carrusel, una
+ * por página y en orden, como en ScheduleDialog). Un reel conserva su vídeo: no
+ * depende de la versión. La base de datos vuelve a comprobarlo al guardar.
+ */
+export function approvedVersionPlan(
+  content: Pick<CalendarContent, 'id' | 'status' | 'current_version' | 'format'>,
+  assets: MediaAssetRow[],
+  currentMediaIds: string[],
+): ApprovedVersionPlan {
+  const version = content.current_version;
+  if (content.status !== 'approved' || version < 1) return { ok: false, reason: 'not_approved', version };
+  if (content.format === 'reel') {
+    return currentMediaIds.length > 0
+      ? { ok: true, version, mediaAssetIds: currentMediaIds }
+      : { ok: false, reason: 'no_exports', version };
+  }
+  const found = publishableExportsOf(assets, content.id, version, content.format);
+  return found ? { ok: true, version, mediaAssetIds: found.map((a) => a.id) } : { ok: false, reason: 'no_exports', version };
+}
+
 export function videosOf(assets: MediaAssetRow[]): MediaAssetRow[] {
   return assets.filter((a) => a.kind === 'video');
 }

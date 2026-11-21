@@ -1,4 +1,4 @@
-import { ExternalLink, MessageSquare, RotateCcw, Send, XCircle } from 'lucide-react';
+import { ExternalLink, MessageSquare, RefreshCw, RotateCcw, Send, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -9,14 +9,17 @@ import type { PublicationAttemptOutcome } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatDateTime } from '@/lib/utils';
 import {
+  approvedVersionPlan,
   useApproveContents,
   useCancelPublication,
   useCommentContent,
   useContentComments,
   usePublicationAttempts,
+  usePublishableMedia,
   useRequestChanges,
   useReschedulePublication,
   useRetryPublication,
+  useSavePublication,
   type CalendarEntry,
 } from './api';
 import {
@@ -80,6 +83,10 @@ export function PublicationDialog({
   const approve = useApproveContents(brandId);
   const changes = useRequestChanges(brandId);
   const comment = useCommentContent(brandId);
+  const rearm = useSavePublication(brandId);
+  // Solo hace falta la biblioteca si la publicación está detenida porque la pieza cambió.
+  const changed = Boolean(entry && entry.status === 'planned' && entry.hold_reason === 'content_changed');
+  const media = usePublishableMedia(brandId, changed);
   // El calendario monta el diálogo con una clave por publicación y fecha: el estado nace con ella.
   const [when, setWhen] = useState(() => (entry ? toLocalInput(entry.scheduled_at) : ''));
   const [body, setBody] = useState('');
@@ -91,6 +98,10 @@ export function PublicationDialog({
   const editable = canEdit && isEditable(entry.status);
   const done = (message: string) => () => toast.success(message);
   const failed = (error: unknown) => toast.error(translateError(error));
+  const plan =
+    changed && editable && content && media.data
+      ? approvedVersionPlan(content, media.data, entry.media_asset_ids)
+      : null;
 
   return (
     <Dialog
@@ -174,6 +185,62 @@ export function PublicationDialog({
               }}
             >
               Mover
+            </Button>
+          </div>
+        )}
+
+        {plan && content && (
+          <div className="space-y-2" data-testid="publication-rearm">
+            {!plan.ok && (
+              <Notice tone="warning">
+                <span data-testid="publication-rearm-problem">
+                  {plan.reason === 'not_approved'
+                    ? 'La pieza no está aprobada: cuando se apruebe podrás usar su versión aprobada.'
+                    : content.format === 'carousel'
+                      ? `Faltan exportaciones de alguna página de la versión ${plan.version}: expórtalas desde el editor (Exportar el carrusel).`
+                      : `Falta la exportación de la versión ${plan.version}: expórtala desde el editor.`}
+                </span>{' '}
+                {plan.reason === 'no_exports' && (
+                  <Link
+                    to={contentPaths(orgId, brandId).item(content.id)}
+                    className="text-primary underline"
+                    data-testid="publication-rearm-editor"
+                  >
+                    Ir al editor a exportarlas
+                  </Link>
+                )}
+              </Notice>
+            )}
+            <Button
+              variant="secondary"
+              disabled={!plan.ok}
+              loading={rearm.isPending}
+              onClick={() => {
+                if (!plan.ok) return;
+                rearm.mutate(
+                  {
+                    publicationId: entry.id,
+                    contentId: content.id,
+                    scheduledAt: entry.scheduled_at,
+                    accountId: entry.social_account_id,
+                    mediaAssetIds: plan.mediaAssetIds,
+                    contentVersion: plan.version,
+                  },
+                  {
+                    onSuccess: (pub) =>
+                      pub.status === 'scheduled'
+                        ? toast.success(`Programada con la versión ${plan.version}`)
+                        : toast.info(
+                            `Guardada, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+                          ),
+                    onError: failed,
+                  },
+                );
+              }}
+              data-testid="publication-use-approved"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden />
+              Usar la versión aprobada
             </Button>
           </div>
         )}
