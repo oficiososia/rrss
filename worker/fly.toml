@@ -39,9 +39,11 @@ swap_size_mb = 1024
   # al desplegar (un proceso que sale enseguida parece un fallo).
   WORKER_IDLE_EXIT_MS = "30000"
   WORKER_SHUTDOWN_GRACE_MS = "20000" # al apagar, 20 s para terminar lo que está en curso
-  WORKER_MEDIA_STORAGE = "auto"      # R2 o Supabase: lo dice la función media-storage (sin claves de R2 aquí)
-  # SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY van como SECRETOS de la app en
-  # Fly (panel → Secrets), nunca aquí.
+  WORKER_MEDIA_STORAGE = "auto"      # solo en modo service-key; por el intermediario, R2 o Supabase lo decide worker-gateway
+  # SUPABASE_URL y WORKER_GATEWAY_TOKEN van como SECRETOS de la app en
+  # Fly (panel → Secrets), nunca aquí. La clave de servicio de Supabase NO va
+  # a Fly: el trabajador entra por la función worker-gateway con su token y
+  # no arranca si en Fly encuentra SUPABASE_SERVICE_ROLE_KEY.
 
 # shared-cpu-2x con 2 GB: FFmpeg usa los dos núcleos y monta un reel vertical
 # 1080×1920 sin quedarse sin memoria (worker/README.md, «Tiempos medidos»).

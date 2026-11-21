@@ -49,7 +49,12 @@ export function createSupabaseObjectStorage(options: SupabaseStorageOptions): Ob
     },
 
     async signPut(key, contentType, _bytes, seconds) {
-      const response = await call(`/object/upload/sign/${bucket}/${encodeKey(key)}`, { method: 'POST' });
+      // x-upsert: la firma admite sobrescribir (un trabajo reintentado vuelve a
+      // subir el mismo resultado a la misma ruta).
+      const response = await call(`/object/upload/sign/${bucket}/${encodeKey(key)}`, {
+        method: 'POST',
+        headers: { 'x-upsert': 'true' },
+      });
       const body = (await response.json().catch(() => null)) as { url?: string } | null;
       if (!response.ok || !body?.url) {
         throw new StorageError('No se pudo firmar la subida', response.status, response.status >= 500);

@@ -18,6 +18,7 @@ termina.
 | `media.report.pdf` — informe mensual de analítica en PDF (pdf-lib, MIT) | Implementado y probado (pdf-lib de verdad); el circuito completo, contra las migraciones reales (`tests/db/analitica-informe.test.ts`). Ver `docs/analitica.md` |
 | `media.document.export` — documento por capas a imagen                  | **Sin implementar.** Solo el punto de enganche (`src/handlers/document-export.ts`), sin registrar: el trabajador no reclama ese tipo y nada lo simula                                  |
 | Adaptadores de Supabase (cola por PostgREST, archivos por Storage)      | Implementados; probados contra un servidor HTTP local. Contra el stack local: probados de extremo a extremo (`tests/e2e/11-reels.spec.ts`, 18/11/2026). Contra staging, **sin probar** |
+| Acceso por el intermediario `worker-gateway` (modo por defecto, sin clave de Supabase) | Implementado (21/11/2026); probado contra la función y la base de datos reales en local (`tests/db/trabajador-gateway.test.ts`) y contra un intermediario simulado (`tests/gateway.test.ts`). E2E por el stack local escrita y **sin ejecutar**. Contra staging, **sin desplegar** |
 | Encargo desde la aplicación (`request_media_job`)                       | Implementado y probado contra las migraciones reales (PGlite): permisos, carga restringida, rutas de la marca, tope de trabajos activos                                                |
 | Resultado a la biblioteca (`media_assets` con procedencia)              | Implementado (disparador al completar) y probado, también con el bucle real de este trabajador contra la cola SQL                                                                      |
 | Tope de 50 MB por archivo subido                                        | Implementado: un resultado mayor falla sin reintento y con el motivo, antes de subir                                                                                                   |
@@ -52,22 +53,28 @@ node src/cli.ts media.reel.template carga.json --storage ./medios --org org --br
 Imprime el resultado y los tiempos. Vale también para `media.image.process` y
 `media.video.derivatives`.
 
-**El trabajador completo** (necesita un proyecto de Supabase con la migración
-de la cola; ver variables más abajo):
+**El trabajador completo** (necesita un proyecto de Supabase con las
+migraciones de la cola y del intermediario, y la función `worker-gateway`
+desplegada; ver variables más abajo). Por defecto entra **por el
+intermediario**, con el token del trabajador (Plataforma → Integraciones →
+Trabajador de medios → «Generar token») y **sin ninguna clave de Supabase**:
 
 ```bash
-SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… npm start                 # vacía la cola y sale
-SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… WORKER_MODE=continuous npm start
+SUPABASE_URL=… WORKER_GATEWAY_TOKEN=rrss_wgt_… npm start                 # vacía la cola y sale
+SUPABASE_URL=… WORKER_GATEWAY_TOKEN=rrss_wgt_… WORKER_MODE=continuous npm start
 ```
 
-**Contra Supabase, con la clave de servicio obtenida en el momento** (nunca
-escrita en un archivo del repositorio; el script la pasa solo al proceso del
-trabajador, sin imprimirla):
+**En local o en CI, con la clave de servicio** (modo explícito
+`WORKER_SUPABASE_ACCESS=service-key`; la clave se obtiene en el momento, nunca
+se escribe en un archivo del repositorio y el script la pasa solo al proceso
+del trabajador, sin imprimirla). En Fly.io este modo no arranca:
 
 ```bash
 npm run start:local     # stack local: URL y clave de `supabase status -o env` (raíz del repo)
 npm run start:staging   # staging: clave pedida a la API de gestión con el token de rrss
 WORKER_MODE=continuous npm run start:local   # las variables WORKER_* pasan tal cual
+# Como en Fly, por el intermediario del stack local (`supabase functions serve`), sin la clave:
+WORKER_GATEWAY_TOKEN=rrss_wgt_… node scripts/run-supabase.ts local-gateway
 ```
 
 - **Local**: antes, `supabase start` en la raíz (y `supabase migration up
@@ -90,7 +97,7 @@ WORKER_MODE=continuous npm run start:local   # las variables WORKER_* pasan tal 
 docker build -t rrss-worker worker/                       # imagen de ejecución
 docker build --target test -t rrss-worker-test worker/    # imagen con las pruebas
 docker run --rm --name rrss-worker-test rrss-worker-test npm run test:reel
-docker run --rm --name rrss-worker-1 -e SUPABASE_URL=… -e SUPABASE_SERVICE_ROLE_KEY=… rrss-worker
+docker run --rm --name rrss-worker-1 -e SUPABASE_URL=… -e WORKER_GATEWAY_TOKEN=… rrss-worker
 ```
 
 La imagen es `node:22-alpine` con `ffmpeg` y `font-dejavu` de Alpine, y corre
@@ -128,10 +135,13 @@ local y el SQL real, sin Supabase.
 - **Registro**: una línea JSON por suceso. Cada intento deja un `job.attempt`
   con trabajo, tipo, número de intento, resultado (`succeeded`, `retry`,
   `failed`, `released`, `timeout`, `lease_lost`), duración y error.
-- **Aislamiento**: el trabajador usa la clave de servicio, que se salta la RLS.
-  Por eso cada ruta de entrada y de salida se comprueba contra la organización
-  y la marca del trabajo (`assertJobPath`): un trabajo no puede leer ni
-  escribir medios de otra marca.
+- **Aislamiento**: por defecto el trabajador no tiene ninguna clave de
+  Supabase: el intermediario `worker-gateway` (docs/alojamiento.md, §5) solo
+  le deja reclamar sus tipos de trabajo, cerrar los que tiene reservados y
+  pedir URL firmadas de rutas de la organización y la marca del trabajo
+  reservado (lo comprueba la base de datos). Además, cada ruta de entrada y
+  de salida se comprueba aquí (`assertJobPath`), que es la única defensa en el
+  modo local con la clave de servicio.
 
 Las dos funciones de la cola que usa para esto (`release_job` y
 `extend_job_lease`) llegaron con la migración `20261117150000_jobs_release_extend.sql`.
@@ -360,8 +370,11 @@ permitirlos cuando se use.
 
 | Variable                      | Por defecto                   | Para qué                                                                                                     |
 | ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `SUPABASE_URL`                | — (obligatoria)               | URL del proyecto                                                                                             |
-| `SUPABASE_SERVICE_ROLE_KEY`   | — (obligatoria)               | Clave de servicio. Solo como secreto del alojamiento; nunca en el repositorio ni en la carga de un trabajo   |
+| `SUPABASE_URL`                | — (obligatoria)               | URL del proyecto (la pública)                                                                                |
+| `WORKER_SUPABASE_ACCESS`      | `gateway`                     | `gateway`: por la función `worker-gateway` con `WORKER_GATEWAY_TOKEN`, sin claves de Supabase (el de Fly). `service-key`: con la clave de servicio, solo en local o CI; en Fly no arranca |
+| `WORKER_GATEWAY_TOKEN`        | — (obligatoria en `gateway`)  | Token del trabajador (`rrss_wgt_…`), de Plataforma → Integraciones → «Generar token». Secreto del alojamiento. Solo sirve para el intermediario; se revoca en la misma pantalla |
+| `WORKER_GATEWAY_URL`          | `<SUPABASE_URL>/functions/v1/worker-gateway` | Otra dirección del intermediario (pruebas)                                                     |
+| `SUPABASE_SERVICE_ROLE_KEY`   | — (solo en `service-key`)     | Clave de servicio, solo en local o CI. **En Fly.io, si aparece, el trabajador no arranca**                   |
 | `WORKER_BUCKET`               | `brand-media`                 | Cubo de Storage                                                                                              |
 | `WORKER_MODE`                 | `drain`                       | `drain` (vacía y sale) o `continuous`                                                                        |
 | `WORKER_ID`                   | `media-<host>-<pid>`          | Nombre con el que reserva (`jobs.locked_by`)                                                                 |
@@ -376,11 +389,11 @@ permitirlos cuando se use.
 | `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                  |
 | `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                     |
 | `WORKER_MAX_UPLOAD_BYTES`     | `52428800` (50 MB)            | Tope de cada archivo subido (el del cubo en el plan gratuito). Por encima, fallo sin reintento con el motivo |
-| `WORKER_MEDIA_STORAGE`        | `auto`                        | `auto`: pregunta a la función `media-storage` dónde está cada archivo (Cloudflare R2 o Supabase) y dónde subir los resultados, sin credenciales de R2; si la función no está desplegada, Supabase Storage. `supabase`: solo Supabase Storage (docs/almacenamiento-r2.md) |
+| `WORKER_MEDIA_STORAGE`        | `auto`                        | Solo en `service-key`. `auto`: pregunta a la función `media-storage` dónde está cada archivo (Cloudflare R2 o Supabase) y dónde subir los resultados, sin credenciales de R2; si la función no está desplegada, Supabase Storage. `supabase`: solo Supabase Storage (docs/almacenamiento-r2.md). Con el intermediario lo decide él |
 
-Mejora de seguridad pendiente (recomendada en la investigación): un rol de
-Postgres limitado a `claim_jobs`, `complete_job` y `fail_job` en vez de la
-clave de servicio general.
+La clave de servicio general ya no hace falta en el alojamiento: la sustituye
+el intermediario `worker-gateway` (en vez del rol de Postgres limitado que se
+propuso; por qué, en docs/alojamiento.md, §5).
 
 ## Cómo se despierta desde la base (Fly.io)
 

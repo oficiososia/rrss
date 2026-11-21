@@ -115,6 +115,18 @@ export function useTestIntegration() {
   });
 }
 
+/**
+ * Genera el token del trabajador para `worker-gateway` (sustituye al anterior,
+ * que deja de valer). El token solo viaja en esta respuesta: no se guarda.
+ */
+export function useGenerateWorkerToken() {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: () => callIntegrations<{ token: string }>({ action: 'generate_worker_token' }),
+    onSuccess: invalidate,
+  });
+}
+
 export function useGenerateTokenKey() {
   const invalidate = useInvalidate();
   return useMutation({

@@ -14,7 +14,7 @@ Documentos relacionados: `worker/README.md` (el trabajador por dentro),
 2. **Por qué hace falta:** eso no cabe en las funciones de Supabase (límite de unos 2 s de CPU por petición y sin FFmpeg). Sin alojarlo, «Reels» y «Recortes» siguen apagados (`VITE_MEDIA_WORKER_ENABLED`) y la extracción de documentos y el informe PDF se quedan en la cola sin ejecutarse.
 3. **Dónde lo recomendamos:** Fly.io, una máquina bajo demanda en Fráncfort (`fra`). Se enciende cuando hay trabajo, vacía la cola y se apaga sola; solo se paga el rato que trabaja.
 4. **Coste al mes** con el volumen de arranque (5-10 marcas, unos 100 reels y 100 recortes): **menos de 1 $ al mes** (*estimación*, ver §3). Fly no cobra facturas personales de menos de 5 $ al mes, según su documentación. Hace falta tarjeta.
-5. **Qué falta para usarlo:** el código está hecho (§4, «Estado del código»). Falta lo del dueño (cuenta, tarjeta, desplegar desde el panel de Fly y pegar token, app y máquina en Integraciones), aplicar la migración en staging y, para producción, un rol de Postgres limitado en lugar de la clave de servicio (§5).
+5. **Qué falta para usarlo:** el código está hecho (§4, «Estado del código»). Falta lo del dueño (cuenta, tarjeta, desplegar desde el panel de Fly, generar el token del trabajador y pegar token, app y máquina en Integraciones) y aplicar las migraciones y desplegar las funciones en staging. **La clave de servicio de Supabase ya no va a Fly** (§5): el trabajador entra por la función `worker-gateway` con un token propio.
 
 ---
 
@@ -72,6 +72,7 @@ Pone «**Dueño**» lo que solo puede hacer él y «**Claude**» lo que hace Cla
 | Integración «Trabajador de medios (Fly.io)» en Plataforma → Integraciones, con «Probar conexión» | Implementado y probado con la API de Fly simulada. Sin probar contra Fly |
 | GitHub Actions (`.github/workflows/worker-fly.yml` y `worker-fly-preparar.yml`) | Alternativa. **No se ha ejecutado** |
 | `worker/scripts/fly-preparar.mjs` | Alternativa local con `flyctl`. Solo probado en modo «solo enseñar» |
+| **Sin clave de servicio en Fly** (21/11/2026, rama `f12/worker-sin-clave`): función `worker-gateway`, migración `20261210010000_worker_gateway.sql` con su vuelta atrás, «Generar token» en Integraciones, trabajador en modo `gateway` por defecto (§5) | Implementado y probado en local (base de datos PGlite + función en Node + cliente del trabajador; `tests/db/trabajador-gateway.test.ts`, `worker/tests/gateway.test.ts`). **Sin aplicar ni desplegar en staging.** La e2e del reel y del recorte por el intermediario está escrita (`tests/e2e/11-reels.spec.ts`) y **sin ejecutar** (Docker no estaba arrancado) |
 
 **Por qué no se usa `flyctl` en el ordenador del dueño:** Windows (Control de aplicaciones / Smart App Control) bloquea `fly.exe` («Una directiva de Control de aplicaciones bloqueó este archivo»). No se toca esa configuración de seguridad. El camino principal es el panel web de Fly («Deploy from GitHub»), que construye en los servidores de Fly.
 
@@ -87,7 +88,7 @@ Según la documentación de Fly (<https://docs.fly.io/security/tokens>, consulta
 | Org (deploy de la organización) | Todas las apps de la organización, y crear apps | Sí, pero sobra permiso |
 | Readonly (de la organización) | Solo lectura | No |
 
-**Elegido: un token de despliegue de la app del trabajador**, el de menor permiso documentado que puede arrancar su máquina. Fly no documenta ninguno más estrecho. Ojo con lo que permite: con él se podría desplegar otra imagen en esa app, que tendría sus secretos (la clave de Supabase). Por eso: caducidad, guardado solo en Vault (cifrado) y rotarlo al caducar. **NO CONFIRMADO** contra Fly que arranque la máquina (la documentación no lo dice con esas palabras): lo confirma el «Probar conexión» y el primer reel.
+**Elegido: un token de despliegue de la app del trabajador**, el de menor permiso documentado que puede arrancar su máquina. Fly no documenta ninguno más estrecho. Ojo con lo que permite: con él se podría desplegar otra imagen en esa app, que tendría sus secretos (el token del trabajador, que solo vale para `worker-gateway`; ya no la clave de Supabase, §5). Por eso: caducidad, guardado solo en Vault (cifrado) y rotarlo al caducar. **NO CONFIRMADO** contra Fly que arranque la máquina (la documentación no lo dice con esas palabras): lo confirma el «Probar conexión» y el primer reel.
 
 Para **crear la app** desde GitHub Actions hace falta, una sola vez, un token de organización; con el panel de Fly no hace falta ninguno (el panel crea la app).
 
@@ -111,9 +112,9 @@ Para **crear la app** desde GitHub Actions hace falta, una sola vez, un token de
    | Nombre | Valor | De dónde sale |
    | --- | --- | --- |
    | `SUPABASE_URL` | `https://zzkdrfhqmjfvrdsoguio.supabase.co` | Es la de staging (no es secreta) |
-   | `SUPABASE_SERVICE_ROLE_KEY` | La clave secreta de staging, la que empieza por **`sb_secret_`** | Supabase → proyecto de staging → *Project Settings* → *API Keys* → *Secret keys* → la `default` → revelar y copiar. Es la misma que usan las funciones del proyecto; la `service_role` antigua (JWT, empieza por `eyJ`) **no**: `media-storage` la rechazaría |
+   | `WORKER_GATEWAY_TOKEN` | El token del trabajador, empieza por **`rrss_wgt_`** | rrss de staging → *Plataforma → Integraciones → Trabajador de medios (Fly.io)* → «Acceso del trabajador a Supabase» → **Generar token** → Copiar. Se enseña una sola vez; si se pierde, se genera otro (el anterior deja de valer) |
 
-   Nada de R2: con `WORKER_MEDIA_STORAGE=auto` las claves de Cloudflare se quedan en Supabase. Si el dueño prefiere no copiarla él, Claude puede obtenerla con el token de rrss y dejarla en el portapapeles sin mostrarla, para que solo la pegue.
+   **Nada más.** La clave de servicio de Supabase (`SUPABASE_SERVICE_ROLE_KEY`, `sb_secret_…`) **no** se pone en Fly: si el trabajador la encuentra allí, no arranca (§5). Tampoco nada de R2: las claves de Cloudflare se quedan en Supabase y el intermediario firma las direcciones.
 8. **Desplegar** y mirar la construcción en directo. Lo esperado: construye la imagen de `worker/Dockerfile`, crea **una** máquina en `fra`, el trabajador arranca, ve la cola vacía, espera 30 s y sale con código 0; la máquina queda **parada** (*stopped*). Eso es lo correcto, no un fallo. Si el panel creara dos máquinas, se borra una en *Machines* (o se deja: parada solo cuesta el disco).
    - Si el primer despliegue se hizo sin secretos, la máquina falla al arrancar (falta `SUPABASE_URL`): poner los secretos y volver a desplegar.
    - Despliegue automático al subir cambios: la app → *Deployments* → *Settings* → activar y elegir la rama. Mejor activarlo solo en `staging` y no a la vez que el flujo de GitHub Actions (se desplegaría dos veces).
@@ -123,7 +124,7 @@ Para **crear la app** desde GitHub Actions hace falta, una sola vez, un token de
 
 Fuentes de este apartado (21/11/2026): campos «Current Working Directory» y «Config path» del panel, <https://community.fly.io/t/launch-ui-better-monorepo-support-and-custom-config-file-names/22181>; la ruta de configuración relativa al directorio de trabajo, <https://community.fly.io/t/how-to-correctly-deploy-a-monorepo-application-from-the-root-directory/25592> y <https://docs.fly.io/launch/monorepo>; «si el repositorio tiene el fly.toml de la app, lo despliega tal cual» y el despliegue automático por rama, <https://community.fly.io/t/experimental-deployments-api/29107> y <https://community.fly.io/t/auto-deploy-on-push-to-github/22306>. La documentación oficial no describe la pantalla campo a campo ni si tiene apartado de secretos: **NO CONFIRMADO** hasta verla.
 
-**Claude, con el «sí» del dueño:** aplicar la migración `20261208010000_media_worker_wake.sql` en staging (`zzkdrfhqmjfvrdsoguio`; producción solo cuando lo pida el dueño), desplegar la función `platform-integrations` (para el «Probar conexión» nuevo) y, cuando el trabajador esté probado, encender `VITE_MEDIA_WORKER_ENABLED` en el proyecto `rrss` de Vercel (entorno de staging) con un despliegue nuevo.
+**Claude, con el «sí» del dueño:** aplicar las migraciones `20261208010000_media_worker_wake.sql` y `20261210010000_worker_gateway.sql` en staging (`zzkdrfhqmjfvrdsoguio`; producción solo cuando lo pida el dueño), desplegar las funciones `platform-integrations` (para «Probar conexión» y «Generar token») y `worker-gateway` (nueva, con `verify_jwt = false`, ya en `supabase/config.toml`) y, cuando el trabajador esté probado, encender `VITE_MEDIA_WORKER_ENABLED` en el proyecto `rrss` de Vercel (entorno de staging) con un despliegue nuevo. El orden importa: migraciones y funciones **antes** de que el dueño genere el token (el botón llama a la función nueva).
 
 ### 4.3 Cómo se despierta (ya implementado)
 
@@ -138,8 +139,8 @@ Fuentes de este apartado (21/11/2026): campos «Current Working Directory» y «
 
 Para cuando no se quiera usar el panel de Fly. No hace falta `flyctl` en ningún ordenador.
 
-- **Crear la app y sus secretos** (una vez): flujo **«Trabajador de medios · preparar Fly.io»** (`.github/workflows/worker-fly-preparar.yml`, solo a mano). Pide dos secretos del repositorio que el dueño pega en GitHub → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*: `FLY_ORG_TOKEN` (token de la organización, panel de Fly → *Tokens*, caducidad corta) y `WORKER_SUPABASE_SERVICE_ROLE_KEY` (la `sb_secret_…`). Los pasa a Fly por la entrada estándar sin imprimirlos. **En cuanto termine, borrar los dos de GitHub.**
-  - **Lo más seguro** es no usar este flujo para la clave: ponerla directamente en el panel de Fly (la app → *Secrets*), y así nunca pasa por GitHub.
+- **Crear la app y sus secretos** (una vez): flujo **«Trabajador de medios · preparar Fly.io»** (`.github/workflows/worker-fly-preparar.yml`, solo a mano). Pide dos secretos del repositorio que el dueño pega en GitHub → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*: `FLY_ORG_TOKEN` (token de la organización, panel de Fly → *Tokens*, caducidad corta) y `WORKER_GATEWAY_TOKEN` (el `rrss_wgt_…` de «Generar token»; el flujo rechaza cualquier otra cosa). Los pasa a Fly por la entrada estándar sin imprimirlos y, si la app tenía `SUPABASE_SERVICE_ROLE_KEY` de antes, la quita. **En cuanto termine, borrar los dos de GitHub.**
+  - **Lo más seguro** es no usar este flujo para el token: ponerlo directamente en el panel de Fly (la app → *Secrets*), y así nunca pasa por GitHub.
 - **Desplegar:** flujo **«Trabajador de medios · Fly.io»** (`.github/workflows/worker-fly.yml`): *Actions* → el flujo → *Run workflow*. Usa el secreto `FLY_API_TOKEN` (un token de despliegue de la app, panel de Fly → la app → *Tokens*). Despliega con `superfly/flyctl-actions/setup-flyctl` fijado por commit (etiqueta 1.6) y `flyctl` 0.5.5. Al subir cambios de `worker/` a `staging` solo despliega si la variable del repositorio `FLY_DEPLOY_FROM_ACTIONS` vale `true` (apagado por defecto, para no duplicar con el panel). Al final lista las máquinas (ID, región, estado) para copiarlas a Integraciones.
 
 ### 4.5 Alternativa: script local (`worker/scripts/fly-preparar.mjs`)
@@ -151,7 +152,7 @@ node worker/scripts/fly-preparar.mjs             # solo enseña lo que haría (p
 node worker/scripts/fly-preparar.mjs --aplicar   # crea la app, secretos, despliega, token → Vault de staging
 ```
 
-Con `--aplicar`: crea la app si no existe; pide la clave secreta de staging a la API de gestión de Supabase con el token de rrss (`~/.supabase-rrss/token`) y elige la que usan las funciones comparando huellas SHA-256 (si no puede, la `sb_secret_…`); la pasa a `flyctl secrets import --stage` por la entrada estándar; despliega con `--remote-only --ha=false --smoke-checks=false`; crea un token de despliegue de la app (`--expiry 4320h`) y guarda token, app y máquina en el Vault de staging (`rrss_fly_*`). No imprime ni guarda la clave ni el token.
+Con `--aplicar` (y `WORKER_GATEWAY_TOKEN=rrss_wgt_…` en el entorno, generado en Integraciones): crea la app si no existe; pasa `SUPABASE_URL` y `WORKER_GATEWAY_TOKEN` a `flyctl secrets import --stage` por la entrada estándar y quita `SUPABASE_SERVICE_ROLE_KEY` si quedaba de antes; despliega con `--remote-only --ha=false --smoke-checks=false`; crea un token de despliegue de la app (`--expiry 4320h`) y guarda token, app y máquina en el Vault de staging (`rrss_fly_*`, con el token de rrss `~/.supabase-rrss/token`). Ya no pide ninguna clave de Supabase. No imprime ni guarda los tokens.
 
 ### 4.6 Ajustes de `worker/fly.toml` respecto al borrador anterior
 
@@ -173,27 +174,49 @@ Sigue sin estar probado contra Supabase de staging (README del trabajador, tabla
 
 ---
 
-## 5. Seguridad: la clave de servicio del trabajador
+## 5. Seguridad: el trabajador sin la clave de servicio
 
-Hoy el trabajador arranca con `SUPABASE_SERVICE_ROLE_KEY`, que se salta la seguridad por filas (RLS) de **toda** la base de datos. Si alguien robara el secreto de Fly, o un fallo en el procesamiento de un PDF o un vídeo malicioso diera control del proceso, podría leer o borrar datos de cualquier marca. Está apuntado en `docs/ESTADO.md`, «Pendientes conocidos». Hoy lo atenúa que cada ruta de entrada y salida se comprueba contra la organización y la marca del trabajo (`assertJobPath`), pero eso defiende al propio trabajador, no al secreto si se filtra.
+**Decisión (21/11/2026): el dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly.** Esa clave se salta la seguridad por filas (RLS) de **toda** la base de datos: si alguien robara el secreto de Fly, o un PDF o un vídeo malicioso diera control del proceso, podría leer o borrar datos de cualquier marca. Se ha sustituido por un intermediario.
 
-**Propuesta: un rol de Postgres limitado (`rrss_worker`).** El trabajador no necesita más que:
+### 5.1 Opciones valoradas
 
-- las funciones de la cola: `claim_jobs`, `complete_job`, `fail_job`, `release_job` y `extend_job_lease`;
-- leer y escribir en el cubo `brand-media` de Storage, y llamar a la función `media-storage` cuando hay R2 (esa llamada también hoy lleva la clave de servicio);
-- nada más: ninguna tabla directa. Los efectos laterales (crear el recurso en la biblioteca, mover el texto extraído a la fuente) ya los hacen disparadores `SECURITY DEFINER` en la misma transacción que `complete_job`, justo para que el trabajador no necesite más permisos.
+| | A. Intermediario `worker-gateway` (**elegida**) | B. Rol de Postgres limitado (`media_worker`) con su propio token |
+| --- | --- | --- |
+| Qué lleva Fly | `SUPABASE_URL` (pública) y un token propio (`rrss_wgt_…`) que solo vale para el intermediario | Un JWT firmado con el rol `media_worker` |
+| ¿Se puede revocar al momento? | **Sí**: borrar el ajuste en Integraciones (o generar otro). Lo comprueba la base de datos en cada llamada | **No** sin cambiar la clave de firma de todo el proyecto: un JWT es válido hasta que caduca. Uno de vida corta obliga a renovarlo desde algún sitio con la clave de firma, que es todavía más poderosa que la de servicio |
+| ¿Lo permite Supabase hoy? | Sí: una Edge Function más | Con las claves nuevas (`sb_publishable_`/`sb_secret_`) y las claves de firma asimétricas no hay forma de pedir en el panel un token de un rol propio; habría que importar una clave privada propia como clave de firma y firmar los JWT fuera, y Storage y las funciones `media-storage` y `drive-media` exigen igualmente la clave de servicio para R2 y Drive. **NO CONFIRMADO** que el `authenticator` de Supabase acepte un rol propio sin más ajustes |
+| Alcance | Por **trabajo**: solo rutas de la marca del trabajo que ese trabajador tiene reservado | Por **tabla y función**: el rol vería la cola entera y cualquier ruta del cubo que sus políticas dejen |
+| Esfuerzo | 2-3 días (hecho) | 1 día, más lo que no está confirmado |
 
-Cómo hacerlo:
+**Por qué A:** es la única con revocación inmediata, autorización por trabajo y marca, y sin depender de cómo evolucione el sistema de claves de Supabase. Las claves de R2 y la de servicio se quedan en los secretos de las funciones de Supabase, como ya estaban para `media-storage` y `drive-media`.
 
-1. Migración nueva (con vuelta atrás y pruebas en `tests/db/aislamiento.test.ts`): rol `rrss_worker` sin `BYPASSRLS`, `GRANT EXECUTE` solo en esas cinco funciones (hoy solo `service_role` las tiene) y políticas de Storage mínimas para el cubo.
-2. Que el trabajador use una clave de ese rol en lugar de la de servicio: un token firmado con el rol `rrss_worker`. **Hay que comprobar antes** que el proyecto de Supabase admite tokens con un rol propio (depende de si usa claves antiguas con secreto JWT o claves nuevas asimétricas, y Supabase las está cambiando).
-3. **Alternativa si no se puede (B):** una Edge Function `worker-gateway` que pida un token propio del trabajador (guardado como secreto, comparado con tiempo constante), exponga solo esas cinco operaciones y firme direcciones de Storage restringidas a las rutas del trabajo. Así el trabajador no recibiría ninguna clave de Supabase. Es más trabajo, pero no depende de cómo evolucione el sistema de claves.
+### 5.2 Cómo funciona
 
-Esfuerzo: opción del rol, **1 día** (migración, rollback, pruebas, cambio en `worker/src/supabase.ts` y rotar la clave); opción del intermediario, **2-3 días**.
+- **El token.** «Generar token» (Plataforma → Integraciones → Trabajador de medios) crea 32 bytes aleatorios (`rrss_wgt_` + 43 caracteres), los enseña **una vez** para copiarlos a Fly y guarda **solo su huella SHA-256** (`sha256:…`) en el ajuste `WORKER_GATEWAY_TOKEN`, que además va cifrado en Vault como todos los secretos de las integraciones. No se puede poner a mano (ni por la pantalla ni por la base de datos: un disparador lo impide). **Rotar** = generar otro (el anterior deja de valer en el acto). **Revocar** = botón «Revocar» (borra el ajuste).
+- **La función `worker-gateway`** (`supabase/functions/worker-gateway/`, `verify_jwt = false` porque el token no es un JWT) solo acepta tokens con forma `rrss_wgt_…` (una clave de Supabase o un JWT se rechazan con 401), calcula la huella y llama con la clave de servicio a las funciones `worker_gateway_*` de la base de datos, que deciden todo:
+  - `claim`: solo tipos del trabajador (`media.*`, `source.extract`), como mucho 16 a la vez; el trabajo queda reservado como `gw:<huella corta>:<nombre del trabajador>`.
+  - `complete`, `fail`, `release`, `extend`: solo trabajos reservados con **ese** token y ese nombre (lo demás, 409 «reserva perdida»).
+  - `read-url` y `write-url`: la ruta tiene que ser de la organización y la marca del trabajo, y el trabajo estar en curso con ese trabajador. Devuelve una URL firmada de **una** ruta: lectura 1 h, subida 15 min (con el tipo y, en R2, el tamaño firmados). En Drive solo se lee. Las subidas a R2 quedan apuntadas para que el alta del recurso sepa que están allí.
+  - Dar de alta recursos, mover el texto extraído o guardar el informe lo siguen haciendo los disparadores `SECURITY DEFINER` de `complete_job`: el trabajador no toca ninguna tabla.
+- **Límites.** Cuerpo de cada petición hasta 300 KiB; subida a Supabase Storage hasta 50 MB (el tope del cubo; `WORKER_GATEWAY_MAX_UPLOAD_BYTES` en la función para cambiarlo) y a R2 hasta 2 GiB; **1.200 llamadas por minuto** entre todas (un reel hace unas decenas); pasado el tope, 429 hasta el minuto siguiente.
+- **El trabajador** (`worker/src/gateway.ts`) arranca por defecto en modo `WORKER_SUPABASE_ACCESS=gateway`. En local y en CI puede seguir con la clave de servicio, pero solo pidiéndolo (`WORKER_SUPABASE_ACCESS=service-key`; `npm run start:local` y `start:staging` lo hacen). **En Fly no arranca** si encuentra `SUPABASE_SERVICE_ROLE_KEY` o se le pide el modo `service-key` (lo detecta por las variables `FLY_APP_NAME`/`FLY_MACHINE_ID` que pone Fly).
+- **Si se roba el token de Fly:** permite reclamar trabajos del trabajador y leer o escribir las rutas de las marcas de **esos** trabajos mientras estén reservados, durante el tiempo que tarde el dueño en pulsar «Revocar». No da acceso a ninguna tabla, ni a otras rutas, ni a ninguna otra función.
 
-Recomendación: para staging, arrancar ya con la clave de servicio (es una demo con datos de prueba y se rota al terminar); **para producción, no sin el rol limitado**. Mientras tanto: el token de Fly con caducidad corta, el secreto solo en Fly, rotar la clave de servicio de staging cuando se termine de probar, y no abrir ningún puerto en la máquina (el diseño ya no abre ninguno).
+### 5.3 Pruebas
 
----
+- `tests/db/trabajador-gateway.test.ts`: el token no sirve para nada más (funciones solo para la clave de servicio, claves de Supabase y JWT rechazados, la huella no vale como token, solo tipos del trabajador), una ruta o un trabajo de otra marca se rechaza, un trabajo reservado por otro no se toca, el token revocado o rotado deja de valer, el tope de llamadas y de tamaño, y el bucle del trabajador entero (reclamar, bajar, subir, cerrar) por el intermediario, también con R2.
+- `tests/db/integraciones.test.ts`: «Generar token» (sale una vez, solo se guarda la huella, rotar y revocar; a mano no se puede).
+- `tests/db/aislamiento.test.ts`: nadie desde la API llama a las funciones ni ve el contador.
+- `worker/tests/gateway.test.ts`: el cliente del trabajador contra un intermediario simulado y las reglas de configuración (en Fly no arranca con la clave).
+- `tests/e2e/11-reels.spec.ts`: el reel y un recorte con el trabajador **por el intermediario del stack local** (`run-supabase.ts local-gateway`, sin clave). **Escrita y sin ejecutar** (21/11/2026: Docker no estaba arrancado).
+
+### 5.4 Pasos para el dueño (staging)
+
+1. Dar el «sí» para que Claude aplique `20261210010000_worker_gateway.sql` en staging y despliegue `worker-gateway` y `platform-integrations`.
+2. En rrss de staging: *Plataforma → Integraciones → Trabajador de medios (Fly.io)* → **Generar token** → **Copiar**.
+3. En Fly: la app → *Secrets* → `WORKER_GATEWAY_TOKEN` = lo copiado (y `SUPABASE_URL`). Si había `SUPABASE_SERVICE_ROLE_KEY`, **borrarla**. Volver a desplegar.
+4. «Probar conexión» en Integraciones: ya no avisa de que falta el token.
+5. Si algún día se sospecha que el token se ha filtrado: **Revocar** (o Generar otro) y pegar el nuevo en Fly.
 
 ## 6. Trabajo de código pendiente (resumen)
 
@@ -203,13 +226,13 @@ Recomendación: para staging, arrancar ya con la clave de servicio (es una demo 
 | Despertador (`pg_net` a la API de Fly, disparador, cron cada 2 min, rollback, pruebas) | **Hecho** y probado con pg_net simulado; sin aplicar en staging | Aplicarlo: minutos, con el «sí» |
 | Integración «Trabajador de medios (Fly.io)» con «Probar conexión» | **Hecho**, probado con Fly simulado; falta desplegar `platform-integrations` en staging | Minutos, con el «sí» |
 | Despliegue por GitHub Actions y script local | **Hecho** como alternativa, sin ejecutar | — |
-| Rol de Postgres limitado (o intermediario) en lugar de la clave de servicio | **No existe** | 1 día (rol) o 2-3 días (intermediario) |
+| Trabajador sin la clave de servicio (intermediario `worker-gateway`, §5) | **Hecho** y probado en local; sin aplicar ni desplegar en staging; e2e sin ejecutar | Aplicarlo: minutos, con el «sí» |
 | Probar el trabajador contra staging real | **Sin probar** (README) | 0,5 día con el dueño delante |
 | Pantalla de Recortes en la aplicación | Falta en la aplicación (la base de datos ya acepta el encargo) | No incluido aquí |
 | `media.document.export` (documento por capas a imagen) | Sin implementar | No incluido aquí |
 | Variables nuevas en `.env.example` | Pendiente (ESTADO.md) | 0,5 h |
 
-Para dejar **staging funcionando** falta el rato del dueño (cuenta, tarjeta, panel de Fly, token) y aplicar la migración. **Producción:** además, 1 día del rol limitado.
+Para dejar **staging funcionando** falta el rato del dueño (cuenta, tarjeta, panel de Fly, token de Fly y token del trabajador) y aplicar las migraciones y desplegar las funciones. **Producción:** lo mismo; ya no hace falta ningún rol limitado.
 
 ---
 

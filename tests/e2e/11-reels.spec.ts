@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } from './apoyo';
@@ -11,9 +12,11 @@ import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } f
 // Requisitos además de los de la tanda: Node ≥ 22.18 (el trabajador ejecuta su
 // TypeScript sin compilar), `npm ci` en worker/ y ffmpeg/ffprobe en el PATH.
 // El trabajador lo arranca la propia prueba con `worker/scripts/run-supabase.ts
-// local`, que lee la URL y la clave de servicio de `supabase status` en el
-// momento (no se escriben en ningún archivo). Modo `drain`: monta lo que haya
-// en la cola y sale.
+// local-gateway`, COMO EN FLY: sin la clave de servicio, por la función
+// `worker-gateway` (la sirve `supabase functions serve`) con un token del
+// trabajador que la prueba genera y cuya huella guarda en la base de datos
+// local (docs/alojamiento.md, §5). Modo `drain`: monta lo que haya en la cola
+// y sale.
 //
 // Parte de lo que dejaron los archivos anteriores: Ana es propietaria de la
 // organización A (marca La Espiga) y Bruno, de la B.
@@ -24,13 +27,32 @@ const RAIZ = path.resolve('.');
 const biblioteca = (lado: 'A' | 'B' = 'A') =>
   `/o/${dato(lado === 'A' ? 'orgA' : 'orgB')}/m/${dato(lado === 'A' ? 'marcaA' : 'marcaB')}/biblioteca`;
 
-/** Arranca el trabajador contra el stack local y espera a que vacíe la cola y salga. */
-function trabajadorLocal(limiteMs = 150_000): Promise<{ codigo: number | null; salida: string }> {
+/**
+ * Token del trabajador para el stack local: aleatorio, y en la base de datos
+ * solo su huella (en Vault), igual que lo deja «Generar token».
+ */
+async function tokenDelTrabajador(): Promise<string> {
+  const token = `rrss_wgt_${randomBytes(32).toString('base64url')}`;
+  const huella = `sha256:${createHash('sha256').update(token).digest('hex')}`;
+  await sql(
+    `with s as (select vault.create_secret($1, 'rrss_e2e_worker_gateway_' || $2, 'e2e') as id)
+     insert into private.integration_settings (setting_key, vault_secret_id, hint)
+     select 'WORKER_GATEWAY_TOKEN', s.id, null from s
+     on conflict (setting_key) do update set vault_secret_id = excluded.vault_secret_id, updated_at = now()`,
+    [huella, Date.now().toString(36)],
+  );
+  return token;
+}
+
+/** Arranca el trabajador contra el stack local (por worker-gateway) y espera a que vacíe la cola y salga. */
+async function trabajadorLocal(limiteMs = 150_000): Promise<{ codigo: number | null; salida: string }> {
+  const token = await tokenDelTrabajador();
   return new Promise((resolver, rechazar) => {
-    const hijo = spawn(process.execPath, ['worker/scripts/run-supabase.ts', 'local'], {
+    const hijo = spawn(process.execPath, ['worker/scripts/run-supabase.ts', 'local-gateway'], {
       cwd: RAIZ,
       env: {
         ...process.env,
+        WORKER_GATEWAY_TOKEN: token,
         WORKER_MODE: 'drain',
         WORKER_ID: 'e2e-reels',
         WORKER_POLL_MS: '500',
@@ -118,6 +140,8 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   const { codigo, salida } = await trabajadorLocal();
   expect(codigo, salida).toBe(0);
   expect(salida).toContain('"outcome":"succeeded"');
+  // Sin la clave de servicio: por el intermediario.
+  expect(salida).toContain('"mode":"gateway"');
 
   // 4. La pantalla lo ve terminado (sondea mientras hay algo en marcha).
   await expect(page.getByTestId('reel-job-status').first()).toHaveText('Listo', { timeout: 30_000 });
@@ -173,4 +197,35 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   await expect(b.page.getByText(recurso!.file_name)).toHaveCount(0);
   sinErrores(b);
   await b.context.close();
+});
+
+test('un recorte (media.image.process) por el intermediario, sin la clave de servicio', async () => {
+  test.setTimeout(200_000);
+  // Una foto de La Espiga que ya está en Storage (la subió el escenario anterior).
+  const [foto] = await sql<{ storage_path: string }>(
+    `select storage_path from public.media_assets
+     where brand_id = $1 and kind = 'image' and source = 'storage' order by created_at desc limit 1`,
+    [dato('marcaA')],
+  );
+  expect(foto, 'hace falta una foto de La Espiga').toBeTruthy();
+  const salida = `${dato('orgA')}/${dato('marcaA')}/recortes/e2e-${Date.now().toString(36)}-1x1.jpg`;
+  const [trabajo] = await sql<{ id: string }>(
+    `select (public.enqueue_job($1, 'media.image.process', $2::jsonb, $3, $4)).id as id`,
+    [
+      dato('orgA'),
+      JSON.stringify({ source: { path: foto!.storage_path }, outputs: [{ path: salida, aspect: '1:1', width: 256 }] }),
+      `e2e-recorte-${Date.now()}`,
+      dato('marcaA'),
+    ],
+  );
+  const { codigo, salida: registro } = await trabajadorLocal();
+  expect(codigo, registro).toBe(0);
+  expect(registro).toContain('"mode":"gateway"');
+  const [fila] = await sql<{ status: string; last_error: string | null }>(
+    `select status, last_error from public.jobs where id = $1`,
+    [trabajo!.id],
+  );
+  expect(fila, registro).toMatchObject({ status: 'succeeded', last_error: null });
+  const objetos = await sql(`select 1 from storage.objects where bucket_id = 'brand-media' and name = $1`, [salida]);
+  expect(objetos).toHaveLength(1);
 });

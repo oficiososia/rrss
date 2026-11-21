@@ -14,15 +14,22 @@ export interface UploadOptions {
 export interface MediaStorage {
   download(objectPath: string, destinationFile: string, signal?: AbortSignal): Promise<void>;
   upload(sourceFile: string, objectPath: string, options: UploadOptions): Promise<void>;
+  /**
+   * Almacenamiento ligado a un trabajo reservado (lo usa el intermediario
+   * `worker-gateway`, que solo firma rutas del trabajo que tiene reservado ese
+   * trabajador). Si existe, el bucle se lo da a cada manejador en lugar del general.
+   */
+  forJob?(job: Job, worker: string): MediaStorage;
 }
 
 const validSegment = (s: string) => s.length > 0 && s !== '.' && s !== '..' && !s.includes('\\');
 
 /**
  * Comprueba que una ruta del cubo pertenece a la marca del trabajo:
- * `<organización>/<marca>/<carpeta>/<archivo>`. El trabajador usa la clave de
- * servicio, que se salta la RLS, así que esta comprobación es la que impide
- * que un trabajo lea o escriba medios de otra marca.
+ * `<organización>/<marca>/<carpeta>/<archivo>`. Con el intermediario
+ * (`worker-gateway`) la base de datos lo vuelve a comprobar; con la clave de
+ * servicio (modo local), que se salta la RLS, esta comprobación es la que
+ * impide que un trabajo lea o escriba medios de otra marca.
  */
 export function assertJobPath(job: Pick<Job, 'organization_id' | 'brand_id'>, objectPath: string): string {
   if (!job.brand_id) throw new PermanentError('Un trabajo de medios debe pertenecer a una marca');

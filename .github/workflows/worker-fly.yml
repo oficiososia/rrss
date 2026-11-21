@@ -13,7 +13,7 @@
 #
 # Secreto del repositorio: FLY_API_TOKEN, un token de despliegue de la app del
 # trabajador (panel de Fly → la app → Tokens). La app y sus secretos
-# (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) tienen que existir antes: panel de
+# (SUPABASE_URL y WORKER_GATEWAY_TOKEN; nunca la clave de servicio) tienen que existir antes: panel de
 # Fly o el flujo «Trabajador de medios · preparar Fly.io» (worker-fly-preparar.yml).
 name: Trabajador de medios · Fly.io
 on:

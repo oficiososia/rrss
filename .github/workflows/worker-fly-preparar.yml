@@ -4,12 +4,16 @@
 # Secretos del repositorio que usa (Settings → Secrets and variables → Actions):
 #   · FLY_ORG_TOKEN: token de la ORGANIZACIÓN de Fly (panel → Tokens), solo para
 #     crear la app. Con caducidad corta; bórralo de GitHub en cuanto termine.
-#   · WORKER_SUPABASE_SERVICE_ROLE_KEY: la clave secreta de Supabase
-#     («sb_secret_…», la misma que usan las funciones). Bórrala de GitHub en
-#     cuanto termine: a partir de ahí vive solo en Fly.
+#   · WORKER_GATEWAY_TOKEN: el token del trabajador («rrss_wgt_…»), generado
+#     en Plataforma → Integraciones → Trabajador de medios («Generar token»).
+#     Bórralo de GitHub en cuanto termine: a partir de ahí vive solo en Fly.
 #
-# Lo más seguro es no usar este flujo y poner el secreto directamente en el
-# panel de Fly (la app → Secrets): así la clave no pasa por GitHub.
+# La clave de servicio de Supabase NO va a Fly (docs/alojamiento.md, §5): el
+# trabajador entra por la función `worker-gateway` con su token. Si la app
+# tenía SUPABASE_SERVICE_ROLE_KEY de antes, este flujo la quita.
+#
+# Lo más seguro es no usar este flujo y poner el token directamente en el
+# panel de Fly (la app → Secrets): así no pasa por GitHub.
 #
 # Nada se imprime: los valores van por la entrada estándar de `flyctl secrets
 # import` y GitHub enmascara los secretos en el registro. Los secretos quedan
@@ -46,18 +50,15 @@ jobs:
           ORG: ${{ inputs.org }}
           SUPABASE_URL: ${{ inputs.supabase_url }}
           FLY_ORG_TOKEN: ${{ secrets.FLY_ORG_TOKEN }}
-          SERVICE_KEY: ${{ secrets.WORKER_SUPABASE_SERVICE_ROLE_KEY }}
+          WORKER_TOKEN: ${{ secrets.WORKER_GATEWAY_TOKEN }}
         run: |
           [[ "$APP" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { echo "::error::Nombre de app no válido."; exit 1; }
           [[ "$ORG" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { echo "::error::Organización no válida."; exit 1; }
           [[ "$SUPABASE_URL" =~ ^https://[a-z0-9]{20}\.supabase\.co$ ]] || { echo "::error::URL de Supabase no válida."; exit 1; }
           [ -n "$FLY_ORG_TOKEN" ] || { echo "::error::Falta el secreto FLY_ORG_TOKEN."; exit 1; }
-          [ -n "$SERVICE_KEY" ] || { echo "::error::Falta el secreto WORKER_SUPABASE_SERVICE_ROLE_KEY."; exit 1; }
-          case "$SERVICE_KEY" in
-            sb_secret_*) echo "Clave de Supabase: clave secreta nueva (sb_secret_…)." ;;
-            eyJ*) echo "::warning::Es la clave service_role antigua (JWT). Las funciones de rrss usan la nueva sb_secret_…: media-storage la rechazaría." ;;
-            *) echo "::error::La clave no parece de Supabase."; exit 1 ;;
-          esac
+          [ -n "$WORKER_TOKEN" ] || { echo "::error::Falta el secreto WORKER_GATEWAY_TOKEN."; exit 1; }
+          [[ "$WORKER_TOKEN" =~ ^rrss_wgt_[A-Za-z0-9_-]{43}$ ]] || {
+            echo "::error::WORKER_GATEWAY_TOKEN no es un token del trabajador (rrss_wgt_…). Nunca la clave de Supabase."; exit 1; }
       - name: Crear la app (si no existe)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_ORG_TOKEN }}
@@ -74,13 +75,17 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_ORG_TOKEN }}
           APP: ${{ inputs.app }}
           SUPABASE_URL: ${{ inputs.supabase_url }}
-          SERVICE_KEY: ${{ secrets.WORKER_SUPABASE_SERVICE_ROLE_KEY }}
+          WORKER_TOKEN: ${{ secrets.WORKER_GATEWAY_TOKEN }}
         run: |
-          printf 'SUPABASE_URL=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$SUPABASE_URL" "$SERVICE_KEY" \
+          printf 'SUPABASE_URL=%s\nWORKER_GATEWAY_TOKEN=%s\n' "$SUPABASE_URL" "$WORKER_TOKEN" \
             | flyctl secrets import --app "$APP" --stage
+          # La clave de servicio no va a Fly: si quedaba de antes, se quita.
+          if flyctl secrets list --app "$APP" --json | grep -q '"SUPABASE_SERVICE_ROLE_KEY"'; then
+            flyctl secrets unset SUPABASE_SERVICE_ROLE_KEY --app "$APP" --stage
+          fi
           # Solo los nombres, nunca los valores.
           flyctl secrets list --app "$APP"
       - name: Siguiente paso
         run: |
-          echo "Hecho. Ahora: borra FLY_ORG_TOKEN y WORKER_SUPABASE_SERVICE_ROLE_KEY de los secretos de GitHub,"
+          echo "Hecho. Ahora: borra FLY_ORG_TOKEN y WORKER_GATEWAY_TOKEN de los secretos de GitHub,"
           echo "crea un token de despliegue de la app (panel de Fly → la app → Tokens) y despliega."

@@ -657,6 +657,14 @@ async function probeMediaWorker(env: Env, deps: ProbeDeps): Promise<ProbeResult>
       message: 'La máquina tiene servicios (puertos) publicados: el trabajador no los necesita.',
     });
   }
+  if (!value(env, 'WORKER_GATEWAY_TOKEN')) {
+    checks.push({
+      name: 'Acceso a Supabase',
+      ok: null,
+      message:
+        'Falta el token del trabajador: pulsa «Generar token» y pégalo en Fly como WORKER_GATEWAY_TOKEN. Sin él, el trabajador no puede reclamar trabajos.',
+    });
+  }
   return summarize(checks, '');
 }
 

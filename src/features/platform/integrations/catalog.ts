@@ -469,6 +469,12 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
           },
         ],
       },
+      {
+        title: 'Acceso del trabajador a Supabase',
+        description:
+          'El trabajador no lleva la clave de servicio: habla con la función worker-gateway con un token propio que solo sirve para eso. Genera el token y pégalo en Fly (la app → «Secrets») como WORKER_GATEWAY_TOKEN, junto a SUPABASE_URL.',
+        fields: [{ key: 'WORKER_GATEWAY_TOKEN', label: 'Token del trabajador', secret: true }],
+      },
     ],
   },
 ];

@@ -38,6 +38,7 @@ import { translateError } from '@/lib/errors';
 import { formatDateTime } from '@/lib/utils';
 import {
   useGenerateTokenKey,
+  useGenerateWorkerToken,
   useIntegrationStatus,
   useSaveIntegration,
   useTestIntegration,
@@ -303,6 +304,8 @@ function IntegrationCard({ integration, status }: { integration: UiIntegration; 
               {group.fields.map((field) =>
                 field.key === 'SOCIAL_TOKEN_KEYS' ? (
                   <TokenKeys key={field.key} row={stored.get(field.key)} fromEnv={fromEnv.has(field.key)} />
+                ) : field.key === 'WORKER_GATEWAY_TOKEN' ? (
+                  <WorkerGatewayToken key={field.key} row={stored.get(field.key)} />
                 ) : field.key === 'SOCIAL_TOKEN_KEY_ID' ? (
                   <ReadOnlySetting
                     key={field.key}
@@ -506,6 +509,110 @@ function TokenKeys({ row, fromEnv }: { row: IntegrationSettingRow | undefined; f
         <KeyRound className="h-4 w-4" aria-hidden />
         {row || fromEnv ? 'Generar una clave nueva (rotar)' : 'Generar clave'}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * Token del trabajador para `worker-gateway`: se genera aquí (nunca se pega a
+ * mano), se enseña UNA vez para copiarlo a Fly y en la base de datos solo
+ * queda su huella. Revocar lo borra: el trabajador deja de poder entrar.
+ */
+function WorkerGatewayToken({ row }: { row: IntegrationSettingRow | undefined }) {
+  const generate = useGenerateWorkerToken();
+  const save = useSaveIntegration();
+  const [token, setToken] = useState<string | null>(null);
+  const copy = () => {
+    if (!token) return;
+    navigator.clipboard?.writeText(token).then(
+      () => toast.success('Token copiado'),
+      () => toast.error('No se pudo copiar: selecciónalo y cópialo a mano'),
+    );
+  };
+  return (
+    <div className="space-y-2 text-sm" data-testid="setting-WORKER_GATEWAY_TOKEN">
+      <p className="font-medium">Token del trabajador</p>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        <code className="rounded bg-subtle px-1.5 py-0.5">WORKER_GATEWAY_TOKEN</code>
+        {row ? (
+          <>
+            <Badge tone="success">Generado</Badge>
+            <span>
+              {formatDateTime(row.updated_at)}
+              {row.updated_by_email ? ` · ${row.updated_by_email}` : ''}
+            </span>
+          </>
+        ) : (
+          <span>Sin generar</span>
+        )}
+      </div>
+      {token && (
+        <Notice tone="warning">
+          <span className="block font-medium">Cópialo ahora: no se volverá a ver.</span>
+          <span className="mt-1 block">
+            Pégalo en Fly (la app → «Secrets») como <code>WORKER_GATEWAY_TOKEN</code>. El anterior, si había, ya no
+            vale.
+          </span>
+          <span className="mt-2 flex flex-wrap items-center gap-2">
+            <Input
+              readOnly
+              value={token}
+              aria-label="Token del trabajador"
+              className="font-mono text-xs"
+              onFocus={(e) => e.currentTarget.select()}
+              data-testid="worker-token-value"
+            />
+            <Button variant="secondary" size="sm" onClick={copy}>
+              Copiar
+            </Button>
+          </span>
+        </Notice>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={generate.isPending}
+          onClick={() =>
+            generate.mutate(undefined, {
+              onSuccess: (r) => setToken(r.token),
+              onError: (e) => toast.error(translateError(e)),
+            })
+          }
+          data-testid="integration-generate-worker-token"
+        >
+          <KeyRound className="h-4 w-4" aria-hidden />
+          {row ? 'Generar uno nuevo (rotar)' : 'Generar token'}
+        </Button>
+        {row && (
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={save.isPending}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  '¿Revocar el token? El trabajador dejará de poder reclamar trabajos hasta que generes otro.',
+                )
+              )
+                return;
+              save.mutate(
+                { integration: 'media_worker', values: { WORKER_GATEWAY_TOKEN: null } },
+                {
+                  onSuccess: () => {
+                    setToken(null);
+                    toast.success('Token revocado');
+                  },
+                  onError: (e) => toast.error(translateError(e)),
+                },
+              );
+            }}
+            data-testid="integration-revoke-worker-token"
+          >
+            Revocar
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
