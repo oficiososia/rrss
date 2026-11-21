@@ -1,4 +1,5 @@
 import type { Canvas, ImageLayer, Layer, LayerType, LogoLayer, ShapeLayer, TextLayer } from '../document';
+import { isSticker, STICKER_LABEL } from './canvas/stickers';
 
 // Capas nuevas con valores de partida razonables para el lienzo en que se
 // crean, y nombres legibles para el panel de capas.
@@ -124,7 +125,28 @@ export function newShapeLayer(
   shape: ShapeLayer['shape'],
   fill = '#E5E7EB',
 ): ShapeLayer {
-  const box = centeredBox(canvas, shape === 'ellipse' ? 1 : 2, 0.5);
+  const aspect = shape === 'rectangle' ? 2 : shape === 'line' || shape === 'arrow' ? 2.5 : 1;
+  const box = centeredBox(canvas, aspect, shape === 'line' || shape === 'rectangle' || shape === 'ellipse' ? 0.5 : 0.3);
+  if (shape === 'line') {
+    // Una línea solo tiene borde: caja baja y trazo grueso, con la misma anchura que se ve.
+    const thickness = Math.max(6, Math.round(Math.min(canvas.width, canvas.height) * 0.008));
+    const height = thickness * 3;
+    return {
+      ...base,
+      id: newLayerId(layers),
+      type: 'shape',
+      name: '',
+      x: box.x,
+      y: Math.round((canvas.height - height) / 2),
+      width: box.width,
+      height,
+      anchor: { x: 'center', y: 'center' },
+      shape,
+      fill: null,
+      stroke: { color: fill, width: thickness },
+      cornerRadius: 0,
+    };
+  }
   return {
     ...base,
     id: newLayerId(layers),
@@ -146,6 +168,9 @@ export function layerLabel(layer: Layer): string {
     const firstLine = layer.text.trim().split('\n')[0] ?? '';
     return firstLine ? (firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine) : 'Texto vacío';
   }
-  if (layer.type === 'shape') return layer.shape === 'ellipse' ? 'Elipse' : 'Rectángulo';
+  if (layer.type === 'shape') {
+    if (layer.shape === 'ellipse') return 'Elipse';
+    return isSticker(layer.shape) ? STICKER_LABEL[layer.shape] : 'Rectángulo';
+  }
   return LAYER_TYPE_LABEL[layer.type];
 }

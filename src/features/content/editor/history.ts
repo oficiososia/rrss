@@ -3,6 +3,7 @@ import {
   addPage,
   clampPageIndex,
   duplicatePage,
+  isNeutralAdjust,
   MAX_IMAGE_BLUR,
   MAX_LAYERS,
   movePage,
@@ -19,6 +20,7 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from '../document';
+import { isFullCrop } from './imageEffects/imageEdit';
 import {
   alignMoves,
   distributeMoves,
@@ -181,6 +183,16 @@ export function applyLayerPatch(layer: Layer, patch: LayerPatch): Layer {
     const blur = Math.min(MAX_IMAGE_BLUR, Math.max(0, Number.isFinite(next.blur) ? next.blur : 0));
     if (blur > 0) next.blur = blur;
     else delete next.blur;
+  }
+  if (next.type === 'image') {
+    // Una edición que no cambia nada no se guarda: la capa queda como si no se hubiera tocado.
+    if (isNeutralAdjust(next.adjust)) delete next.adjust;
+    if (isFullCrop(next.crop)) delete next.crop;
+    if (!next.straighten || Math.abs(next.straighten) < 0.01) delete next.straighten;
+  }
+  // Lo que se quita de una capa se pone a `undefined` en el cambio: no debe quedar en el documento.
+  for (const key of Object.keys(next) as (keyof typeof next)[]) {
+    if (next[key] === undefined) delete next[key];
   }
   return next;
 }

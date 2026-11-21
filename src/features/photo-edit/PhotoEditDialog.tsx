@@ -61,7 +61,7 @@ import {
 } from './pixels';
 import { composeCutout } from './cutout/composition';
 import { alphaOf, restorePlate, sameAspect, subjectMaskPixels } from './cutout/plate';
-import { cutoutSupport, describeCutoutError, removeBackgroundInBrowser, type CutoutProgress } from './cutout/engine';
+import { removalSupport, describeRemovalError, removeBackground, type CutoutProgress } from './cutout/remover';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
@@ -583,7 +583,7 @@ function BackgroundTab({
       })),
     [profile.data],
   );
-  const support = useMemo(() => cutoutSupport(), []);
+  const support = useMemo(() => removalSupport(), []);
   const [engine, setEngine] = useState<'browser' | 'ai'>(support.ok || !ai ? 'browser' : 'ai');
   // El recorte hecho en el navegador (todavía sin guardar).
   const [cutout, setCutout] = useState<{ pixels: Pixels; model: string } | null>(null);
@@ -609,10 +609,10 @@ function BackgroundTab({
     setCutError(null);
     setProgress(null);
     try {
-      const result = await removeBackgroundInBrowser(pixels, setProgress);
+      const result = await removeBackground(pixels, setProgress);
       setCutout({ pixels: result.pixels, model: result.model });
     } catch (error) {
-      setCutError(describeCutoutError(error));
+      setCutError(describeRemovalError(error));
     } finally {
       setCutting(false);
       setProgress(null);
@@ -913,7 +913,7 @@ function AiAction({
   const [background, setBackground] = useState('');
   const isBackground = operation === 'replace_background';
   // La máscara viene de quien integra el diálogo o, si no, del recorte del navegador.
-  const browserCutout = useMemo(() => cutoutSupport().ok && Boolean(pixels), [pixels]);
+  const browserCutout = useMemo(() => removalSupport().ok && Boolean(pixels), [pixels]);
   const withMask = isBackground && (Boolean(getSubjectMask) || browserCutout) && choice.usesSubjectMask !== false;
   // Solo se puede volver a pegar el plato con el recorte propio.
   const canProtect = withMask && !getSubjectMask;
@@ -1019,7 +1019,7 @@ function AiAction({
           } else if (pixels) {
             setPreparing(true);
             setMaskProgress(null);
-            const cut = await removeBackgroundInBrowser(pixels, setMaskProgress);
+            const cut = await removeBackground(pixels, setMaskProgress);
             const alpha = alphaOf(cut.pixels);
             const mask = subjectMaskPixels(
               alpha,
@@ -1037,7 +1037,7 @@ function AiAction({
           toast.error(
             getSubjectMask
               ? 'No se ha podido preparar la máscara del plato. Inténtalo de nuevo.'
-              : `No se ha podido recortar el plato para protegerlo. ${describeCutoutError(error)}`,
+              : `No se ha podido recortar el plato para protegerlo. ${describeRemovalError(error)}`,
           );
           return;
         } finally {

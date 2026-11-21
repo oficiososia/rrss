@@ -23,6 +23,12 @@ export type PhotoEditStep =
       shadow?: boolean;
     }
   | {
+      /** Fondo desenfocado detrás del plato (intensidad de 1 a 100), con sombra suave opcional. */
+      kind: 'blur_background';
+      amount: number;
+      shadow?: boolean;
+    }
+  | {
       /** Fondo cambiado con IA y el plato original vuelto a pegar encima (docs/edicion-fotos.md, §9). */
       kind: 'ai_background';
       prompt: string;
@@ -74,6 +80,9 @@ function stepJson(step: PhotoEditStep): Json {
       plate_protected: step.plateProtected,
     };
   }
+  if (step.kind === 'blur_background') {
+    return { kind: 'blur_background', amount: step.amount, ...(step.shadow ? { shadow: true } : {}) };
+  }
   if (step.kind === 'remove_background') return { kind: 'remove_background', engine: step.engine, model: step.model };
   return {
     kind: 'background',
@@ -112,6 +121,7 @@ const STEP_NAME: Record<PhotoEditStep['kind'], string> = {
   crop: 'Recorte',
   background: 'Fondo nuevo',
   ai_background: 'Fondo nuevo',
+  blur_background: 'Fondo desenfocado',
   remove_background: 'Sin fondo',
 };
 
@@ -126,7 +136,7 @@ export function editedFileName(sourceName: string, steps: PhotoEditStep[], exten
       .trim() || 'foto';
   const crop = steps.find((s): s is Extract<PhotoEditStep, { kind: 'crop' }> => s.kind === 'crop');
   const main =
-    steps.find((s) => s.kind === 'background' || s.kind === 'ai_background') ??
+    steps.find((s) => s.kind === 'background' || s.kind === 'ai_background' || s.kind === 'blur_background') ??
     steps.find((s) => s.kind === 'remove_background') ??
     (steps.some((s) => s.kind === 'adjust') ? steps.find((s) => s.kind === 'adjust') : crop);
   let label = main ? STEP_NAME[main.kind] : 'Editada';

@@ -10,7 +10,10 @@ import type { Rect as Bounds } from '../../safeZones';
 import { layersInRect, normalizeRect, snapBox, snapTargets } from '../arrange';
 import { layerToNodeBox, nodeToLayerBox, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
-import { applySpecAttrs, drawSpecShape } from './draw';
+import { loadCorsImage } from '@/lib/corsImage';
+import { editKey, editNeedsPixels } from '../imageEffects/imageEdit';
+import { BitmapCache, EDITOR_BITMAP_SIDE, prepareBitmap } from '../imageEffects/prepare';
+import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
 import type { NodeSpec } from './nodes';
 import type { SafeZoneOverlay, SelectOptions } from './types';
 
@@ -83,6 +86,10 @@ export class Scene {
   private nodes = new Map<string, AnyNode>();
   private specs = new Map<string, NodeSpec>();
   private images = new Map<string, HTMLImageElement | 'error'>();
+  /** Direcciones cargadas con permiso de lectura de píxeles (hace falta para la luz y el color). */
+  private readable = new Set<string>();
+  private loadingReadable = new Set<string>();
+  private bitmaps = new BitmapCache();
   private input: SceneInput | null = null;
   private pendingEmit = false;
 
@@ -188,6 +195,7 @@ export class Scene {
     this.stage.destroy();
     this.nodes.clear();
     this.specs.clear();
+    this.bitmaps.clear();
   }
 
   // ── Selección y zona segura ────────────────────────────────────────────
@@ -298,17 +306,60 @@ export class Scene {
 
   private apply(node: AnyNode, spec: NodeSpec): void {
     applySpecAttrs(node, spec);
-    if (spec.kind === 'image' && spec.url) this.loadImage(spec.url);
+    if (spec.kind === 'image' && spec.url) this.loadImage(spec.url, editNeedsPixels(spec.edit));
   }
 
   private drawShape(context: Context, shape: Shape): void {
     const spec = this.specs.get(shape.id());
     if (!spec) return;
-    drawSpecShape(context, shape, spec, spec.kind === 'image' && spec.url ? this.images.get(spec.url) : undefined);
+    drawSpecShape(context, shape, spec, this.imageFor(spec));
   }
 
-  private loadImage(url: string): void {
-    if (this.images.has(url)) return;
+  /** La foto de la capa: tal cual, o ya editada con el mismo código que usa la exportación. */
+  private imageFor(spec: NodeSpec): LoadedImage {
+    if (spec.kind !== 'image' || !spec.url) return undefined;
+    const base = this.images.get(spec.url);
+    if (!(base instanceof HTMLImageElement) || !spec.edit) return base;
+    if (editNeedsPixels(spec.edit) && !this.readable.has(spec.url)) return base;
+    const key = `${spec.url}|${editKey(spec.edit)}`;
+    let bitmap = this.bitmaps.get(key);
+    if (!bitmap) {
+      try {
+        bitmap = prepareBitmap(base, spec.edit, EDITOR_BITMAP_SIDE);
+      } catch {
+        // El navegador no deja leer la foto: se ve sin editar (la exportación avisará).
+        return base;
+      }
+      this.bitmaps.set(key, bitmap);
+    }
+    return bitmap;
+  }
+
+  private loadImage(url: string, needsPixels = false): void {
+    const known = this.images.get(url);
+    // Ya cargada: solo se vuelve a pedir si ahora hace falta leer sus píxeles y no se podía.
+    if (known && !(needsPixels && !this.readable.has(url) && known instanceof HTMLImageElement)) return;
+    if (needsPixels) {
+      if (this.loadingReadable.has(url)) return;
+      this.loadingReadable.add(url);
+      // Sin pasar por la caché del navegador, que puede tener la copia sin permisos de origen (lib/corsImage).
+      void loadCorsImage(url).then(
+        (image) => {
+          this.readable.add(url);
+          this.images.set(url, image);
+          this.content.batchDraw();
+        },
+        () => {
+          // No se reintenta: se queda la foto sin editar (la exportación avisará).
+          if (!known) this.loadPlain(url);
+        },
+      );
+      return;
+    }
+    this.loadPlain(url);
+  }
+
+  private loadPlain(url: string): void {
     const image = new window.Image();
     image.crossOrigin = 'anonymous';
     this.images.set(url, image);

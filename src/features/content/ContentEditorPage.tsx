@@ -97,6 +97,7 @@ import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { assetIdsOf } from './editor/canvas/nodes';
 import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { activePageIndex, editorReducer, initEditor } from './editor/history';
+import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { ArrangeControls, MultiSelectionPanel } from './editor/panels/ArrangeControls';
 import { CopyPanel } from './editor/panels/CopyPanel';
@@ -1055,6 +1056,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <Circle className="h-4 w-4" aria-hidden />
             Elipse
           </Button>
+          <AddStickerSelect
+            disabled={full}
+            onAdd={(shape) =>
+              dispatch({
+                type: 'add',
+                layer: newShapeLayer(canvas, everyLayer, shape, brandStyle.palette[1]?.hex),
+              })
+            }
+          />
           {voiceCopilot && (
             <Button
               variant={copilotOpen ? 'primary' : 'secondary'}
