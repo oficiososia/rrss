@@ -29,11 +29,11 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
-  type KeyboardEvent,
   type MouseEvent,
 } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -416,22 +416,6 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
-  // Escape sin foco en ningún campo (p. ej. tras pulsar en el panel): quita la selección.
-  // Lo que llega desde un diálogo (portal) o desde un campo de texto no cuenta.
-  const hasSelection = state.selectedIds.length > 0;
-  useEffect(() => {
-    if (!hasSelection) return;
-    const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || isTypingTarget(event.target)) return;
-      const target = event.target as Node | null;
-      if (target !== document.body && !rootRef.current?.contains(target)) return;
-      dispatch({ type: 'select', id: null });
-      setPanel('layer');
-    };
-    document.addEventListener('keydown', onEscape);
-    return () => document.removeEventListener('keydown', onEscape);
-  }, [hasSelection]);
-
   // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
   // contenido se monta después de este efecto.
   useEffect(() => {
@@ -514,9 +498,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   };
 
   // ── Teclado: deshacer, rehacer, guardar y, con una capa elegida, mover, borrar y soltar ──
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    // Lo que llega desde un diálogo (portal) no es del editor.
-    if (!rootRef.current?.contains(event.target as Node)) return;
+  // Se escucha en el documento y no solo en el editor: tras cerrar un diálogo (elegir o editar una foto)
+  // el foco puede quedar en la página y los atajos deben seguir funcionando. Lo que llega desde un
+  // diálogo abierto (portal) o desde fuera del editor (menú lateral) no es del editor.
+  function onKeyDown(event: globalThis.KeyboardEvent) {
+    const origin = event.target as Node | null;
+    if (origin !== document.body && !rootRef.current?.contains(origin)) return;
     const mod = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
     if (mod && (key === 'z' || key === 'y')) {
@@ -566,6 +553,16 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       dispatch({ type: 'nudgeSelection', dx: move[0], dy: move[1] });
     }
   }
+
+  const keyHandler = useRef(onKeyDown);
+  useLayoutEffect(() => {
+    keyHandler.current = onKeyDown;
+  });
+  useEffect(() => {
+    const listener = (event: globalThis.KeyboardEvent) => keyHandler.current(event);
+    document.addEventListener('keydown', listener);
+    return () => document.removeEventListener('keydown', listener);
+  }, []);
 
   // ── Guardar, restaurar y estados ──
   function handleConflictOr(error: unknown) {
@@ -902,7 +899,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }
 
   return (
-    <div ref={rootRef} onKeyDown={onKeyDown} className="flex min-h-0 flex-1 flex-col gap-2" data-testid="editor-root">
+    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-2" data-testid="editor-root">
       {/* Cabecera en una línea: dónde estoy, estado y versión; a la derecha, guardar, la acción principal y «⋯» */}
       <header className="flex shrink-0 items-center gap-2" data-testid="editor-header">
         <Link
