@@ -14,6 +14,7 @@ Instagram. Estado a 19/11/2026:
 | Facebook (páginas) | Modelo preparado (`social_accounts.network = 'facebook'`); no se conecta ni se publica |
 | Stories de Instagram | No se publican (el formato queda «Detenida: formato no admitido») |
 | «Publicar ahora» (migración `20261130010000`, ruta `social-publish/now`) | Probado en base de datos (PGlite) y en componentes; escenario e2e `tests/e2e/23-publicar-ahora.spec.ts` **escrito, sin ejecutar** |
+| Carruseles de varias páginas en UNA versión (documento v4, migración `20261203010000`) | Probado en base de datos (PGlite, con el publicador y la Graph API simulada), unitarias y componentes; e2e `tests/e2e/27-carrusel-paginas.spec.ts` (ver «Carruseles») |
 
 ## 1. Qué hace
 
@@ -47,7 +48,10 @@ Cancelada.
 - Una publicación solo está `scheduled` si la pieza está aprobada, su versión
   vigente es la programada, no está archivada, la cuenta está viva y los
   recursos son exportaciones JPEG de **esa pieza y esa versión** (o un vídeo en
-  un reel). Si no, está `planned` con `hold_reason`.
+  un reel). En un **carrusel**, una exportación de **cada página** del
+  documento de esa versión y **en el orden de las páginas** (la n.º i es la
+  página i); en un post, una exportación de un documento de una sola página. Si
+  no, está `planned` con `hold_reason`.
 - Un disparador sobre `content_items` reevalúa el calendario en cada cambio:
   guardar otra versión, retirar la aprobación o archivar la detiene; reaprobar
   la misma versión la rearma. Si se aprobó una versión nueva, hay que elegir su
@@ -170,6 +174,68 @@ trabajos de claves distintas para la misma publicación— y da una sola
 publicación; la exclusión real entre procesos descansa en esos bloqueos de
 Postgres y **no se ha probado con dos conexiones**.
 
+### Carruseles
+
+Un carrusel es **una pieza con varias páginas en una sola versión** (documento
+v4, `src/features/content/document/schema.ts`): de 2 a 10 páginas en Instagram,
+todas con el mismo lienzo (proporción y color de fondo) y el mismo texto de la
+publicación. Antes, un carrusel tenía un solo lienzo y había que hacer cada
+diapositiva como una versión distinta, lo que no se podía publicar.
+
+1. **Editor.** Tira de miniaturas bajo el lienzo: elegir la página que se edita,
+   añadir, duplicar, borrar y reordenar (arrastrando o con «mover a la
+   izquierda/derecha»). Deshacer es uno para todo el documento, pero cada paso
+   recuerda su página: deshacer un cambio de otra página vuelve a ella; añadir,
+   duplicar, borrar y reordenar páginas también se deshacen. El copiloto por voz
+   ve y cambia solo la página activa. «Vista previa» enseña el carrusel con
+   flechas y puntos, como Instagram. El verificador de marca revisa los textos de
+   todas las páginas (dice la página) y bloquea un carrusel de menos de 2 o más
+   de 10 páginas y un post de más de una.
+2. **Exportar.** «Exportar el carrusel» dibuja todas las páginas en JPEG (nombre
+   `…-v3-p2.jpg`) y guarda cada una en la biblioteca con su procedencia:
+   `{"type": "export", "content_id", "version", "page": 2, "page_count": 4, …}`.
+3. **Programar.** El diálogo elige solo las exportaciones de la última tanda de
+   la versión aprobada, una por página y en orden (se puede cambiar; la base de
+   datos manda). «Publicar ahora» desde el editor exporta las páginas si faltan,
+   en el mismo paso.
+4. **Base de datos.** `private.publication_media_problem` (migración
+   `20261203010000`) cuenta las páginas del documento de la versión
+   (`private.content_version_page_count`) y exige que el recurso i diga
+   `page = i` y `page_count` = esas páginas. Exportaciones sin número de página
+   (de antes) no valen para un carrusel; al aplicar la migración, lo que estaba
+   programado así se detiene con «invalid_media».
+5. **Publicador.** Sin cambios: ya creaba un contenedor por imagen en el orden de
+   `media_asset_ids` (que `social_publication_begin` devuelve con su ordinalidad)
+   y el del carrusel con esos hijos en ese orden. Probado en base de datos con la
+   Graph API simulada (el orden de las direcciones de los hijos).
+
+### Convertir un carrusel hecho con varias versiones
+
+Para el integrador (no se ha tocado ningún dato de staging). Un carrusel montado
+antes del documento v4 como una pieza con una diapositiva por versión (la demo de
+EnerGym: 4 versiones) se convierte en una versión nueva de 4 páginas con
+`scripts/unir-versiones-en-carrusel.sql`:
+
+1. Buscar la pieza y sus versiones (en el editor SQL del proyecto):
+   `select id, title, current_version from public.content_items where title ilike '%<parte del título>%';`
+   y `select version, change_note, data #>> '{canvas,aspectRatio}' from public.content_versions where content_id = '<id>' order by version;`
+   para saber qué versiones son las diapositivas y en qué orden.
+2. Elegir un editor de la marca (su `user_id` en `brand_members`).
+3. Rellenar en el script `content_id`, `editor_id` y la lista `versions` (en el
+   orden de las diapositivas; p. ej. `array[1, 2, 3, 4]`) y ejecutarlo entero. Es
+   una transacción: falla sin tocar nada si falta una versión, si alguna ya es v4
+   o si no comparten proporción. Guarda una versión nueva (la pieza vuelve a
+   borrador; el historial conserva las 4) con las capas renombradas
+   `s<versión>-<id>`, y el lienzo y el texto de la última de la lista.
+4. Si la pieza no tiene el formato «Carrusel», cambiarlo en el editor («Nombre y
+   red»).
+5. Abrir el editor, revisar las 4 páginas (el color de fondo es común; si las
+   diapositivas tenían fondos distintos, un rectángulo al fondo de cada página),
+   «Exportar el carrusel», aprobar y programar o «Publicar ahora».
+
+Probado con PGlite (`tests/db/publicacion.test.ts`); **sin ejecutar** sobre la
+demo real.
+
 ## 3. Por qué una Edge Function y no el trabajador de medios
 
 Publicar es hablar con la API de Meta (segundos, sin CPU), necesita el secreto
@@ -265,7 +331,9 @@ un Supabase local (misma guarda que la IA simulada).
 ## 6. Activarlo en staging
 
 1. Aplicar las migraciones `20261119010000` a `20261119040000` (primero en
-   staging; la vuelta atrás de cada una está en `supabase/rollbacks/`).
+   staging; la vuelta atrás de cada una está en `supabase/rollbacks/`). Para los
+   carruseles de varias páginas, además `20261203010000_carousel_pages.sql`
+   (sin función que desplegar: el publicador no cambia).
 2. Desplegar `social-connect` y `social-publish` (`verify_jwt = false` en
    `config.toml`: la primera recibe la vuelta de Meta sin JWT; la segunda, la
    llamada de pg_cron con la clave de servicio en `apikey`).
@@ -285,6 +353,10 @@ un Supabase local (misma guarda que la IA simulada).
    duplica. Esta es la primera vez que el adaptador hablaría con Meta de verdad.
 
 ## 7. Límites conocidos
+
+- Carruseles: solo imágenes (los vídeos dentro de un carrusel no se hacen
+  desde el documento); las páginas comparten el color de fondo del lienzo; la
+  tira de miniaturas es un esquema (cajas y colores), no el dibujo real.
 
 - La imagen exportada la produce el navegador de quien edita (no hay render en
   el servidor): la base de datos comprueba que el recurso dice ser la
