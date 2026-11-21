@@ -5,7 +5,7 @@ import { Badge, Button, ConfirmDialog, Dialog, Field, Input, Select, Textarea } 
 import { mediaWorkerEnabled } from '@/config/app';
 import { StringListInput } from '@/features/brand/editor/inputs';
 import { canEditPhoto } from '@/features/photo-edit/api';
-import { PhotoEditDialog } from '@/features/photo-edit/PhotoEditDialog';
+import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatBytes, formatDateTime } from '@/lib/utils';
@@ -71,7 +71,8 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
   return (
     <>
       <Dialog
-        open
+        // Mientras se edita la foto (pantalla completa) la ficha se aparta; lo escrito en ella se conserva.
+        open={!editingPhoto}
         onOpenChange={(open) => !open && onClose()}
         title={asset.file_name}
         description={details.join(' · ')}
@@ -241,12 +242,11 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
         </div>
       </Dialog>
 
-      {editingPhoto && (
-        <PhotoEditDialog
+      {editingPhoto && url && (
+        <PhotoEditScreen
           asset={asset}
           url={url}
-          open
-          onOpenChange={setEditingPhoto}
+          onClose={() => setEditingPhoto(false)}
           resultLabel="Abrir"
           onResult={onOpenAsset ? (row) => onOpenAsset(row.id) : undefined}
         />

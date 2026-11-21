@@ -58,8 +58,8 @@ import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
-import { canEditPhoto, canEditWithAi, useAiEditOptions } from '@/features/photo-edit/api';
-import { PhotoEditDialog } from '@/features/photo-edit/PhotoEditDialog';
+import { canEditPhoto, canEditWithAi, useAiEditOptions, useOriginalAsset } from '@/features/photo-edit/api';
+import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
 import type { PhotoToolsContext } from './editor/panels/PhotoPanel';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
@@ -372,6 +372,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
   // Ediciones de foto de la capa elegida que crean una foto nueva (quitar el fondo…) y, si el
   // servidor tiene IA para ello, «Cambiar el fondo con IA». Sin IA configurada, ese botón no sale.
+  // «Volver a la original»: la foto de la que sale la de la capa, si es una edición y la original sigue en la biblioteca.
+  const originalQuery = useOriginalAsset(brand.id, editablePhoto?.row ?? null);
+  const originalPhoto = useMemo(() => {
+    if (!editablePhoto) return null;
+    return originalQuery.data ? { layerId: editablePhoto.layerId, assetId: originalQuery.data.id } : null;
+  }, [editablePhoto, originalQuery.data]);
   const aiPhotoOptions = useAiEditOptions(brand.id, Boolean(editablePhoto) && canEditWithAi(editablePhoto!.row));
   const aiBackgroundAvailable = Boolean(aiPhotoOptions.data?.some((choice) => choice.operation === 'replace_background'));
   const photoTools: PhotoToolsContext | undefined = editablePhoto
@@ -1268,6 +1274,18 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                         : undefined
                     }
                     photoTools={photoTools}
+                    onRestoreOriginal={
+                      originalPhoto
+                        ? () => {
+                            dispatch({
+                              type: 'update',
+                              id: originalPhoto.layerId,
+                              patch: { source: { kind: 'asset', assetId: originalPhoto.assetId } },
+                            });
+                            toast.success('La capa vuelve a la foto original. Se deshace con Ctrl+Z.');
+                          }
+                        : undefined
+                    }
                   />
                   {selected && !readOnly && !selected.locked && (
                     <ArrangeControls layers={[selected]} dispatch={dispatch} />
@@ -1470,22 +1488,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             />
           )}
           {photoEditing && editablePhoto && (
-            <PhotoEditDialog
+            <PhotoEditScreen
               initialTab={photoEditTab}
               asset={editablePhoto.row}
               url={editablePhoto.url}
-              open
-              onOpenChange={setPhotoEditing}
-              resultLabel="Usar en el diseño"
-              // Cambia la imagen de la capa por la editada (se deshace con Ctrl+Z); la original sigue en la biblioteca.
-              onResult={(row) => {
+              onClose={() => setPhotoEditing(false)}
+              // La capa pasa a la foto editada al momento; se deshace con Ctrl+Z o «Volver a la original».
+              onApply={(row) => {
                 dispatch({
                   type: 'update',
                   id: editablePhoto.layerId,
                   patch: { source: { kind: 'asset', assetId: row.id } },
                 });
                 setPhotoEditing(false);
-                toast.success('La capa usa ahora la foto editada. La original sigue en la biblioteca.');
+                toast.success('La capa usa ahora la foto editada. Se deshace con Ctrl+Z; la original sigue en la biblioteca.', {
+                  action: { label: 'Deshacer', onClick: () => dispatch({ type: 'undo' }) },
+                });
               }}
             />
           )}

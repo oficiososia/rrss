@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as libraryApi from '@/features/library/api';
 import * as storageApi from '@/features/storage/api';
@@ -23,7 +23,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
-  default: (props: CanvasViewProps) => <div data-testid="canvas-stub" data-layers={props.document.layers.length} />,
+  default: (props: CanvasViewProps) => {
+    const photo = props.document.layers.find((layer) => layer.type === 'image');
+    const source = photo?.type === 'image' && photo.source.kind === 'asset' ? photo.source.assetId : '';
+    return <div data-testid="canvas-stub" data-layers={props.document.layers.length} data-source={source} />;
+  },
 }));
 
 function pixels(width: number, height: number, alpha = 255): Pixels {
@@ -197,20 +201,17 @@ describe('Editar foto desde la biblioteca', () => {
     expect(fake.calls.filter((c) => c.kind === 'function' && c.name === 'ai-media')).toEqual([]);
   });
 
-  it('recortes por red: guarda un recurso nuevo por formato, con su caja', async () => {
+  it('recortes por red: guarda un recurso nuevo con el formato elegido y su caja', async () => {
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
     await user.click(dialog.getByRole('tab', { name: 'Recortes' }));
-    await user.click(await dialog.findByTestId('photo-edit-crops-save'));
-    await waitFor(() => expect(uploaded).toHaveLength(3));
-    expect(uploaded.map((u) => u.file.name)).toEqual([
-      'Recorte 1:1 · plato.jpg',
-      'Recorte 4:5 · plato.jpg',
-      'Recorte 9:16 · plato.jpg',
-    ]);
-    const square = (uploaded[0]!.provenance as { steps: Array<{ box: { width: number; height: number } }> }).steps[0]!;
-    expect(square).toMatchObject({ kind: 'crop', aspect: '1:1', smart: true, box: { width: 90, height: 90 } });
-    expect(uploaded[0]!.dimensions).toEqual({ width: 90, height: 90, durationMs: null });
+    await user.click(await dialog.findByTestId('photo-edit-crop-4:5'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    expect(uploaded[0]!.file.name).toBe('Recorte 4:5 · plato.jpg');
+    const crop = (uploaded[0]!.provenance as { steps: Array<{ box: { width: number; height: number } }> }).steps[0]!;
+    expect(crop).toMatchObject({ kind: 'crop', aspect: '4:5', smart: true, box: { width: 72, height: 90 } });
+    expect(uploaded[0]!.dimensions).toEqual({ width: 72, height: 90, durationMs: null });
   });
 
   it('sin IA, quitar el fondo se ofrece en el navegador (gratis) y no se llama a ningún servidor', async () => {
@@ -259,7 +260,7 @@ describe('Editar foto desde la biblioteca', () => {
     expect(cut).toHaveBeenCalledTimes(1);
     expect(uploaded).toHaveLength(0);
     await user.click(dialog.getByTestId('photo-edit-shadow'));
-    await user.click(dialog.getByTestId('photo-edit-color-apply'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
 
     await waitFor(() => expect(uploaded).toHaveLength(1));
     expect(uploaded[0]!.file.name).toBe('Fondo nuevo · plato.jpg');
@@ -289,6 +290,7 @@ describe('Editar foto desde la biblioteca', () => {
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
     await user.click(await dialog.findByTestId('photo-edit-cutout-save'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
     await waitFor(() => expect(uploaded).toHaveLength(1));
     expect(uploaded[0]!.file.name).toBe('Sin fondo · plato.png');
     expect((uploaded[0]!.provenance as { steps: unknown[] }).steps).toEqual([
@@ -317,7 +319,7 @@ describe('Editar foto desde la biblioteca', () => {
     const dialog = await openEditDialog(user);
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     await dialog.findByTestId('photo-edit-backgrounds');
-    await user.click(dialog.getByTestId('photo-edit-color-apply'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
     await waitFor(() => expect(uploaded).toHaveLength(1));
     expect(uploaded[0]!.file.name).toBe('Fondo nuevo · sin-fondo.png');
     expect(uploaded[0]!.provenance).toMatchObject({
@@ -584,9 +586,12 @@ function documentWithPhoto(): ContentDocument {
 }
 
 describe('Editar foto desde el editor', () => {
-  it('la capa pasa a usar la foto editada; la original sigue en la biblioteca', async () => {
+  const ORIGINAL = '11111111-1111-4111-8111-111111111111';
+  const EDITED = '22222222-2222-4222-8222-222222222222';
+
+  async function openEditor() {
     seedWorkspace({ orgRole: 'owner' });
-    const original = asset('11111111-1111-4111-8111-111111111111', 'plato.jpg');
+    const original = asset(ORIGINAL, 'plato.jpg');
     fake.tables.media_assets = [original];
     fake.tables.brand_profiles = [];
     fake.tables.content_items = [
@@ -622,28 +627,147 @@ describe('Editar foto desde el editor', () => {
     // La foto editada tiene que tener un identificador válido para el documento.
     mocks.uploadAsset.mockImplementationOnce(async (input: Parameters<typeof libraryApi.uploadAsset>[0]) => {
       uploaded.push(input);
-      const row = asset('22222222-2222-4222-8222-222222222222', input.file.name, {
-        provenance: input.provenance ?? {},
-      });
+      const row = asset(EDITED, input.file.name, { provenance: input.provenance ?? {} });
       fake.rows('media_assets').push(row);
       return row;
     });
-
-    const { user } = renderApp(`${BRAND_BASE}/contenidos/content-1`);
+    const app = renderApp(`${BRAND_BASE}/contenidos/content-1`);
     await screen.findByTestId('editor-title');
-    await user.click(screen.getByRole('tab', { name: /Capas/ }));
-    await user.click(await screen.findByTestId('layer-item'));
-    await user.click(screen.getByRole('tab', { name: 'Diseño' }));
+    await app.user.click(screen.getByRole('tab', { name: /Capas/ }));
+    await app.user.click(await screen.findByTestId('layer-item'));
+    await app.user.click(screen.getByRole('tab', { name: 'Diseño' }));
+    return { ...app, original };
+  }
+
+  const layerSource = () => screen.getByTestId('canvas-stub').getAttribute('data-source');
+
+  it('aplicar cambia la capa al momento; deshacer, rehacer y «Volver a la original» recorren todo el ciclo', async () => {
+    const { user, original } = await openEditor();
+    expect(layerSource()).toBe(ORIGINAL);
+    // Sin ediciones previas no hay a qué volver.
+    expect(screen.queryByTestId('layer-restore-original')).not.toBeInTheDocument();
+
+    await user.click(await screen.findByTestId('layer-edit-photo'));
+    const dialog = within(await screen.findByTestId('photo-edit'));
+    await dialog.findByTestId('photo-edit-preview');
+    // No es una ventana emergente: es una pantalla propia, sin diálogo.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(dialog.getByTestId('photo-edit-save')).toHaveTextContent('Aplicar a la capa');
+    await user.click(dialog.getByTestId('photo-edit-auto'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+
+    // Editar → aplicar: la pantalla se cierra y la capa ya usa la copia (queda también en «Ediciones»).
+    await waitFor(() => expect(screen.queryByTestId('photo-edit')).not.toBeInTheDocument());
+    expect(uploaded[0]!.provenance).toMatchObject({ source_asset_id: ORIGINAL });
+    expect(uploaded[0]!.folder).toBe('Ediciones');
+    expect(fake.rows('media_assets').find((r) => r.id === ORIGINAL)).toEqual(original);
+    expect(await screen.findByText(/La capa usa ahora la foto editada/)).toBeInTheDocument();
+    expect(layerSource()).toBe(EDITED);
+
+    // Deshacer / rehacer del editor.
+    await user.click(screen.getByTestId('undo'));
+    expect(layerSource()).toBe(ORIGINAL);
+    await user.click(screen.getByTestId('redo'));
+    expect(layerSource()).toBe(EDITED);
+
+    // «Volver a la original» desde la propia capa (también se puede deshacer).
+    await user.click(await screen.findByTestId('layer-restore-original'));
+    expect(layerSource()).toBe(ORIGINAL);
+    expect(screen.queryByTestId('layer-restore-original')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('undo'));
+    expect(layerSource()).toBe(EDITED);
+    expect(fake.rows('media_assets').find((r) => r.id === ORIGINAL)).toEqual(original);
+  });
+
+  it('Ctrl+Z en la pantalla de edición no toca el diseño de debajo; Esc vuelve sin guardar nada', async () => {
+    const { user } = await openEditor();
+    await user.click(await screen.findByTestId('layer-edit-photo'));
+    const dialog = within(await screen.findByTestId('photo-edit'));
+    await dialog.findByTestId('photo-edit-preview');
+    await user.keyboard('{Control>}z{/Control}');
+    expect(screen.getByTestId('photo-edit')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('photo-edit')).not.toBeInTheDocument());
+    expect(uploaded).toHaveLength(0);
+    expect(layerSource()).toBe(ORIGINAL);
+  });
+
+  it('volver con cambios sin guardar pregunta antes de descartarlos', async () => {
+    const { user } = await openEditor();
     await user.click(await screen.findByTestId('layer-edit-photo'));
     const dialog = within(await screen.findByTestId('photo-edit'));
     await dialog.findByTestId('photo-edit-preview');
     await user.click(dialog.getByTestId('photo-edit-auto'));
-    await user.click(dialog.getByTestId('photo-edit-save'));
-    await user.click(await dialog.findByTestId('photo-edit-use'));
-
+    await user.click(dialog.getByTestId('photo-edit-back'));
+    expect(await dialog.findByTestId('photo-edit-discard')).toBeInTheDocument();
+    await user.click(dialog.getByRole('button', { name: 'Seguir editando' }));
+    expect(screen.getByTestId('photo-edit')).toBeInTheDocument();
+    await user.click(dialog.getByTestId('photo-edit-back'));
+    await user.click(await dialog.findByTestId('photo-edit-discard-confirm'));
     await waitFor(() => expect(screen.queryByTestId('photo-edit')).not.toBeInTheDocument());
-    expect(uploaded[0]!.provenance).toMatchObject({ source_asset_id: original.id });
-    expect(fake.rows('media_assets').find((r) => r.id === original.id)).toEqual(original);
-    expect(await screen.findByText(/La capa usa ahora la foto editada/)).toBeInTheDocument();
+    expect(uploaded).toHaveLength(0);
+  });
+});
+
+describe('Pantalla «Editar foto»: detalles', () => {
+  it('«Mejorar automáticamente» se quita en un clic y no se arrastra a la siguiente copia', async () => {
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    const auto = dialog.getByTestId('photo-edit-auto');
+    await user.click(auto);
+    expect(auto).toHaveAttribute('aria-pressed', 'true');
+    expect(dialog.getByTestId('photo-edit-save')).toBeEnabled();
+    // Un clic y vuelve a como estaba.
+    await user.click(auto);
+    expect(auto).toHaveAttribute('aria-pressed', 'false');
+    expect(dialog.getByTestId('photo-edit-save')).toBeDisabled();
+    expect(dialog.getByTestId('photo-edit-exposure')).toHaveValue('0');
+
+    // Una copia con la mejora automática y la siguiente, solo con un ajuste a mano.
+    await user.click(auto);
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    await waitFor(() => expect(auto).toHaveAttribute('aria-pressed', 'false'));
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-save')).toBeDisabled());
+    fireEvent.change(dialog.getByTestId('photo-edit-exposure'), { target: { value: '20' } });
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(2));
+    const steps = (uploaded[1]!.provenance as { steps: Array<{ kind: string; auto?: boolean; adjustments?: unknown }> })
+      .steps;
+    expect(steps[0]).toMatchObject({ kind: 'adjust', auto: false, exposure: 20 });
+  });
+
+  it('la vista previa del fondo enseña el color elegido y «Ver la original» se mantiene con el puntero', async () => {
+    const paint = vi.spyOn(canvasModule, 'paint').mockImplementation(() => undefined);
+    const cutout = asset('sin-fondo', 'sin-fondo.png', { mime_type: 'image/png' });
+    const { user } = await openPhoto({ orgRole: 'owner' }, [cutout]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await dialog.findByTestId('photo-edit-cutout-preview');
+    const lastPixels = () => paint.mock.calls.at(-1)![1] as Pixels;
+    fireEvent.change(dialog.getByTestId('photo-edit-color'), { target: { value: '#336699' } });
+    await waitFor(() => expect(Array.from(lastPixels().data.slice(0, 4))).toEqual([0x33, 0x66, 0x99, 255]));
+
+    // Mantener pulsado enseña la foto de antes; al soltar, vuelve lo editado.
+    const compare = dialog.getByTestId('photo-edit-compare');
+    fireEvent.pointerDown(compare);
+    await waitFor(() => expect(compare).toHaveAttribute('aria-pressed', 'true'));
+    fireEvent.pointerUp(compare);
+    await waitFor(() => expect(compare).toHaveAttribute('aria-pressed', 'false'));
+  });
+
+  it('desde la biblioteca, tras guardar una copia se puede deshacer y la copia desaparece', async () => {
+    const original = asset('foto-1', 'plato.jpg');
+    const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
+    const dialog = await openEditDialog(user);
+    expect(dialog.getByTestId('photo-edit-save')).toHaveTextContent('Guardar copia');
+    await user.click(dialog.getByTestId('photo-edit-auto'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    const result = await dialog.findByTestId('photo-edit-result');
+    expect(fake.rows('media_assets').some((r) => r.id === 'editada-1')).toBe(true);
+    await user.click(within(result).getByTestId('photo-edit-undo-save'));
+    await waitFor(() => expect(dialog.queryByTestId('photo-edit-result')).not.toBeInTheDocument());
+    expect(fake.rows('media_assets').some((r) => r.id === 'editada-1')).toBe(false);
+    expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
   });
 });

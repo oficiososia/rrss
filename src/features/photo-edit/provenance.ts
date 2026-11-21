@@ -144,3 +144,10 @@ export function editedFileName(sourceName: string, steps: PhotoEditStep[], exten
   else if (crop?.aspect) label = `${label} ${crop.aspect}`;
   return `${label} · ${base}.${extension}`;
 }
+
+/** De qué foto sale esta (la procedencia de una edición), o `null` si es una foto subida tal cual. */
+export function sourceAssetIdOf(provenance: Json | undefined): string | null {
+  if (!provenance || typeof provenance !== 'object' || Array.isArray(provenance)) return null;
+  const id = (provenance as Record<string, Json | undefined>).source_asset_id;
+  return typeof id === 'string' && id ? id : null;
+}
