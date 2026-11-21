@@ -1585,12 +1585,7 @@ describe('publicación: cuentas, calendario, intentos y comentarios (Fase 3)', (
     await denied(db, ana, `select public.reschedule_publication($1, now() + interval '2 days')`, [pubB1]);
     await denied(db, ana, `select public.cancel_publication($1)`, [pubB1]);
     await denied(db, ana, `select public.retry_publication($1)`, [pubB1]);
-    await denied(
-      db,
-      ana,
-      `select public.publish_publication_now($1, null, '{}'::uuid[], 1, null)`,
-      [contentB1],
-    );
+    await denied(db, ana, `select public.publish_publication_now($1, null, '{}'::uuid[], 1, null)`, [contentB1]);
     await denied(db, ana, `select public.publication_publish_kick($1)`, [pubB1]);
     await denied(db, ana, `select public.comment_content_item($1, 'intrusa')`, [contentB1]);
     await denied(db, ana, `select public.request_content_changes($1, 'intrusa')`, [contentB1]);
@@ -2470,7 +2465,19 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
         network: 'instagram',
         format: 'post',
         document: doc(assetId),
-        analysis: { examples: [{ permalink }] },
+        analysis: { examples: [{ permalink }, { permalink }] },
+      },
+    ]);
+  const manualTemplate = (analysis: Record<string, unknown>, key = 'cartel-manual') =>
+    JSON.stringify([
+      {
+        key,
+        name: 'Cartel manual',
+        network: 'instagram',
+        format: 'post',
+        source: 'manual',
+        document: doc(),
+        analysis,
       },
     ]);
   const deliver = `select public.deliver_design_templates($1, $2::jsonb)`;
@@ -2583,9 +2590,119 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
     await denied(db, ana, deliver, [marcaA1, JSON.stringify(paged)], /recurso/);
     // Entregarla otra vez la actualiza, no la duplica.
     await as(db, editorA, deliver, [marcaA1, template(importadaA1, assetA1)]);
-    expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toHaveLength(
-      1,
+    expect(
+      await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1]),
+    ).toHaveLength(1);
+  });
+
+  it('las plantillas importadas exigen de 2 a 3 ejemplos y no llevan referencias', async () => {
+    const importada = (analysis: Record<string, unknown>) =>
+      JSON.stringify([{ ...JSON.parse(template(importadaA1))[0], key: 'sin-ejemplos', analysis }]);
+    await denied(db, ana, deliver, [marcaA1, importada({})], /2 a 3 ejemplos/);
+    await denied(db, ana, deliver, [marcaA1, importada({ examples: [{ permalink: importadaA1 }] })], /2 a 3 ejemplos/);
+    await denied(
+      db,
+      ana,
+      deliver,
+      [
+        marcaA1,
+        importada({
+          examples: [{ permalink: importadaA1 }, { permalink: importadaA1 }],
+          references: [{ url: 'https://instagram.com/p/a/', note: 'x' }],
+        }),
+      ],
+      /no lleva referencias/,
     );
+  });
+
+  it('una plantilla manual se acepta sin publicaciones importadas, con referencias públicas con nota', async () => {
+    const referencias = [
+      { url: 'https://www.instagram.com/p/EJEMPLO1/', note: 'Titular sobre foto' },
+      { url: 'https://facebook.com/ejemplo/posts/2', note: 'Lo mismo en Facebook' },
+    ];
+    const [row] = await as<{ source: string; analysis: { references: unknown[] } }>(
+      db,
+      ana,
+      `select t.source, t.analysis from public.deliver_design_templates($1, $2::jsonb) t`,
+      [marcaA1, manualTemplate({ references: referencias })],
+    );
+    expect(row!.source).toBe('manual');
+    expect(row!.analysis.references).toHaveLength(2);
+    // Sin referencias ni ejemplos también vale (de 0 a 10); entregarla otra vez la actualiza.
+    await as(db, editorA, deliver, [marcaA1, manualTemplate({})]);
+    expect(
+      await as(
+        db,
+        ana,
+        `select 1 from public.brand_design_templates where brand_id = $1 and template_key = 'cartel-manual'`,
+        [marcaA1],
+      ),
+    ).toHaveLength(1);
+    // Si trae ejemplos importados, se validan como siempre.
+    await as(db, ana, deliver, [marcaA1, manualTemplate({ examples: [{ permalink: importadaA1 }] }, 'con-ejemplo')]);
+    await denied(
+      db,
+      ana,
+      deliver,
+      [marcaA1, manualTemplate({ examples: [{ permalink: importadaB1 }] }, 'ajeno')],
+      /ejemplo/,
+    );
+    // Enlaces que no valen: no https, otro dominio, parecido, con usuario.
+    for (const url of [
+      'http://instagram.com/p/a/',
+      'https://otra.example/p/a/',
+      'https://instagram.com.malo.example/p/a/',
+      'https://usuario@instagram.com/p/a/',
+      'https://notinstagram.com/p/a/',
+    ]) {
+      await denied(db, ana, deliver, [marcaA1, manualTemplate({ references: [{ url, note: 'x' }] })], /referencia/);
+    }
+    // Sin nota, o más de 10.
+    await denied(
+      db,
+      ana,
+      deliver,
+      [marcaA1, manualTemplate({ references: [{ url: referencias[0]!.url, note: '' }] })],
+      /referencia/,
+    );
+    await denied(
+      db,
+      ana,
+      deliver,
+      [marcaA1, manualTemplate({ references: Array.from({ length: 11 }, () => referencias[0]) })],
+      /10 referencias/,
+    );
+    // La web de la marca sí vale (y sus subdominios); un dominio que solo acaba igual, no.
+    await db.query(`update public.brands set website = 'https://www.casa-ejemplo.invalid' where id = $1`, [marcaA1]);
+    await as(db, ana, deliver, [
+      marcaA1,
+      manualTemplate({ references: [{ url: 'https://casa-ejemplo.invalid/carta', note: 'Carta' }] }, 'con-web'),
+    ]);
+    await as(db, ana, deliver, [
+      marcaA1,
+      manualTemplate({ references: [{ url: 'https://blog.casa-ejemplo.invalid/', note: 'Blog' }] }, 'con-blog'),
+    ]);
+    await denied(
+      db,
+      ana,
+      deliver,
+      [marcaA1, manualTemplate({ references: [{ url: 'https://xcasa-ejemplo.invalid/', note: 'x' }] })],
+      /referencia/,
+    );
+    // El origen debe ser uno de los dos.
+    const raro = JSON.stringify([{ ...JSON.parse(manualTemplate({}))[0], source: 'otro' }]);
+    await denied(db, ana, deliver, [marcaA1, raro], /origen/);
+    // Aislamiento: ni quien no edita ni otra organización la entregan, y la de A no la ve B.
+    await denied(db, clienteA, deliver, [marcaA1, manualTemplate({})], /edita/);
+    await denied(db, berta, deliver, [marcaA1, manualTemplate({})], /edita/);
+    expect(
+      await as(db, berta, `select 1 from public.brand_design_templates where source = 'manual' and brand_id = $1`, [
+        marcaA1,
+      ]),
+    ).toEqual([]);
+    // Limpieza: las pruebas siguientes parten de las plantillas importadas.
+    await db.query(`delete from public.brand_design_templates where source = 'manual'`);
+    await db.query(`update public.brands set website = '' where id = $1`, [marcaA1]);
   });
 
   it('las funciones del servidor no se ejecutan desde la API', async () => {
@@ -2610,9 +2727,7 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
     await denied(db, clienteA, `select public.delete_design_template($1)`, [t!.id], /edita/);
     await denied(db, berta, `select public.delete_design_template($1)`, [t!.id], /edita/);
     await as(db, editorA, `select public.delete_design_template($1)`, [t!.id]);
-    expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toEqual(
-      [],
-    );
+    expect(await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1`, [marcaA1])).toEqual([]);
   });
 
   it('al borrar la cuenta conectada se van sus importaciones y publicaciones importadas', async () => {
