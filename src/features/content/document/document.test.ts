@@ -16,6 +16,7 @@ import {
   validateDocumentFromAnyVersion,
   type ContentDocumentInput,
   type DocumentMigration,
+  isNeutralAdjust,
 } from './index';
 
 const ASSET = '11111111-1111-4111-8111-111111111111';
@@ -360,7 +361,7 @@ describe('versión 4: páginas', () => {
 
   it('un documento de la versión 3 se lee como uno de una sola página con las mismas capas', () => {
     const document = migrateDocument(savedBefore(3));
-    expect(document.schemaVersion).toBe(4);
+    expect(document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
     expect(document.pages).toHaveLength(1);
     expect(document.pages[0]).toMatchObject({ id: 'p1', name: '' });
     expect(document.pages[0]!.layers.map((l) => l.id)).toEqual(['fondo', 'banda', 'titular', 'logo']);
@@ -429,5 +430,124 @@ describe('versión 4: páginas', () => {
     expect(createEmptyDocument({ pages: 3 }).pages.map((p) => p.id)).toEqual(['p1', 'p2', 'p3']);
     expect(createEmptyDocument({ pages: 0 }).pages).toHaveLength(1);
     expect(createEmptyDocument({ pages: 50 }).pages).toHaveLength(MAX_PAGES);
+  });
+});
+
+describe('versión 5: ediciones sencillas', () => {
+  /** Un documento tal y como lo guardaba la versión 4 (con páginas, sin ediciones). */
+  const savedV4 = () => ({
+    schemaVersion: 4,
+    canvas: { ...CANVAS },
+    pages: [{ id: 'p1', name: '', layers: sampleLayers() }],
+    copy: COPY,
+  });
+  const image = () => sampleLayers().find((layer) => layer.type === 'image')!;
+  const text = () => sampleLayers().find((layer) => layer.type === 'text')!;
+  const firstLayer = (layers: LayersInput) => {
+    const result = validateDocument(sample(layers));
+    if (!result.ok) throw new Error(JSON.stringify(result.issues));
+    return result.document.pages[0]!.layers[0]!;
+  };
+
+  it('un documento de la versión 4 se lee igual, sin ediciones', () => {
+    const document = migrateDocument(savedV4());
+    expect(document.schemaVersion).toBe(5);
+    const layer = document.pages[0]!.layers[0]!;
+    for (const field of ['adjust', 'turn', 'crop', 'backdrop', 'shadow', 'outline', 'background']) {
+      expect(layer, field).not.toHaveProperty(field);
+    }
+    const current = validateDocument(sample());
+    expect(current.ok && current.document).toEqual(document);
+  });
+
+  it('la migración 4 → 5 quita ediciones coladas en cualquier página, no toca el borde de una forma ni el original', () => {
+    const raw = {
+      ...savedV4(),
+      pages: [
+        {
+          id: 'p1',
+          layers: [
+            { ...image(), adjust: { brightness: 50 }, crop: { x: 0, y: 0, width: 0.5, height: 0.5 } },
+            { ...sampleLayers()[1]!, stroke: { color: '#000000', width: 4 }, shadow: { color: '#000000', blur: 3 } },
+          ],
+        },
+        { id: 'p2', layers: [{ ...text(), id: 't2', outline: { color: '#000000', width: 3 }, background: { color: '#FFFFFF' } }] },
+      ],
+    } as unknown as Record<string, unknown>;
+    const migrated = runMigrations(raw) as { pages: { layers: Record<string, unknown>[] }[] };
+    expect(migrated.pages[0]!.layers[0]).not.toHaveProperty('adjust');
+    expect(migrated.pages[0]!.layers[0]).not.toHaveProperty('crop');
+    expect(migrated.pages[0]!.layers[1]).not.toHaveProperty('shadow');
+    expect(migrated.pages[0]!.layers[1]).toHaveProperty('stroke');
+    expect(migrated.pages[1]!.layers[0]).not.toHaveProperty('outline');
+    expect(migrated.pages[1]!.layers[0]).not.toHaveProperty('background');
+    expect((raw.pages as { layers: Record<string, unknown>[] }[])[0]!.layers[0]).toHaveProperty('adjust');
+  });
+
+  it('acepta los ajustes, el giro y el recorte de una imagen y rellena lo que falta', () => {
+    const layer = firstLayer([
+      {
+        ...image(),
+        adjust: { brightness: 20, filter: 'warm' },
+        turn: 90,
+        flipX: true,
+        straighten: -3.5,
+        crop: { x: 0.1, y: 0.2, width: 0.5, height: 0.6 },
+        backdrop: { kind: 'gradient', from: '#FF0000', to: '#0000FF' },
+        shadow: { color: '#000000', blur: 30 },
+      },
+    ]);
+    expect(layer).toMatchObject({
+      adjust: { brightness: 20, contrast: 0, saturation: 0, temperature: 0, sharpness: 0, filter: 'warm' },
+      turn: 90,
+      flipX: true,
+      straighten: -3.5,
+      backdrop: { kind: 'gradient', angle: 180 },
+      shadow: { blur: 30, offsetX: 0, offsetY: 0, opacity: 0.4 },
+    });
+  });
+
+  it('rechaza lo que se sale de los límites', () => {
+    const bad = (extra: Record<string, unknown>) => validateDocument(sample([{ ...image(), ...extra } as never])).ok;
+    expect(bad({ adjust: { brightness: 101 } })).toBe(false);
+    expect(bad({ adjust: { sharpness: -1 } })).toBe(false);
+    expect(bad({ adjust: { filter: 'inventado' } })).toBe(false);
+    expect(bad({ turn: 45 })).toBe(false);
+    expect(bad({ straighten: 46 })).toBe(false);
+    expect(bad({ crop: { x: 0.6, y: 0, width: 0.6, height: 1 } })).toBe(false);
+    expect(bad({ crop: { x: 0, y: 0, width: 0.001, height: 1 } })).toBe(false);
+    expect(bad({ backdrop: { kind: 'color', color: 'rojo' } })).toBe(false);
+    expect(bad({ backdrop: { kind: 'blur', blur: 0 } })).toBe(false);
+    expect(bad({ shadow: { color: '#000000', blur: 1000 } })).toBe(false);
+  });
+
+  it('acepta contorno, sombra y fondo en un texto, y las figuras nuevas', () => {
+    const layer = firstLayer([
+      {
+        ...text(),
+        outline: { color: '#000000', width: 4 },
+        shadow: { color: '#000000', blur: 8, offsetY: 4 },
+        background: { color: '#FFD700' },
+      },
+    ]);
+    expect(layer).toMatchObject({
+      outline: { width: 4 },
+      background: { opacity: 1, padding: 16, radius: 0 },
+      shadow: { opacity: 0.4 },
+    });
+    for (const shape of ['triangle', 'star', 'heart', 'arrow', 'burst', 'speech', 'line']) {
+      const result = validateDocument(sample([{ ...sampleLayers()[1]!, shape } as never]));
+      expect(result.ok, shape).toBe(true);
+    }
+    expect(validateDocument(sample([{ ...sampleLayers()[1]!, shape: 'hexagono' } as never])).ok).toBe(false);
+  });
+
+  it('un ajuste a cero y sin filtro es neutro', () => {
+    expect(isNeutralAdjust(undefined)).toBe(true);
+    expect(isNeutralAdjust({ brightness: 0, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 })).toBe(true);
+    expect(isNeutralAdjust({ brightness: 0, contrast: 0, saturation: 0, temperature: 0, sharpness: 0, filter: 'bw' })).toBe(
+      false,
+    );
+    expect(isNeutralAdjust({ brightness: 1, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 })).toBe(false);
   });
 });
