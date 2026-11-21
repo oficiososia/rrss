@@ -37,17 +37,10 @@ import type { BrandRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { cn, initials } from '@/lib/utils';
+import { MobileNav } from './MobileNav';
+import { NavBadge, type NavItem } from './nav';
 import { useTheme, type ThemeChoice } from './theme';
 import { useFeature } from '@/features/platform/integrations/useFeature';
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  end?: boolean;
-  /** Avisos sin leer (insignia). */
-  badge?: number;
-}
 
 interface AppShellProps {
   orgs: MyOrganization[];
@@ -230,24 +223,6 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
   );
 }
 
-/** Insignia de avisos sin leer junto a una entrada del menú. */
-function NavBadge({ count, compact = false }: { count: number | undefined; compact?: boolean }) {
-  if (!count) return null;
-  const text = count > 99 ? '99+' : String(count);
-  return (
-    <span
-      className={cn(
-        'inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-[0.6875rem] font-semibold leading-5 text-primary-fg',
-        compact ? 'absolute -right-2 -top-1.5' : 'ml-auto',
-      )}
-      data-testid="nav-badge"
-    >
-      {text}
-      <span className="sr-only"> {count === 1 ? 'aviso sin leer' : 'avisos sin leer'}</span>
-    </span>
-  );
-}
-
 export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) {
   const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
   const aiText = useFeature('aiText');
@@ -282,8 +257,13 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
               data-testid={`nav-${label.toLowerCase()}`}
               className={({ isActive }) =>
                 cn(
-                  'flex min-h-[2.75rem] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
-                  isActive ? 'bg-primary-soft text-primary' : 'text-muted hover:bg-subtle hover:text-fg',
+                  'relative flex min-h-[2.75rem] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
+                  // La sección activa la decide solo la ruta (aria-current lo pone NavLink):
+                  // fondo, color y una raya a la izquierda, para no confundirla con el
+                  // fondo de «pasar por encima» de la entrada que se acaba de pulsar.
+                  isActive
+                    ? 'bg-primary-soft font-semibold text-primary before:absolute before:inset-y-2 before:left-0 before:w-1 before:rounded-full before:bg-primary'
+                    : 'text-muted hover:bg-subtle hover:text-fg',
                 )
               }
             >
@@ -313,31 +293,8 @@ export function AppShell({ orgs, org, brands, brand, children }: AppShellProps) 
           <LegalFooter className="mt-12" />
         </main>
 
-        {/* Móvil y tablet: navegación inferior */}
-        <nav
-          aria-label="Principal"
-          className="fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-        >
-          {items.map(({ to, label, icon: Icon, end, badge }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  'flex min-h-[3.5rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 text-[0.6875rem] font-medium',
-                  isActive ? 'text-primary' : 'text-muted',
-                )
-              }
-            >
-              <span className="relative">
-                <Icon className="h-5 w-5" aria-hidden />
-                <NavBadge count={badge} compact />
-              </span>
-              <span className="max-w-full truncate">{label}</span>
-            </NavLink>
-          ))}
-        </nav>
+        {/* Móvil y tablet: 4 secciones fijas y «Más» con el resto */}
+        <MobileNav items={items} brandName={brand?.name} />
       </div>
     </div>
   );
