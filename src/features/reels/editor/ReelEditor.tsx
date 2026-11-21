@@ -63,7 +63,7 @@ import { jobContentVersion, pieceJobKeys, renderOfVersion, usePieceJobs, useSave
 import { previewWarnings } from './compose';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
-import { addClip, addText, brandTextStyle, moveClip, moveText, setMusic, trimClip, trimText } from './ops';
+import { addClip, addText, brandTextStyle, moveClip, moveText, newId, setMusic, trimClip, trimText } from './ops';
 import {
   applyTemplate,
   buildRenderRequest,
@@ -353,12 +353,13 @@ function Editor({
     }
   }
 
+  // El identificador del elemento nuevo se calcula antes, para elegirlo en el mismo paso.
+  const takenIds = () => [...project.plan.clips.map((c) => c.id), ...project.plan.texts.map((t) => t.id)];
   const addMedia = (asset: ReelSourceAsset) => {
-    apply((p) => {
-      const next = addClip(p, asset, template);
-      const added = next.plan.clips[next.plan.clips.length - 1];
-      if (added) queueMicrotask(() => select({ kind: 'clip', id: added.id }));
-      return next;
+    dispatch({
+      type: 'change',
+      change: (p) => addClip(p, asset, template),
+      select: { kind: 'clip', id: newId('c', takenIds()) },
     });
   };
   const newText = () => {
@@ -368,11 +369,10 @@ function Editor({
       fontFamily: defaultFont?.family,
       color: palette[0]?.hex,
     });
-    apply((p) => {
-      const next = addText(p, template, playhead, style, timeline.total);
-      const added = next.plan.texts[next.plan.texts.length - 1];
-      if (added) queueMicrotask(() => select({ kind: 'text', id: added.id }));
-      return next;
+    dispatch({
+      type: 'change',
+      change: (p) => addText(p, template, playhead, style, timeline.total),
+      select: { kind: 'text', id: newId('t', takenIds()) },
     });
   };
 
