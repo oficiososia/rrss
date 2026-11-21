@@ -381,59 +381,25 @@ Mejora de seguridad pendiente (recomendada en la investigación): un rol de
 Postgres limitado a `claim_jobs`, `complete_job` y `fail_job` en vez de la
 clave de servicio general.
 
-## Cómo se despertaría desde la base
+## Cómo se despierta desde la base (Fly.io)
 
-**No está creado.** El destino de la llamada depende del alojamiento. El
-esquema, cuando se decida:
+**Implementado** (migración `20261208010000_media_worker_wake.sql`, pruebas en
+`tests/db/trabajador-despertador.test.ts`; sin aplicar en staging). Detalle y
+pasos para el dueño en `docs/alojamiento.md`, §4.
 
-1. **Disparador** `AFTER INSERT` en `public.jobs` (por sentencia) que llama con
-   `pg_net` a la URL que arranca el trabajador. `pg_net` envía tras el commit,
-   con 2 s de espera y sin garantía de entrega.
-2. **`pg_cron` cada minuto de respaldo**, obligatorio porque `pg_net` puede
-   perder llamadas: si hay trabajos de medios pendientes o con la reserva
-   caducada, vuelve a llamar. También cubre los reintentos, que se hacen
-   reclamables más tarde sin que haya ningún `INSERT`.
-3. La URL y el token viven en **Vault**, no en el SQL ni en el repositorio.
-
-Boceto, **sin aplicar**:
-
-```sql
-create function private.wake_media_worker() returns void
-language plpgsql security definer set search_path = '' as $$
-declare
-  v_url text;
-  v_token text;
-begin
-  select decrypted_secret into v_url from vault.decrypted_secrets where name = 'media_worker_wake_url';
-  select decrypted_secret into v_token from vault.decrypted_secrets where name = 'media_worker_wake_token';
-  if v_url is null then return; end if;
-  perform net.http_post(
-    url := v_url,
-    headers := jsonb_build_object('Authorization', 'Bearer ' || v_token, 'Content-Type', 'application/json'),
-    body := '{}'::jsonb,
-    timeout_milliseconds := 2000
-  );
-end $$;
-
-create function private.jobs_wake_media_worker() returns trigger
-language plpgsql security definer set search_path = '' as $$
-begin
-  perform private.wake_media_worker();
-  return null;
-end $$;
-
-create trigger jobs_wake_media_worker after insert on public.jobs
-  for each statement execute function private.jobs_wake_media_worker();
-
-select cron.schedule('media-worker-wake', '* * * * *', $$
-  select private.wake_media_worker()
-  where exists (
-    select 1 from public.jobs
-    where kind like 'media.%'
-      and ((status = 'queued' and run_after <= now()) or (status = 'running' and locked_until < now()))
-  )
-$$);
-```
+1. **Disparador** `AFTER INSERT` en `public.jobs` (por sentencia), solo si
+   entra un trabajo del trabajador (`media.*` o `source.extract`) que ya toca
+   ejecutar: llama a `private.media_worker_wake()`, que hace con `pg_net`
+   `POST https://api.machines.dev/v1/apps/{app}/machines/{id}/start`. `pg_net`
+   envía tras el commit y sin garantía de entrega. Un fallo nunca impide encolar.
+2. **`pg_cron` cada 2 minutos de respaldo** (`rrss-media-worker-wake`): llamadas
+   perdidas, reintentos con espera y trabajos devueltos al apagar.
+3. El token de Fly, la app y la máquina se pegan en **Plataforma →
+   Integraciones → Trabajador de medios (Fly.io)** (el token, cifrado en Vault);
+   de respaldo, los secretos sueltos de Vault `rrss_fly_*`. Nada en el SQL ni en
+   el repositorio. Sin ellos, solo un aviso.
+4. No llama si un trabajo del trabajador tiene la reserva viva (la máquina ya
+   trabaja) ni más de una vez cada 10 s.
 
 Despertar dos veces no hace daño: `claim_jobs` reparte cada trabajo a un solo
 trabajador y el segundo proceso encuentra la cola vacía y sale.

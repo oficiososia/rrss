@@ -1,13 +1,14 @@
 // Lo que se enseña en «Plataforma → Integraciones»: cada integración, sus
 // apartados y sus campos, con el nombre de la variable de entorno que sustituye.
-// El catálogo que manda es el de la base de datos (migraciones 20261120010000
-// 20261123010000 y 20261124010000);
+// El catálogo que manda es el de la base de datos (migraciones 20261120010000,
+// 20261123010000, 20261124010000 y 20261208010000);
 // el del servidor está en supabase/functions/_shared/integrations/catalog.ts y
 // una prueba (tests/db/integraciones.test.ts) comprueba que los tres coinciden.
 //
 // Sin importaciones con «@/»: lo usan también las pruebas de base de datos.
 
-export type IntegrationId = 'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive' | 'r2';
+export type IntegrationId =
+  'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive' | 'r2' | 'media_worker';
 
 export interface UiField {
   key: string;
@@ -419,6 +420,45 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
               { value: 'supabase', label: 'Supabase Storage (respaldo)' },
             ],
             help: 'Sin poner, en R2 si está configurado. Cambiarlo no mueve lo ya subido.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'media_worker',
+    title: 'Trabajador de medios (Fly.io)',
+    description:
+      'La máquina de Fly.io que monta los reels, hace los recortes, extrae el texto de los documentos y genera los informes en PDF. Está parada y la base de datos la arranca cuando hay trabajo en la cola; al vaciarla se vuelve a parar sola.',
+    testDescription:
+      'Pregunta a la API de máquinas de Fly por esa máquina (GET): dice si existe, en qué estado está y si el token sirve. No la arranca.',
+    groups: [
+      {
+        title: 'App y máquina',
+        description:
+          'En el panel de Fly, la app del trabajador → «Machines»: el nombre de la app y el ID de su máquina (docs/alojamiento.md).',
+        fields: [
+          { key: 'FLY_APP', label: 'App', secret: false, placeholder: 'rrss-worker' },
+          {
+            key: 'FLY_MACHINE_ID',
+            label: 'ID de la máquina',
+            secret: false,
+            placeholder: '148e21dc7d0189',
+            help: 'Si se destruye y se vuelve a crear la máquina, cambia: pon el nuevo.',
+          },
+        ],
+      },
+      {
+        title: 'Token de Fly',
+        description:
+          'Un token de despliegue de esa app (panel de Fly → la app → «Tokens»), no uno de la organización: solo sirve para esa app.',
+        fields: [
+          {
+            key: 'FLY_API_TOKEN',
+            label: 'Token',
+            secret: true,
+            placeholder: 'FlyV1 fm2_…',
+            help: 'Se guarda cifrado. Cuando caduque, crea otro y pégalo aquí.',
           },
         ],
       },

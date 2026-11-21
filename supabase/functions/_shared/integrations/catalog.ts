@@ -4,7 +4,8 @@
 // funciones leen primero lo guardado en la base de datos y, si no está, la
 // variable (settings.ts). El mismo catálogo vive en la migración
 // 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
-// y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI)
+// y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI y en
+// 20261208010000 con el trabajador de medios en Fly.io)
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -12,7 +13,16 @@
 //
 // Sin dependencias de Deno ni de Node: lo usan las funciones y las pruebas.
 
-export const INTEGRATION_IDS = ['meta', 'comfyui', 'ai_text', 'ai_image', 'stripe', 'google_drive', 'r2'] as const;
+export const INTEGRATION_IDS = [
+  'meta',
+  'comfyui',
+  'ai_text',
+  'ai_image',
+  'stripe',
+  'google_drive',
+  'r2',
+  'media_worker',
+] as const;
 export type IntegrationId = (typeof INTEGRATION_IDS)[number];
 
 export interface IntegrationSettingSpec {
@@ -64,7 +74,13 @@ const prices = json((parsed) =>
 const flag = oneOf(['true', 'false']);
 const providerModel = pattern(/^[A-Za-z0-9._@/:-]{1,200}$/, 'Solo letras, números y . _ @ / : -');
 
-export const TEXT_PROVIDER_CHOICES = ['anthropic-vertex', 'anthropic-bedrock', 'mistral', 'openai', 'anthropic'] as const;
+export const TEXT_PROVIDER_CHOICES = [
+  'anthropic-vertex',
+  'anthropic-bedrock',
+  'mistral',
+  'openai',
+  'anthropic',
+] as const;
 const textProvider = oneOf([...TEXT_PROVIDER_CHOICES]);
 
 /** Prefijos de las variables de proveedor y modelo de cada tarea de texto (ai/text/config.ts). */
@@ -76,6 +92,13 @@ export const TEXT_TASK_PREFIXES = [
   'AI_TEXT_ANALYTICS_SUMMARY',
   'AI_TEXT_EDITOR_COPILOT',
 ] as const;
+
+/** Token de Fly: «FlyV1 fm2_…[,fm2_…]» de `fly tokens create` o del panel, o uno antiguo «fo1_…». */
+export const FLY_TOKEN_PATTERN =
+  /^(FlyV1 fm\d_[A-Za-z0-9_+/=-]{10,}(,fm\d_[A-Za-z0-9_+/=-]{10,})*|fo1_[A-Za-z0-9_-]{10,})$/;
+/** Mismas formas que admite `private.media_worker_wake()` (van en la URL de la API). */
+export const FLY_APP_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export const FLY_MACHINE_PATTERN = /^[a-z0-9]{6,32}$/;
 
 export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   // Meta
@@ -250,6 +273,29 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   },
   { key: 'R2_JURISDICTION', integration: 'r2', secret: false, validate: oneOf(['eu', 'default']) },
   { key: 'MEDIA_UPLOAD_BACKEND', integration: 'r2', secret: false, validate: oneOf(['r2', 'supabase']) },
+  // Trabajador de medios en Fly.io (docs/alojamiento.md): la base de datos
+  // arranca su máquina con la API de máquinas de Fly (20261208010000).
+  {
+    key: 'FLY_API_TOKEN',
+    integration: 'media_worker',
+    secret: true,
+    validate: pattern(
+      FLY_TOKEN_PATTERN,
+      'Pega el token entero tal como lo da Fly: empieza por «FlyV1 fm2_» (o por «fo1_» si es uno antiguo).',
+    ),
+  },
+  {
+    key: 'FLY_APP',
+    integration: 'media_worker',
+    secret: false,
+    validate: pattern(FLY_APP_PATTERN, 'El nombre de la app de Fly: minúsculas, cifras y guiones.'),
+  },
+  {
+    key: 'FLY_MACHINE_ID',
+    integration: 'media_worker',
+    secret: false,
+    validate: pattern(FLY_MACHINE_PATTERN, 'El ID de la máquina: minúsculas y cifras (por ejemplo, 148e21dc7d0189).'),
+  },
 ];
 
 export const INTEGRATION_SETTING_KEYS: ReadonlySet<string> = new Set(INTEGRATION_SETTINGS.map((s) => s.key));

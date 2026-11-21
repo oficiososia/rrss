@@ -21,6 +21,9 @@
 //   r2        HeadBucket sobre el cubo con la clave (una operación de clase B,
 //             dentro de las 10 M gratuitas al mes): dice si el cubo existe y
 //             si la clave puede usarlo. No sube ni baja nada.
+//   media_worker  GET /v1/apps/{app}/machines/{id} en la API de máquinas de
+//             Fly: si la máquina existe, su estado y su región, y si el token
+//             vale. No la arranca (arrancar es cosa de la base de datos).
 //
 // ⚠ Escrito contra la documentación de cada servicio y probado solo con
 // servicios simulados (tests/db/integraciones-funciones.test.ts).
@@ -39,7 +42,7 @@ import { loadDriveConfig } from '../drive/config.ts';
 import { DRIVE_LOCAL_TEST_FLAG } from '../drive/local-test.ts';
 import { loadMediaStorageConfig } from '../storage/config.ts';
 import { createS3Storage } from '../storage/s3.ts';
-import type { IntegrationId } from './catalog.ts';
+import { FLY_APP_PATTERN, FLY_MACHINE_PATTERN, type IntegrationId } from './catalog.ts';
 import type { Env } from './settings.ts';
 
 export type ProbeFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -559,6 +562,89 @@ async function probeR2(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   return summarize(checks, '');
 }
 
+// ─────────────────────────── Trabajador de medios (Fly.io) ───────────────────────────
+
+/** API de máquinas de Fly (la misma que llama `private.media_worker_wake()`). */
+export const FLY_MACHINES_API = 'https://api.machines.dev';
+
+/** Cabecera de autorización de Fly: los tokens «FlyV1 …» van tal cual; los demás, como Bearer. */
+export const flyAuthorization = (token: string) => (token.startsWith('FlyV1 ') ? token : `Bearer ${token}`);
+
+async function probeMediaWorker(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  const token = value(env, 'FLY_API_TOKEN');
+  const app = value(env, 'FLY_APP');
+  const machine = value(env, 'FLY_MACHINE_ID');
+  const missing = [
+    !app && 'la app (FLY_APP)',
+    !machine && 'el ID de la máquina (FLY_MACHINE_ID)',
+    !token && 'el token (FLY_API_TOKEN)',
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    return summarize([{ name: 'Configuración', ok: false, message: `Falta ${missing.join(', ')}.` }], '');
+  }
+  if (!FLY_APP_PATTERN.test(app!) || !FLY_MACHINE_PATTERN.test(machine!)) {
+    return summarize(
+      [{ name: 'Configuración', ok: false, message: 'La app o el ID de la máquina no tienen un formato válido.' }],
+      '',
+    );
+  }
+  const r = await call(deps, `${FLY_MACHINES_API}/v1/apps/${app}/machines/${machine}`, {
+    headers: { Authorization: flyAuthorization(token!), Accept: 'application/json' },
+  });
+  if ('error' in r) {
+    checks.push({ name: 'Máquina', ok: false, message: unreachable('Fly.io', r) });
+    return summarize(checks, '');
+  }
+  if (r.status === 404) {
+    checks.push({
+      name: 'Máquina',
+      ok: false,
+      message: 'Fly no encuentra esa máquina en esa app (revisa el nombre de la app y el ID de la máquina).',
+    });
+    return summarize(checks, '');
+  }
+  if (r.status !== 200) {
+    checks.push({ name: 'Máquina', ok: false, message: rejected('Fly.io', r.status) });
+    return summarize(checks, '');
+  }
+  const body = (r.body ?? {}) as {
+    state?: unknown;
+    region?: unknown;
+    config?: { restart?: { policy?: unknown }; services?: unknown };
+  };
+  const state = typeof body.state === 'string' ? body.state : 'desconocido';
+  const region = typeof body.region === 'string' ? body.region : 'desconocida';
+  checks.push({
+    name: 'Máquina',
+    ok: true,
+    message: `Fly responde: la máquina existe (estado «${state}», región ${region}) y el token sirve para esa app.`,
+  });
+  const policy = body.config?.restart?.policy;
+  if (typeof policy === 'string' && policy !== 'no') {
+    checks.push({
+      name: 'Reinicio',
+      ok: null,
+      message: `La máquina se reinicia sola al terminar (política «${policy}»): no se parará al vaciar la cola. Revisa [[restart]] en worker/fly.toml.`,
+    });
+  }
+  if (region !== 'fra' && region !== 'desconocida') {
+    checks.push({
+      name: 'Región',
+      ok: null,
+      message: `La máquina está en «${region}», no en Fráncfort (fra): los medios se procesarían fuera de la región prevista.`,
+    });
+  }
+  if (Array.isArray(body.config?.services) && body.config.services.length > 0) {
+    checks.push({
+      name: 'Puertos',
+      ok: null,
+      message: 'La máquina tiene servicios (puertos) publicados: el trabajador no los necesita.',
+    });
+  }
+  return summarize(checks, '');
+}
+
 export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   switch (id) {
     case 'meta':
@@ -575,6 +661,8 @@ export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeD
       return probeGoogleDrive(env);
     case 'r2':
       return probeR2(env, deps);
+    case 'media_worker':
+      return probeMediaWorker(env, deps);
   }
 }
 

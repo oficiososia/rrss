@@ -2152,6 +2152,23 @@ describe('analítica: métricas, capturas e informes (Fase 5)', () => {
   });
 });
 
+describe('despertador del trabajador de medios (20261208010000)', () => {
+  it('nadie lo ejecuta ni toca su estado desde la API: solo el disparador y pg_cron', async () => {
+    const statements = [
+      `select private.media_worker_wake()`,
+      `select private.is_media_worker_kind('media.reel.template')`,
+      `select * from private.media_worker_wake_state`,
+      `update private.media_worker_wake_state set last_requested_at = null`,
+    ];
+    for (const user of [ana, adminA, superadmin, ajeno, null]) {
+      for (const sql of statements) await denied(db, user, sql, [], /permission denied/);
+    }
+    for (const sql of statements) {
+      await expect(asService(db, sql)).rejects.toThrow(/permission denied/);
+    }
+  });
+});
+
 describe('Plataforma → Integraciones (20261120010000)', () => {
   const ADMIN_CALLS: Array<[string, unknown[]]> = [
     [`select * from public.admin_integration_settings()`, []],
