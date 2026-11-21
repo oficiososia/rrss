@@ -1,4 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { chooseMoreAction } from '@/test/moreMenu';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
@@ -285,15 +287,134 @@ describe('editor de reels', () => {
     });
     expect(await screen.findByTestId('reel-piece-job')).toHaveTextContent('Versión 1');
 
-    // Con cambios sin guardar, no se monta.
-    fireEvent.click(screen.getByTestId('reel-add-text'));
+    // Mientras se monta esa versión, el botón espera.
     expect(screen.getByTestId('reel-render')).toBeDisabled();
+    expect(screen.getByTestId('reel-render-state')).toHaveTextContent(/puedes seguir editando/);
+  });
+
+  it('con cambios sin guardar, un solo botón guarda la versión nueva y la monta', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seed();
+    fake.rpc('request_media_job', (args) => ({
+      id: 'job-2',
+      organization_id: ORG_ID,
+      brand_id: BRAND_ID,
+      kind: 'media.reel.template',
+      payload: args.p_input,
+      status: 'queued',
+      attempts: 0,
+      max_attempts: 3,
+      last_error: null,
+      result: null,
+      created_at: '2026-11-21T10:00:00Z',
+    }));
+    await open();
+    fireEvent.click(screen.getByTestId('reel-add-text'));
+    expect(screen.getByTestId('reel-render')).toHaveTextContent('Guardar y montar el vídeo');
+    fireEvent.click(screen.getByTestId('reel-render'));
+    await waitFor(() => expect(fake.callsTo('request_media_job', 'rpc')).toHaveLength(1));
+    expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
+    const input = (fake.callsTo('request_media_job', 'rpc')[0]!.payload as { p_input: Record<string, unknown> })
+      .p_input;
+    expect(input).toMatchObject({ content: { id: 'reel-1', version: 2 } });
+  });
+
+  it('muestra el estado del montaje de la versión: en cola, montando, listo con enlace o fallo', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    seed();
+    const job = (status: string, extra: Record<string, unknown> = {}) => ({
+      id: `job-${status}`,
+      organization_id: ORG_ID,
+      brand_id: BRAND_ID,
+      kind: 'media.reel.template',
+      payload: { content: { id: 'reel-1', version: 1 } },
+      status,
+      attempts: 1,
+      max_attempts: 3,
+      last_error: null,
+      result: null,
+      created_at: '2026-11-21T10:00:00Z',
+      ...extra,
+    });
+    fake.tables.jobs = [job('succeeded', { result: { assets: [{ id: 'asset-9' }] } })];
+    const first = await open();
+    expect(await screen.findByTestId('reel-render-view')).toHaveAttribute(
+      'href',
+      expect.stringContaining('recurso=asset-9'),
+    );
+    expect(screen.getByTestId('reel-render')).toHaveTextContent('Montar otra vez');
+    first.unmount();
+
+    fake.tables.jobs = [job('failed', { last_error: 'Sin espacio' })];
+    const second = await open();
+    expect(await screen.findByText(/No se pudo montar: Sin espacio/)).toBeInTheDocument();
+    second.unmount();
+
+    fake.tables.jobs = [job('running')];
+    await open();
+    await waitFor(() => expect(screen.getByTestId('reel-render-state')).toHaveTextContent(/puedes seguir editando/));
+    expect(screen.getByTestId('reel-render')).toBeDisabled();
+  });
+
+  it('un reel vacío ofrece empezar en un paso: estilo, texto de apertura y varias fotos en el orden elegido', async () => {
+    seed({ data: { schemaVersion: 4, canvas: {}, pages: [] } });
+    await open();
+    expect(screen.getAllByTestId('reel-template-card').length).toBeGreaterThanOrEqual(3);
+    fireEvent.click(screen.getByRole('radio', { name: /Corte rítmico/ }));
+    fireEvent.change(screen.getByTestId('reel-starter-text'), { target: { value: 'Menú de otoño' } });
+    fireEvent.click(screen.getByTestId('reel-starter-pick'));
+    const dialog = await screen.findByRole('dialog');
+    // Se eligen la segunda foto y después la primera: entran en ese orden.
+    fireEvent.click(within(dialog).getByRole('button', { name: /«local.jpg»/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /«plato.jpg»/ }));
+    expect(
+      within(dialog)
+        .getAllByTestId('reel-media-order')
+        .map((n) => n.textContent),
+    ).toEqual(['2', '1']);
+    expect(within(dialog).getByTestId('reel-media-count')).toHaveTextContent('2 elegidas');
+    fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
+    await waitFor(() => expect(clipLabels()).toEqual(['1. Foto local.jpg, 1,5 s', '2. Foto plato.jpg, 1,5 s']));
+    expect(screen.getAllByTestId('reel-text-block')).toHaveLength(1);
+    expect(screen.getByTestId('reel-version')).toHaveTextContent('cambios sin guardar');
+  });
+
+  it('el selector filtra por fotos y vídeos', async () => {
+    seed();
+    await open();
+    fireEvent.click(screen.getByTestId('reel-add-media'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByTestId('reel-media-option')).toHaveLength(3);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Vídeos' }));
+    expect(within(dialog).getAllByTestId('reel-media-option')).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Fotos' }));
+    expect(within(dialog).getAllByTestId('reel-media-option')).toHaveLength(2);
+  });
+
+  it('se archiva desde el menú «⋯» y las zonas de Instagram se enseñan y se ocultan', async () => {
+    seed();
+    fake.tables.content_items![0] = { ...fake.tables.content_items![0]!, archived_at: null };
+    await open();
+    expect(screen.queryByTestId('reel-safe-zones')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('reel-safe-toggle'));
+    expect(screen.getByTestId('reel-safe-zones')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('reel-safe-toggle'));
+    expect(screen.queryByTestId('reel-safe-zones')).not.toBeInTheDocument();
+
+    fake.rpc('archive_content_item', (args) => ({
+      ...fake.tables.content_items![0]!,
+      archived_at: args.p_archived ? '2026-11-21T10:00:00Z' : null,
+    }));
+    const user = userEvent.setup();
+    await chooseMoreAction(user, 'reel-more', 'reel-archive');
+    await user.click(await screen.findByTestId('confirm-action'));
+    await waitFor(() => expect(fake.callsTo('archive_content_item', 'rpc')).toHaveLength(1));
   });
 
   it('una pieza reel con un diseño por capas avisa y empieza un montaje vacío', async () => {
     seed({ data: { schemaVersion: 4, canvas: {}, pages: [] } });
     await open();
     expect(screen.getByText(/es un diseño por capas/)).toBeInTheDocument();
-    expect(screen.getByText('Todavía no hay nada en el reel')).toBeInTheDocument();
+    expect(screen.getByText('Empieza tu reel en tres pasos')).toBeInTheDocument();
   });
 });

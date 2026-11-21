@@ -8,6 +8,7 @@ import {
   PHOTO_SECONDS,
   REEL_MAX_CLIPS,
   REEL_MAX_TEXTS,
+  REEL_TEXT_MAX_LENGTH,
   templateTextStyle,
   templateTransition,
   type Clip,
@@ -84,6 +85,29 @@ export function addClip(project: ReelProject, asset: SourceAsset, template: Reel
   const clips = [...project.plan.clips];
   clips.splice(index ?? clips.length, 0, clip);
   return withPlan(project, { clips });
+}
+
+/**
+ * Empieza un reel de golpe: la plantilla elegida, todas las piezas en el orden
+ * en que se eligieron y, si se escribió, un texto de apertura sobre el primer
+ * tramo. Las que pasen del tope de un reel se dejan fuera.
+ */
+export function startReel(
+  project: ReelProject,
+  assets: SourceAsset[],
+  template: ReelTemplateSummary,
+  opening: { text: string; style: TextStyle } | null,
+): ReelProject {
+  let next: ReelProject = { ...project, template: { id: template.id } };
+  for (const asset of assets) next = addClip(next, asset, template);
+  const title = opening?.text.trim();
+  if (opening && title && next.plan.clips.length > 0) {
+    const first = Math.min(template.timing.photoSeconds, template.timing.maxClipSeconds);
+    next = addText(next, template, 0, opening.style, Math.max(first, 1));
+    const added = next.plan.texts[next.plan.texts.length - 1]!;
+    next = mapText(next, added.id, (t) => ({ ...t, text: title.slice(0, REEL_TEXT_MAX_LENGTH) }));
+  }
+  return next;
 }
 
 export function removeClip(project: ReelProject, id: string) {

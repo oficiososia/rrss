@@ -3,16 +3,21 @@
 // navegador, textos y subtítulos, música con su licencia, guardado con
 // versiones, aprobación y montaje del vídeo por el trabajador de medios.
 import {
+  Archive,
+  ArchiveRestore,
   Captions,
+  CheckCircle2,
   ChevronLeft,
   Clapperboard,
   History,
   Images,
   Music2,
-  Plus,
+  Palette,
+  PencilLine,
   Redo2,
   Save,
   Send,
+  SendHorizontal,
   Type,
   Undo2,
   ZoomIn,
@@ -26,14 +31,17 @@ import {
   Button,
   Card,
   CardBody,
+  ConfirmDialog,
   Dialog,
-  EmptyState,
   ErrorState,
   Field,
   Input,
   Notice,
+  PageHeader,
   Select,
   Skeleton,
+  Spinner,
+  type MoreMenuItem,
 } from '@/components/ui';
 import { mediaWorkerEnabled } from '@/config/app';
 import { useActiveProfile } from '@/features/brand/api';
@@ -47,7 +55,14 @@ import {
 } from '@/features/content/api';
 import { SaveVersionDialog } from '@/features/content/editor/SaveVersionDialog';
 import { contentPaths } from '@/features/content/labels';
-import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage } from '@/features/content/status';
+import {
+  editorPrimaryAction,
+  STATUS_LABEL,
+  STATUS_TONE,
+  statusActions,
+  statusChangedMessage,
+  type StatusAction,
+} from '@/features/content/status';
 import { useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { useFeature } from '@/features/platform/integrations/useFeature';
@@ -63,7 +78,18 @@ import { jobContentVersion, pieceJobKeys, renderOfVersion, usePieceJobs, useSave
 import { previewWarnings } from './compose';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
-import { addClip, addText, brandTextStyle, moveClip, moveText, newId, setMusic, trimClip, trimText } from './ops';
+import {
+  addClip,
+  addText,
+  brandTextStyle,
+  moveClip,
+  moveText,
+  newId,
+  setMusic,
+  startReel,
+  trimClip,
+  trimText,
+} from './ops';
 import {
   applyTemplate,
   buildRenderRequest,
@@ -77,7 +103,10 @@ import {
   REEL_MAX_SECONDS,
   type ReelProject,
 } from './project';
+import { MediaPicker } from './MediaPicker';
 import { ReelPlayer } from './ReelPlayer';
+import { Starter } from './Starter';
+import { TemplateCards } from './TemplateCards';
 import { Timeline, ZOOM_LEVELS } from './Timeline';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -178,6 +207,11 @@ function Editor({
   const [musicOpen, setMusicOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [busyStatus, setBusyStatus] = useState<ContentStatus | null>(null);
+  const [styleOpen, setStyleOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  /** Texto de apertura escrito en la pantalla de salida, para ponerlo al elegir las fotos. */
+  const [openingText, setOpeningText] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
   const template = REEL_TEMPLATES.find((t) => t.id === project.template.id) ?? defaultTemplate();
@@ -286,7 +320,7 @@ function Editor({
     [timeline.total],
   );
 
-  async function save(note: string) {
+  async function save(note: string): Promise<number | null> {
     try {
       const row = await saveReel.mutateAsync({ contentId: item.id, project, note, expectedVersion });
       setExpectedVersion(row.version);
@@ -294,6 +328,7 @@ function Editor({
       dispatch({ type: 'commit' });
       setSaveOpen(false);
       toast.success(`Versión ${row.version} guardada.`);
+      return row.version;
     } catch (error) {
       toast.error(
         isVersionConflict(error)
@@ -302,6 +337,7 @@ function Editor({
             ? error.message
             : translateError(error),
       );
+      return null;
     }
   }
 
@@ -317,19 +353,58 @@ function Editor({
     }
   }
 
-  function renderVideo() {
-    if (dirty || problems.length > 0) return;
+  /** Encarga el montaje de la versión indicada (la guardada, o la que se acaba de guardar). */
+  function renderVideo(version: number) {
+    if (problems.length > 0) return;
     request.mutate(
       {
-        request: buildRenderRequest(project, { id: item.id, version: expectedVersion }),
+        request: buildRenderRequest(project, { id: item.id, version }),
         idempotencyKey: crypto.randomUUID(),
       },
       {
         onSuccess: () => {
           void queryClient.invalidateQueries({ queryKey: pieceJobKeys(brand.id, item.id) });
-          toast.success('Montaje encargado: el vídeo llegará a la biblioteca (carpeta «Reels»).');
+          toast.success(
+            'Montaje encargado. Aquí verás cómo avanza; el vídeo llegará a la biblioteca (carpeta «Reels»).',
+          );
         },
         onError: (error) => toast.error(translateError(error)),
+      },
+    );
+  }
+
+  /** Un solo botón: si hay cambios los guarda como versión nueva y después monta. */
+  async function saveAndRender() {
+    if (problems.length > 0 || rendering) return;
+    let version = expectedVersion;
+    if (dirty || version === 0) {
+      const saved = await save('Antes de montar el vídeo');
+      if (saved === null) return;
+      version = saved;
+    }
+    renderVideo(version);
+  }
+
+  async function rename(title: string) {
+    try {
+      await mutations.update.mutateAsync({ contentId: item.id, title });
+      setRenameOpen(false);
+      toast.success('Nombre cambiado');
+    } catch (error) {
+      toast.error(translateError(error));
+    }
+  }
+
+  function toggleArchive() {
+    const archived = !item.archived_at;
+    mutations.archive.mutateAsync({ contentId: item.id, archived }).then(
+      () => {
+        setConfirmArchive(false);
+        toast.success(archived ? 'Contenido archivado' : 'Contenido recuperado');
+      },
+      (error: unknown) => {
+        setConfirmArchive(false);
+        toast.error(translateError(error));
       },
     );
   }
@@ -355,23 +430,37 @@ function Editor({
 
   // El identificador del elemento nuevo se calcula antes, para elegirlo en el mismo paso.
   const takenIds = () => [...project.plan.clips.map((c) => c.id), ...project.plan.texts.map((t) => t.id)];
-  const addMedia = (asset: ReelSourceAsset) => {
-    dispatch({
-      type: 'change',
-      change: (p) => addClip(p, asset, template),
-      select: { kind: 'clip', id: newId('c', takenIds()) },
-    });
-  };
-  const newText = () => {
+  const newTextStyle = () => {
     const defaultFont = fonts.find((f) => reelFont.data && f.family === reelFont.data.family);
-    const style = brandTextStyle(template, {
+    return brandTextStyle(template, {
       fontPath: defaultFont?.path,
       fontFamily: defaultFont?.family,
       color: palette[0]?.hex,
     });
+  };
+  /** Las piezas elegidas entran en el orden de la elección; en un reel vacío, con el estilo y el texto de partida. */
+  const addMedia = (assets: ReelSourceAsset[]) => {
+    if (assets.length === 0) return;
+    if (project.plan.clips.length === 0) {
+      dispatch({
+        type: 'change',
+        change: (p) =>
+          startReel(p, assets, template, openingText.trim() ? { text: openingText, style: newTextStyle() } : null),
+        select: { kind: 'clip', id: 'c1' },
+      });
+      setOpeningText('');
+      return;
+    }
     dispatch({
       type: 'change',
-      change: (p) => addText(p, template, playhead, style, timeline.total),
+      change: (p) => assets.reduce((acc, asset) => addClip(acc, asset, template), p),
+      select: { kind: 'clip', id: newId('c', takenIds()) },
+    });
+  };
+  const newText = () => {
+    dispatch({
+      type: 'change',
+      change: (p) => addText(p, template, playhead, newTextStyle(), timeline.total),
       select: { kind: 'text', id: newId('t', takenIds()) },
     });
   };
@@ -384,94 +473,178 @@ function Editor({
     item.status === 'approved' &&
     PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`);
   const pps = ZOOM_LEVELS[zoom]!;
+  const empty = project.plan.clips.length === 0;
+
+  // ── Cabecera: una acción principal; lo demás, en «⋯» ──
+  const primary = editorPrimaryAction(item, actions, { edit: canEdit, publishNow: canPublish, schedule: false });
+  const statusBlocked = (action: StatusAction) =>
+    dirty
+      ? 'Guarda los cambios antes'
+      : action.needsVersion && expectedVersion === 0
+        ? 'Hace falta guardar una versión antes'
+        : undefined;
+  const FORWARD = new Set<ContentStatus>(['in_review', 'approved']);
+  const primaryStatus = primary?.kind === 'status' ? primary.action.to : null;
+  const statusItem = (action: StatusAction) => ({
+    id: `status-${action.to}`,
+    label: action.label,
+    icon: FORWARD.has(action.to) ? SendHorizontal : Undo2,
+    onSelect: () => void changeStatus(action.to),
+    disabled: Boolean(statusBlocked(action)) || busyStatus !== null,
+    hint: statusBlocked(action),
+    testId: `reel-status-${action.to}`,
+  });
+  const moreActions: MoreMenuItem[] = [
+    {
+      id: 'history',
+      label: 'Historial',
+      icon: History,
+      onSelect: () => setHistoryOpen(true),
+      disabled: item.current_version === 0,
+      testId: 'reel-history',
+    },
+    null,
+    ...actions.filter((a) => a.to !== primaryStatus && FORWARD.has(a.to)).map(statusItem),
+    ...(canPublish && primary?.kind !== 'publishNow'
+      ? [
+          {
+            id: 'publish-now',
+            label: 'Publicar ahora',
+            icon: Send,
+            onSelect: () => setPublishOpen(true),
+            disabled: !render,
+            hint: render ? undefined : 'Monta antes el vídeo de esta versión',
+            testId: 'reel-publish-now',
+          },
+        ]
+      : []),
+    null,
+    ...(canEdit && !item.archived_at
+      ? [
+          {
+            id: 'rename',
+            label: 'Cambiar el nombre',
+            icon: PencilLine,
+            onSelect: () => setRenameOpen(true),
+            testId: 'reel-rename',
+          },
+        ]
+      : []),
+    null,
+    ...actions.filter((a) => a.to !== primaryStatus && !FORWARD.has(a.to)).map(statusItem),
+    ...(canEdit && !item.archived_at
+      ? [
+          {
+            id: 'archive',
+            label: 'Archivar',
+            icon: Archive,
+            onSelect: () => setConfirmArchive(true),
+            destructive: true,
+            testId: 'reel-archive',
+          },
+        ]
+      : []),
+  ];
+  const primaryButton = (() => {
+    if (!primary) return null;
+    if (primary.kind === 'restore')
+      return (
+        <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="reel-restore">
+          <ArchiveRestore className="h-4 w-4" aria-hidden />
+          Recuperar
+        </Button>
+      );
+    if (primary.kind === 'publishNow')
+      return (
+        <Button
+          size="sm"
+          onClick={() => setPublishOpen(true)}
+          disabled={!render}
+          title={render ? undefined : 'Monta antes el vídeo de esta versión'}
+          data-testid="reel-publish-now"
+        >
+          <Send className="h-4 w-4" aria-hidden />
+          Publicar ahora
+        </Button>
+      );
+    if (primary.kind === 'status') {
+      const { action } = primary;
+      return (
+        <Button
+          size="sm"
+          onClick={() => void changeStatus(action.to)}
+          disabled={Boolean(statusBlocked(action)) || busyStatus !== null}
+          loading={busyStatus === action.to}
+          title={statusBlocked(action)}
+          data-testid={`reel-status-${action.to}`}
+        >
+          {action.to === 'approved' ? (
+            <CheckCircle2 className="h-4 w-4" aria-hidden />
+          ) : (
+            <SendHorizontal className="h-4 w-4" aria-hidden />
+          )}
+          {action.label}
+        </Button>
+      );
+    }
+    return null;
+  })();
+
+  // ── Estado del montaje de la versión que se ve ──
+  const versionJob = (jobs.data ?? []).find((j) => jobContentVersion(j) === expectedVersion && expectedVersion > 0);
+  const versionView = versionJob ? describeJob(versionJob) : null;
+  const renderBlockedBy = empty
+    ? 'Añade fotos o clips.'
+    : problems.length > 0
+      ? 'Arregla antes lo que se marca en rojo bajo la línea de tiempo.'
+      : null;
 
   return (
     <div ref={rootRef} className="space-y-4" data-testid="reel-editor">
-      {/* ── Cabecera ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Link to={paths.list} className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
-          <ChevronLeft className="h-4 w-4" aria-hidden />
-          Contenidos
-        </Link>
-        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{item.title}</h1>
-        <Badge tone={STATUS_TONE[item.status]}>
-          <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
-        </Badge>
-        <span className="text-xs text-muted" data-testid="reel-version">
-          {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar'}
-          {dirty ? ' · cambios sin guardar' : ''}
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {!readOnly && (
+      <PageHeader
+        compact
+        back={
+          <Link to={paths.list} className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+            Contenidos
+          </Link>
+        }
+        title={item.title}
+        meta={
           <>
+            <Badge tone={STATUS_TONE[item.status]}>
+              <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
+            </Badge>
+            {item.archived_at && <Badge tone="warning">Archivado</Badge>}
+            <span data-testid="reel-version">
+              {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar'}
+              {dirty ? ' · cambios sin guardar' : ''}
+            </span>
+          </>
+        }
+        secondary={
+          !readOnly && (
             <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Deshacer"
-              disabled={state.past.length === 0}
-              onClick={() => dispatch({ type: 'undo' })}
-              data-testid="reel-undo"
-            >
-              <Undo2 className="h-4 w-4" aria-hidden />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Rehacer"
-              disabled={state.future.length === 0}
-              onClick={() => dispatch({ type: 'redo' })}
-              data-testid="reel-redo"
-            >
-              <Redo2 className="h-4 w-4" aria-hidden />
-            </Button>
-            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setSaveOpen(true)}
-              disabled={!dirty || project.plan.clips.length === 0}
+              disabled={!dirty || empty}
               data-testid="reel-save"
             >
               <Save className="h-4 w-4" aria-hidden />
-              Guardar versión
+              Guardar<span className="max-sm:sr-only"> versión</span>
             </Button>
-          </>
-        )}
-        <Button variant="secondary" onClick={() => setHistoryOpen(true)} disabled={item.current_version === 0}>
-          <History className="h-4 w-4" aria-hidden />
-          Historial
-        </Button>
-        {actions.map((action) => (
-          <Button
-            key={action.to}
-            variant="secondary"
-            onClick={() => void changeStatus(action.to)}
-            disabled={(action.needsVersion && (expectedVersion === 0 || dirty)) || busyStatus !== null}
-            loading={busyStatus === action.to}
-            data-testid={`reel-status-${action.to}`}
-          >
-            {action.label}
-          </Button>
-        ))}
-        {worker && !readOnly && (
-          <Button
-            variant="secondary"
-            onClick={renderVideo}
-            disabled={dirty || expectedVersion === 0 || problems.length > 0 || rendering}
-            loading={request.isPending}
-            title={dirty ? 'Guarda los cambios antes de montar' : undefined}
-            data-testid="reel-render"
-          >
-            <Clapperboard className="h-4 w-4" aria-hidden />
-            {rendering ? 'Montando…' : 'Montar el vídeo'}
-          </Button>
-        )}
-        {canPublish && render && (
-          <Button variant="secondary" onClick={() => setPublishOpen(true)}>
-            <Send className="h-4 w-4" aria-hidden />
-            Publicar ahora
-          </Button>
-        )}
-      </div>
+          )
+        }
+        action={primaryButton}
+        more={moreActions}
+        moreLabel="Más acciones del reel"
+        moreTestId="reel-more"
+      />
 
+      {item.archived_at && (
+        <Notice tone="warning">Está archivado: se puede ver, pero no cambiar hasta recuperarlo.</Notice>
+      )}
       {previousDesign && (
         <Notice>
           La versión vigente de esta pieza es un diseño por capas. Aquí empiezas un montaje de vídeo: al guardarlo será
@@ -489,9 +662,9 @@ function Editor({
         </Notice>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
-        {/* ── Vista previa ── */}
-        <div className="space-y-3">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
+        {/* ── Vista previa y estado del montaje ── */}
+        <div className="order-1 space-y-3 lg:row-span-2">
           <ReelPlayer
             plan={project.plan}
             timeline={timeline}
@@ -502,8 +675,14 @@ function Editor({
             playing={playing}
             onTime={setPlayhead}
             onPlayingChange={setPlaying}
+            maxSeconds={REEL_MAX_SECONDS}
           />
-          {warnings.length > 0 && project.plan.clips.length > 0 && (
+          <p className="text-center text-xs text-muted" data-testid="reel-limits">
+            {timeline.total > template.timing.maxTotalSeconds
+              ? `Dura ${fmt(timeline.total)} s; este estilo está pensado para hasta ${fmt(template.timing.maxTotalSeconds)} s. El máximo es ${REEL_MAX_SECONDS} s.`
+              : `Máximo ${REEL_MAX_SECONDS} s; este estilo va bien hasta ${fmt(template.timing.maxTotalSeconds)} s.`}
+          </p>
+          {warnings.length > 0 && !empty && (
             <div data-testid="reel-preview-warnings">
               <Notice tone="warning">
                 <span className="font-medium">Se verá distinto en el vídeo:</span>
@@ -515,213 +694,288 @@ function Editor({
               </Notice>
             </div>
           )}
+          {worker && (
+            <Card>
+              <CardBody className="space-y-2" data-testid="reel-render-panel">
+                <h2 className="text-sm font-semibold">Vídeo final</h2>
+                {rendering ? (
+                  <div className="flex items-center gap-2 text-sm" role="status" data-testid="reel-render-state">
+                    <Spinner label="Montando" />
+                    <span>{versionView?.label ?? 'Montando'}… Se actualiza solo; puedes seguir editando.</span>
+                  </div>
+                ) : versionView?.assetId ? (
+                  <p className="text-sm" data-testid="reel-render-state">
+                    <Badge tone="success">Listo</Badge>{' '}
+                    <Link
+                      to={`/o/${org.id}/m/${brand.id}/biblioteca?recurso=${versionView.assetId}`}
+                      className="font-medium text-primary hover:underline"
+                      data-testid="reel-render-view"
+                    >
+                      Ver el vídeo
+                    </Link>
+                  </p>
+                ) : versionView?.tone === 'danger' ? (
+                  <p className="text-sm text-danger" role="alert" data-testid="reel-render-state">
+                    No se pudo montar: {versionView.detail}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted" data-testid="reel-render-state">
+                    {dirty
+                      ? 'Hay cambios sin guardar. Al montar se guardan como versión nueva.'
+                      : 'Todavía no se ha montado esta versión.'}
+                  </p>
+                )}
+                {!readOnly && (
+                  <>
+                    <Button
+                      className="w-full"
+                      onClick={() => void saveAndRender()}
+                      disabled={Boolean(renderBlockedBy) || rendering}
+                      loading={request.isPending || saveReel.isPending}
+                      data-testid="reel-render"
+                    >
+                      <Clapperboard className="h-4 w-4" aria-hidden />
+                      {rendering
+                        ? 'Montando…'
+                        : dirty || expectedVersion === 0
+                          ? 'Guardar y montar el vídeo'
+                          : versionView?.assetId || versionView?.tone === 'danger'
+                            ? 'Montar otra vez'
+                            : 'Montar el vídeo'}
+                    </Button>
+                    {renderBlockedBy && <p className="text-xs text-muted">{renderBlockedBy}</p>}
+                  </>
+                )}
+              </CardBody>
+            </Card>
+          )}
         </div>
 
-        {/* ── Plantilla, añadir y propiedades ── */}
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label="Plantilla de partida">
-              {(fieldProps) => (
-                <Select
-                  {...fieldProps}
-                  value={template.id}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    const next = REEL_TEMPLATES.find((t) => t.id === e.target.value);
-                    if (next) apply((p) => applyTemplate(p, next));
-                  }}
-                  data-testid="reel-template"
-                >
-                  {REEL_TEMPLATES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
+        {/* ── Añadir ── */}
+        <div className="order-2 space-y-3">
+          {empty ? (
+            !readOnly && (
+              <Starter
+                templates={REEL_TEMPLATES}
+                templateId={template.id}
+                onTemplate={(id) => {
+                  const next = REEL_TEMPLATES.find((t) => t.id === id);
+                  if (next) apply((p) => applyTemplate(p, next));
+                }}
+                onPickMedia={(text) => {
+                  setOpeningText(text);
+                  setMediaOpen(true);
+                }}
+              />
+            )
+          ) : (
+            <>
+              {!readOnly && (
+                <div className="grid grid-cols-5 gap-2" data-testid="reel-toolbar">
+                  {[
+                    {
+                      id: 'reel-add-media',
+                      icon: Images,
+                      label: 'Fotos y clips',
+                      onClick: () => setMediaOpen(true),
+                      disabled: project.plan.clips.length >= REEL_MAX_CLIPS,
+                    },
+                    { id: 'reel-add-text', icon: Type, label: 'Texto', onClick: newText, disabled: false },
+                    {
+                      id: 'reel-add-music',
+                      icon: Music2,
+                      label: 'Música',
+                      onClick: () => (project.plan.music ? select({ kind: 'music' }) : setMusicOpen(true)),
+                      disabled: false,
+                    },
+                    {
+                      id: 'reel-subtitles',
+                      icon: Captions,
+                      label: 'Subtítulos',
+                      onClick: () => select({ kind: 'subtitles' }),
+                      disabled: false,
+                    },
+                    {
+                      id: 'reel-template',
+                      icon: Palette,
+                      label: 'Estilo',
+                      onClick: () => setStyleOpen(true),
+                      disabled: false,
+                    },
+                  ].map((b) => (
+                    <Button
+                      key={b.id}
+                      variant="secondary"
+                      className="h-auto min-w-0 flex-col gap-1 px-1 py-2 text-xs"
+                      onClick={b.onClick}
+                      disabled={b.disabled}
+                      data-testid={b.id}
+                    >
+                      <b.icon className="h-5 w-5" aria-hidden />
+                      <span className="max-w-full truncate">{b.label}</span>
+                    </Button>
                   ))}
-                </Select>
+                </div>
               )}
-            </Field>
-            {!readOnly && (
-              <>
+              <div className="flex items-center gap-2">
+                {!readOnly && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={state.past.length === 0}
+                      onClick={() => dispatch({ type: 'undo' })}
+                      data-testid="reel-undo"
+                    >
+                      <Undo2 className="h-4 w-4" aria-hidden />
+                      Deshacer
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={state.future.length === 0}
+                      onClick={() => dispatch({ type: 'redo' })}
+                      data-testid="reel-redo"
+                    >
+                      <Redo2 className="h-4 w-4" aria-hidden />
+                      Rehacer
+                    </Button>
+                  </>
+                )}
+                <span className="ml-auto text-xs text-muted">Estilo: {template.name}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Propiedades del elemento elegido ── */}
+        {!empty && (
+          <div className="order-4 lg:order-3">
+            <Card>
+              <CardBody>
+                <Inspector
+                  project={project}
+                  selection={selection}
+                  template={template}
+                  readOnly={readOnly}
+                  apply={apply}
+                  onSelect={select}
+                  labelOf={labelOf}
+                  fileSecondsOf={fileSecondsOf}
+                  urlOf={(path) => urls.get(path)}
+                  palette={palette}
+                  fonts={fonts}
+                  autoSubtitles={autoSubtitles}
+                  brandId={brand.id}
+                />
+              </CardBody>
+            </Card>
+          </div>
+        )}
+
+        {/* ── Línea de tiempo ── */}
+        {!empty && (
+          <div className="order-3 space-y-2 lg:order-4 lg:col-span-2">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium">Línea de tiempo</span>
+              <span className="text-muted" data-testid="reel-duration">
+                {fmt(timeline.total)} s de {REEL_MAX_SECONDS} s como máximo
+              </span>
+              <span className="ml-auto flex items-center gap-1">
                 <Button
-                  variant="secondary"
-                  onClick={() => setMediaOpen(true)}
-                  disabled={project.plan.clips.length >= REEL_MAX_CLIPS}
-                  data-testid="reel-add-media"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Alejar la línea de tiempo"
+                  disabled={zoom === 0}
+                  onClick={() => setZoom((z) => z - 1)}
                 >
-                  <Images className="h-4 w-4" aria-hidden />
-                  Foto o clip
+                  <ZoomOut className="h-4 w-4" aria-hidden />
                 </Button>
                 <Button
-                  variant="secondary"
-                  onClick={newText}
-                  disabled={project.plan.clips.length === 0}
-                  data-testid="reel-add-text"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Acercar la línea de tiempo"
+                  disabled={zoom === ZOOM_LEVELS.length - 1}
+                  onClick={() => setZoom((z) => z + 1)}
+                  data-testid="reel-zoom-in"
                 >
-                  <Type className="h-4 w-4" aria-hidden />
-                  Texto
+                  <ZoomIn className="h-4 w-4" aria-hidden />
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => (project.plan.music ? select({ kind: 'music' }) : setMusicOpen(true))}
-                  data-testid="reel-add-music"
-                >
-                  <Music2 className="h-4 w-4" aria-hidden />
-                  Música
-                </Button>
-                <Button variant="secondary" onClick={() => select({ kind: 'subtitles' })} data-testid="reel-subtitles">
-                  <Captions className="h-4 w-4" aria-hidden />
-                  Subtítulos
-                </Button>
-              </>
+              </span>
+            </div>
+            <Timeline
+              plan={project.plan}
+              timeline={timeline}
+              pxPerSecond={pps}
+              playhead={playhead}
+              selection={selection}
+              readOnly={readOnly}
+              labelOf={labelOf}
+              fileSecondsOf={fileSecondsOf}
+              onSeek={seek}
+              onSelect={select}
+              onMoveClip={(from, to) => apply((p) => moveClip(p, from, to))}
+              onTrimClip={(id, edge, value, key) => {
+                const clip = project.plan.clips.find((c) => c.id === id);
+                apply((p) => trimClip(p, id, edge, value, clip ? fileSecondsOf(clip.path) : null), key);
+              }}
+              onMoveText={(id, value, key) => apply((p) => moveText(p, id, value), key)}
+              onTrimText={(id, edge, value, key) => apply((p) => trimText(p, id, edge, value), key)}
+              onDragEnd={() => dispatch({ type: 'commit' })}
+            />
+            {problems.length > 0 && (
+              <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
+                {problems.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
             )}
           </div>
-          <p className="text-xs text-muted">{template.description}</p>
-          <Card>
-            <CardBody>
-              <Inspector
-                project={project}
-                selection={selection}
-                template={template}
-                readOnly={readOnly}
-                apply={apply}
-                onSelect={select}
-                labelOf={labelOf}
-                fileSecondsOf={fileSecondsOf}
-                urlOf={(path) => urls.get(path)}
-                palette={palette}
-                fonts={fonts}
-                autoSubtitles={autoSubtitles}
-                brandId={brand.id}
-              />
-            </CardBody>
-          </Card>
-        </div>
-      </div>
-
-      {/* ── Línea de tiempo ── */}
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium">Línea de tiempo</span>
-          <span className="text-muted" data-testid="reel-duration">
-            {fmt(timeline.total)} s de {REEL_MAX_SECONDS} s como máximo
-          </span>
-          <span className="ml-auto flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Alejar la línea de tiempo"
-              disabled={zoom === 0}
-              onClick={() => setZoom((z) => z - 1)}
-            >
-              <ZoomOut className="h-4 w-4" aria-hidden />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Acercar la línea de tiempo"
-              disabled={zoom === ZOOM_LEVELS.length - 1}
-              onClick={() => setZoom((z) => z + 1)}
-              data-testid="reel-zoom-in"
-            >
-              <ZoomIn className="h-4 w-4" aria-hidden />
-            </Button>
-          </span>
-        </div>
-        {project.plan.clips.length === 0 ? (
-          <Card>
-            <EmptyState
-              icon={Images}
-              title="Todavía no hay nada en el reel"
-              description="Añade fotos y clips de la biblioteca. La plantilla pone la duración, las transiciones y el estilo de partida."
-              action={
-                !readOnly ? (
-                  <Button onClick={() => setMediaOpen(true)}>
-                    <Plus className="h-4 w-4" aria-hidden />
-                    Añadir foto o clip
-                  </Button>
-                ) : undefined
-              }
-            />
-          </Card>
-        ) : (
-          <Timeline
-            plan={project.plan}
-            timeline={timeline}
-            pxPerSecond={pps}
-            playhead={playhead}
-            selection={selection}
-            readOnly={readOnly}
-            labelOf={labelOf}
-            fileSecondsOf={fileSecondsOf}
-            onSeek={seek}
-            onSelect={select}
-            onMoveClip={(from, to) => apply((p) => moveClip(p, from, to))}
-            onTrimClip={(id, edge, value, key) => {
-              const clip = project.plan.clips.find((c) => c.id === id);
-              apply((p) => trimClip(p, id, edge, value, clip ? fileSecondsOf(clip.path) : null), key);
-            }}
-            onMoveText={(id, value, key) => apply((p) => moveText(p, id, value), key)}
-            onTrimText={(id, edge, value, key) => apply((p) => trimText(p, id, edge, value), key)}
-            onDragEnd={() => dispatch({ type: 'commit' })}
-          />
-        )}
-        {problems.length > 0 && project.plan.clips.length > 0 && (
-          <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
-            {problems.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
         )}
       </div>
 
       {/* ── Montajes de la pieza ── */}
-      {worker && (
+      {worker && (jobs.data ?? []).length > 0 && (
         <Card>
           <CardBody className="space-y-2">
             <h2 className="text-sm font-semibold">Montajes</h2>
-            {jobs.isPending ? (
-              <Skeleton className="h-12" />
-            ) : (jobs.data ?? []).length === 0 ? (
-              <p className="text-sm text-muted">Todavía no se ha montado ninguna versión.</p>
-            ) : (
-              <ul className="divide-y divide-border" data-testid="reel-piece-jobs">
-                {(jobs.data ?? []).map((job) => {
-                  const view = describeJob(job);
-                  return (
-                    <li
-                      key={job.id}
-                      className="flex flex-wrap items-center gap-2 py-2 text-sm"
-                      data-testid="reel-piece-job"
+            <ul className="divide-y divide-border" data-testid="reel-piece-jobs">
+              {(jobs.data ?? []).map((job) => {
+                const view = describeJob(job);
+                return (
+                  <li
+                    key={job.id}
+                    className="flex flex-wrap items-center gap-2 py-2 text-sm"
+                    data-testid="reel-piece-job"
+                  >
+                    <span>Versión {jobContentVersion(job) ?? '?'}</span>
+                    <Badge
+                      tone={
+                        view.tone === 'success'
+                          ? 'success'
+                          : view.tone === 'danger'
+                            ? 'danger'
+                            : view.tone === 'progress'
+                              ? 'primary'
+                              : 'neutral'
+                      }
                     >
-                      <span>Versión {jobContentVersion(job) ?? '?'}</span>
-                      <Badge
-                        tone={
-                          view.tone === 'success'
-                            ? 'success'
-                            : view.tone === 'danger'
-                              ? 'danger'
-                              : view.tone === 'progress'
-                                ? 'primary'
-                                : 'neutral'
-                        }
+                      {view.label}
+                    </Badge>
+                    <span className="text-xs text-muted">{formatDateTime(job.created_at)}</span>
+                    {view.detail && <span className="w-full text-xs text-danger">{view.detail}</span>}
+                    {view.assetId && (
+                      <Link
+                        to={`/o/${org.id}/m/${brand.id}/biblioteca?recurso=${view.assetId}`}
+                        className="font-medium text-primary hover:underline"
                       >
-                        {view.label}
-                      </Badge>
-                      <span className="text-xs text-muted">{formatDateTime(job.created_at)}</span>
-                      {view.detail && <span className="w-full text-xs text-danger">{view.detail}</span>}
-                      {view.assetId && (
-                        <Link
-                          to={`/o/${org.id}/m/${brand.id}/biblioteca?recurso=${view.assetId}`}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          Ver el vídeo
-                        </Link>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                        Ver el vídeo
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </CardBody>
         </Card>
       )}
@@ -733,16 +987,53 @@ function Editor({
         issues={[]}
         onSave={(note) => void save(note)}
       />
-      <MediaPicker
-        open={mediaOpen}
-        onOpenChange={setMediaOpen}
-        sources={(sources.data ?? []).filter((a) => a.kind === 'image' || a.kind === 'video')}
-        loading={sources.isPending}
-        error={sources.error}
-        onPick={(asset) => {
-          addMedia(asset);
-          setMediaOpen(false);
-        }}
+      {mediaOpen && (
+        <MediaPicker
+          open={mediaOpen}
+          onOpenChange={setMediaOpen}
+          sources={(sources.data ?? []).filter((a) => a.kind === 'image' || a.kind === 'video')}
+          loading={sources.isPending}
+          error={sources.error}
+          room={REEL_MAX_CLIPS - project.plan.clips.length}
+          confirmLabel={(n) => (empty ? (n === 0 ? 'Crear el reel' : `Crear el reel con ${n}`) : `Añadir ${n}`)}
+          onConfirm={addMedia}
+        />
+      )}
+      <Dialog
+        open={styleOpen}
+        onOpenChange={setStyleOpen}
+        title="Estilo del reel"
+        description="Cambia el ritmo, las transiciones y el estilo del texto. Pone de nuevo la duración de las fotos y las transiciones del estilo; no toca el orden, los recortes ni lo que escribiste."
+        size="lg"
+      >
+        <TemplateCards
+          templates={REEL_TEMPLATES}
+          value={template.id}
+          disabled={readOnly}
+          onChange={(id) => {
+            const next = REEL_TEMPLATES.find((t) => t.id === id);
+            if (next) apply((p) => applyTemplate(p, next));
+            setStyleOpen(false);
+          }}
+        />
+      </Dialog>
+      {renameOpen && (
+        <RenameDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          current={item.title}
+          saving={mutations.update.isPending}
+          onSave={(title) => void rename(title)}
+        />
+      )}
+      <ConfirmDialog
+        open={confirmArchive}
+        onOpenChange={setConfirmArchive}
+        title={`¿Archivar «${item.title}»?`}
+        description="No se borra: queda en «Archivadas», con su historial, y se puede recuperar."
+        confirmLabel="Archivar"
+        loading={mutations.archive.isPending}
+        onConfirm={toggleArchive}
       />
       <MusicPicker
         open={musicOpen}
@@ -775,85 +1066,6 @@ function Editor({
         />
       )}
     </div>
-  );
-}
-
-function MediaPicker({
-  open,
-  onOpenChange,
-  sources,
-  loading,
-  error,
-  onPick,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  sources: ReelSourceAsset[];
-  loading: boolean;
-  error: unknown;
-  onPick: (asset: ReelSourceAsset) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const visible = sources.filter((s) => s.file_name.toLowerCase().includes(query.trim().toLowerCase()));
-  const thumbs = useSignedUrls(
-    open
-      ? visible
-          .filter((a) => a.kind === 'image')
-          .map((a) => a.storage_path)
-          .sort()
-      : [],
-  );
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Añadir una foto o un clip"
-      description="De la biblioteca de la marca."
-      size="lg"
-    >
-      <Input
-        placeholder="Buscar por nombre"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        aria-label="Buscar"
-      />
-      {loading ? (
-        <Skeleton className="mt-3 h-24" />
-      ) : error ? (
-        <ErrorState error={error} />
-      ) : visible.length === 0 ? (
-        <p className="mt-3 text-sm text-muted">No hay fotos ni clips. Súbelos primero a la biblioteca.</p>
-      ) : (
-        <ul
-          className="mt-3 grid max-h-[50vh] grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4"
-          data-testid="reel-media-picker"
-        >
-          {visible.map((asset) => {
-            const url = thumbs.data?.get(asset.storage_path);
-            return (
-              <li key={asset.id}>
-                <button
-                  type="button"
-                  className="block w-full overflow-hidden rounded-lg border border-border bg-subtle text-left hover:shadow-pop"
-                  onClick={() => onPick(asset)}
-                  aria-label={`Añadir «${asset.file_name}»`}
-                  data-testid="reel-media-option"
-                >
-                  <span className="flex aspect-square items-center justify-center overflow-hidden">
-                    {asset.kind === 'image' && url ? (
-                      <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
-                    ) : (
-                      <Clapperboard className="h-6 w-6 text-muted" aria-hidden />
-                    )}
-                  </span>
-                  <span className="block truncate px-2 py-1 text-xs">{asset.file_name}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </Dialog>
   );
 }
 
@@ -989,6 +1201,52 @@ function VersionsDialog({
           ))}
         </ul>
       )}
+    </Dialog>
+  );
+}
+
+function RenameDialog({
+  open,
+  onOpenChange,
+  current,
+  saving,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  current: string;
+  saving: boolean;
+  onSave: (title: string) => void;
+}) {
+  const [title, setTitle] = useState(current);
+  const clean = title.trim();
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Cambiar el nombre"
+      description="Es el nombre con el que lo ves en Contenidos; no sale en la red."
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!clean || clean === current}
+            loading={saving}
+            onClick={() => onSave(clean)}
+            data-testid="reel-rename-save"
+          >
+            Guardar
+          </Button>
+        </>
+      }
+    >
+      <Field label="Nombre">
+        {(fieldProps) => (
+          <Input {...fieldProps} value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
+        )}
+      </Field>
     </Dialog>
   );
 }

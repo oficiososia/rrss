@@ -98,10 +98,11 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   const contentId = page.url().split('/contenidos/')[1]!.split('?')[0]!;
 
   // 3. Foto y clip a la línea de tiempo; un texto.
+  await page.getByTestId('reel-starter-pick').click();
   for (const nombre of [foto, clip]) {
-    await page.getByTestId('reel-add-media').click();
-    await page.getByRole('button', { name: `Añadir «${nombre}»` }).click();
+    await page.getByRole('button', { name: `Elegir «${nombre}»` }).click();
   }
+  await page.getByTestId('reel-media-confirm').click();
   await expect(page.getByTestId('reel-clip')).toHaveCount(2);
   await page.getByTestId('reel-add-text').click();
   await page.getByTestId('reel-text-content').fill('Pan recién hecho');

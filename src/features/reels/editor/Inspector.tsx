@@ -139,6 +139,43 @@ function ClipPanel(props: InspectorProps & { clip: Clip; index: number }) {
       <p className="truncate text-sm font-medium">
         {index + 1}. {clip.type === 'video' ? 'Clip' : 'Foto'} · {props.labelOf(clip.path)}
       </p>
+      {!readOnly && (
+        <div className="flex flex-wrap gap-1 border-b border-border pb-3" data-testid="reel-clip-actions">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={index === 0}
+            onClick={() => apply((p) => moveClip(p, index, index - 1))}
+            aria-label="Mover antes"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            Antes
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={index === count - 1}
+            onClick={() => apply((p) => moveClip(p, index, index + 1))}
+            aria-label="Mover después"
+          >
+            Después
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => apply((p) => duplicateClip(p, clip.id))}>
+            <Copy className="h-4 w-4" aria-hidden />
+            Duplicar
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => apply((p) => removeClip(p, clip.id))}
+            data-testid="reel-clip-remove"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+            Quitar
+          </Button>
+        </div>
+      )}
       <fieldset disabled={readOnly} className="space-y-3">
         <Section title="Tiempo">
           {clip.type === 'photo' ? (
@@ -316,44 +353,6 @@ function ClipPanel(props: InspectorProps & { clip: Clip; index: number }) {
       </fieldset>
 
       {clip.type === 'video' && <ClipSubtitles {...props} clip={clip} />}
-
-      {!readOnly && (
-        <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={index === 0}
-            onClick={() => apply((p) => moveClip(p, index, index - 1))}
-            aria-label="Mover antes"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Antes
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={index === count - 1}
-            onClick={() => apply((p) => moveClip(p, index, index + 1))}
-            aria-label="Mover después"
-          >
-            Después
-            <ArrowRight className="h-4 w-4" aria-hidden />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => apply((p) => duplicateClip(p, clip.id))}>
-            <Copy className="h-4 w-4" aria-hidden />
-            Duplicar
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => apply((p) => removeClip(p, clip.id))}
-            data-testid="reel-clip-remove"
-          >
-            <Trash2 className="h-4 w-4" aria-hidden />
-            Quitar
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -476,6 +475,11 @@ function ClipSubtitles(props: InspectorProps & { clip: VideoClip; index: number 
               <Captions className="h-4 w-4" aria-hidden />
               {cues.length ? 'Volver a transcribir' : 'Subtítulos automáticos'}
             </Button>
+          )}
+          {!props.autoSubtitles && (
+            <p className="w-full text-xs text-muted" data-testid="reel-auto-subtitles-off">
+              Los subtítulos automáticos no están disponibles en este entorno. Puedes escribirlos a mano.
+            </p>
           )}
           <Button
             variant="ghost"

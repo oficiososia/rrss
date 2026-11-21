@@ -248,7 +248,7 @@ describe('Crear una idea', () => {
       format: 'reel',
     });
     expect(screen.getByTestId('reel-version')).toHaveTextContent('Sin guardar');
-    expect(screen.getByText('Todavía no hay nada en el reel')).toBeInTheDocument();
+    expect(screen.getByText('Empieza tu reel en tres pasos')).toBeInTheDocument();
     // Sin IA conectada todavía: no hay botón de generar.
     expect(screen.queryByRole('button', { name: /IA/ })).not.toBeInTheDocument();
   });

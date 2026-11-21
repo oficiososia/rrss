@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 21/11/2026 («Editar foto» a pantalla completa en la rama `f15/editar-foto-pantalla`; ediciones sencillas del editor en la rama `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 21/11/2026 (editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas del editor en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -111,6 +111,17 @@ salida suaves y confirmación de licencia (queda en la procedencia). Se guarda c
 - Precio de los subtítulos: 0,0045 $/min (OpenAI, 21/11/2026) + 10 % de cota por la UE = 82,5 micros/s.
 - Pruebas: unitarias, componentes, trabajador con FFmpeg real, base de datos (con aislamiento). La e2e `29-editor-reels.spec.ts` está **escrita y sin ejecutar** (Docker parado). Sin probar contra OpenAI real ni la vista previa en un navegador real.
 - Para llevarlo a staging: migración `20261207010000`, desplegar `ai-transcribe` y redesplegar `platform-integrations`; `VITE_REEL_SUBTITLES_ENABLED` cuando haya clave de OpenAI. Detalle en `docs/editor-reels.md`.
+
+#### Editor de reels más intuitivo (rama `f14/reels-intuitivo`, 21/11/2026)
+
+Auditoría en staging (escritorio y 375 px) y mejoras sin tocar el plan, el trabajador ni la base de datos:
+pantalla de salida de tres pasos (estilo con muestras en movimiento, texto de apertura, varias fotos en el orden elegido),
+selector de fotos y clips con miniaturas, varias a la vez, filtros y tandas, «Guardar y montar el vídeo» con el estado del
+montaje a la vista, cabecera común con «⋯» (Archivar, cambiar el nombre, Historial), diseño de una columna en móvil sin
+scroll lateral, barra de duración, zonas que tapa Instagram y asas de recorte táctiles. **Arreglo en `media-storage`**:
+`sign` daba 500 con ≥ ~100 rutas (URL de PostgREST demasiado larga); ahora consulta de 40 en 40, **hay que redesplegar la
+función**. Pendiente: cortes al compás de la música, portada del reel, animaciones de texto (cambian el plan: fase aparte)
+y mirar la pantalla nueva en staging (no se ha visto en un navegador real). Detalle y cómo probar en `docs/editor-reels.md` §7.
 
 ### Fase 4 · Campañas (primera parte)
 
