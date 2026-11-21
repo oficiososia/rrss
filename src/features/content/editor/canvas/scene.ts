@@ -188,6 +188,14 @@ export class Scene {
     this.overlay.batchDraw();
   }
 
+  /**
+   * Lo que se ve ahora (sin selección ni guías si no las hay) a una escala dada. Lo usan las pruebas de
+   * navegador para comparar el lienzo con la exportación.
+   */
+  snapshot(pixelRatio = 1): HTMLCanvasElement {
+    return this.stage.toCanvas({ pixelRatio });
+  }
+
   destroy(): void {
     this.stage.destroy();
     this.nodes.clear();
