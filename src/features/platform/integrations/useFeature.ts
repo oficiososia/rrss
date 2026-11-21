@@ -1,4 +1,10 @@
-import { aiImageEnabled, aiTextEnabled, driveLibraryEnabled, socialPublishingEnabled } from '@/config/app';
+import {
+  aiImageEnabled,
+  aiTextEnabled,
+  driveLibraryEnabled,
+  reelSubtitlesEnabled,
+  socialPublishingEnabled,
+} from '@/config/app';
 import { billingEnabled } from '@/features/billing/labels';
 import { useIntegrationAvailability, type IntegrationAvailability } from './api';
 
@@ -12,7 +18,7 @@ import { useIntegrationAvailability, type IntegrationAvailability } from './api'
 // despliegue) y el servidor decide si de verdad funcionan. Mientras no hay
 // respuesta del servidor, o si falla, no se enseña.
 
-export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing' | 'drive' | 'mediaStorage';
+export type Feature = 'aiText' | 'aiImage' | 'publishing' | 'billing' | 'drive' | 'mediaStorage' | 'reelSubtitles';
 
 const BUILD_FLAGS: Record<Feature, () => boolean> = {
   aiText: aiTextEnabled,
@@ -23,6 +29,8 @@ const BUILD_FLAGS: Record<Feature, () => boolean> = {
   // Archivos en Cloudflare R2: sin variable de compilación. Si el servidor guarda
   // archivos en R2, la aplicación tiene que saber leerlos en cualquier despliegue.
   mediaStorage: () => true,
+  // Subtítulos automáticos de los reels: interruptor propio y OpenAI configurado en el servidor.
+  reelSubtitles: reelSubtitlesEnabled,
 };
 
 export function useFeature(feature: Feature): boolean {

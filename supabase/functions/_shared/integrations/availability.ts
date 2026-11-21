@@ -12,6 +12,7 @@ import type { MediaReader, MediaStorage } from '../ai/media/contract.ts';
 import type { MediaModelRow } from '../ai/media/models.ts';
 import { createMediaRuntime } from '../ai/media/runtime.ts';
 import { loadAiTextConfig } from '../ai/text/config.ts';
+import { transcriptionReady } from '../ai/transcription/config.ts';
 import { loadLocalTestTextConfig } from '../ai/text/local-test.ts';
 import { TEXT_UNITS } from '../ai/text/prompt.ts';
 import { normalizeAppUrl } from '../billing/handlers.ts';
@@ -34,6 +35,8 @@ export interface IntegrationAvailability {
   drive: boolean;
   /** Archivos de la biblioteca en Cloudflare R2: cuenta, clave y cubo. */
   mediaStorage: boolean;
+  /** Subtítulos automáticos de los reels: OpenAI cargable (clave y criterio de la UE) con precio. */
+  reelSubtitles: boolean;
 }
 
 export const NOTHING_AVAILABLE: IntegrationAvailability = {
@@ -45,6 +48,7 @@ export const NOTHING_AVAILABLE: IntegrationAvailability = {
   billing: false,
   drive: false,
   mediaStorage: false,
+  reelSubtitles: false,
 };
 
 const unused = () => {
@@ -96,5 +100,6 @@ export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): 
     billing: Boolean(env.STRIPE_SECRET_KEY?.trim()) && webhook && normalizeAppUrl(env.BILLING_APP_URL) !== null,
     drive: driveReady(drive),
     mediaStorage: mediaStorageReady(loadMediaStorageConfig(env)),
+    reelSubtitles: transcriptionReady(env),
   };
 }

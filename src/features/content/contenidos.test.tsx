@@ -44,30 +44,36 @@ function documentWithText(text = 'Titular de otoño'): ContentDocument {
   const doc = createEmptyDocument();
   return {
     ...doc,
-    pages: [{ id: 'p1', name: '', layers: [
+    pages: [
       {
-        id: 'titular',
-        type: 'text',
+        id: 'p1',
         name: '',
-        x: 100,
-        y: 100,
-        width: 800,
-        height: 200,
-        rotation: 0,
-        opacity: 1,
-        visible: true,
-        locked: false,
-        anchor: { x: 'center', y: 'center' },
-        text,
-        fontFamily: 'sans-serif',
-        fontSize: 80,
-        fontWeight: 700,
-        italic: false,
-        color: '#111111',
-        align: 'center',
-        lineHeight: 1.2,
+        layers: [
+          {
+            id: 'titular',
+            type: 'text',
+            name: '',
+            x: 100,
+            y: 100,
+            width: 800,
+            height: 200,
+            rotation: 0,
+            opacity: 1,
+            visible: true,
+            locked: false,
+            anchor: { x: 'center', y: 'center' },
+            text,
+            fontFamily: 'sans-serif',
+            fontSize: 80,
+            fontWeight: 700,
+            italic: false,
+            color: '#111111',
+            align: 'center',
+            lineHeight: 1.2,
+          },
+        ],
       },
-    ] }],
+    ],
   };
 }
 
@@ -221,7 +227,7 @@ describe('Lista de contenidos', () => {
 });
 
 describe('Crear una idea', () => {
-  it('elige red y formato del catálogo y abre el editor con un lienzo de la proporción admitida', async () => {
+  it('elige red y formato del catálogo y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-new'));
@@ -232,7 +238,8 @@ describe('Crear una idea', () => {
     expect(dialog.getByText(/Es un formato de vídeo/)).toBeInTheDocument();
     await user.click(dialog.getByTestId('create-content-submit'));
 
-    expect(await screen.findByTestId('editor-title')).toHaveTextContent('Reel del vermut');
+    // Un reel se abre en el editor de reels (línea de tiempo y vista previa), no en el de imagen.
+    expect(await screen.findByTestId('reel-editor', {}, { timeout: 5000 })).toHaveTextContent('Reel del vermut');
     expect(fake.callsTo('content_items', 'insert')[0]?.payload).toEqual({
       brand_id: BRAND_ID,
       organization_id: ORG_ID,
@@ -240,9 +247,8 @@ describe('Crear una idea', () => {
       network: 'instagram',
       format: 'reel',
     });
-    expect(screen.getByTestId('editor-version')).toHaveTextContent('Sin guardar todavía');
-    // El reel recomienda 9:16.
-    expect(await screen.findByTestId('canvas-stub')).toHaveAttribute('data-ratio', '9:16');
+    expect(screen.getByTestId('reel-version')).toHaveTextContent('Sin guardar');
+    expect(screen.getByText('Todavía no hay nada en el reel')).toBeInTheDocument();
     // Sin IA conectada todavía: no hay botón de generar.
     expect(screen.queryByRole('button', { name: /IA/ })).not.toBeInTheDocument();
   });

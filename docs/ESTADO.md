@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 21/11/2026. Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 21/11/2026 (editor de reels en la rama `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -22,9 +22,9 @@ y las funciones desplegadas sin proveedores.
 
 | Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 826 pasan (21/11/2026, rama `f8/carrusel-paginas` con `claude/focused-noether-hk502p` unida) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db`  | 843 pasan, 2 omitidas (21/11/2026, rama `f8/carrusel-paginas`; incluye carruseles de varias páginas) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
-| `worker/`          | 81 pasan (21/11/2026) | Trabajador de medios con FFmpeg real: reels (con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
+| `npm test`         | 876 pasan (21/11/2026, rama `f11/editor-reels`; incluye el editor de reels) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db`  | 858 pasan, 2 omitidas (21/11/2026, rama `f11/editor-reels`; incluye editor de reels y subtítulos automáticos) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `worker/`          | 90 pasan (21/11/2026, rama `f11/editor-reels`) | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
 | `agency/`          | 49 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
 | `npm run test:e2e` | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
 | CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -90,6 +90,27 @@ hecho con varias versiones (la demo de EnerGym) en `docs/publicacion.md`
   función que desplegar (el cambio de la Graph API simulada solo cuenta en local).
   Ojo: un carrusel ya programado con exportaciones sin número de página queda
   detenido («invalid_media») hasta exportar sus páginas.
+
+### Editor de reels (rama `f11/editor-reels`, 21/11/2026)
+
+Una pieza de formato reel se monta en un **editor de reels** (el diseño por capas
+antiguo sigue en `?editor=imagen`): línea de tiempo con pistas de vídeo y fotos,
+textos, subtítulos y música; arrastrar para ordenar, recortar principio y final,
+duración de las fotos, transición por elemento, cabezal, zoom y deshacer/rehacer.
+Las tres plantillas son el punto de partida. **Vista previa al momento** en el
+navegador (clips, fotos, textos, subtítulos y sonido sincronizados, con aviso de lo
+que se verá distinto). Textos con la tipografía (.ttf/.otf) y los colores de la marca.
+**Subtítulos automáticos** con OpenAI (`gpt-transcribe`, clave de Integraciones; un
+trozo de voz = un subtítulo) con cupo y coste por organización, interruptor
+`VITE_REEL_SUBTITLES_ENABLED` y corrección a mano. **Música** con volumen, entrada y
+salida suaves y confirmación de licencia (queda en la procedencia). Se guarda como
+**versión de la pieza**, se aprueba y se monta la versión guardada; programar y
+«Publicar ahora» proponen su montaje.
+- Plan del reel **v2** (`worker/src/reel/schema.ts`, `src/features/reels/editor/project.ts`); el v1 se migra al leerlo.
+- Migración `20261207010000_reel_editor` (sin tablas: carga v2, enlace con la pieza, tipografías y licencia comprobadas, procedencia), con vuelta atrás. Función nueva `ai-transcribe`.
+- Precio de los subtítulos: 0,0045 $/min (OpenAI, 21/11/2026) + 10 % de cota por la UE = 82,5 micros/s.
+- Pruebas: unitarias, componentes, trabajador con FFmpeg real, base de datos (con aislamiento). La e2e `29-editor-reels.spec.ts` está **escrita y sin ejecutar** (Docker parado). Sin probar contra OpenAI real ni la vista previa en un navegador real.
+- Para llevarlo a staging: migración `20261207010000`, desplegar `ai-transcribe` y redesplegar `platform-integrations`; `VITE_REEL_SUBTITLES_ENABLED` cuando haya clave de OpenAI. Detalle en `docs/editor-reels.md`.
 
 ### Fase 4 · Campañas (primera parte)
 
@@ -362,6 +383,7 @@ después en `energym-demo-datos/capturas/tanda2/f13-*`.
 | Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
 | Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
 | Quitar el fondo en el navegador (IS-Net, onnxruntime-web) | Lógica y flujo probados con el worker simulado; modelo real solo comprobado en CPU de Node; sin probar en un navegador (WebGPU/WASM, tiempos, calidad) | `docs/edicion-fotos.md` §7 |
+| Subtítulos automáticos con OpenAI (`gpt-transcribe`) | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave | `docs/editor-reels.md` |
 | IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar | `docs/ia-medios.md` §13 |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |
 | «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
@@ -430,6 +452,8 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 3. Activar el vídeo con IA (por defecto, apagado).
 4. Alojamiento del trabajador de medios: recomendado Fly.io en Fráncfort; código preparado (`docs/alojamiento.md`), falta la cuenta.
 5. Música para los reels y su licencia.
+4. Alojamiento del trabajador de medios.
+5. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
 6. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
 7. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
 8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.

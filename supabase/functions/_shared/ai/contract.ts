@@ -90,6 +90,15 @@ export interface AiInput {
    * los proveedores cuya caché de prompts se orienta con una clave.
    */
   cacheKey?: string;
+  /**
+   * Sonido que transcribir (tarea `transcription`): trozos ya cortados por
+   * quien llama, cada uno con su duración. Nunca va al registro.
+   */
+  audio?: {
+    chunks: Array<{ data: Uint8Array; mimeType: string; seconds: number }>;
+    /** Idioma esperado (ISO 639-1), si se sabe. */
+    language?: string;
+  };
 }
 
 export interface AiProviderRequest {

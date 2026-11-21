@@ -44,6 +44,7 @@ export const ALL_AVAILABLE = {
   drive: true,
   // Sin R2: las pruebas de siempre firman y suben con Supabase Storage.
   mediaStorage: false,
+  reelSubtitles: true,
 };
 type Op = 'select' | 'insert' | 'update' | 'delete';
 

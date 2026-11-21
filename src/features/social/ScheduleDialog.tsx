@@ -12,6 +12,7 @@ import {
   usePublishableMedia,
   useSchedulableContents,
   useSocialAccounts,
+  reelRenderOf,
   videosOf,
 } from './api';
 import {
@@ -81,7 +82,15 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
         : null,
     [content, media.data],
   );
-  const assetIds = assetChoice ?? pageSet?.map((a) => a.id) ?? [];
+  /** Un reel del editor de reels: se propone el montaje de la versión vigente. */
+  const reelRender = useMemo(
+    () =>
+      content?.format === 'reel' && media.data && content.current_version > 0
+        ? reelRenderOf(media.data, content.id, content.current_version)
+        : null,
+    [content, media.data],
+  );
+  const assetIds = assetChoice ?? pageSet?.map((a) => a.id) ?? (reelRender ? [reelRender.id] : []);
 
   const toggle = (id: string) =>
     setAssetIds((choice) => {

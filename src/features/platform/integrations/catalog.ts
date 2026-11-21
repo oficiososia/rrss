@@ -211,6 +211,13 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
           },
           { key: 'OPENAI_ORGANIZATION', label: 'Organización (opcional)', secret: false, placeholder: 'org-…' },
           { key: 'OPENAI_PROJECT', label: 'Proyecto (opcional)', secret: false, placeholder: 'proj_…' },
+          {
+            key: 'AI_TRANSCRIPTION_MODEL',
+            label: 'Modelo de transcripción (subtítulos de los reels)',
+            secret: false,
+            placeholder: 'gpt-transcribe',
+            help: 'Opcional. Sin él, gpt-transcribe. Precio en la tabla de precios: "openai/<modelo>": { "audio_seconds": micros }.',
+          },
         ],
       },
       {

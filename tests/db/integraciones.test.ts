@@ -363,6 +363,7 @@ describe('configuración efectiva', () => {
       billing: false,
       drive: false,
       mediaStorage: false,
+      reelSubtitles: false,
     });
     const keys = `k1:${Buffer.alloc(32, 1).toString('base64')}`;
     const some = computeAvailability(

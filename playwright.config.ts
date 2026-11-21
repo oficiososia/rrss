@@ -87,6 +87,8 @@ export default defineConfig({
         VITE_AI_VOICE_COPILOT_ENABLED: 'true',
         // El trabajador de medios existe en este entorno: lo arranca tests/e2e/11-reels.spec.ts contra el stack local.
         VITE_MEDIA_WORKER_ENABLED: 'true',
+        // Subtítulos automáticos del editor de reels, con la transcripción simulada (ai-transcribe).
+        VITE_REEL_SUBTITLES_ENABLED: 'true',
         // Publicación (Fase 3): conectar y programar, contra la Graph API simulada de social-publish/social-connect.
         VITE_SOCIAL_PUBLISHING_ENABLED: 'true',
         // Biblioteca con Google Drive, contra el Drive simulado de drive-media.

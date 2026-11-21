@@ -188,6 +188,12 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
   { key: 'AI_BEDROCK_ACCESS_KEY_ID', integration: 'ai_text', secret: true },
   { key: 'AI_BEDROCK_SECRET_ACCESS_KEY', integration: 'ai_text', secret: true },
   { key: 'AI_BEDROCK_BEARER_TOKEN', integration: 'ai_text', secret: true },
+  {
+    key: 'AI_TRANSCRIPTION_MODEL',
+    integration: 'ai_text',
+    secret: false,
+    validate: pattern(/^[a-z0-9][a-z0-9._-]{1,60}$/, 'Nombre de modelo no válido (por ejemplo, gpt-transcribe).'),
+  },
   { key: 'AI_PRICES', integration: 'ai_text', secret: false, validate: prices },
   { key: 'AI_ALLOW_NON_EU_PROCESSING', integration: 'ai_text', secret: false, validate: flag },
   {
