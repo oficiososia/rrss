@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { REEL_TEMPLATES } from '../templates';
 import { fadeAlpha, frameAt, musicGain, photoMotions, previewWarnings } from './compose';
 import { editorReducer, initEditor } from './history';
-import { addClip, addCue, moveClip, removeMusic, setMusic, trimClip, trimText, updateClip } from './ops';
+import { addClip, addCue, moveClip, removeMusic, setMusic, startReel, trimClip, trimText, updateClip } from './ops';
 import { emptyProject, planTimeline, type ReelProject } from './project';
 import { encodeWav, speechSegments, splitCue } from './subtitles';
 
@@ -34,6 +34,24 @@ describe('cambios sobre el proyecto', () => {
     expect(moveClip(p, 0, 2).plan.clips.map((c) => c.id)).toEqual(['c2', 'c3', 'c1']);
     expect(moveClip(p, 2, 0).plan.clips.map((c) => c.id)).toEqual(['c3', 'c1', 'c2']);
     expect(moveClip(p, 1, 1)).toBe(p);
+  });
+
+  it('empieza un reel de golpe: estilo, piezas en orden y texto de apertura sobre el primer tramo', () => {
+    const corte = template('corte-ritmico');
+    const style = { ...sample().plan.texts[0]?.style } as never;
+    const p = startReel(
+      emptyProject(fundido),
+      [asset('z.jpg', 'image'), asset('y.mp4', 'video', 8000), asset('x.jpg', 'image')],
+      corte,
+      { text: '  Menú de otoño  ', style },
+    );
+    expect(p.template.id).toBe('corte-ritmico');
+    expect(p.plan.clips.map((c) => c.path)).toEqual(['o/m/media/z.jpg', 'o/m/media/y.mp4', 'o/m/media/x.jpg']);
+    expect(p.plan.clips[0]).toMatchObject({ seconds: 1.5, transition: { type: 'cut' } });
+    expect(p.plan.texts).toHaveLength(1);
+    expect(p.plan.texts[0]).toMatchObject({ text: 'Menú de otoño', start: 0 });
+    // Sin texto no se añade ninguno.
+    expect(startReel(emptyProject(fundido), [asset('z.jpg', 'image')], fundido, null).plan.texts).toHaveLength(0);
   });
 
   it('recorta sin bajar de 0,5 s, sin pasar de 60 s y sin salirse del archivo', () => {

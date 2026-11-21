@@ -4,9 +4,10 @@
 // movimiento de la plantilla, y la música con un <audio> cuyo volumen sigue la
 // entrada y la salida suaves. No hay FFmpeg aquí: es una aproximación fiel a
 // las cuentas del trabajador, y lo que se verá distinto se avisa aparte.
-import { Pause, Play, SkipBack } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Pause, Play, ScanLine, SkipBack } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui';
+import { cn } from '@/lib/utils';
 import type { ReelTemplateSummary } from '../templates';
 import { frameAt, musicGain, type FrameText } from './compose';
 import { textLayout, type DraftPlan, type PlanTimeline } from './project';
@@ -30,6 +31,8 @@ export interface ReelPlayerProps {
   playing: boolean;
   onTime: (seconds: number) => void;
   onPlayingChange: (playing: boolean) => void;
+  /** Segundos máximos de un reel, para la barra de duración. */
+  maxSeconds?: number;
 }
 
 /** Desviación del desenfoque en el lienzo (la misma cuenta que `blurSigma` del trabajador). */
@@ -52,6 +55,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
     latest.current = props;
   });
   const clock = useRef({ base: playhead, started: 0, lastTick: 0 });
+  const [safeZones, setSafeZones] = useState(false);
 
   // ── Elementos de medios: uno por clip y uno por foto ──
   const mediaKey = useMemo(
@@ -260,9 +264,11 @@ export function ReelPlayer(props: ReelPlayerProps) {
     draw(playhead);
   }, [playhead, plan, timeline, playing, props.defaultFamily]);
 
+  const max = props.maxSeconds ?? 90;
+  const used = Math.min(1, timeline.total / max);
   return (
     <div className="space-y-2">
-      <div className="mx-auto aspect-[9/16] w-full max-w-[18rem] overflow-hidden rounded-xl bg-black shadow-card">
+      <div className="relative mx-auto aspect-[9/16] h-[min(54svh,32rem)] max-w-full overflow-hidden rounded-xl bg-black shadow-card">
         <canvas
           ref={canvasRef}
           width={PREVIEW_WIDTH}
@@ -272,6 +278,16 @@ export function ReelPlayer(props: ReelPlayerProps) {
           aria-label="Vista previa del reel"
           data-testid="reel-preview"
         />
+        {safeZones && (
+          <div className="pointer-events-none absolute inset-0" aria-hidden data-testid="reel-safe-zones">
+            <div className="absolute inset-x-0 top-0 h-[12%] border-b border-dashed border-white/70 bg-red-500/25" />
+            <div className="absolute inset-x-0 bottom-0 h-[22%] border-t border-dashed border-white/70 bg-red-500/25" />
+            <div className="absolute bottom-[22%] right-0 top-[12%] w-[14%] border-l border-dashed border-white/70 bg-red-500/25" />
+            <span className="absolute inset-x-0 top-[4%] text-center text-[10px] font-medium text-white">
+              Lo tapa Instagram
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex items-center justify-center gap-2">
         <Button
@@ -298,6 +314,30 @@ export function ReelPlayer(props: ReelPlayerProps) {
         <span className="w-24 text-center text-sm tabular-nums" data-testid="reel-time">
           {fmt(Math.min(playhead, timeline.total))} / {fmt(timeline.total)} s
         </span>
+        <Button
+          variant={safeZones ? 'primary' : 'ghost'}
+          size="icon"
+          aria-label="Zonas que tapa Instagram"
+          aria-pressed={safeZones}
+          title="Zonas que tapa Instagram (arriba, abajo y a la derecha)"
+          onClick={() => setSafeZones((v) => !v)}
+          data-testid="reel-safe-toggle"
+        >
+          <ScanLine className="h-4 w-4" aria-hidden />
+        </Button>
+      </div>
+      <div
+        className="mx-auto h-1.5 w-full max-w-[18rem] overflow-hidden rounded-full bg-subtle"
+        role="progressbar"
+        aria-label="Duración del reel"
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-valuenow={Math.round(timeline.total * 10) / 10}
+      >
+        <div
+          className={cn('h-full rounded-full', used >= 1 ? 'bg-danger' : used > 0.8 ? 'bg-warning' : 'bg-primary')}
+          style={{ width: `${used * 100}%` }}
+        />
       </div>
     </div>
   );

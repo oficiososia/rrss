@@ -1,0 +1,243 @@
+// Elegir fotos y clips de la biblioteca para el reel: varias de una vez, con
+// miniatura (también de los clips), filtro «Fotos / Vídeos», buscador y el
+// orden en que se eligen marcado con un número. Se enseñan por tandas para no
+// firmar ni dibujar cientos de direcciones de golpe.
+import { Clapperboard, Film, Image as ImageIcon, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Dialog, ErrorState, Input, Skeleton } from '@/components/ui';
+import { previewPath, useSignedUrls } from '@/features/library/api';
+import { cn } from '@/lib/utils';
+import type { ReelSourceAsset } from '../api';
+
+const PAGE = 48;
+type Filter = 'all' | 'image' | 'video';
+const FILTERS: Array<{ id: Filter; label: string }> = [
+  { id: 'all', label: 'Todo' },
+  { id: 'image', label: 'Fotos' },
+  { id: 'video', label: 'Vídeos' },
+];
+
+export interface MediaPickerProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  sources: ReelSourceAsset[];
+  loading: boolean;
+  error: unknown;
+  /** Cuántas piezas caben todavía en el reel. */
+  room: number;
+  title?: string;
+  description?: string;
+  /** Texto del botón, con el número de elegidas: «Añadir 3». */
+  confirmLabel?: (count: number) => string;
+  onConfirm: (assets: ReelSourceAsset[]) => void;
+}
+
+/** Primer fotograma de un clip, solo cuando la casilla llega a verse en pantalla. */
+function VideoFrame({ url }: { url: string | undefined }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <span ref={ref} className="relative flex h-full w-full items-center justify-center bg-subtle">
+      {visible && url ? (
+        <video
+          src={`${url}#t=0.1`}
+          preload="metadata"
+          muted
+          playsInline
+          tabIndex={-1}
+          aria-hidden
+          className="h-full w-full object-cover"
+          data-testid="reel-media-video-frame"
+        />
+      ) : (
+        <Clapperboard className="h-6 w-6 text-muted" aria-hidden />
+      )}
+      <Film className="absolute bottom-1 left-1 h-4 w-4 rounded bg-black/60 p-0.5 text-white" aria-hidden />
+    </span>
+  );
+}
+
+export function MediaPicker({
+  open,
+  onOpenChange,
+  sources,
+  loading,
+  error,
+  room,
+  title = 'Elige fotos y clips',
+  description = 'De la biblioteca de la marca. Toca varias: entran en el reel en el orden en que las eliges.',
+  confirmLabel = (n) => (n === 1 ? 'Añadir 1' : `Añadir ${n}`),
+  onConfirm,
+}: MediaPickerProps) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [shown, setShown] = useState(PAGE);
+  const [chosen, setChosen] = useState<string[]>([]);
+
+  // Se monta al abrirse (ReelEditor), así que siempre parte de cero.
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return sources.filter(
+      (s) => (filter === 'all' || s.kind === filter) && (!needle || s.file_name.toLowerCase().includes(needle)),
+    );
+  }, [sources, filter, query]);
+  const page = useMemo(() => visible.slice(0, shown), [visible, shown]);
+  const pagePaths = useMemo(() => (open ? page.map(previewPath).sort() : []), [open, page]);
+  const urls = useSignedUrls(pagePaths);
+  const byId = useMemo(() => new Map(sources.map((s) => [s.id, s])), [sources]);
+  const full = chosen.length >= room;
+
+  const toggle = (id: string) =>
+    setChosen((current) =>
+      current.includes(id) ? current.filter((c) => c !== id) : current.length >= room ? current : [...current, id],
+    );
+  const confirm = () => {
+    onConfirm(chosen.map((id) => byId.get(id)).filter((a): a is ReelSourceAsset => Boolean(a)));
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      description={description}
+      size="lg"
+      footer={
+        <>
+          <span className="mr-auto self-center text-sm text-muted" data-testid="reel-media-count">
+            {chosen.length === 0 ? 'Ninguna elegida' : `${chosen.length} elegida${chosen.length === 1 ? '' : 's'}`}
+            {full ? ' (el máximo del reel)' : ''}
+          </span>
+          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button disabled={chosen.length === 0} onClick={confirm} data-testid="reel-media-confirm">
+            {confirmLabel(chosen.length)}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 basis-40">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+            aria-hidden
+          />
+          <Input
+            className="pl-9"
+            placeholder="Buscar por nombre"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setShown(PAGE);
+            }}
+            aria-label="Buscar"
+          />
+        </div>
+        <div className="flex gap-1" role="group" aria-label="Qué enseñar">
+          {FILTERS.map((f) => (
+            <Button
+              key={f.id}
+              size="sm"
+              variant={filter === f.id ? 'primary' : 'secondary'}
+              aria-pressed={filter === f.id}
+              onClick={() => {
+                setFilter(f.id);
+                setShown(PAGE);
+              }}
+            >
+              {f.id === 'image' && <ImageIcon className="h-3.5 w-3.5" aria-hidden />}
+              {f.id === 'video' && <Film className="h-3.5 w-3.5" aria-hidden />}
+              {f.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      {loading ? (
+        <Skeleton className="mt-3 h-24" />
+      ) : error ? (
+        <ErrorState error={error} />
+      ) : visible.length === 0 ? (
+        <p className="mt-3 text-sm text-muted">
+          {sources.length === 0
+            ? 'No hay fotos ni clips. Súbelos primero a la biblioteca.'
+            : 'No hay nada con ese nombre o de ese tipo.'}
+        </p>
+      ) : (
+        <>
+          <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4" data-testid="reel-media-picker">
+            {page.map((asset) => {
+              const url = urls.data?.get(previewPath(asset));
+              const order = chosen.indexOf(asset.id);
+              const selected = order >= 0;
+              return (
+                <li key={asset.id}>
+                  <button
+                    type="button"
+                    aria-pressed={selected}
+                    aria-label={`${selected ? 'Quitar' : 'Elegir'} «${asset.file_name}»`}
+                    disabled={!selected && full}
+                    onClick={() => toggle(asset.id)}
+                    className={cn(
+                      'relative block w-full overflow-hidden rounded-lg border bg-subtle text-left disabled:opacity-40',
+                      selected ? 'border-primary ring-2 ring-primary' : 'border-border hover:shadow-pop',
+                    )}
+                    data-testid="reel-media-option"
+                  >
+                    <span className="block aspect-square overflow-hidden">
+                      {asset.kind === 'video' ? (
+                        <VideoFrame url={url} />
+                      ) : url ? (
+                        <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      ) : (
+                        <Skeleton className="h-full w-full rounded-none" />
+                      )}
+                    </span>
+                    {selected && (
+                      <span
+                        className="absolute right-1 top-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 text-xs font-semibold text-primary-fg"
+                        data-testid="reel-media-order"
+                      >
+                        {order + 1}
+                      </span>
+                    )}
+                    <span className="block truncate px-2 py-1 text-xs">{asset.file_name}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {visible.length > page.length && (
+            <div className="mt-3 text-center">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShown((n) => n + PAGE)}
+                data-testid="reel-media-more"
+              >
+                Ver más ({visible.length - page.length})
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Dialog>
+  );
+}

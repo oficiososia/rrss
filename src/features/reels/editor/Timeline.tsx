@@ -424,7 +424,7 @@ function Handle({
       aria-valuenow={0}
       tabIndex={-1}
       className={cn(
-        'absolute top-0 bottom-0 z-10 w-2 cursor-ew-resize bg-fg/20 hover:bg-primary',
+        'absolute top-0 bottom-0 z-10 w-2 cursor-ew-resize touch-none bg-fg/20 hover:bg-primary [@media(pointer:coarse)]:w-5',
         side === 'start' ? 'left-0' : 'right-0',
       )}
       onPointerDown={onPointerDown}

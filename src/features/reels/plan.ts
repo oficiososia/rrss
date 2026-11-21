@@ -106,7 +106,9 @@ export function buildReelInput(
         type: piece.type,
         path: piece.path,
         ...(piece.seconds !== null ? { seconds: piece.seconds } : {}),
-        ...(piece.type === 'photo' && piece.blur && piece.blur > 0 ? { blur: Math.min(100, Math.round(piece.blur)) } : {}),
+        ...(piece.type === 'photo' && piece.blur && piece.blur > 0
+          ? { blur: Math.min(100, Math.round(piece.blur)) }
+          : {}),
       })),
       texts: texts.map((text) => ({
         text: text.text.trim(),
