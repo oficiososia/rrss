@@ -12,7 +12,7 @@ cuenta conectada; el token no sale nunca del servidor. Estado a 20/11/2026:
 | Interfaz: Marca → Datos de la marca → Cuentas conectadas | Probada en e2e (`24-importar-publicaciones.spec.ts`, ver `ESTADO.md` para el resultado) |
 | Herramienta de la agencia (`importadas`, `comprobar-plantillas`, `entregar-plantillas`) | Probada contra un Supabase simulado |
 | Adaptador real de Meta para el histórico (`_shared/social/import-graph.ts`) | Escrito contra la documentación oficial, **sin probar contra el servicio real**: no hay aplicación de Meta |
-| Interfaz para **usar** las plantillas (crear una pieza desde una plantilla, listarlas) | **Pendiente**: hoy se guardan, se leen por la API y se importan al editor como documento v3 |
+| Interfaz para **usar** las plantillas: «Empezar desde una plantilla» en Nueva idea (Contenidos) y en el editor, con vista previa, nombre y análisis resumido | Implementado y probado con pruebas de componentes (21/11/2026); e2e `28-pieza-desde-plantilla` escrita, **sin ejecutar** (no había Supabase local). Mismos permisos que crear piezas (editar). Sin plantillas, la interfaz explica cómo conseguirlas |
 
 ## 1. Importar las publicaciones
 

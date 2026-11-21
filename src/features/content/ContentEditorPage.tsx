@@ -6,6 +6,7 @@ import {
   Download,
   History,
   Image as ImageIcon,
+  LayoutTemplate,
   Mic,
   PencilLine,
   Redo2,
@@ -101,6 +102,7 @@ import { NetworkPreviewDialog } from './editor/preview/NetworkPreviewDialog';
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
+import { ApplyTemplateDialog } from './templates/ApplyTemplateDialog';
 import { PublishNowDialog } from '@/features/social/PublishNowDialog';
 import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
@@ -213,6 +215,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
   const [photoEditing, setPhotoEditing] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
@@ -705,6 +708,18 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             >
               <PencilLine className="h-4 w-4" aria-hidden />
               Nombre y red
+            </Button>
+          )}
+          {!readOnly && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTemplateOpen(true)}
+              data-testid="editor-from-template"
+              title="Sustituir el diseño por una plantilla de la marca"
+            >
+              <LayoutTemplate className="h-4 w-4" aria-hidden />
+              Desde una plantilla
             </Button>
           )}
           <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} data-testid="editor-preview">
@@ -1244,6 +1259,20 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         images={images}
         onRestore={(version) => (dirty ? setPendingRestore(version) : restore(version))}
       />
+      {!readOnly && (
+        <ApplyTemplateDialog
+          orgId={org.id}
+          brandId={brand.id}
+          open={templateOpen}
+          onOpenChange={setTemplateOpen}
+          target={{ network: item.network, format: item.format }}
+          hasDesign={allLayers(state.document).length > 0}
+          onApply={(document, template) => {
+            dispatch({ type: 'replace', document });
+            toast.success(`Plantilla «${template.name}» aplicada. Sustituye las fotos y ajusta el texto.`);
+          }}
+        />
+      )}
       {!readOnly && (
         <>
           <ImagePickerDialog
