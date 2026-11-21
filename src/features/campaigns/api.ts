@@ -20,6 +20,7 @@ import {
   MAX_CAMPAIGN_NETWORKS,
   MAX_INSTRUCTION_CHARS,
   MAX_PLAN_DAYS,
+  campaignPlanSchema,
   daysInclusive,
   isRealDate,
   type CampaignPlan,
@@ -86,6 +87,8 @@ export interface CampaignPieceLink extends CampaignContentRow {
   status: ContentStatus | null;
   network: string;
   format: string;
+  /** Versión vigente de la pieza (0 = sin documento). Para su vista previa. */
+  current_version: number;
 }
 
 /** Piezas que creó el motor, en el orden del plan, con su estado de ahora. */
@@ -103,7 +106,7 @@ export function useCampaignContents(brandId: string, campaignId: string, enabled
       );
       const ids = links.map((l) => l.content_id);
       const items = ids.length
-        ? unwrap(await supabase.from('content_items').select('id, title, status, network, format').in('id', ids))
+        ? unwrap(await supabase.from('content_items').select('id, title, status, network, format, current_version').in('id', ids))
         : [];
       const byId = new Map(items.map((i) => [i.id, i]));
       return links.map((link) => {
@@ -114,8 +117,76 @@ export function useCampaignContents(brandId: string, campaignId: string, enabled
           status: item?.status ?? null,
           network: item?.network ?? '',
           format: item?.format ?? '',
+          current_version: item?.current_version ?? 0,
         };
       });
+    },
+  });
+}
+
+export interface CampaignOverview {
+  /** Plan vigente de cada campaña que ya lo tiene (null si no tiene el formato esperado). */
+  plans: Map<string, CampaignPlan | null>;
+  /** Piezas creadas de cada campaña aceptada, en el orden del plan. */
+  contents: Map<string, { content_id: string; piece_index: number; current_version: number }[]>;
+}
+
+/**
+ * Para la lista: el plan vigente de cada campaña (cuántas piezas lleva y sus
+ * recursos sugeridos) y las piezas creadas de las aceptadas (sus miniaturas).
+ * Solo lectura; dos o tres consultas para toda la lista.
+ */
+export function useCampaignsOverview(brandId: string, campaigns: CampaignRow[]) {
+  const withPlan = campaigns.filter((c) => c.current_plan_version > 0);
+  const accepted = campaigns.filter((c) => c.status === 'accepted');
+  const key = withPlan.map((c) => `${c.id}:${c.current_plan_version}:${c.status}`).join(',');
+  return useQuery({
+    queryKey: [...campaignKeys.all(brandId), 'overview', key] as const,
+    enabled: withPlan.length > 0,
+    queryFn: async (): Promise<CampaignOverview> => {
+      const rows = unwrap(
+        await supabase
+          .from('campaign_plans')
+          .select('campaign_id, version, data')
+          .in(
+            'campaign_id',
+            withPlan.map((c) => c.id),
+          ),
+      );
+      const plans = new Map<string, CampaignPlan | null>();
+      for (const campaign of withPlan) {
+        const row = rows.find((r) => r.campaign_id === campaign.id && r.version === campaign.current_plan_version);
+        const parsed = row ? campaignPlanSchema.safeParse(row.data) : null;
+        plans.set(campaign.id, parsed?.success ? parsed.data : null);
+      }
+      const contents = new Map<string, { content_id: string; piece_index: number; current_version: number }[]>();
+      if (accepted.length) {
+        const links = unwrap(
+          await supabase
+            .from('campaign_contents')
+            .select('*')
+            .in(
+              'campaign_id',
+              accepted.map((c) => c.id),
+            )
+            .order('piece_index', { ascending: true }),
+        );
+        const ids = links.map((l) => l.content_id);
+        const items = ids.length
+          ? unwrap(await supabase.from('content_items').select('id, current_version').in('id', ids))
+          : [];
+        const versions = new Map(items.map((i) => [i.id, i.current_version]));
+        for (const link of links) {
+          const list = contents.get(link.campaign_id) ?? [];
+          list.push({
+            content_id: link.content_id,
+            piece_index: link.piece_index,
+            current_version: versions.get(link.content_id) ?? 0,
+          });
+          contents.set(link.campaign_id, list);
+        }
+      }
+      return { plans, contents };
     },
   });
 }

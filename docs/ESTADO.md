@@ -97,6 +97,15 @@ hecho con varias versiones (la demo de EnerGym) en `docs/publicacion.md`
 borradores, nunca aprobados ni publicados; protegido contra instrucciones
 maliciosas en fuentes y perfil; en modo agencia el plan lo entrega la agencia.
 
+Presentación (rama `f10/campanas-diseno`, 21/11/2026): la lista son tarjetas
+con fechas, estado, número de piezas y miniaturas; el detalle abre con título,
+estado, fechas, red, objetivo en una línea y la acción según el estado, y
+enseña la semana como tira de días con la miniatura de cada pieza (exportación
+de la versión vigente, esbozo del documento o foto sugerida por el plan). Al
+pulsar una pieza se abre su ficha (texto, motivo, «Abrir en el editor»).
+«Por qué este plan» (observado / datos / hipótesis, siempre por separado) y
+«Lo que se pidió» van plegados. Sin cambios de datos ni de lógica.
+
 ### Fase 5 · Analítica
 
 Capturas horarias de métricas de Instagram, panel que separa dato de hipótesis y

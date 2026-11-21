@@ -111,8 +111,9 @@ test('«prepara la semana que viene»: plan explicado, se retoca y al aceptarlo 
   const { page } = s;
   await pedirPlan(page, 'Prepara la semana que viene', { fuentes: false, facebook: true });
 
-  // El plan explicado: objetivo, observado, sin datos (y lo dice) e hipótesis.
+  // El plan explicado: objetivo arriba; observado, sin datos (y lo dice) e hipótesis, plegados en «Por qué este plan».
   await expect(page.getByTestId('campaign-status')).toHaveText('Plan por revisar');
+  await expect(page.getByTestId('campaign-why')).toContainText('sin datos de resultados');
   await expect(page.getByTestId('campaign-objective')).toHaveText('[simulado] Prepara la semana que viene.');
   await expect(page.getByTestId('reason-observed')).toContainText('La instrucción pide');
   await expect(page.getByTestId('reason-data')).toContainText('todavía no tiene datos de resultados');
@@ -122,15 +123,16 @@ test('«prepara la semana que viene»: plan explicado, se retoca y al aceptarlo 
   await expect(piezas).toHaveCount(4);
   await expect(piezas.nth(0)).toContainText('Instagram');
   await expect(piezas.nth(1)).toContainText('Facebook');
-  await expect(piezas.nth(0).getByTestId('campaign-piece-caption')).toHaveValue(new RegExp(`${MENSAJE}.*${CTA}`, 'i'));
-  await expect(piezas.nth(0)).toContainText('#CafeLumen');
+  // El texto de cada pieza está en su ficha, que se abre al pulsarla.
+  const ficha = page.getByTestId('campaign-piece-panel');
+  await piezas.nth(0).click();
+  await expect(ficha.getByTestId('campaign-piece-caption')).toHaveValue(new RegExp(`${MENSAJE}.*${CTA}`, 'i'));
+  await expect(ficha).toContainText('#CafeLumen');
 
   // Revisar: retocar el texto de la primera y quitar la última.
-  await piezas
-    .nth(0)
-    .getByTestId('campaign-piece-caption')
-    .fill('Lunes de tueste: café de especialidad tostado en casa.');
-  await piezas.nth(3).getByTestId('campaign-piece-remove').click();
+  await ficha.getByTestId('campaign-piece-caption').fill('Lunes de tueste: café de especialidad tostado en casa.');
+  await piezas.nth(3).click();
+  await ficha.getByTestId('campaign-piece-remove').click();
   await expect(piezas).toHaveCount(3);
   await expect(page.getByTestId('campaign-accept')).toHaveText(/crear 3 borradores/);
 
@@ -168,10 +170,7 @@ test('«prepara la semana que viene»: plan explicado, se retoca y al aceptarlo 
   expect(generacion).toEqual({ provider: 'simulated', status: 'succeeded' });
 
   // Las piezas están en Contenidos, como borradores pendientes de aprobar.
-  await page
-    .getByRole('link', { name: /^Abrir / })
-    .first()
-    .click();
+  await page.getByTestId('campaign-open-next').click();
   await expect(page).toHaveURL(/\/contenidos\/[0-9a-f-]{36}$/);
   sinErrores(s);
   await s.context.close();

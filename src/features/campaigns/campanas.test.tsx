@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BrandRole, CampaignRow, OrgRole } from '@/lib/database.types';
+import { createEmptyDocument } from '@/features/content/document';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
 import { nextWeek } from './plan';
@@ -96,6 +97,7 @@ function seed(
     }));
   fake.tables.campaign_contents = [];
   fake.tables.content_items = [];
+  fake.tables.content_versions = [];
   fake.tables.content_requests = [];
   fake.tables.media_assets = [];
   fake.tables.brand_knowledge_sources = [];
@@ -137,12 +139,21 @@ describe('la sección Campañas', () => {
     await user.type(within(dialog).getByTestId('campaign-instruction'), 'Prepara la semana que viene');
     await user.click(within(dialog).getByTestId('campaign-submit'));
 
-    // El plan con sus explicaciones: observado, sin datos (y lo dice) e hipótesis.
+    // Arriba, el objetivo en una línea; el porqué, plegado y con su resumen.
     expect(await screen.findByTestId('campaign-objective')).toHaveTextContent('Llenar las mesas de entre semana.');
+    const why = screen.getByTestId('campaign-why');
+    expect(why).not.toHaveAttribute('open');
+    expect(why).toHaveTextContent('1 cosa observada, sin datos de resultados, 1 hipótesis.');
+    expect(screen.getByTestId('campaign-instruction')).not.toHaveAttribute('open');
+    // Dentro, observado, sin datos (y lo dice) e hipótesis, siempre por separado.
     expect(screen.getByTestId('reason-observed')).toHaveTextContent('El tono de la marca es cercano.');
     expect(screen.getByTestId('reason-data')).toHaveTextContent('todavía no tiene datos de resultados');
     expect(screen.getByTestId('reason-hypotheses')).toHaveTextContent('El jueves funciona');
+    // La semana: una columna por día; cada pieza, su formato y nada de texto largo.
+    expect(screen.getAllByTestId('campaign-day')).toHaveLength(7);
     expect(screen.getAllByTestId('campaign-plan-piece')).toHaveLength(2);
+    expect(screen.getByTestId('campaign-plan-pieces')).not.toHaveTextContent('Arrancamos la semana');
+    expect(screen.queryByTestId('campaign-piece-panel')).not.toBeInTheDocument();
 
     const sent = fake.callsTo('ai-generate', 'function')[0]!.payload as {
       action: string;
@@ -157,12 +168,19 @@ describe('la sección Campañas', () => {
     expect(new Set(sent.input.targets.map((t) => t.network))).toEqual(new Set(['instagram']));
     expect(fake.callsTo('create_campaign', 'rpc')[0]!.payload).toMatchObject({ p_generation_id: GENERATION });
 
-    // Retocar y quitar antes de aceptar.
+    // Retocar y quitar antes de aceptar, desde la ficha de cada pieza.
     const pieces = screen.getAllByTestId('campaign-plan-piece');
-    const caption = within(pieces[0]!).getByTestId('campaign-piece-caption');
+    await user.click(pieces[0]!);
+    expect(pieces[0]).toHaveAttribute('aria-expanded', 'true');
+    const panel = screen.getByTestId('campaign-piece-panel');
+    expect(panel).toHaveTextContent('Lunes: abrir la semana.');
+    const caption = within(panel).getByTestId('campaign-piece-caption');
     await user.clear(caption);
     await user.type(caption, 'Texto retocado.');
-    await user.click(within(pieces[1]!).getByTestId('campaign-piece-remove'));
+    await user.click(pieces[1]!);
+    await user.click(within(screen.getByTestId('campaign-piece-panel')).getByTestId('campaign-piece-remove'));
+    expect(screen.getAllByTestId('campaign-plan-piece')).toHaveLength(1);
+    expect(screen.queryByTestId('campaign-piece-panel')).not.toBeInTheDocument();
     await user.click(screen.getByTestId('campaign-accept'));
     const confirm = await screen.findByRole('alertdialog').catch(() => screen.findByRole('dialog'));
     await user.click(within(confirm).getByRole('button', { name: 'Aceptar y crear borradores' }));
@@ -180,7 +198,7 @@ describe('la sección Campañas', () => {
     expect(accepted.p_drafts[0]!.title).toContain('Plato de la semana');
   });
 
-  it('una campaña aceptada enseña sus piezas como borradores', async () => {
+  it('una campaña aceptada enseña sus piezas como borradores, con su vista previa y el enlace al editor', async () => {
     vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
     seed({}, [campaignRow({ status: 'accepted', accepted_plan_version: 1 })]);
     fake.tables.campaign_contents = [
@@ -206,20 +224,58 @@ describe('la sección Campañas', () => {
         current_version: 1,
       },
     ];
-    renderApp(`${BRAND_BASE}/campanas/camp-1`);
+    // Sin exportación: la miniatura es el esbozo de la primera página del documento.
+    fake.tables.content_versions = [
+      {
+        id: 'v-1',
+        content_id: 'c-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        version: 1,
+        schema_version: 1,
+        data: createEmptyDocument({ aspectRatio: '4:5', backgroundColor: '#123456' }),
+      },
+    ];
+    const { user } = renderApp(`${BRAND_BASE}/campanas/camp-1`);
     const list = await screen.findByTestId('campaign-piece-list');
     expect(within(list).getByTestId('campaign-piece-status')).toHaveTextContent('Borrador');
     expect(screen.queryByTestId('campaign-accept')).not.toBeInTheDocument();
+    const tile = within(list).getByTestId('campaign-piece-row');
+    await waitFor(() => expect(within(tile).getByTestId('campaign-piece-thumb')).toHaveAttribute('data-preview', 'document'));
+    // La acción principal lleva a la siguiente pieza por terminar.
+    expect(screen.getByTestId('campaign-open-next')).toHaveAttribute('href', `${BRAND_BASE}/contenidos/c-1`);
+    await user.click(tile);
+    const panel = screen.getByTestId('campaign-piece-panel');
+    expect(within(panel).getByTestId('campaign-piece-caption-text')).toHaveTextContent('guiso de setas');
+    expect(within(panel).getByRole('img', { name: /Vista previa de «Plato de la semana»/ })).toBeInTheDocument();
+    expect(within(panel).getByTestId('campaign-piece-open')).toHaveAttribute('href', `${BRAND_BASE}/contenidos/c-1`);
+  });
+
+  it('la lista enseña cada campaña como tarjeta: fechas, estado, número de piezas y miniaturas', async () => {
+    vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
+    seed({}, [campaignRow(), campaignRow({ id: 'camp-2', title: 'Otoño', status: 'requested', current_plan_version: 0 })]);
+    renderApp(`${BRAND_BASE}/campanas`);
+    const cards = await screen.findAllByTestId('campaign-row');
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent('Plan por revisar');
+    expect(cards[0]).toHaveAttribute('href', `${BRAND_BASE}/campanas/camp-1`);
+    await waitFor(() => expect(within(cards[0]!).getByTestId('campaign-row-count')).toHaveTextContent('2 piezas'));
+    expect(within(cards[0]!).getAllByTestId('campaign-piece-thumb')).toHaveLength(2);
+    expect(within(cards[1]!).getByTestId('campaign-row-count')).toHaveTextContent('Sin plan todavía');
   });
 
   it('el lector ve el plan pero no lo puede aceptar ni descartar', async () => {
     vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
     seed({ brandRole: 'viewer' }, [campaignRow()]);
-    renderApp(`${BRAND_BASE}/campanas/camp-1`);
+    const { user } = renderApp(`${BRAND_BASE}/campanas/camp-1`);
     await screen.findByTestId('campaign-objective');
     expect(screen.queryByTestId('campaign-accept')).not.toBeInTheDocument();
     expect(screen.queryByTestId('campaign-discard')).not.toBeInTheDocument();
+    await user.click(screen.getAllByTestId('campaign-plan-piece')[0]!);
+    const panel = screen.getByTestId('campaign-piece-panel');
+    expect(within(panel).getByTestId('campaign-piece-caption-text')).toHaveTextContent('guiso de setas');
     expect(screen.queryByTestId('campaign-piece-caption')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('campaign-piece-remove')).not.toBeInTheDocument();
   });
 
   it('modo agencia (sin IA en el entorno): se pide el plan a la agencia', async () => {
