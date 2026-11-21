@@ -44,7 +44,7 @@ function QuotaCard({ orgId, periodStart }: { orgId: string; periodStart: string 
     <Card>
       <CardHeader
         title={`Cupo de IA · ${monthLabel(periodStart)}`}
-        description="Lo que la organización puede gastar en IA este mes. Se renueva el día 1 de cada mes (hora UTC)."
+        description="Lo que la organización puede gastar en IA este mes. Se renueva el día 1 de cada mes."
       />
       <CardBody>
         {quota.isPending || ledger.isPending ? (
@@ -95,7 +95,7 @@ function Figures({ ledger, limit }: { ledger: MonthLedger; limit: number | null 
         <Figure
           label="Reservado"
           value={formatMicros(ledger.reservedMicros)}
-          hint="Generaciones en curso: se reserva una cota superior y se ajusta al terminar."
+          hint="Generaciones en curso: se aparta lo máximo que podrían costar y se ajusta al terminar."
           testId="ai-quota-reserved"
         />
         {available !== null && (

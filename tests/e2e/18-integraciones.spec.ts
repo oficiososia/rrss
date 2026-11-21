@@ -123,7 +123,7 @@ test('quien gestiona la marca conecta Instagram pegando un token (Graph API simu
   await page.getByTestId('social-token-value').fill(token);
   await page.getByTestId('social-token-submit').click();
   await aviso(page, 'Cuenta @cuenta_simulada conectada con el token');
-  await expect(tarjeta.getByTestId('social-account-token')).toContainText('Con token');
+  await expect(tarjeta.getByTestId('social-account-token')).toContainText('Conexión avanzada');
   expect(await page.content()).not.toContain(token);
 
   const [cuenta] = await sql<{ connection_method: string; claro: boolean }>(

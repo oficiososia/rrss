@@ -143,7 +143,7 @@ function ExportCard() {
     <Card data-testid="account-export">
       <CardHeader
         title="Descargar mis datos"
-        description="Un archivo JSON con tus datos personales: perfil, organizaciones y roles, documentos aceptados, tu actividad, y los encargos, comentarios, piezas y archivos que creaste."
+        description="Un archivo con tus datos personales: perfil, organizaciones y roles, documentos aceptados, tu actividad, y los encargos, comentarios, piezas y archivos que creaste."
       />
       <CardBody className="space-y-3 text-sm">
         <p className="text-muted">

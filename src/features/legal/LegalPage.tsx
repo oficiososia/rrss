@@ -135,9 +135,9 @@ function Privacy() {
       <p>
         Puedes acceder a tus datos, rectificarlos, pedir que se borren, limitar u oponerte a su tratamiento y
         llevártelos en un formato legible por máquina. Desde la aplicación, en «Mi cuenta»:{' '}
-        <strong>Descargar mis datos</strong> (archivo JSON) y <strong>Borrar mi cuenta</strong>. Para lo demás, escribe
-        a {P.privacyEmail}. Si los datos son de una organización, atenderemos tu petición junto con ella, que es su
-        responsable.
+        <strong>Descargar mis datos</strong> (un archivo que se puede abrir y reutilizar) y{' '}
+        <strong>Borrar mi cuenta</strong>. Para lo demás, escribe a {P.privacyEmail}. Si los datos son de una
+        organización, atenderemos tu petición junto con ella, que es su responsable.
       </p>
       <p className="mt-2">
         Si crees que no hemos atendido bien tu petición, puedes reclamar ante la Agencia Española de Protección de Datos
@@ -161,8 +161,8 @@ function Privacy() {
       <H2>8. Seguridad</H2>
       <p>
         Cada organización solo ve sus datos: el aislamiento lo impone la base de datos, no solo la aplicación. Los
-        archivos se guardan en un almacenamiento privado (Supabase o Cloudflare R2, en la UE) y se comparten con enlaces que caducan. [MEDIDAS ADICIONALES A
-        DESCRIBIR]
+        archivos se guardan en un almacenamiento privado (Supabase o Cloudflare R2, en la UE) y se comparten con enlaces
+        que caducan. [MEDIDAS ADICIONALES A DESCRIBIR]
       </p>
 
       <H2>9. Cambios</H2>

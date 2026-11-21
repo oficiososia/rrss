@@ -13,6 +13,8 @@ import {
   xhrUpload,
 } from '@/lib/files';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
+import { buildThumbPath, createThumbnail } from '@/lib/thumbnail';
+import { DRIVE_URL_REUSE_MS, signWithCache, STORAGE_URL_REUSE_MS } from '@/features/storage/signedUrlCache';
 import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';
 import {
   deleteStoredMedia,
@@ -114,6 +116,15 @@ export function useAssetsByIds(brandId: string, ids: string[]) {
  * `drive-media`, que comprueba que se ven y firma su dirección; `variant`
  * 'thumb' pide la miniatura de Drive (para cuadrículas).
  */
+/**
+ * Ruta que se firma para PINTAR un recurso en cuadrículas y vistas pequeñas: la
+ * miniatura si existe y, si no, el archivo original. Editar, exportar y publicar
+ * no la usan: van siempre con `storage_path`.
+ */
+export function previewPath(asset: Pick<MediaAssetRow, 'storage_path' | 'thumb_path'>): string {
+  return asset.thumb_path || asset.storage_path;
+}
+
 export function useSignedUrls(paths: string[], options: { variant?: DriveVariant } = {}) {
   const variant = options.variant ?? 'full';
   return useQuery({
@@ -124,11 +135,18 @@ export function useSignedUrls(paths: string[], options: { variant?: DriveVariant
       const map = new Map<string, string>();
       const drivePaths = paths.filter(isDrivePath);
       const storagePaths = paths.filter((p) => !isDrivePath(p));
+      // Con caché: solo se firma lo que no está firmado ya (las firmas duran una hora).
       if (storagePaths.length > 0) {
-        for (const [path, url] of await signStoragePaths(storagePaths, 3600)) map.set(path, url);
+        const signed = await signWithCache('storage', storagePaths, STORAGE_URL_REUSE_MS, (missing) =>
+          signStoragePaths(missing, 3600),
+        );
+        for (const [path, url] of signed) map.set(path, url);
       }
       if (drivePaths.length > 0) {
-        for (const [path, url] of await signDrivePaths(drivePaths, variant)) map.set(path, url);
+        const signed = await signWithCache(`drive:${variant}`, drivePaths, DRIVE_URL_REUSE_MS, (missing) =>
+          signDrivePaths(missing, variant),
+        );
+        for (const [path, url] of signed) map.set(path, url);
       }
       return map;
     },
@@ -170,7 +188,7 @@ export interface UploadInput {
  * `onProgress` se usa XMLHttpRequest (es lo único que mide bytes reales); sin
  * él, el cliente normal.
  */
-async function uploadObject(path: string, file: File, onProgress?: (percent: number) => void): Promise<void> {
+async function uploadObject(path: string, file: Blob, onProgress?: (percent: number) => void): Promise<void> {
   const target = supabaseConfigured ? await uploadTarget(path, file.type, file.size) : { backend: 'supabase' as const };
   if (target.backend === 'r2') {
     if (onProgress) {
@@ -218,9 +236,23 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
     input.sha256 ?? sha256Hex(file),
     input.dimensions ?? readMediaDimensions(file),
   ]);
-  const path = buildStoragePath(organizationId, brandId, 'media', file.name);
+  const id = crypto.randomUUID();
+  const path = buildStoragePath(organizationId, brandId, 'media', file.name, id);
 
+  const thumbnail = await createThumbnail(file); // null si no hace falta o no se puede
   await uploadObject(path, file, input.onProgress);
+  // La miniatura es un extra: si no sube, el recurso se crea sin ella.
+  let thumbPath: string | null = null;
+  if (thumbnail) {
+    const candidate = buildThumbPath(organizationId, brandId, id, thumbnail.extension);
+    try {
+      await uploadObject(candidate, thumbnail.blob);
+      thumbPath = candidate;
+    } catch {
+      await supabase.storage.from(STORAGE_BUCKET).remove([candidate]).catch(() => undefined);
+      await discardUploadedMedia(candidate);
+    }
+  }
 
   const inserted = await supabase
     .from('media_assets')
@@ -239,6 +271,7 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
       folder: input.folder ?? '',
       tags: input.tags ?? [],
       ...(input.provenance ? { provenance: input.provenance } : {}),
+      ...(thumbPath ? { thumb_path: thumbPath } : {}),
       // El valor da igual: la base de datos fija el plazo.
       ...(input.provisional ? { provisional_until: new Date().toISOString() } : {}),
     })
@@ -248,8 +281,9 @@ export async function uploadAsset(input: UploadInput): Promise<MediaAssetRow> {
   if (inserted.error) {
     // Sin fila no hay anotación en la cola: lo de Supabase se borra como siempre y
     // lo de R2 lo borra el servidor (y, si no puede, la tarea programada de huérfanos).
-    await supabase.storage.from(STORAGE_BUCKET).remove([path]);
+    await supabase.storage.from(STORAGE_BUCKET).remove(thumbPath ? [path, thumbPath] : [path]);
     await discardUploadedMedia(path);
+    if (thumbPath) await discardUploadedMedia(thumbPath);
     throw inserted.error;
   }
   return inserted.data;
@@ -279,8 +313,8 @@ async function removeStoredFiles(paths: string[]): Promise<boolean> {
 /** Borra recursos (fila y archivo) de una vez. Lo usa quien sube y se arrepiente antes de enlazarlos. */
 export async function deleteAssets(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const rows = unwrap(await supabase.from('media_assets').delete().in('id', ids).select('id, storage_path'));
-  await removeStoredFiles(rows.map((r) => r.storage_path));
+  const rows = unwrap(await supabase.from('media_assets').delete().in('id', ids).select('id, storage_path, thumb_path'));
+  await removeStoredFiles(rows.flatMap((r) => (r.thumb_path ? [r.storage_path, r.thumb_path] : [r.storage_path])));
 }
 
 /**
@@ -330,14 +364,14 @@ export function useAssetMutations(brandId: string) {
   });
 
   const remove = useMutation({
-    mutationFn: async (asset: Pick<MediaAssetRow, 'id' | 'storage_path'>) => {
+    mutationFn: async (asset: Pick<MediaAssetRow, 'id' | 'storage_path'> & { thumb_path?: string | null }) => {
       // Primero la fila (es lo que ve la app); un disparador anota la ruta en la
       // cola de limpieza. Después se intenta borrar el archivo: si falla, la
       // anotación se queda y se reintenta en la siguiente visita (no es un error
       // para quien borra, el recurso ya no existe).
       const rows = unwrap(await supabase.from('media_assets').delete().eq('id', asset.id).select('id'));
       if (rows.length === 0) throw { code: '42501', message: 'permission denied' };
-      await removeStoredFiles([asset.storage_path]);
+      await removeStoredFiles(asset.thumb_path ? [asset.storage_path, asset.thumb_path] : [asset.storage_path]);
     },
     onSuccess,
   });

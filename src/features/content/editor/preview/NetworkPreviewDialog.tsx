@@ -238,8 +238,8 @@ export function NetworkPreviewDialog({
           {caption.limit !== null ? (
             <li>
               Antes de «ver más» se ven unos {caption.limit} caracteres
-              {caption.provenance === 'unverified' ? ' (cifra sin verificar)' : ''}; la red corta por el ancho real, así
-              que puede variar.
+              {caption.provenance === 'unverified' ? ' (aproximado)' : ''}; la red corta por el ancho real, así que
+              puede variar.
             </li>
           ) : (
             showsCaption(spec) && <li>No sabemos dónde corta esta red el pie: se enseña entero.</li>

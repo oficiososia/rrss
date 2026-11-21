@@ -48,22 +48,22 @@ describe('Ajustes → Consumo de IA', () => {
     seedUsage({ limit: 10 * M });
     renderApp(`${BASE}/ajustes/ia`);
 
-    expect(await screen.findByTestId('ai-quota-limit')).toHaveTextContent('10,00 unidades de cuenta');
-    expect(screen.getByTestId('ai-quota-consumed')).toHaveTextContent('2,00 unidades de cuenta');
-    expect(screen.getByTestId('ai-quota-reserved')).toHaveTextContent('3,00 unidades de cuenta');
-    expect(screen.getByTestId('ai-quota-available')).toHaveTextContent('5,00 unidades de cuenta');
+    expect(await screen.findByTestId('ai-quota-limit')).toHaveTextContent('10,00 créditos');
+    expect(screen.getByTestId('ai-quota-consumed')).toHaveTextContent('2,00 créditos');
+    expect(screen.getByTestId('ai-quota-reserved')).toHaveTextContent('3,00 créditos');
+    expect(screen.getByTestId('ai-quota-available')).toHaveTextContent('5,00 créditos');
     expect(screen.getByRole('progressbar', { name: 'Cupo comprometido' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByRole('link', { name: 'Consumo de IA' })).toBeInTheDocument();
 
     const brands = await screen.findByTestId('ai-usage-brands');
     expect(within(brands).getByRole('rowheader', { name: 'Casa Demo' }).closest('tr')).toHaveTextContent(
-      '1,50 unidades de cuenta',
+      '1,50 créditos',
     );
     expect(within(brands).getByRole('rowheader', { name: 'Marca borrada o sin acceso' })).toBeInTheDocument();
 
     const months = await screen.findByTestId('ai-usage-months');
     expect(within(months).getAllByRole('row')).toHaveLength(7);
-    expect(within(months).getByText('2,00 unidades de cuenta')).toBeInTheDocument();
+    expect(within(months).getByText('2,00 créditos')).toBeInTheDocument();
     expect(fake.callsTo('ai_cost_by_organization', 'rpc')).toHaveLength(6);
 
     // Sin moneda configurada: ni «€» ni «$», y el aviso de que es una estimación.
@@ -84,7 +84,7 @@ describe('Ajustes → Consumo de IA', () => {
     seedUsage({ limit: null });
     fake.rpc('organization_plan_usage', () => ({ plan: { name: 'Profesional' }, ai_limit_micros: 10 * M }));
     renderApp(`${BASE}/ajustes/ia`);
-    expect(await screen.findByTestId('ai-quota-limit')).toHaveTextContent('10,00 unidades de cuenta');
+    expect(await screen.findByTestId('ai-quota-limit')).toHaveTextContent('10,00 créditos');
     expect(screen.getByTestId('ai-quota-source')).toHaveTextContent('Cupo incluido en el plan «Profesional».');
     expect(screen.queryByTestId('ai-no-quota')).not.toBeInTheDocument();
   });
@@ -94,7 +94,7 @@ describe('Ajustes → Consumo de IA', () => {
     seedUsage({ limit: 5 * M });
     renderApp(`${BASE}/ajustes/ia`);
     expect(await screen.findByTestId('ai-quota-exhausted')).toHaveTextContent(/está agotado/);
-    expect(screen.getByTestId('ai-quota-available')).toHaveTextContent('0,00 unidades de cuenta');
+    expect(screen.getByTestId('ai-quota-available')).toHaveTextContent('0,00 créditos');
   });
 
   it('un error al leer el cupo se puede reintentar', async () => {
@@ -147,7 +147,7 @@ describe('Plataforma → cupo mensual de IA', () => {
 
     const amount = await screen.findByTestId('ai-quota-amount');
     await user.selectOptions(screen.getByTestId('ai-quota-org'), ORG_ID);
-    expect(await screen.findByTestId('ai-quota-org-cost')).toHaveTextContent('0,75 unidades de cuenta');
+    expect(await screen.findByTestId('ai-quota-org-cost')).toHaveTextContent('0,75 créditos');
     await user.type(amount, '-4');
     expect(screen.getByText(/Escribe un importe positivo/)).toBeInTheDocument();
     expect(screen.getByTestId('ai-quota-save')).toBeDisabled();
@@ -155,9 +155,7 @@ describe('Plataforma → cupo mensual de IA', () => {
     await user.type(amount, '25,5');
     await user.click(screen.getByTestId('ai-quota-save'));
 
-    expect(await screen.findByTestId('ai-quota-saved')).toHaveTextContent(
-      'Cupo de Grupo Demo: 25,50 unidades de cuenta al mes.',
-    );
+    expect(await screen.findByTestId('ai-quota-saved')).toHaveTextContent('Cupo de Grupo Demo: 25,50 créditos al mes.');
     expect(fake.callsTo('admin_set_ai_quota', 'rpc')[0]!.payload).toEqual({
       p_organization_id: ORG_ID,
       p_monthly_limit_micros: 25_500_000,

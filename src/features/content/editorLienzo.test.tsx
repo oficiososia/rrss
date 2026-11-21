@@ -336,7 +336,7 @@ describe('Editor: vista previa por red', () => {
     expect(await within(preview).findByRole('img')).toHaveAttribute('src', 'blob:vista-previa');
     expect(within(preview).getByTestId('preview-caption')).toHaveTextContent(`Casa Demo ${'a'.repeat(125)}… más`);
     expect(screen.getByRole('dialog')).toHaveTextContent(/Aproximada/);
-    expect(preview).toHaveTextContent(/sin verificar/);
+    expect(preview).toHaveTextContent(/aproximado/);
   });
 
   it('una historia va a pantalla completa y sin pie', async () => {

@@ -3,6 +3,7 @@ import { BRAND_ROLE_LABEL, ORG_ROLE_LABEL } from '@/features/permissions/roles';
 import type { BrandRole, OrgRole } from '@/lib/database.types';
 import { REQUEST_STATUS_LABEL } from '@/features/requests/labels';
 import type { ContentRequestStatus } from '@/lib/database.types';
+import { CAMPAIGN_STATUS_TEXT, CONTENT_STATUS_TEXT, describeUnknownActivity, excerpt } from '@/lib/texts';
 
 function str(data: Json, key: string): string {
   if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
@@ -11,13 +12,6 @@ function str(data: Json, key: string): string {
   }
   return '';
 }
-
-const CONTENT_STATUS_TEXT: Record<string, string> = {
-  idea: 'idea',
-  draft: 'borrador',
-  in_review: 'en revisión',
-  approved: 'aprobado',
-};
 
 /**
  * Frase en español para una fila del registro de auditoría, o `null` si la
@@ -117,7 +111,22 @@ export function describeAudit(
       return `eliminó el encargo «${str(data, 'title')}»`;
     case 'content_request_comments:insert':
       return str(data, 'kind') === 'comment' ? 'comentó un encargo' : 'cambió el estado de un encargo';
+    case 'content_comments:insert': {
+      const kind = str(data, 'kind');
+      if (kind === 'approved') return 'aprobó una publicación';
+      if (kind === 'unapproved') return 'retiró la aprobación de una publicación';
+      if (kind === 'changes_requested') return 'pidió cambios en una publicación';
+      const body = excerpt(str(data, 'body'));
+      return body ? `comentó en una publicación: «${body}»` : 'comentó en una publicación';
+    }
+    case 'campaigns:insert':
+      return `creó la campaña «${str(data, 'title')}»`;
+    case 'campaigns:update':
+      return `actualizó la campaña «${str(data, 'title')}» (${CAMPAIGN_STATUS_TEXT[str(data, 'status')] ?? 'cambio de estado'})`;
+    case 'campaigns:delete':
+      return `eliminó la campaña «${str(data, 'title')}»`;
     default:
-      return `${action} en ${entity}`;
+      // Nunca se enseña el nombre de la tabla: «hizo un cambio» si no hay frase mejor.
+      return describeUnknownActivity(action, entity);
   }
 }

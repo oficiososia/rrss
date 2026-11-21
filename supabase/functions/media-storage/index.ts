@@ -55,7 +55,18 @@ const handlerFor = memoByEnv((effective) => {
         .eq('source', 'storage')
         .in('storage_path', paths);
       if (error) throw new Error('No se pudieron leer los recursos');
-      return (data ?? []) as AssetLocation[];
+      // Las miniaturas (`thumb_path`) se firman como el original: mismo almacén y misma RLS.
+      const thumbs = await client
+        .from('media_assets')
+        .select('thumb_path, storage_backend')
+        .eq('source', 'storage')
+        .in('thumb_path', paths);
+      if (thumbs.error) throw new Error('No se pudieron leer los recursos');
+      const thumbRows = (thumbs.data ?? []).map((r) => ({
+        storage_path: r.thumb_path as string,
+        storage_backend: r.storage_backend,
+      }));
+      return [...(data ?? []), ...thumbRows] as AssetLocation[];
     },
     async cleanupForPaths(accessToken, paths) {
       const { data, error } = await asUser(accessToken)

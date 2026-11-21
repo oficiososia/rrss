@@ -1,7 +1,7 @@
 import { Check, Images, Sparkles } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Badge, Button, Dialog, Field, Notice, Select, Skeleton, Spinner, Textarea } from '@/components/ui';
-import { useAssets, useSignedUrls } from '@/features/library/api';
+import { previewPath, useAssets, useSignedUrls } from '@/features/library/api';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { cn } from '@/lib/utils';
 import { AiErrorNotice } from './AiErrorNotice';
@@ -301,7 +301,7 @@ function ReferencePicker({
   const filters = useMemo(() => ({ kind: 'image' as const, tag: '', folder: '', search: '' }), []);
   const assets = useAssets(brandId, filters);
   const rows = useDeferredValue(useMemo(() => assets.data?.pages.flat() ?? [], [assets.data]));
-  const paths = useMemo(() => rows.map((a: MediaAssetRow) => a.storage_path), [rows]);
+  const paths = useMemo(() => rows.map((a: MediaAssetRow) => previewPath(a)), [rows]);
   const urls = useSignedUrls(paths);
   const full = selected.length >= MAX_IMAGE_REFERENCES;
 
@@ -315,7 +315,7 @@ function ReferencePicker({
       data-testid="ai-image-reference-list"
     >
       {rows.map((asset) => {
-        const url = urls.data?.get(asset.storage_path);
+        const url = urls.data?.get(previewPath(asset));
         const checked = selected.includes(asset.id);
         return (
           <li key={asset.id}>

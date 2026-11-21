@@ -51,7 +51,10 @@ describe('exportar e importar la configuración de una marca', () => {
   });
 
   it('explica por qué no vale un archivo', () => {
-    expect(parseBrandConfig('{no es json')).toEqual({ ok: false, errors: ['El archivo no es un JSON válido.'] });
+    expect(parseBrandConfig('{no es json')).toEqual({
+      ok: false,
+      errors: ['El archivo no es una configuración válida.'],
+    });
 
     const otherFormat = parseBrandConfig(
       JSON.stringify({ format: 'otra-cosa', version: 1, brand: { name: 'X' }, profile: {} }),

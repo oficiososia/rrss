@@ -410,7 +410,7 @@ export function analyze(input: AnalysisInput): Analysis {
     caveats.push('Hay días sin cifras en el periodo: los totales solo suman los días medidos.');
   }
   caveats.push(
-    'Los días se cuentan en hora UTC; Instagram puede cortar el día a otra hora, así que una cifra diaria puede no coincidir exactamente con la de la aplicación.',
+    'Los días se cuentan con la hora universal (una o dos horas menos que en España); Instagram puede cortar el día a otra hora, así que una cifra diaria puede no coincidir exactamente con la de la aplicación.',
   );
 
   // ── Lo que no se puede medir ──

@@ -13,17 +13,17 @@ describe('importes de IA', () => {
   it('sin moneda configurada usa una unidad neutra y no pinta símbolos', () => {
     expect(neutral.currency).toBeNull();
     const text = formatMicros(12_500_000, neutral);
-    expect(text).toBe('12,50 unidades de cuenta');
+    expect(text).toBe('12,50 créditos');
     expect(text).not.toMatch(/[€$]/);
-    expect(formatMicros(1_000_000, neutral)).toBe('1,00 unidad de cuenta');
-    expect(moneyUnitLabel(neutral)).toBe('unidades de cuenta');
-    expect(moneyEstimateNote(neutral)).toMatch(/todavía no está fijada/);
+    expect(formatMicros(1_000_000, neutral)).toBe('1,00 crédito');
+    expect(moneyUnitLabel(neutral)).toBe('créditos');
+    expect(moneyEstimateNote(neutral)).toMatch(/aún no tiene una moneda fijada/);
   });
 
   it('los importes diminutos no se redondean a cero', () => {
-    expect(formatMicros(12, neutral)).toBe('< 0,0001 unidades de cuenta');
-    expect(formatMicros(0, neutral)).toBe('0,00 unidades de cuenta');
-    expect(formatMicros(1234, neutral)).toBe('0,0012 unidades de cuenta');
+    expect(formatMicros(12, neutral)).toBe('< 0,0001 créditos');
+    expect(formatMicros(0, neutral)).toBe('0,00 créditos');
+    expect(formatMicros(1234, neutral)).toBe('0,0012 créditos');
   });
 
   it('con una moneda ISO válida la usa; con un valor raro, la ignora', () => {

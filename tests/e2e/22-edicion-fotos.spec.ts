@@ -16,8 +16,8 @@ import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
 test.describe.configure({ mode: 'serial' });
 
 const marcaA = () => `/o/${dato('orgA')}/m/${dato('marcaA')}`;
-/** Precio inventado de la edición simulada (LOCAL_TEST_EDIT_PRICE_MICROS): 0,01 unidades de cuenta. */
-const COSTE = '0,01 unidades de cuenta';
+/** Precio inventado de la edición simulada (LOCAL_TEST_EDIT_PRICE_MICROS): 0,01 créditos. */
+const COSTE = '0,01 créditos';
 const FOTO = png(640, 480, [180, 120, 60]);
 
 /** La tarjeta de un recurso en la cuadrícula de la biblioteca. */
@@ -28,10 +28,11 @@ function tarjeta(page: Page, nombre: string) {
 test.beforeAll(async () => {
   // Al relanzar solo este archivo (E2E_CONTINUAR=1), la foto de la pasada anterior
   // haría que la subida se tomara por un duplicado: se quitan sus filas y las ediciones.
-  await sql(
-    `delete from public.media_assets where brand_id = $1 and file_name in ($2, $3)`,
-    [dato('marcaA'), 'pan-para-recortar.png', 'Sin fondo · pan-para-recortar.png'],
-  );
+  await sql(`delete from public.media_assets where brand_id = $1 and file_name in ($2, $3)`, [
+    dato('marcaA'),
+    'pan-para-recortar.png',
+    'Sin fondo · pan-para-recortar.png',
+  ]);
 });
 
 interface Fila extends Record<string, unknown> {

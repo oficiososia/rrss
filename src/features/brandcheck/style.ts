@@ -164,7 +164,7 @@ export function checkReadability(text: PieceText, options: BrandCheckOptions = {
       code: 'READABILITY_SCORE',
       check: 'readability',
       severity: 'info',
-      message: `Legibilidad (Fernández-Huerta): ${stats.score} de 100, ${readabilityBand(stats.score)}. Es solo orientativo.`,
+      message: `Facilidad de lectura: ${stats.score} de 100, ${readabilityBand(stats.score)}. Es solo orientativo.`,
       measured: stats.score,
       threshold: READABILITY_REFERENCE,
       target: { part: 'caption' },

@@ -176,7 +176,7 @@ describe('Analítica', () => {
     expect(within(facts).getAllByText('Dato').length).toBeGreaterThan(2);
     expect(facts).toHaveTextContent('Alcance: 4200 (periodo anterior: 2800, +50 %).');
     const hypotheses = screen.getByTestId('analytics-hypotheses');
-    expect(within(hypotheses).getAllByText('Hipótesis').length).toBeGreaterThan(0);
+    expect(within(hypotheses).getAllByText('Interpretación').length).toBeGreaterThan(0);
 
     const unmeasurable = screen.getByTestId('analytics-unmeasurable');
     expect(unmeasurable).toHaveTextContent('Impresiones: Meta la retiró.');
@@ -231,7 +231,7 @@ describe('Analítica', () => {
     const { user } = renderApp(`${BRAND_BASE}/analitica`);
     await user.click(await screen.findByTestId('analytics-ai'));
     const ai = await screen.findByTestId('analytics-ai-hypotheses');
-    expect(ai).toHaveTextContent('Hipótesis (IA)');
+    expect(ai).toHaveTextContent('Interpretación (IA)');
     expect(ai).toHaveTextContent('Podría convenir publicar más reels.');
     expect(ai).toHaveTextContent('Se apoya en: Alcance: 4200');
     expect(ai).toHaveTextContent('Se han descartado 1');

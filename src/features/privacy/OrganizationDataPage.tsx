@@ -31,7 +31,7 @@ function ExportOrganizationCard() {
     <Card data-testid="org-export">
       <CardHeader
         title="Exportar los datos de la organización"
-        description="Un archivo JSON con la configuración, los miembros, las marcas con sus perfiles, los contenidos con todas sus versiones, los encargos y la lista de archivos."
+        description="Un archivo con la configuración, los miembros, las marcas con sus perfiles, los contenidos con todas sus versiones, los encargos y la lista de archivos."
       />
       <CardBody className="space-y-3 text-sm">
         <p className="text-muted">

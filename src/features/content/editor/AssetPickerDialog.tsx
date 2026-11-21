@@ -3,7 +3,7 @@ import { Images, Search, Upload } from 'lucide-react';
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, EmptyState, ErrorState, Input, Skeleton, Spinner } from '@/components/ui';
-import { assetKeys, uploadAsset, useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { assetKeys, previewPath, uploadAsset, useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { translateError } from '@/lib/errors';
 import type { MediaAssetRow } from '@/lib/database.types';
 
@@ -22,12 +22,12 @@ function AssetGrid({
   onPick: (asset: MediaAssetRow) => void;
   testId: string;
 }) {
-  const paths = useMemo(() => assets.map((a) => a.storage_path), [assets]);
+  const paths = useMemo(() => assets.map(previewPath), [assets]);
   const urls = useSignedUrls(paths);
   return (
     <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid={testId}>
       {assets.map((asset) => {
-        const url = urls.data?.get(asset.storage_path);
+        const url = urls.data?.get(previewPath(asset));
         return (
           <li key={asset.id}>
             <button

@@ -106,7 +106,9 @@ export function ConnectedAccountsCard() {
                 data-testid="social-connect-token"
               >
                 <KeyRound className="h-4 w-4" aria-hidden />
-                {instagram?.connection_method === 'token' ? 'Pegar un token nuevo' : 'Conectar con un token'}
+                {instagram?.connection_method === 'token'
+                  ? 'Renovar la conexión avanzada'
+                  : 'Conexión avanzada (agencia)'}
               </Button>
             )}
           </div>
@@ -160,13 +162,13 @@ function AccountRow({
             Conectada el {formatDate(account.connected_at)}
             {account.connection_method === 'token' &&
               (account.token_expires_at
-                ? ` · con un token que caduca el ${formatDate(account.token_expires_at)}`
-                : ' · con un token sin caducidad declarada')}
+                ? ` · conexión avanzada, caduca el ${formatDate(account.token_expires_at)}`
+                : ' · conexión avanzada, sin fecha de caducidad')}
           </span>
         </span>
         {account.connection_method === 'token' && (
           <span data-testid="social-account-token">
-            <Badge>Con token</Badge>
+            <Badge>Conexión avanzada</Badge>
           </span>
         )}
         {account.status === 'active' ? (
@@ -193,7 +195,7 @@ function AccountRow({
             <Warning>
               El acceso caduca el {formatDate(account.token_expires_at!)}:{' '}
               {account.connection_method === 'token'
-                ? 'pega un token nuevo antes para renovarlo.'
+                ? 'renueva la conexión avanzada antes de esa fecha.'
                 : 'vuelve a conectar la cuenta antes para renovarlo.'}
             </Warning>
           )}
@@ -254,7 +256,7 @@ function TokenConnectDialog({
       { igUserId: igUserId.trim(), accessToken: accessToken.trim() },
       {
         onSuccess: (result) => {
-          toast.success(`Cuenta @${result.username} conectada con el token`);
+          toast.success(`Cuenta @${result.username} conectada`);
           for (const warning of result.warnings) toast.warning(warning);
           close(false);
         },
@@ -267,8 +269,8 @@ function TokenConnectDialog({
     <Dialog
       open={open}
       onOpenChange={close}
-      title="Conectar Instagram con un token"
-      description="Para cuentas que ya tienen su aplicación de Meta y un token de acceso de página de larga duración."
+      title="Conexión avanzada de Instagram"
+      description="Para cuentas que ya tienen su aplicación de Meta y una clave de acceso de página de larga duración. Normalmente la hace tu agencia."
       footer={
         <>
           <Button variant="ghost" onClick={() => close(false)}>
@@ -288,14 +290,11 @@ function TokenConnectDialog({
     >
       <form id="social-token-form" className="space-y-4" onSubmit={submit}>
         <Notice tone="warning">
-          El token sustituye al inicio de sesión con Meta para esta cuenta: se publica y se mide con él. Caduca cuando
-          lo diga Meta; entonces la cuenta pasa a «hay que volver a conectarla» y hay que pegar uno nuevo. Se comprueba
-          con Meta antes de guardarlo y se guarda cifrado: no se vuelve a ver.
+          La clave de acceso sustituye al inicio de sesión con Meta para esta cuenta: se publica y se mide con ella.
+          Caduca cuando lo diga Meta; entonces la cuenta pasa a «hay que volver a conectarla» y hay que pegar una nueva.
+          Se comprueba con Meta antes de guardarla y se guarda cifrada: no se vuelve a ver.
         </Notice>
-        <Field
-          label="Identificador de la cuenta de Instagram (IG User ID)"
-          hint="Solo cifras, por ejemplo 17841400000000000."
-        >
+        <Field label="Identificador de la cuenta de Instagram" hint="Solo cifras, por ejemplo 17841400000000000.">
           {(props) => (
             <Input
               {...props}
@@ -308,8 +307,8 @@ function TokenConnectDialog({
           )}
         </Field>
         <Field
-          label="Token de acceso de página"
-          hint="De Facebook Login (empieza por EAA). Necesita los permisos instagram_basic e instagram_content_publish; para medir, también instagram_manage_insights."
+          label="Clave de acceso de página"
+          hint="La da Facebook al iniciar sesión (empieza por EAA). Necesita permiso para publicar en Instagram y, para medir, para ver sus estadísticas."
           error={error}
         >
           {(props) => (

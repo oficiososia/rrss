@@ -18,8 +18,8 @@ import { abrir, dato, LOCAL, sinErrores, sql } from './apoyo';
 test.describe.configure({ mode: 'serial' });
 
 const marcaA = () => `/o/${dato('orgA')}/m/${dato('marcaA')}`;
-/** Precio inventado del simulado (LOCAL_TEST_IMAGE_PRICE_MICROS): 0,02 unidades de cuenta. */
-const COSTE = '0,02 unidades de cuenta';
+/** Precio inventado del simulado (LOCAL_TEST_IMAGE_PRICE_MICROS): 0,02 créditos. */
+const COSTE = '0,02 créditos';
 
 /** Clave de servicio del stack LOCAL (la de todas las instalaciones de la CLI; no es un secreto). */
 function claveDeServicioLocal(): string {

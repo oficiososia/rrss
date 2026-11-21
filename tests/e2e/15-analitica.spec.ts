@@ -141,7 +141,7 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   await expect(page.getByTestId('analytics-facts')).toContainText('Dato');
   await expect(page.getByTestId('analytics-facts')).toContainText('Alcance:');
   await expect(page.getByTestId('analytics-hypotheses')).toBeVisible();
-  await expect(page.getByTestId('analytics-caveats')).toContainText('UTC');
+  await expect(page.getByTestId('analytics-caveats')).toContainText('hora universal');
   const noMedible = page.getByTestId('analytics-unmeasurable');
   await expect(noMedible).toContainText('Impresiones');
   await expect(noMedible).toContainText('Facebook');
@@ -150,7 +150,7 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   // La Espiga no está en modo agencia: la IA interpreta, solo con los datos medidos.
   await page.getByTestId('analytics-ai').click();
   const ia = page.getByTestId('analytics-ai-hypotheses');
-  await expect(ia).toContainText('Hipótesis (IA)');
+  await expect(ia).toContainText('Interpretación (IA)');
   await expect(ia).toContainText('[simulado] Podría merecer la pena fijarse en esto');
   await expect(ia).toContainText('Se apoya en:');
 
