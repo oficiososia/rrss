@@ -272,7 +272,7 @@ describe('Asistente: importar una configuración JSON', () => {
     await upload(user, 'esto no es json {');
     const errors = await screen.findByTestId('wizard-import-errors');
     expect(errors).toHaveTextContent('No se ha podido importar');
-    expect(errors).toHaveTextContent('El archivo no es un JSON válido.');
+    expect(errors).toHaveTextContent('El archivo no es una configuración válida.');
     expect(heading()).toHaveTextContent('1/7');
     expect(screen.getByLabelText('Nombre comercial')).toHaveValue('');
   });

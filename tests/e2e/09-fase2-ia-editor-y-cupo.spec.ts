@@ -42,7 +42,7 @@ const ERRORES_DE_CUPO = [/status of 402/];
 
 /** Como `formatMicros` de la aplicación, sin moneda fijada. */
 const importe = (micros: number) =>
-  `${new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(micros / 1_000_000)} unidades de cuenta`;
+  `${new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(micros / 1_000_000)} créditos`;
 
 async function generaciones(lado: 'A' | 'B'): Promise<number> {
   const [fila] = await sql<{ n: string }>(
@@ -250,10 +250,9 @@ test('editar la pieza (texto y una capa), guardar otra versión y ver el histori
   await expect(historial.getByRole('listitem').nth(1)).toContainText('Texto redactado con IA');
   await page.keyboard.press('Escape');
 
-  const [guardada] = await sql<{ data: { pages: { layers: { type: string; text?: string }[] }[]; copy: { caption: string } } }>(
-    `select data from public.content_versions where content_id = $1 and version = 2`,
-    [dato('piezaA')],
-  );
+  const [guardada] = await sql<{
+    data: { pages: { layers: { type: string; text?: string }[] }[]; copy: { caption: string } };
+  }>(`select data from public.content_versions where content_id = $1 and version = 2`, [dato('piezaA')]);
   expect(guardada?.data.pages[0]?.layers.some((l) => l.type === 'text' && l.text === 'Hogazas de otoño')).toBe(true);
   expect(guardada?.data.copy.caption).toContain('Ahora más barato.');
   sinErrores(s);

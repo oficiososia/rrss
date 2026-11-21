@@ -294,7 +294,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
             </Button>
             <Button variant="secondary" onClick={exportConfig} data-testid="profile-export">
               <Download className="h-4 w-4" aria-hidden />
-              Exportar JSON
+              Descargar configuración
             </Button>
           </>
         }

@@ -1,3 +1,4 @@
+import { TEXT } from '@/lib/texts';
 // Único sitio donde se enseñan importes de IA.
 //
 // La base de datos guarda los importes como enteros en millonésimas («micros»)
@@ -37,10 +38,10 @@ export function resolveMoneyDisplay(raw: string | undefined): MoneyDisplay {
 
 export const MONEY_DISPLAY: MoneyDisplay = resolveMoneyDisplay(import.meta.env.VITE_AI_ACCOUNT_CURRENCY);
 
-const NEUTRAL_UNIT = { one: 'unidad de cuenta', other: 'unidades de cuenta' };
+const NEUTRAL_UNIT = TEXT.creditUnit;
 const MAX_DECIMALS = 4;
 
-/** Importe en micros → texto («12,50 unidades de cuenta» o, con moneda fijada, «12,50 €»). */
+/** Importe en micros → texto («12,50 créditos» o, con moneda fijada, «12,50 €»). */
 export function formatMicros(micros: number, display: MoneyDisplay = MONEY_DISPLAY): string {
   const units = (Number.isFinite(micros) ? micros : 0) / MICROS_PER_UNIT;
   const tiny = units !== 0 && Math.abs(units) < 10 ** -MAX_DECIMALS;
@@ -66,7 +67,7 @@ export function moneyUnitLabel(display: MoneyDisplay = MONEY_DISPLAY): string {
 export function moneyEstimateNote(display: MoneyDisplay = MONEY_DISPLAY): string {
   return display.currency
     ? `Importes estimados en ${display.currency} a partir del consumo que informa el proveedor de IA y la tarifa configurada en la plataforma. No son una factura.`
-    : 'Importes estimados a partir del consumo que informa el proveedor de IA y la tarifa configurada en la plataforma. Van en la moneda de cuenta de la plataforma, que todavía no está fijada. No son una factura.';
+    : 'Importes estimados a partir del consumo que informa el proveedor de IA y la tarifa configurada en la plataforma. Se cuentan en créditos de IA, porque la plataforma aún no tiene una moneda fijada. No son una factura.';
 }
 
 /**

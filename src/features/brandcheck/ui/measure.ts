@@ -39,7 +39,7 @@ export function describeMeasure(finding: Finding): string | null {
     case 'ALT_TEXT_MISSING':
       return null;
     case 'READABILITY_SCORE':
-      return `Índice de legibilidad ${num(Number(m))}${t !== null ? ` (referencia ${t})` : ''}.`;
+      return `Facilidad de lectura ${num(Number(m))}${t !== null ? ` (referencia ${t})` : ''}.`;
     default:
       return t !== null ? `Medido: ${m} · Umbral: ${t}.` : `Medido: ${m}.`;
   }

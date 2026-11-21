@@ -333,7 +333,7 @@ export function ChannelsSection({ value, onChange, disabled }: SectionProps) {
       </Field>
       <StringListInput
         label="Otros idiomas"
-        hint="Códigos de idioma: en, fr, ca…"
+        hint="Escribe el código de cada idioma: en (inglés), fr (francés), ca (catalán)…"
         values={value.languages.others}
         onChange={(others) => onChange({ ...value, languages: { ...value.languages, others } })}
         maxLength={10}

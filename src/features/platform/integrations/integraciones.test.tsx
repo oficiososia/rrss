@@ -236,7 +236,7 @@ describe('conectar Instagram con un token', () => {
     expect(within(card).queryByTestId('social-connect-instagram')).toBeNull();
 
     await user.click(within(card).getByTestId('social-connect-token'));
-    expect(await screen.findByText(/El token sustituye al inicio de sesión con Meta/)).toBeInTheDocument();
+    expect(await screen.findByText(/La clave de acceso sustituye al inicio de sesión con Meta/)).toBeInTheDocument();
     expect(screen.getByText(/Caduca cuando lo diga Meta/)).toBeInTheDocument();
     await user.type(screen.getByTestId('social-token-ig-id'), '17841400000000001');
     await user.type(screen.getByTestId('social-token-value'), 'EAAprueba0000000000000000');
@@ -249,8 +249,8 @@ describe('conectar Instagram con un token', () => {
       igUserId: '17841400000000001',
       accessToken: 'EAAprueba0000000000000000',
     });
-    expect(await within(card).findByTestId('social-account-token')).toHaveTextContent('Con token');
-    expect(within(card).getByText(/con un token sin caducidad declarada/)).toBeInTheDocument();
+    expect(await within(card).findByTestId('social-account-token')).toHaveTextContent('Conexión avanzada');
+    expect(within(card).getByText(/conexión avanzada, sin fecha de caducidad/)).toBeInTheDocument();
   });
 
   it('si Meta rechaza el token, se dice en el diálogo', async () => {

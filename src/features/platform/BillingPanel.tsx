@@ -167,9 +167,9 @@ export function BillingPanel({ now = new Date() }: { now?: Date }) {
           </div>
           <CardBody>
             <p className="text-xs text-muted">
-              Precios de plan y costes de IA van en la misma moneda de cuenta de la plataforma; si no, el margen no
-              tendría sentido. Los ingresos son el precio de catálogo, no lo cobrado: impuestos, descuentos y prorrateos
-              están en Stripe.
+              Los precios de los planes y los costes de IA se cuentan en la misma unidad (créditos o euros); si no, el
+              margen no tendría sentido. Los ingresos son el precio de catálogo, no lo cobrado: impuestos, descuentos y
+              prorrateos están en Stripe.
             </p>
           </CardBody>
         </>

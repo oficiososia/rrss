@@ -147,7 +147,7 @@ describe('Configuración → Plan', () => {
 
     const options = await screen.findByTestId('plan-options');
     expect(options).toHaveTextContent('Profesional');
-    expect(options).toHaveTextContent('79,00 unidades de cuenta al mes');
+    expect(options).toHaveTextContent('79,00 créditos al mes');
     // El plan por defecto no se vende.
     expect(options).not.toHaveTextContent('Prueba');
     await user.click(screen.getByTestId('checkout-professional'));
@@ -248,10 +248,10 @@ describe('Plataforma → margen y planes', () => {
     const { user } = renderApp('/plataforma');
 
     const table = await screen.findByTestId('billing-overview');
-    expect(screen.getByTestId(`margin-${ORG_ID}`)).toHaveTextContent('75,00 unidades de cuenta');
-    expect(screen.getByTestId('margin-org-2')).toHaveTextContent('-2,00 unidades de cuenta');
+    expect(screen.getByTestId(`margin-${ORG_ID}`)).toHaveTextContent('75,00 créditos');
+    expect(screen.getByTestId('margin-org-2')).toHaveTextContent('-2,00 créditos');
     expect(screen.getByTestId('margin-org-2')).toHaveClass('text-danger');
-    expect(screen.getByTestId('margin-total')).toHaveTextContent('73,00 unidades de cuenta');
+    expect(screen.getByTestId('margin-total')).toHaveTextContent('73,00 créditos');
     expect(within(table).getByText('Asignado por la plataforma')).toBeInTheDocument();
     expect(fake.callsTo('admin_billing_overview', 'rpc')[0]!.payload).toEqual({
       p_period_start: expect.stringMatching(/^\d{4}-\d{2}-01$/),

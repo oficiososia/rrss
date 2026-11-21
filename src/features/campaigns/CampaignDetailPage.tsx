@@ -100,7 +100,9 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
     if (accepted) {
       return (contents.data ?? []).map((link) => {
         const piece =
-          draft && link.plan_version === campaign.current_plan_version ? (draft.pieces[link.piece_index] ?? null) : null;
+          draft && link.plan_version === campaign.current_plan_version
+            ? (draft.pieces[link.piece_index] ?? null)
+            : null;
         return {
           key: link.content_id,
           planIndex: null,
@@ -386,7 +388,7 @@ function WhyThisPlan({ plan, version, createdAt }: { plan: CampaignPlan; version
   const summary = [
     count(observed.length, 'cosa observada', 'cosas observadas'),
     dataBacked.length ? count(dataBacked.length, 'dato', 'datos') : 'sin datos de resultados',
-    count(hypotheses.length, 'hipótesis', 'hipótesis'),
+    count(hypotheses.length, 'suposición', 'suposiciones'),
   ].join(', ');
   return (
     <Fold title="Por qué este plan" summary={`${summary[0]!.toUpperCase()}${summary.slice(1)}.`} testId="campaign-why">

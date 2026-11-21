@@ -53,7 +53,12 @@ describe('describeAudit', () => {
     // Altas que trae consigo la aceptación: no se repiten.
     expect(
       describeAudit(
-        { action: 'insert', entity_type: 'brand_members', actor_id: 'u1', data: { user_id: 'u1', role: 'editor', ...via } },
+        {
+          action: 'insert',
+          entity_type: 'brand_members',
+          actor_id: 'u1',
+          data: { user_id: 'u1', role: 'editor', ...via },
+        },
         names,
       ),
     ).toBeNull();
@@ -74,7 +79,14 @@ describe('describeAudit', () => {
         {
           action: 'update',
           entity_type: 'invitations',
-          data: { email: 'x@y.z', accepted_at: '2026-01-01', brand_id: 'b1', brand_role: 'editor', org_role: 'member', ...via },
+          data: {
+            email: 'x@y.z',
+            accepted_at: '2026-01-01',
+            brand_id: 'b1',
+            brand_role: 'editor',
+            org_role: 'member',
+            ...via,
+          },
         },
         names,
       ),
@@ -110,8 +122,9 @@ describe('describeAudit', () => {
       describeAudit({ action: 'delete', entity_type: 'organization_members', data: { user_id: 'otro' } }, names),
     ).toBe('quitó a un usuario de la organización');
     expect(describeAudit({ action: 'insert', entity_type: 'brands', data: null }, names)).toBe('creó la marca «»');
-    expect(describeAudit({ action: 'insert', entity_type: 'tabla_futura', data: [] }, names)).toBe(
-      'insert en tabla_futura',
+    expect(describeAudit({ action: 'insert', entity_type: 'tabla_futura', data: [] }, names)).toBe('hizo un cambio');
+    expect(describeAudit({ action: 'update', entity_type: 'social_accounts', data: {} }, names)).toBe(
+      'cambió una cuenta de red social',
     );
   });
 });
@@ -142,5 +155,30 @@ describe('likePattern', () => {
   it('escapa los comodines para buscar el texto tal cual', () => {
     expect(likePattern('100%_real\\')).toBe('%100\\%\\_real\\\\%');
     expect(likePattern('foto')).toBe('%foto%');
+  });
+});
+
+describe('comentarios y campañas en la actividad', () => {
+  const names = () => '';
+  it('dice qué se hizo, sin nombres de tablas', () => {
+    expect(
+      describeAudit(
+        {
+          action: 'insert',
+          entity_type: 'content_comments',
+          data: { kind: 'comment', body: 'Chuletón al punto, cambia la foto' },
+        },
+        names,
+      ),
+    ).toBe('comentó en una publicación: «Chuletón al punto, cambia la foto»');
+    expect(
+      describeAudit({ action: 'insert', entity_type: 'content_comments', data: { kind: 'approved' } }, names),
+    ).toBe('aprobó una publicación');
+    expect(
+      describeAudit(
+        { action: 'update', entity_type: 'campaigns', data: { title: 'Navidad', status: 'accepted' } },
+        names,
+      ),
+    ).toBe('actualizó la campaña «Navidad» (aceptada)');
   });
 });

@@ -1,3 +1,4 @@
+import { cleanText } from '@/lib/texts';
 import { BarChart3, Download, FileText, Lightbulb, Ruler, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -119,7 +120,7 @@ export function AnalyticsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Analítica"
-        description="Cifras medidas en las redes de la marca. Lo que es interpretación se marca como hipótesis, y lo que no se puede medir se dice."
+        description="Cifras medidas en las redes de la marca. Lo que es interpretación se marca como tal, y lo que no se puede medir se dice."
         action={
           <Select
             aria-label="Periodo"
@@ -151,7 +152,7 @@ export function AnalyticsPage() {
         <>
           <p className="text-sm text-muted">
             Periodo: <strong className="text-fg">{periodText(period)}</strong> · comparado con {periodText(previous)} ·
-            días en hora UTC.
+            días contados con la hora universal (una o dos horas menos que en España).
           </p>
           <Kpis totals={analysis.totals} />
           <Evolution analysis={analysis} points={points.data ?? []} />
@@ -404,7 +405,7 @@ function Summary({
     <Card>
       <CardHeader
         title="Resumen del analista"
-        description="Sin IA: reglas fijas sobre las cifras medidas. Un dato es una cifra; una hipótesis, una interpretación posible."
+        description="Sin IA: reglas fijas sobre las cifras medidas. Un dato es una cifra; una interpretación, una explicación posible."
         action={
           aiAvailable && analysis.hasData ? (
             <Button variant="secondary" onClick={() => void askAi()} disabled={busy} data-testid="analytics-ai">
@@ -430,7 +431,7 @@ function Summary({
         </section>
         <section>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-            <Lightbulb className="h-4 w-4" aria-hidden /> Hipótesis
+            <Lightbulb className="h-4 w-4" aria-hidden /> Interpretaciones
           </h3>
           <ul className="space-y-1.5 text-sm" data-testid="analytics-hypotheses">
             {analysis.hypotheses.length === 0 && (
@@ -440,7 +441,7 @@ function Summary({
             )}
             {analysis.hypotheses.map((h) => (
               <li key={h.id} className="flex gap-2">
-                <Badge tone="warning">Hipótesis</Badge>
+                <Badge tone="warning">Interpretación</Badge>
                 <span>{h.text}</span>
               </li>
             ))}
@@ -455,7 +456,7 @@ function Summary({
         {ai && (
           <section data-testid="analytics-ai-hypotheses">
             <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <Sparkles className="h-4 w-4" aria-hidden /> Hipótesis propuestas por la IA
+              <Sparkles className="h-4 w-4" aria-hidden /> Interpretaciones propuestas por la IA
             </h3>
             <p className="mb-2 text-xs text-muted">
               La IA solo ha recibido los datos de arriba. Lo que propone son interpretaciones, no cifras ni
@@ -469,7 +470,7 @@ function Summary({
                 {ai.hypotheses.map((h) => (
                   <li key={h.id}>
                     <div className="flex gap-2">
-                      <Badge tone="warning">Hipótesis (IA)</Badge>
+                      <Badge tone="warning">Interpretación (IA)</Badge>
                       <span>{h.text}</span>
                     </div>
                     <p className="ml-1 mt-0.5 text-xs text-muted">
@@ -486,6 +487,19 @@ function Summary({
   );
 }
 
+/** Una línea por métrica: si la misma (p. ej. «Impresiones», de la cuenta y de las publicaciones) sale dos veces, se juntan sus motivos. */
+function groupUnmeasurable(list: Analysis['unmeasurable']): Array<{ id: string; label: string; reason: string }> {
+  const byLabel = new Map<string, { id: string; label: string; reasons: string[] }>();
+  for (const u of list) {
+    const label = cleanText(u.label);
+    const reason = cleanText(u.reason);
+    const found = byLabel.get(label);
+    if (!found) byLabel.set(label, { id: u.id, label, reasons: reason ? [reason] : [] });
+    else if (reason && !found.reasons.includes(reason)) found.reasons.push(reason);
+  }
+  return [...byLabel.values()].map((g) => ({ id: g.id, label: g.label, reason: g.reasons.join(' ') }));
+}
+
 function Unmeasurable({ analysis }: { analysis: Analysis }) {
   return (
     <Card>
@@ -495,7 +509,7 @@ function Unmeasurable({ analysis }: { analysis: Analysis }) {
       />
       <CardBody>
         <ul className="space-y-1.5 text-sm" data-testid="analytics-unmeasurable">
-          {analysis.unmeasurable.map((u) => (
+          {groupUnmeasurable(analysis.unmeasurable).map((u) => (
             <li key={u.id}>
               <strong className="font-medium">{u.label}:</strong> <span className="text-muted">{u.reason}</span>
             </li>

@@ -143,7 +143,7 @@ describe('la sección Campañas', () => {
     expect(await screen.findByTestId('campaign-objective')).toHaveTextContent('Llenar las mesas de entre semana.');
     const why = screen.getByTestId('campaign-why');
     expect(why).not.toHaveAttribute('open');
-    expect(why).toHaveTextContent('1 cosa observada, sin datos de resultados, 1 hipótesis.');
+    expect(why).toHaveTextContent('1 cosa observada, sin datos de resultados, 1 suposición.');
     expect(screen.getByTestId('campaign-instruction')).not.toHaveAttribute('open');
     // Dentro, observado, sin datos (y lo dice) e hipótesis, siempre por separado.
     expect(screen.getByTestId('reason-observed')).toHaveTextContent('El tono de la marca es cercano.');
@@ -241,7 +241,9 @@ describe('la sección Campañas', () => {
     expect(within(list).getByTestId('campaign-piece-status')).toHaveTextContent('Borrador');
     expect(screen.queryByTestId('campaign-accept')).not.toBeInTheDocument();
     const tile = within(list).getByTestId('campaign-piece-row');
-    await waitFor(() => expect(within(tile).getByTestId('campaign-piece-thumb')).toHaveAttribute('data-preview', 'document'));
+    await waitFor(() =>
+      expect(within(tile).getByTestId('campaign-piece-thumb')).toHaveAttribute('data-preview', 'document'),
+    );
     // La acción principal lleva a la siguiente pieza por terminar.
     expect(screen.getByTestId('campaign-open-next')).toHaveAttribute('href', `${BRAND_BASE}/contenidos/c-1`);
     await user.click(tile);
@@ -253,7 +255,10 @@ describe('la sección Campañas', () => {
 
   it('la lista enseña cada campaña como tarjeta: fechas, estado, número de piezas y miniaturas', async () => {
     vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
-    seed({}, [campaignRow(), campaignRow({ id: 'camp-2', title: 'Otoño', status: 'requested', current_plan_version: 0 })]);
+    seed({}, [
+      campaignRow(),
+      campaignRow({ id: 'camp-2', title: 'Otoño', status: 'requested', current_plan_version: 0 }),
+    ]);
     renderApp(`${BRAND_BASE}/campanas`);
     const cards = await screen.findAllByTestId('campaign-row');
     expect(cards).toHaveLength(2);

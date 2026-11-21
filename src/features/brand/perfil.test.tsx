@@ -217,7 +217,7 @@ describe('Perfil de marca: exportar JSON', () => {
   it('descarga un archivo con el nombre de la marca, el perfil guardado y sin los logotipos de origen', async () => {
     const download = captureDownload();
     const { user } = renderApp(PROFILE_URL);
-    await user.click(await screen.findByRole('button', { name: /Exportar JSON/ }));
+    await user.click(await screen.findByRole('button', { name: /Descargar configuración/ }));
 
     expect(download.fileName()).toBe('casa-demo.brand-config.json');
     const parsed = parseBrandConfig(await download.text());
@@ -233,14 +233,14 @@ describe('Perfil de marca: exportar JSON', () => {
     const download = captureDownload();
     const { user } = renderApp(PROFILE_URL);
     await user.type(await screen.findByLabelText('Descripción del negocio'), ' SIN GUARDAR');
-    await user.click(screen.getByRole('button', { name: /Exportar JSON/ }));
+    await user.click(screen.getByRole('button', { name: /Descargar configuración/ }));
     expect(await download.text()).not.toContain('SIN GUARDAR');
   });
 
   it('lo exportado se puede importar en el asistente de otra marca y llega intacto al resumen', async () => {
     const download = captureDownload();
     const first = renderApp(PROFILE_URL);
-    await first.user.click(await screen.findByRole('button', { name: /Exportar JSON/ }));
+    await first.user.click(await screen.findByRole('button', { name: /Descargar configuración/ }));
     const text = await download.text();
     first.unmount();
 
