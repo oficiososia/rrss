@@ -398,6 +398,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - pg_cron: `rrss-ai-media-poll` (30 s), `rrss-social-publish` (cada minuto), `rrss-analytics` y `rrss-purge-provisional-assets` (cada hora). Faltan a propósito los secretos de Vault (`rrss_project_url`, `rrss_service_role_key`): sin ellos las llamadas programadas solo dejan un aviso.
 - Inicio de sesión con retorno a https://rrss-omega.vercel.app y `localhost:5173`.
 - Cuentas: la del dueño (superadministrador), una de prueba y la de la agencia (Gestora de Casa Tomás). Casa Tomás está dada de alta en Oficiosos, en modo agencia, con perfil, logotipos y 25 fotos.
+- Copiloto del editor con OpenAI (21/11/2026): secretos de `ai-generate` `AI_TEXT_EDITOR_COPILOT_PROVIDER=openai`, `AI_TEXT_EDITOR_COPILOT_MODEL=gpt-6.1-terra`, `OPENAI_BASE_URL=https://eu.api.openai.com` y `AI_PRICES` de ese modelo; `ai-generate` y `platform-integrations` redesplegadas; `VITE_AI_VOICE_COPILOT_ENABLED` ya estaba en `true` en Vercel producción. **Falta la clave `OPENAI_API_KEY`** (la pone el dueño en Plataforma → Integraciones → IA de texto → OpenAI, de un proyecto con residencia en Europa). Sin probar con modelo real hasta entonces.
 - Interruptores de Vercel encendidos: `VITE_AI_TEXT_ENABLED`, `VITE_AI_IMAGE_ENABLED`, `VITE_SOCIAL_PUBLISHING_ENABLED`, `VITE_AI_VOICE_COPILOT_ENABLED` y `VITE_DRIVE_LIBRARY_ENABLED`; cada módulo sale solo cuando su integración está configurada. Apagados: reels y recortes (sin trabajador alojado) y facturación (sin precios decididos).
 
 ## Para usar en staging lo desplegado
