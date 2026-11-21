@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyDocument, type TextLayer } from '../document';
+import { createEmptyDocument, pageView, withLayers, type TextLayer } from '../document';
 import { editorReducer, initEditor } from '../editor/history';
 import { applyCopilotOperations, backgroundImageOf, needsPhotoPick, withPickedPhoto, type CopilotApplyContext } from './apply';
 import { ASSUMED_PHOTO_TONE, colorRole, contrastOf, legibleTextColor, preferredTextColor, toneOfPalette } from './legibility';
@@ -45,9 +45,9 @@ describe('copiloto: aplicar operaciones', () => {
     const document = createEmptyDocument({ aspectRatio: '4:5' });
     const result = applyCopilotOperations(document, MENU, context);
     if (!result.ok) throw new Error(JSON.stringify(result.issues));
-    const [background, logo, title, dishes, price] = result.document.layers;
+    const [background, logo, title, dishes, price] = result.document.pages[0]!.layers;
     expect(background).toMatchObject({ type: 'image', blur: 40, x: 0, y: 0, width: 1080, height: 1350 });
-    expect(backgroundImageOf(result.document)?.id).toBe(background!.id);
+    expect(backgroundImageOf(pageView(result.document))?.id).toBe(background!.id);
     expect(logo).toMatchObject({ type: 'logo', assetId: LOGO });
     expect(logo!.y).toBeLessThan(title!.y);
     // Sobre la foto (de tono aún desconocido) el granate no se lee: va el color de la marca más legible.
@@ -65,15 +65,15 @@ describe('copiloto: aplicar operaciones', () => {
     const result = applyCopilotOperations(document, MENU, context);
     if (!result.ok) throw new Error('no aplica');
     let state = editorReducer(initEditor(document), { type: 'replace', document: result.document });
-    expect(state.document.layers).toHaveLength(5);
+    expect(state.document.pages[0]!.layers).toHaveLength(5);
     const blur = applyCopilotOperations(state.document, [op({ op: 'blur_image', blur: 70 })], context);
     if (!blur.ok) throw new Error('no aplica');
     state = editorReducer(state, { type: 'replace', document: blur.document });
-    expect(backgroundImageOf(state.document)?.blur).toBe(70);
+    expect(backgroundImageOf(pageView(state.document))?.blur).toBe(70);
     state = editorReducer(state, { type: 'undo' });
-    expect(backgroundImageOf(state.document)?.blur).toBe(40);
+    expect(backgroundImageOf(pageView(state.document))?.blur).toBe(40);
     state = editorReducer(state, { type: 'undo' });
-    expect(state.document.layers).toEqual([]);
+    expect(state.document.pages[0]!.layers).toEqual([]);
   });
 
   it('cambia la foto de fondo existente en vez de añadir otra, y salta lo que no puede hacer', () => {
@@ -90,8 +90,8 @@ describe('copiloto: aplicar operaciones', () => {
       context,
     );
     if (!second.ok) throw new Error('no aplica');
-    expect(second.document.layers).toHaveLength(1);
-    expect(second.document.layers[0]).toMatchObject({ source: { kind: 'asset', assetId: other } });
+    expect(second.document.pages[0]!.layers).toHaveLength(1);
+    expect(second.document.pages[0]!.layers[0]).toMatchObject({ source: { kind: 'asset', assetId: other } });
     expect(second.document.canvas.backgroundColor).toBe('#000000');
     expect(second.skipped).toEqual(['No se encuentra la capa que hay que quitar.']);
   });
@@ -106,10 +106,10 @@ describe('copiloto: aplicar operaciones', () => {
   it('no toca capas bloqueadas', () => {
     const base = applyCopilotOperations(createEmptyDocument(), [op({ op: 'add_text', text: 'Hola' })], context);
     if (!base.ok) throw new Error('no aplica');
-    const locked = { ...base.document, layers: base.document.layers.map((l) => ({ ...l, locked: true })) };
-    const id = locked.layers[0]!.id;
+    const locked = withLayers(base.document, base.document.pages[0]!.layers.map((l) => ({ ...l, locked: true })));
+    const id = locked.pages[0]!.layers[0]!.id;
     const result = applyCopilotOperations(locked, [op({ op: 'remove_layer', target: id }), op({ op: 'update_text', target: id, text: 'Adiós' })], context);
-    expect(result.ok && result.document.layers[0]).toMatchObject({ text: 'Hola' });
+    expect(result.ok && result.document.pages[0]!.layers[0]).toMatchObject({ text: 'Hola' });
     expect(result.ok && result.changes).toEqual([]);
   });
 });
@@ -138,7 +138,7 @@ describe('copiloto: validación en el navegador', () => {
   it('el resumen del documento no lleva el texto de la publicación ni las fuentes de las imágenes', () => {
     const result = applyCopilotOperations(createEmptyDocument(), MENU, context);
     if (!result.ok) throw new Error('no aplica');
-    const summary = summarizeDocument({ ...result.document, copy: { ...result.document.copy, caption: 'secreto' } });
+    const summary = summarizeDocument(pageView({ ...result.document, copy: { ...result.document.copy, caption: 'secreto' } }));
     expect(JSON.stringify(summary)).not.toContain('secreto');
     expect(JSON.stringify(summary)).not.toContain(PHOTO);
     expect(summary.layers[0]).toMatchObject({ type: 'image', blur: 40 });
@@ -169,7 +169,8 @@ const ROLES: CopilotApplyContext = {
     fonts: ['Marca Titulares', 'Marca Texto'],
   },
 };
-const texts = (document: { layers: { type: string }[] }) => document.layers.filter((l) => l.type === 'text') as TextLayer[];
+const texts = (document: { pages: { layers: { type: string }[] }[] }) =>
+  document.pages[0]!.layers.filter((l) => l.type === 'text') as TextLayer[];
 
 describe('copiloto: color de los textos por uso y legible', () => {
   it('lee el uso de cada color del perfil (texto libre, sin mayúsculas ni tildes)', () => {
@@ -245,7 +246,7 @@ describe('copiloto: color de los textos por uso y legible', () => {
     if (!first.ok) throw new Error('no aplica');
     const [auto, , fijo] = texts(first.document);
     expect(auto!.color).toBe('#2B2B2B');
-    const locked = { ...first.document, layers: first.document.layers.map((l) => (l.id === fijo!.id ? { ...l, locked: true } : l)) };
+    const locked = withLayers(first.document, first.document.pages[0]!.layers.map((l) => (l.id === fijo!.id ? { ...l, locked: true } : l)));
     const second = applyCopilotOperations(
       locked,
       [
@@ -265,14 +266,14 @@ describe('copiloto: movimiento relativo', () => {
     const base = createEmptyDocument({ aspectRatio: '4:5' });
     const result = applyCopilotOperations(base, [op({ op: 'add_text', text: 'Menú de Navidad', style: 'title', position: 'lower' })], context);
     if (!result.ok) throw new Error('no aplica');
-    return { document: result.document, id: result.document.layers[0]!.id, layer: result.document.layers[0]! };
+    return { document: result.document, id: result.document.pages[0]!.layers[0]!.id, layer: result.document.pages[0]!.layers[0]! };
   };
 
   it('«sube» y «a la derecha» mueven pasos del 5 % del lienzo', () => {
     const { document, id, layer } = doc();
     const result = applyCopilotOperations(document, [op({ op: 'move_layer', target: id, dy: -2, dx: 1 })], context);
     if (!result.ok) throw new Error('no aplica');
-    const moved = result.document.layers[0]!;
+    const moved = result.document.pages[0]!.layers[0]!;
     expect(moved.y).toBe(Math.round(layer.y - 2 * 0.05 * 1350));
     expect(moved.x).toBe(Math.min(Math.round(layer.x + 0.05 * 1080), 1080 - layer.width));
   });
@@ -281,7 +282,7 @@ describe('copiloto: movimiento relativo', () => {
     const { document, id, layer } = doc();
     const down = applyCopilotOperations(document, [op({ op: 'move_layer', target: id, dy: 6 }), op({ op: 'move_layer', target: id, dy: 6 })], context);
     if (!down.ok) throw new Error('no aplica');
-    expect(down.document.layers[0]!.y).toBe(1350 - layer.height);
+    expect(down.document.pages[0]!.layers[0]!.y).toBe(1350 - layer.height);
     expect(down.changes).toHaveLength(1);
     expect(down.skipped).toEqual(['«Menú de Navidad» ya está en el borde.']);
   });
@@ -290,7 +291,7 @@ describe('copiloto: movimiento relativo', () => {
     const { document, id } = doc();
     const result = applyCopilotOperations(document, [op({ op: 'move_layer', target: id, position: 'top', dy: 3 })], context);
     if (!result.ok) throw new Error('no aplica');
-    expect(result.document.layers[0]!.y).toBe(Math.round(1350 * 0.05));
+    expect(result.document.pages[0]!.layers[0]!.y).toBe(Math.round(1350 * 0.05));
   });
 });
 
@@ -300,20 +301,20 @@ describe('copiloto: el logotipo no pisa los textos', () => {
     const conTexto = (y: number) => {
       const result = applyCopilotOperations(canvas, [op({ op: 'add_text', text: 'Casa Tomás', style: 'title', position: 'top' })], context);
       if (!result.ok) throw new Error('no aplica');
-      return { ...result.document, layers: result.document.layers.map((l) => ({ ...l, y })) };
+      return withLayers(result.document, result.document.pages[0]!.layers.map((l) => ({ ...l, y })));
     };
     const logo = op({ op: 'add_logo', assetId: LOGO, position: 'top', align: 'center' });
 
     const hueco = applyCopilotOperations(conTexto(200), [logo], context);
     if (!hueco.ok) throw new Error('no aplica');
-    const [texto, puesto] = hueco.document.layers;
+    const [texto, puesto] = hueco.document.pages[0]!.layers;
     expect(puesto!.y + puesto!.height).toBeLessThanOrEqual(texto!.y);
     expect(puesto!.x + puesto!.width / 2).toBeCloseTo(540, 0);
     expect(hueco.skipped).toEqual([]);
 
     const sinHueco = applyCopilotOperations(conTexto(60), [logo], context);
     if (!sinHueco.ok) throw new Error('no aplica');
-    expect(sinHueco.document.layers).toHaveLength(2);
+    expect(sinHueco.document.pages[0]!.layers).toHaveLength(2);
     expect(sinHueco.skipped).toEqual(['El logotipo pisa «Casa Tomás»: muévelo o quita ese texto.']);
   });
 });

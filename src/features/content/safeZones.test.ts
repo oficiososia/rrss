@@ -10,7 +10,7 @@ function storyWithText(y: number, height = 150): ContentDocument {
   return contentDocumentSchema.parse({
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { ...STORY, backgroundColor: '#FFFFFF' },
-    layers: [
+    pages: [{ id: 'p1', name: '', layers: [
       {
         id: 't',
         type: 'text',
@@ -23,7 +23,7 @@ function storyWithText(y: number, height = 150): ContentDocument {
         fontSize: 80,
         color: '#111111',
       },
-    ],
+    ] }],
   });
 }
 

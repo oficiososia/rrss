@@ -48,7 +48,7 @@ describe('verifyPiece', () => {
     expect(status['length']).toBe('passed');
     expect(status['brand-hashtags']).toBe('skipped');
     expect(status['emojis']).toBe('skipped');
-    expect(r.checks).toHaveLength(12);
+    expect(r.checks).toHaveLength(13);
   });
   it('no inventa reglas: con un perfil vacío solo hay informativos omitidos', () => {
     const r = verifyPiece({ text: { caption: 'Hola' }, limits: {}, brand: {} });

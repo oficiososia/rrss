@@ -1,11 +1,14 @@
 import {
+  clampPageIndex,
   MAX_LAYERS,
+  pageView,
   validateDocument,
   type Canvas,
   type ContentDocument,
   type DocumentIssue,
   type ImageLayer,
   type Layer,
+  type PageView,
   type TextLayer,
 } from '../document';
 import { dropLoneGroups } from '../editor/arrange';
@@ -58,6 +61,8 @@ export interface CopilotApplyContext {
    * foto sin tono conocido se supone media oscura (ver legibility.ts).
    */
   imageTones?: ReadonlyMap<string, string>;
+  /** Página sobre la que actúa (la activa del editor). Por omisión, la primera. */
+  pageIndex?: number;
 }
 
 export type CopilotApplyResult =
@@ -91,7 +96,7 @@ function coversCanvas(layer: Layer, canvas: Canvas): boolean {
 }
 
 /** La foto de fondo: la imagen más al fondo que cubre todo el lienzo. */
-export function backgroundImageOf(document: ContentDocument): ImageLayer | null {
+export function backgroundImageOf(document: Pick<PageView, 'canvas' | 'layers'>): ImageLayer | null {
   const found = document.layers.find((layer) => layer.type === 'image' && coversCanvas(layer, document.canvas));
   return (found as ImageLayer | undefined) ?? null;
 }
@@ -129,7 +134,7 @@ const overlapsY = (a: { y: number; height: number }, b: { y: number; height: num
  * Altura para un texto nuevo: la de su posición o, sin posición, debajo del
  * último texto. Si choca con otro texto o logotipo, baja hasta dejar sitio.
  */
-function placeY(document: ContentDocument, height: number, position: CopilotPosition | null, after: Layer | null) {
+function placeY(document: Pick<PageView, 'canvas' | 'layers'>, height: number, position: CopilotPosition | null, after: Layer | null) {
   const { canvas } = document;
   const gap = Math.round(canvas.height * 0.02);
   let y = position ? Math.round(canvas.height * SLOT[position]) : after ? after.y + after.height + gap : Math.round(canvas.height * SLOT.upper);
@@ -154,13 +159,22 @@ const looksHeading = (layer: TextLayer) => layer.fontWeight >= 600;
 const layerName = (layer: Layer) =>
   layer.type === 'text' ? `«${layer.text.split('\n')[0]!.slice(0, 40)}»` : layer.name || 'la capa';
 
-/** Aplica las operaciones en orden sobre una copia del documento y valida el resultado. */
+/**
+ * Aplica las operaciones en orden sobre una copia de UNA página del documento
+ * (`context.pageIndex`, la activa del editor) y valida el documento entero. Las
+ * demás páginas no se tocan; el color de fondo del lienzo es común a todas.
+ */
 export function applyCopilotOperations(
   input: ContentDocument,
   operations: CopilotOperation[],
   context: CopilotApplyContext,
 ): CopilotApplyResult {
-  let document: ContentDocument = { ...input, canvas: { ...input.canvas }, layers: [...input.layers] };
+  const pageIndex = clampPageIndex(input, context.pageIndex ?? 0);
+  const start = pageView(input, pageIndex);
+  let document: PageView = { ...start, canvas: { ...start.canvas }, layers: [...start.layers] };
+  // Las capas nuevas no repiten identificador con las de otras páginas.
+  const otherLayers = input.pages.flatMap((page, index) => (index === pageIndex ? [] : page.layers));
+  const taken = () => [...otherLayers, ...document.layers];
   const changes: string[] = [];
   const skipped: string[] = [];
   const touched = new Set<string>();
@@ -220,7 +234,7 @@ export function applyCopilotOperations(
             ...(op.blur !== null ? { blur } : {}),
           });
         } else {
-          const layer = newImageLayer(canvas, document.layers, { id: op.assetId, name });
+          const layer = newImageLayer(canvas, taken(), { id: op.assetId, name });
           if (!add(blur ? { ...layer, blur } : layer, true)) break;
         }
         changes.push(op.blur ? `Foto de fondo «${name}», difuminada (${op.blur} %)` : `Foto de fondo «${name}»`);
@@ -249,7 +263,7 @@ export function applyCopilotOperations(
           break;
         }
         const asset = context.assets.get(id) ?? { id, name: 'Logotipo' };
-        const base = newLogoLayer(canvas, document.layers, asset);
+        const base = newLogoLayer(canvas, taken(), asset);
         const margin = Math.round(Math.min(canvas.width, canvas.height) * 0.05);
         let { x, y } = base;
         if (op.position || op.align) {
@@ -308,7 +322,7 @@ export function applyCopilotOperations(
             backdropAt(document.canvas, document.layers, { x, y, width: box.width, height: box.height }, context.imageTones),
           );
         const layer: TextLayer = {
-          id: newLayerId(document.layers),
+          id: newLayerId(taken()),
           type: 'text',
           name: '',
           x,
@@ -410,9 +424,14 @@ export function applyCopilotOperations(
     }
   }
 
-  const checked = validateDocument(document);
+  const merged: ContentDocument = {
+    ...input,
+    canvas: document.canvas,
+    pages: input.pages.map((page, index) => (index === pageIndex ? { ...page, layers: document.layers } : page)),
+  };
+  const checked = validateDocument(merged);
   if (!checked.ok) return { ok: false, issues: checked.issues };
-  const present = new Set(checked.document.layers.map((layer) => layer.id));
+  const present = new Set(checked.document.pages[pageIndex]!.layers.map((layer) => layer.id));
   return {
     ok: true,
     document: checked.document,

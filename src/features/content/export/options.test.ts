@@ -6,6 +6,7 @@ import {
   exportSize,
   layerLabel,
   normalizeFileName,
+  pageFileName,
   suggestFileName,
 } from './options';
 
@@ -112,5 +113,40 @@ describe('procedencia', () => {
       pixel_ratio: 1,
       exported_at: '2026-11-18T10:00:00.000Z',
     });
+  });
+});
+
+describe('exportar un carrusel', () => {
+  it('cada página lleva su número en el nombre y en la procedencia', () => {
+    expect(
+      suggestFileName({ title: 'Menú', format: 'jpeg', width: 1080, height: 1350, version: 3, unsaved: false, page: 2 }),
+    ).toBe('menu-1080x1350-v3-p2.jpg');
+    expect(pageFileName('mi-carrusel.jpg', 3, 'jpeg')).toBe('mi-carrusel-p3.jpg');
+    expect(pageFileName('mi-carrusel-p1.jpg', 2, 'jpeg')).toBe('mi-carrusel-p2.jpg');
+    const provenance = buildProvenance({
+      contentId: 'c',
+      version: 3,
+      unsavedChanges: false,
+      format: 'jpeg',
+      width: 1080,
+      height: 1350,
+      pixelRatio: 1,
+      exportedAt: new Date('2026-11-21T10:00:00Z'),
+      page: { number: 2, count: 4 },
+    });
+    expect(provenance).toMatchObject({ page: 2, page_count: 4, version: 3 });
+    // Un documento de una página no lleva número.
+    const single = buildProvenance({
+      contentId: 'c',
+      version: 3,
+      unsavedChanges: false,
+      format: 'jpeg',
+      width: 1080,
+      height: 1080,
+      pixelRatio: 1,
+      exportedAt: new Date(),
+    });
+    expect(single).not.toHaveProperty('page');
+    expect(single).not.toHaveProperty('page_count');
   });
 });

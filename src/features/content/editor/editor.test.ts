@@ -8,6 +8,7 @@ import { containBox, coverCrop, fitScale, layerToNodeBox, nodeToLayerBox, snapTo
 import {
   editorReducer,
   HISTORY_LIMIT,
+  activeLayers,
   initEditor,
   normalizeRotation,
   reorderLayers,
@@ -25,7 +26,7 @@ function run(state: EditorState, ...actions: EditorAction[]): EditorState {
 
 function withText(): { state: EditorState; text: TextLayer } {
   const doc = createEmptyDocument();
-  const text = newTextLayer(doc.canvas, doc.layers);
+  const text = newTextLayer(doc.canvas, []);
   return { state: run(initEditor(doc), { type: 'add', layer: text }), text };
 }
 
@@ -42,7 +43,7 @@ describe('capas nuevas', () => {
     const ids = new Set<string>();
     for (const layer of layers) ids.add(layer.id);
     expect(ids.size).toBe(layers.length);
-    const result = validateDocument({ ...doc, layers });
+    const result = validateDocument({ ...doc, pages: [{ id: 'p1', layers }] });
     expect(result.ok).toBe(true);
   });
 
@@ -78,12 +79,12 @@ describe('órdenes del editor', () => {
   it('añadir selecciona la capa nueva y se puede deshacer y rehacer', () => {
     const { state, text } = withText();
     expect(state.selectedId).toBe(text.id);
-    expect(state.document.layers).toHaveLength(1);
+    expect(activeLayers(state)).toHaveLength(1);
     const undone = run(state, { type: 'undo' });
-    expect(undone.document.layers).toHaveLength(0);
+    expect(activeLayers(undone)).toHaveLength(0);
     expect(undone.selectedId).toBeNull();
     const redone = run(undone, { type: 'redo' });
-    expect(redone.document.layers[0]?.id).toBe(text.id);
+    expect(activeLayers(redone)[0]?.id).toBe(text.id);
   });
 
   it('escribir seguido en un campo es un solo paso de deshacer; un punto de control lo corta', () => {
@@ -96,7 +97,7 @@ describe('órdenes del editor', () => {
     );
     expect(typed.past).toHaveLength(2);
     const undone = run(typed, { type: 'undo' });
-    expect((undone.document.layers[0] as TextLayer).text).toBe('Escribe aquí');
+    expect((activeLayers(undone)[0] as TextLayer).text).toBe('Escribe aquí');
 
     const split = run(
       state,
@@ -105,7 +106,7 @@ describe('órdenes del editor', () => {
       { type: 'update', id: text.id, patch: { text: 'Dos' }, key: 'text' },
       { type: 'undo' },
     );
-    expect((split.document.layers[0] as TextLayer).text).toBe('Uno');
+    expect((activeLayers(split)[0] as TextLayer).text).toBe('Uno');
   });
 
   it('un cambio nuevo borra lo que se podía rehacer', () => {
@@ -117,7 +118,7 @@ describe('órdenes del editor', () => {
       { type: 'update', id: text.id, patch: { y: 10 } },
     );
     expect(next.future).toHaveLength(0);
-    expect(next.document.layers[0]).toMatchObject({ x: text.x, y: 10 });
+    expect(activeLayers(next)[0]).toMatchObject({ x: text.x, y: 10 });
   });
 
   it('mover con las flechas agrupa los toques y no mueve capas bloqueadas', () => {
@@ -127,7 +128,7 @@ describe('órdenes del editor', () => {
       { type: 'nudge', id: text.id, dx: 1, dy: 0 },
       { type: 'nudge', id: text.id, dx: 10, dy: -1 },
     );
-    expect(moved.document.layers[0]).toMatchObject({ x: text.x + 11, y: text.y - 1 });
+    expect(activeLayers(moved)[0]).toMatchObject({ x: text.x + 11, y: text.y - 1 });
     expect(moved.past).toHaveLength(2);
     const locked = run(
       state,
@@ -139,7 +140,7 @@ describe('órdenes del editor', () => {
         dy: 5,
       },
     );
-    expect(locked.document.layers[0]).toMatchObject({ x: text.x, y: text.y });
+    expect(activeLayers(locked)[0]).toMatchObject({ x: text.x, y: text.y });
   });
 
   it('respeta los límites del documento al cambiar una capa', () => {
@@ -149,16 +150,16 @@ describe('órdenes del editor', () => {
       id: text.id,
       patch: { width: -5, height: 0, rotation: 450, opacity: 3, x: 1e9 },
     });
-    expect(next.document.layers[0]).toMatchObject({ width: 1, height: 1, rotation: 90, opacity: 1, x: 100_000 });
+    expect(activeLayers(next)[0]).toMatchObject({ width: 1, height: 1, rotation: 90, opacity: 1, x: 100_000 });
     expect(validateDocument(next.document).ok).toBe(true);
   });
 
   it('borrar quita la selección; deshacer la recupera', () => {
     const { state, text } = withText();
     const removed = run(state, { type: 'remove', id: text.id });
-    expect(removed.document.layers).toHaveLength(0);
+    expect(activeLayers(removed)).toHaveLength(0);
     expect(removed.selectedId).toBeNull();
-    expect(run(removed, { type: 'undo' }).document.layers).toHaveLength(1);
+    expect(activeLayers(run(removed, { type: 'undo' }))).toHaveLength(1);
   });
 
   it('ordena capas: adelante, atrás, al frente y al fondo', () => {
@@ -210,7 +211,7 @@ describe('órdenes del editor', () => {
     const { state } = withText();
     const loaded = run(state, { type: 'load', document: createEmptyDocument() });
     expect(loaded.past).toHaveLength(0);
-    expect(loaded.document.layers).toHaveLength(0);
+    expect(activeLayers(loaded)).toHaveLength(0);
   });
 
   it('normaliza el giro a (-180, 180]', () => {
@@ -242,9 +243,9 @@ describe('traducción documento ↔ nodos', () => {
     const logo = newLogoLayer(doc.canvas, [], { id: LOGO, name: 'logo' });
     const ellipse = { ...newShapeLayer(doc.canvas, [], 'ellipse'), cornerRadius: 20 };
     const locked = { ...newShapeLayer(doc.canvas, [], 'rectangle'), locked: true, cornerRadius: 12 };
-    const document: ContentDocument = { ...doc, layers: [image, text, logo, ellipse, locked] };
+    const document: ContentDocument = { ...doc, pages: [{ id: 'p1', name: '', layers: [image, text, logo, ellipse, locked] }] };
     const images = new Map([[ASSET, 'https://example.test/foto.jpg']]);
-    const nodes = describeDocument(document, images);
+    const nodes = describeDocument(document.pages[0]!, images);
 
     expect(nodes.map((n) => n.kind)).toEqual(['image', 'text', 'image', 'ellipse', 'rect']);
     expect(nodes[0]).toMatchObject({ url: 'https://example.test/foto.jpg', fit: 'cover', editable: true });
@@ -254,7 +255,7 @@ describe('traducción documento ↔ nodos', () => {
     expect(nodes[3]).toMatchObject({ cornerRadius: 0 });
     expect(nodes[4]).toMatchObject({ editable: false, cornerRadius: 12 });
     // En solo lectura nada se puede mover.
-    expect(describeDocument(document, images, true).every((n) => !n.editable)).toBe(true);
+    expect(describeDocument(document.pages[0]!, images, true).every((n) => !n.editable)).toBe(true);
     expect(assetIdsOf(document)).toEqual([ASSET, LOGO].sort());
   });
 
@@ -373,5 +374,89 @@ describe('cambios de estado según el rol', () => {
     expect(labels(item('draft'), { edit: true, approve: true })).toContain('Aprobar');
     expect(labels(item('draft', true), { edit: true, approve: true })).toEqual([]);
     expect(labels(item('in_review'), { edit: false, approve: false })).toEqual([]);
+  });
+});
+
+describe('editor: páginas de un carrusel', () => {
+  const carousel = () => initEditor(createEmptyDocument({ aspectRatio: '4:5', pages: 2 }));
+  const textOn = (state: EditorState) => newTextLayer(state.document.canvas, state.document.pages.flatMap((p) => p.layers));
+
+  it('las capas se añaden y se cambian en la página activa', () => {
+    let state = carousel();
+    expect(state.activePageId).toBe('p1');
+    state = run(state, { type: 'add', layer: textOn(state) });
+    state = run(state, { type: 'selectPage', index: 1 });
+    expect(state.activePageId).toBe('p2');
+    expect(state.selectedIds).toEqual([]);
+    expect(activeLayers(state)).toEqual([]);
+    state = run(state, { type: 'add', layer: textOn(state) });
+    expect(state.document.pages.map((p) => p.layers.length)).toEqual([1, 1]);
+    // Cambiar de página no es un paso de deshacer.
+    expect(state.past).toHaveLength(2);
+    expect(validateDocument(state.document).ok).toBe(true);
+  });
+
+  it('deshacer vuelve a la página donde se hizo el cambio y lo deshace allí', () => {
+    let state = carousel();
+    const first = textOn(state);
+    state = run(state, { type: 'add', layer: first }, { type: 'selectPage', index: 1 });
+    state = run(state, { type: 'add', layer: textOn(state) }, { type: 'selectPage', index: 0 });
+    // Estoy en la página 1; el último cambio fue en la 2.
+    const undone = run(state, { type: 'undo' });
+    expect(undone.activePageId).toBe('p2');
+    expect(undone.document.pages.map((p) => p.layers.length)).toEqual([1, 0]);
+    const again = run(undone, { type: 'undo' });
+    expect(again.activePageId).toBe('p1');
+    expect(again.document.pages.map((p) => p.layers.length)).toEqual([0, 0]);
+    const redone = run(again, { type: 'redo' }, { type: 'redo' });
+    expect(redone.document.pages.map((p) => p.layers.length)).toEqual([1, 1]);
+    expect(redone.activePageId).toBe('p2');
+  });
+
+  it('añadir, duplicar, borrar y reordenar páginas son pasos de deshacer', () => {
+    let state = carousel();
+    state = run(state, { type: 'add', layer: textOn(state) });
+    state = run(state, { type: 'duplicatePage' });
+    expect(state.document.pages).toHaveLength(3);
+    expect(state.activePageId).toBe(state.document.pages[1]!.id);
+    expect(activeLayers(state)).toHaveLength(1);
+    expect(validateDocument(state.document).ok).toBe(true);
+
+    state = run(state, { type: 'addPage' });
+    expect(state.document.pages).toHaveLength(4);
+    expect(activeLayers(state)).toEqual([]);
+
+    const moved = run(state, { type: 'movePage', pageId: 'p1', to: 3 });
+    expect(moved.document.pages[3]!.id).toBe('p1');
+    expect(run(moved, { type: 'undo' }).document.pages[0]!.id).toBe('p1');
+
+    const removed = run(state, { type: 'removePage' });
+    expect(removed.document.pages).toHaveLength(3);
+    const back = run(removed, { type: 'undo' });
+    expect(back.document.pages).toHaveLength(4);
+    expect(back.activePageId).toBe(state.activePageId);
+
+    // La única página no se borra.
+    const single = initEditor(createEmptyDocument());
+    expect(run(single, { type: 'removePage' })).toBe(single);
+  });
+
+  it('elegir una capa de otra página lleva a esa página', () => {
+    let state = carousel();
+    const layer = textOn(state);
+    state = run(state, { type: 'add', layer }, { type: 'selectPage', index: 1 });
+    state = run(state, { type: 'select', id: layer.id, exact: true });
+    expect(state.activePageId).toBe('p1');
+    expect(state.selectedIds).toEqual([layer.id]);
+  });
+
+  it('cambiar la proporción adapta todas las páginas en un solo paso', () => {
+    let state = carousel();
+    state = run(state, { type: 'add', layer: textOn(state) }, { type: 'selectPage', index: 1 });
+    state = run(state, { type: 'add', layer: textOn(state) });
+    const square = run(state, { type: 'setRatio', ratio: '1:1' });
+    expect(square.document.canvas.aspectRatio).toBe('1:1');
+    expect(square.document.pages.every((p) => p.layers[0]!.width <= 1080)).toBe(true);
+    expect(run(square, { type: 'undo' }).document.canvas.aspectRatio).toBe('4:5');
   });
 });

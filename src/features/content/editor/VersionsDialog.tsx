@@ -3,6 +3,7 @@ import { lazy, Suspense, useState } from 'react';
 import { Badge, Button, Dialog, ErrorState, Notice, Spinner } from '@/components/ui';
 import { formatDateTime } from '@/lib/utils';
 import { useContentVersion, useContentVersions, type ContentVersionSummary, type LoadedVersion } from '../api';
+import { pageView } from '../document';
 import type { ImageLookup } from './canvas/nodes';
 
 const CanvasView = lazy(() => import('./canvas/KonvaCanvas'));
@@ -69,7 +70,7 @@ function VersionPreview({
           <div className="h-72 rounded-lg bg-subtle p-3">
             <Suspense fallback={<Spinner />}>
               <CanvasView
-                document={loaded.document}
+                document={pageView(loaded.document, 0)}
                 selectedIds={NONE}
                 readOnly
                 images={images}
@@ -85,6 +86,11 @@ function VersionPreview({
               />
             </Suspense>
           </div>
+          {loaded.document.pages.length > 1 && (
+            <p className="text-xs text-muted" data-testid="version-pages">
+              Carrusel de {loaded.document.pages.length} páginas: se ve la primera.
+            </p>
+          )}
           {loaded.document.copy.caption && (
             <p className="whitespace-pre-wrap break-words text-sm text-muted">{loaded.document.copy.caption}</p>
           )}

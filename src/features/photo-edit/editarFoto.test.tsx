@@ -561,7 +561,7 @@ function documentWithPhoto(): ContentDocument {
   const doc = createEmptyDocument({ aspectRatio: '4:5' });
   return {
     ...doc,
-    layers: [
+    pages: [{ id: 'p1', name: '', layers: [
       {
         id: 'foto',
         type: 'image',
@@ -579,7 +579,7 @@ function documentWithPhoto(): ContentDocument {
         fit: 'cover',
         focus: { x: 0.5, y: 0.5 },
       },
-    ],
+    ] }],
   };
 }
 

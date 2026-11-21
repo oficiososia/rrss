@@ -50,6 +50,8 @@ export interface TextLayer {
   exempt?: boolean;
   /** Caja que ocupa en el lienzo (con su giro), en unidades del lienzo. Sin dato no se comprueba la zona segura. */
   bounds?: { left: number; top: number; right: number; bottom: number };
+  /** Página en la que está (desde 1), en un documento de varias páginas. */
+  page?: number;
 }
 
 /** Zona del lienzo que la interfaz de la red no tapa (ver `content/safeZones.ts`). */
@@ -113,6 +115,8 @@ export interface BrandCheckInput {
   imagePalette?: PaletteColor[];
   /** Zona segura del formato. Sin ella (el formato no la tiene o no aplica a este lienzo), no se comprueba. */
   safeArea?: SafeArea;
+  /** Páginas de la pieza y cuántas admite el formato (un carrusel, de 2 a 10). Sin dato no se comprueba. */
+  pages?: { count: number; min: number; max: number };
 }
 
 /** Umbrales ajustables; los valores por defecto están justificados en `thresholds.ts`. */
@@ -144,7 +148,8 @@ export type CheckId =
   | 'palette'
   | 'emojis'
   | 'readability'
-  | 'alt-text';
+  | 'alt-text'
+  | 'pages';
 
 export type FindingCode =
   | 'LENGTH_EXCEEDED'
@@ -165,7 +170,9 @@ export type FindingCode =
   | 'READABILITY_TOO_SHORT'
   | 'ALT_TEXT_MISSING'
   | 'ALT_TEXT_TOO_LONG'
-  | 'PROFILE_DATA_MISSING';
+  | 'PROFILE_DATA_MISSING'
+  | 'PAGES_TOO_FEW'
+  | 'PAGES_TOO_MANY';
 
 /** A qué parte de la pieza se refiere el hallazgo. */
 export type PiecePart = 'caption' | 'hashtags' | 'mentions' | 'altText' | 'textLayer' | 'image' | 'piece';

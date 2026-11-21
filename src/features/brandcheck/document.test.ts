@@ -11,7 +11,7 @@ function doc(layers: LayerInput[], copy: object = {}, backgroundColor = '#FFFFFF
   return contentDocumentSchema.parse({
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor },
-    layers,
+    pages: [{ id: 'p1', name: '', layers }],
     copy,
   });
 }
@@ -144,5 +144,38 @@ describe('entrada completa', () => {
   it('en un formato sin texto alternativo no lo exige', () => {
     const input = buildBrandCheckInput(doc([rect('r')]), getFormatSpec('instagram', 'reel'), null);
     expect(input.hasImage).toBe(false);
+  });
+});
+
+describe('documentos de varias páginas', () => {
+  const carousel = (pages: LayerInput[][]) =>
+    contentDocumentSchema.parse({
+      schemaVersion: DOCUMENT_SCHEMA_VERSION,
+      canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
+      pages: pages.map((layers, i) => ({ id: `p${i + 1}`, layers })),
+      copy: { caption: 'Hola', altText: 'Fotos' },
+    });
+
+  it('revisa los textos de todas las páginas y dice en cuál está cada uno', () => {
+    const layers = textLayersFromDocument(carousel([[text('a')], [], [text('b', { color: '#FAFAFA' })]]));
+    expect(layers.map((l) => [l.id, l.page])).toEqual([
+      ['a', 1],
+      ['b', 3],
+    ]);
+    const result = verifyPiece(
+      buildBrandCheckInput(carousel([[text('a')], [text('b', { color: '#FAFAFA' })]]), getFormatSpec('instagram', 'carousel'), null),
+    );
+    const contrast = result.findings.find((f) => f.code === 'CONTRAST_TOO_LOW');
+    expect(contrast?.message).toMatch(/página 2/);
+    expect(contrast?.target).toMatchObject({ part: 'textLayer', layerId: 'b' });
+  });
+
+  it('bloquea un carrusel de una página y un post de varias', () => {
+    const one = verifyPiece(buildBrandCheckInput(carousel([[text('a')]]), getFormatSpec('instagram', 'carousel'), null));
+    expect(one.findings.find((f) => f.check === 'pages')).toMatchObject({ code: 'PAGES_TOO_FEW', severity: 'block' });
+    const many = verifyPiece(buildBrandCheckInput(carousel([[text('a')], []]), getFormatSpec('instagram', 'post'), null));
+    expect(many.findings.find((f) => f.check === 'pages')).toMatchObject({ code: 'PAGES_TOO_MANY', severity: 'block' });
+    const ok = verifyPiece(buildBrandCheckInput(carousel([[text('a')], []]), getFormatSpec('instagram', 'carousel'), null));
+    expect(ok.checks.find((c) => c.id === 'pages')?.status).toBe('passed');
   });
 });

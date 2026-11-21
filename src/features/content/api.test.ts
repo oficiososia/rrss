@@ -202,7 +202,7 @@ describe('saveContentVersion', () => {
   });
 
   it('un documento que no cumple el esquema no llega al servidor', async () => {
-    const broken = { ...createEmptyDocument(), layers: [{ id: 'a', type: 'text' }] } as never;
+    const broken = { ...createEmptyDocument(), pages: [{ id: 'p1', layers: [{ id: 'a', type: 'text' }] }] } as never;
     const error = await saveContentVersion({ contentId: 'c1', document: broken }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DocumentError);
     expect((error as DocumentError).reason).toBe('invalid');

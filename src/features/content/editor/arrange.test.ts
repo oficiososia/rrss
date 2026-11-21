@@ -12,7 +12,7 @@ import {
   snapTargets,
   unionBounds,
 } from './arrange';
-import { editorReducer, initEditor, type EditorAction, type EditorState } from './history';
+import { activeLayers, editorReducer, initEditor, type EditorAction, type EditorState } from './history';
 import { newShapeLayer } from './layers';
 
 const CANVAS = { width: 1080, height: 1080 };
@@ -23,14 +23,14 @@ function rect(id: string, x: number, y: number, width = 100, height = 100, extra
 }
 
 function docWith(layers: Layer[]): ContentDocument {
-  return { ...createEmptyDocument(), layers };
+  return { ...createEmptyDocument(), pages: [{ id: 'p1', name: '', layers }] };
 }
 
 function run(state: EditorState, ...actions: EditorAction[]): EditorState {
   return actions.reduce(editorReducer, state);
 }
 
-const byId = (state: EditorState, id: string) => state.document.layers.find((layer) => layer.id === id)!;
+const byId = (state: EditorState, id: string) => activeLayers(state).find((layer) => layer.id === id)!;
 
 describe('cajas envolventes', () => {
   it('sin giro es la caja de la capa; girada 90°, se intercambian ancho y alto alrededor del centro', () => {
@@ -208,16 +208,16 @@ describe('editor: varias capas', () => {
   it('mueve, alinea y borra varias, cada orden en un solo paso de deshacer', () => {
     let state = run(start(), { type: 'selectMany', ids: ['a', 'b', 'c'] });
     state = run(state, { type: 'nudgeSelection', dx: 10, dy: 0 }, { type: 'nudgeSelection', dx: 10, dy: 0 });
-    expect(state.document.layers.map((l) => l.x)).toEqual([120, 420, 720]);
+    expect(activeLayers(state).map((l) => l.x)).toEqual([120, 420, 720]);
     expect(state.past).toHaveLength(1);
     state = run(state, { type: 'align', to: 'top' });
-    expect(state.document.layers.map((l) => l.y)).toEqual([100, 100, 100]);
+    expect(activeLayers(state).map((l) => l.y)).toEqual([100, 100, 100]);
     state = run(state, { type: 'distribute', axis: 'horizontal' });
     state = run(state, { type: 'removeSelection' });
-    expect(state.document.layers).toHaveLength(0);
+    expect(activeLayers(state)).toHaveLength(0);
     expect(state.selectedIds).toEqual([]);
     const back = run(state, { type: 'undo' });
-    expect(back.document.layers).toHaveLength(3);
+    expect(activeLayers(back)).toHaveLength(3);
     expect(back.selectedIds).toEqual([]);
   });
 
@@ -228,7 +228,7 @@ describe('editor: varias capas', () => {
       { type: 'selectMany', ids: ['a', 'b'] },
       { type: 'removeSelection' },
     );
-    expect(state.document.layers.map((l) => l.id)).toEqual(['b', 'c']);
+    expect(activeLayers(state).map((l) => l.id)).toEqual(['b', 'c']);
     expect(state.selectedIds).toEqual(['b']);
   });
 
@@ -258,8 +258,8 @@ describe('editor: varias capas', () => {
     expect(state.selectedIds).toEqual(['b']);
 
     state = run(state, { type: 'select', id: 'a' }, { type: 'ungroup' });
-    expect(state.document.layers.every((l) => l.groupId === undefined)).toBe(true);
-    expect(run(state, { type: 'undo' }).document.layers[0]!.groupId).toBe(groupId);
+    expect(activeLayers(state).every((l) => l.groupId === undefined)).toBe(true);
+    expect(activeLayers(run(state, { type: 'undo' }))[0]!.groupId).toBe(groupId);
   });
 
   it('agrupar exige dos capas; al borrar una de un grupo de dos, la otra se queda sin grupo', () => {

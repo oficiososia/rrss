@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { extractPalette } from '@/features/brandcheck/palette';
 import type { PaletteColor } from '@/features/brandcheck/types';
-import type { ContentDocument, ImageLayer } from '../document';
+import type { ImageLayer, PageView } from '../document';
 import type { ImageLookup } from './canvas/nodes';
 
 // Paleta dominante de la imagen de la pieza, para el verificador de marca.
@@ -14,7 +14,7 @@ export type ImagePaletteState =
   { status: 'none' } | { status: 'loading' } | { status: 'ready'; palette: PaletteColor[] } | { status: 'unavailable' };
 
 /** La capa de imagen visible más grande: la que manda en los colores de la pieza. */
-export function mainImageLayer(document: ContentDocument): ImageLayer | null {
+export function mainImageLayer(document: Pick<PageView, 'layers'>): ImageLayer | null {
   let best: ImageLayer | null = null;
   for (const layer of document.layers) {
     if (layer.type !== 'image' || !layer.visible || layer.opacity <= 0) continue;

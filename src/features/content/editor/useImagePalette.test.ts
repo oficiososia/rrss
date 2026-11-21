@@ -32,7 +32,7 @@ describe('imagen de la que se saca la paleta', () => {
     const big = image('grande', B, 800, 800);
     const hidden = image('oculta', A, 2000, 2000, { visible: false });
     expect(mainImageLayer({ ...doc, layers: [small, big, hidden] })?.id).toBe('grande');
-    expect(mainImageLayer(doc)).toBeNull();
+    expect(mainImageLayer(doc.pages[0]!)).toBeNull();
   });
 
   it('solo tiene dirección si la imagen es de la biblioteca y ya está firmada', () => {

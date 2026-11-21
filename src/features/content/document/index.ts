@@ -4,3 +4,4 @@ export * from './schema';
 export * from './document';
 export * from './migrate';
 export * from './adapt';
+export * from './pages';

@@ -1,5 +1,6 @@
 import {
   createEmptyDocument,
+  pageLimits,
   validateDocument,
   type AspectRatio,
   type ContentDocument,
@@ -67,32 +68,39 @@ function pieceTitle(piece: CampaignPiece): string {
 }
 
 function pieceDocument(piece: CampaignPiece, assets: ReadonlyMap<string, EngineAsset>): ContentDocument {
-  const empty = createEmptyDocument({ aspectRatio: canvasRatioForTarget(getFormatSpec(piece.network, piece.format)) });
-  const image = piece.assetIds.map((id) => assets.get(id)).find((asset) => asset?.kind === 'image');
-  const layers: ImageLayer[] = image
-    ? [
-        {
-          id: 'campaign-image',
-          type: 'image',
-          name: image.name.slice(0, 120),
-          x: 0,
-          y: 0,
-          width: empty.canvas.width,
-          height: empty.canvas.height,
-          rotation: 0,
-          opacity: 1,
-          visible: true,
-          locked: false,
-          anchor: { x: 'stretch', y: 'stretch' },
-          source: { kind: 'asset', assetId: image.id },
-          fit: 'cover',
-          focus: { x: 0.5, y: 0.5 },
-        },
-      ]
-    : [];
+  const spec = getFormatSpec(piece.network, piece.format);
+  const empty = createEmptyDocument({ aspectRatio: canvasRatioForTarget(spec) });
+  const imageLayer = (image: EngineAsset, index: number): ImageLayer => ({
+    id: index === 0 ? 'campaign-image' : `campaign-image-${index + 1}`,
+    type: 'image',
+    name: image.name.slice(0, 120),
+    x: 0,
+    y: 0,
+    width: empty.canvas.width,
+    height: empty.canvas.height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    anchor: { x: 'stretch', y: 'stretch' },
+    source: { kind: 'asset', assetId: image.id },
+    fit: 'cover',
+    focus: { x: 0.5, y: 0.5 },
+  });
+  const images = piece.assetIds
+    .map((id) => assets.get(id))
+    .filter((asset): asset is EngineAsset => asset?.kind === 'image');
+  const range = pageLimits(spec);
+  // Un carrusel: una página por foto elegida (las que falten hasta el mínimo, vacías). Lo demás: una página.
+  const count = range.min > 1 ? Math.min(range.max, Math.max(range.min, images.length)) : 1;
+  const pages = Array.from({ length: count }, (_, index) => ({
+    id: `p${index + 1}`,
+    name: '',
+    layers: images[index] && (range.min > 1 || index === 0) ? [imageLayer(images[index], index)] : [],
+  }));
   const result = validateDocument({
     ...empty,
-    layers,
+    pages,
     copy: {
       caption: piece.caption,
       hashtags: piece.hashtags,

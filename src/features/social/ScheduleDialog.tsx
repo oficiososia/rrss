@@ -5,7 +5,9 @@ import { targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
 import { translateError } from '@/lib/errors';
 import {
+  exportPageOf,
   exportsOf,
+  publishableExportsOf,
   useSavePublication,
   usePublishableMedia,
   useSchedulableContents,
@@ -45,7 +47,8 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
   const [when, setWhen] = useState(() => toLocalInput(defaultScheduleDate(initialDate)));
   // null = la primera cuenta conectada de la red de la pieza.
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
-  const [assetIds, setAssetIds] = useState<string[]>([]);
+  // null = lo automático: en un carrusel, la exportación de cada página de la versión, en su orden.
+  const [assetChoice, setAssetIds] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // «Cuándo»: en un día y hora, o ahora mismo (pide confirmación en otro diálogo).
   const [mode, setMode] = useState<'later' | 'now'>('later');
@@ -60,7 +63,7 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
   const chooseContent = (id: string) => {
     setContentId(id);
     setAccountChoice(null);
-    setAssetIds([]);
+    setAssetIds(null);
   };
 
   const choices = useMemo(() => {
@@ -68,17 +71,27 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
     if (content.format === 'reel') return videosOf(media.data);
     return content.current_version > 0 ? exportsOf(media.data, content.id, content.current_version) : [];
   }, [content, media.data]);
+  /** Las páginas del carrusel en orden (la última tanda exportada de la versión), si están todas. */
+  const pageSet = useMemo(
+    () =>
+      content?.format === 'carousel' && media.data && content.current_version > 0
+        ? publishableExportsOf(media.data, content.id, content.current_version, 'carousel')
+        : null,
+    [content, media.data],
+  );
+  const assetIds = assetChoice ?? pageSet?.map((a) => a.id) ?? [];
 
   const toggle = (id: string) =>
-    setAssetIds((prev) =>
-      content?.format === 'reel' || content?.format === 'post'
+    setAssetIds((choice) => {
+      const prev = choice ?? assetIds;
+      return content?.format === 'reel' || content?.format === 'post'
         ? prev[0] === id
           ? []
           : [id]
         : prev.includes(id)
           ? prev.filter((x) => x !== id)
-          : [...prev, id],
-    );
+          : [...prev, id];
+    });
 
   const publishNow = () => {
     setError(null);
@@ -243,9 +256,29 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
                 {content.format === 'reel'
                   ? 'Vídeo del reel'
                   : content.format === 'carousel'
-                    ? 'Imágenes del carrusel (de 2 a 10, en orden)'
+                    ? 'Imágenes del carrusel (una por página, en su orden)'
                     : 'Imagen'}
               </legend>
+              {content.format === 'carousel' && (
+                <p className="text-xs text-muted" data-testid="schedule-pages-hint">
+                  {pageSet
+                    ? `Se eligen solas las ${pageSet.length} páginas de la versión ${content.current_version}, en orden. La base de datos solo arma la publicación con una exportación de cada página, en su orden.`
+                    : `Faltan exportaciones de alguna página de la versión ${content.current_version}: expórtalas desde el editor (Exportar el carrusel).`}
+                  {pageSet && assetChoice !== null && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="text-primary underline"
+                        onClick={() => setAssetIds(null)}
+                        data-testid="schedule-pages-reset"
+                      >
+                        Volver a las páginas en orden
+                      </button>
+                    </>
+                  )}
+                </p>
+              )}
               {choices.length === 0 ? (
                 <p className="text-sm text-muted" data-testid="schedule-no-media">
                   {content.format === 'reel'
@@ -267,7 +300,14 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate }: Sch
                             onChange={() => toggle(a.id)}
                             data-testid="schedule-asset"
                           />
-                          <span className="min-w-0 flex-1 truncate">{a.file_name}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {exportPageOf(a) && (
+                              <span className="mr-1 text-xs text-muted">
+                                Página {exportPageOf(a)!.page}/{exportPageOf(a)!.count} ·
+                              </span>
+                            )}
+                            {a.file_name}
+                          </span>
                           {index >= 0 && content.format === 'carousel' && (
                             <span className="text-xs text-muted">{index + 1}.ª</span>
                           )}

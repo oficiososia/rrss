@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// Formato del documento de una publicación: un lienzo con capas y el texto que
-// la acompaña. Es propio y no depende de ningún editor ni motor de dibujo: el
+// Formato del documento de una publicación: un lienzo con una o varias páginas
+// de capas y el texto que la acompaña. Es propio y no depende de ningún editor ni motor de dibujo: el
 // editor, el render del servidor y la IA leen y escriben este mismo JSON.
 // Se guarda en content_versions.data; `schemaVersion` permite migrarlo
 // (ver migrate.ts) sin migraciones de base de datos.
@@ -14,7 +14,12 @@ import { z } from 'zod';
 //      lee igual: sus imágenes quedan nítidas. Se sube la versión para que una
 //      aplicación anterior no abra (y al guardar pierda) un desenfoque que no
 //      sabe dibujar: dirá que el documento es de una versión más reciente.
-export const DOCUMENT_SCHEMA_VERSION = 3;
+//   4  páginas (`pages`, de 1 a 10, cada una con sus capas) en lugar de una sola
+//      lista de capas: un carrusel es UNA pieza con varias páginas en UNA
+//      versión. Todas comparten el lienzo (misma proporción y color de fondo) y
+//      el texto de la publicación (`copy`, uno por pieza). Un documento de la 3
+//      se lee como uno de una sola página con las mismas capas.
+export const DOCUMENT_SCHEMA_VERSION = 4;
 
 /** Desenfoque máximo de una imagen (intensidad, en %). */
 export const MAX_IMAGE_BLUR = 100;
@@ -193,7 +198,27 @@ export const layerSchema = z.discriminatedUnion('type', [
 ]);
 
 export const LAYER_TYPES = ['image', 'text', 'logo', 'shape'] as const;
+/** Capas como mucho por página. */
 export const MAX_LAYERS = 60;
+
+// ── Páginas ──────────────────────────────────────────────────────────────
+
+/**
+ * Páginas como mucho en un documento: el techo técnico (el máximo de un
+ * carrusel de Instagram al publicar por la API). Lo que admite cada formato lo
+ * dice `pageLimits` (pages.ts): un post tiene una, un carrusel de 2 a 10.
+ */
+export const MAX_PAGES = 10;
+
+/**
+ * Una página (una diapositiva de un carrusel). Su orden es el del array
+ * `pages`: es el orden en que se publica. Las capas van del fondo al frente.
+ */
+export const pageSchema = z.object({
+  id: layerIdSchema,
+  name: z.string().max(120).default(''),
+  layers: z.array(layerSchema).max(MAX_LAYERS).default([]),
+});
 
 // ── Texto de la publicación ──────────────────────────────────────────────
 // Los máximos de aquí son el techo técnico del documento, no los límites de
@@ -245,20 +270,38 @@ export const contentDocumentSchema = z
   .object({
     schemaVersion: z.literal(DOCUMENT_SCHEMA_VERSION),
     canvas: canvasSchema,
-    layers: z.array(layerSchema).max(MAX_LAYERS).default([]),
+    /** Al menos una. Sin páginas, una vacía. */
+    pages: z
+      .array(pageSchema)
+      .min(1, 'El documento necesita al menos una página')
+      .max(MAX_PAGES, `Un documento tiene como mucho ${MAX_PAGES} páginas`)
+      .default([{ id: 'p1' }]),
     copy: postCopySchema.default({}),
   })
   .superRefine((document, ctx) => {
+    // Los identificadores de las capas son únicos en TODO el documento (no solo
+    // en su página): así una capa se encuentra sin saber en qué página está.
+    const pages = new Set<string>();
     const seen = new Set<string>();
-    document.layers.forEach((layer, index) => {
-      if (seen.has(layer.id)) {
+    document.pages.forEach((page, pageIndex) => {
+      if (pages.has(page.id)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['layers', index, 'id'],
-          message: 'Hay dos capas con el mismo identificador',
+          path: ['pages', pageIndex, 'id'],
+          message: 'Hay dos páginas con el mismo identificador',
         });
       }
-      seen.add(layer.id);
+      pages.add(page.id);
+      page.layers.forEach((layer, index) => {
+        if (seen.has(layer.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['pages', pageIndex, 'layers', index, 'id'],
+            message: 'Hay dos capas con el mismo identificador',
+          });
+        }
+        seen.add(layer.id);
+      });
     });
   });
 
@@ -266,6 +309,8 @@ export type ContentDocument = z.infer<typeof contentDocumentSchema>;
 /** Lo que se puede escribir: lo que tiene valor por defecto es opcional. */
 export type ContentDocumentInput = z.input<typeof contentDocumentSchema>;
 export type Canvas = ContentDocument['canvas'];
+export type DocumentPage = ContentDocument['pages'][number];
+export type DocumentPageInput = z.input<typeof pageSchema>;
 export type Layer = z.infer<typeof layerSchema>;
 export type LayerInput = z.input<typeof layerSchema>;
 export type LayerType = Layer['type'];

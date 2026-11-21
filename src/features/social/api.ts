@@ -225,6 +225,45 @@ export function exportsOf(assets: MediaAssetRow[], contentId: string, version: n
   });
 }
 
+/** Página (desde 1) y páginas del documento de una exportación de un carrusel; null si es de una sola imagen. */
+export function exportPageOf(asset: Pick<MediaAssetRow, 'provenance'>): { page: number; count: number } | null {
+  const p = (asset.provenance ?? {}) as Record<string, unknown>;
+  if (typeof p.page !== 'number' || typeof p.page_count !== 'number') return null;
+  return { page: p.page, count: p.page_count };
+}
+
+/**
+ * Exportaciones de una pieza y versión para publicar, ya en el orden de las
+ * páginas: en un carrusel, la más reciente de cada página (de la última tanda
+ * exportada, la que dice cuántas páginas tiene el documento); en un post, la
+ * más reciente de una sola imagen. Null si falta alguna página. La base de
+ * datos vuelve a comprobarlo con el documento de la versión.
+ */
+export function publishableExportsOf(
+  assets: MediaAssetRow[],
+  contentId: string,
+  version: number,
+  format: string,
+): MediaAssetRow[] | null {
+  const all = exportsOf(assets, contentId, version).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (format !== 'carousel') {
+    const single = all.find((a) => (exportPageOf(a)?.count ?? 1) === 1);
+    return single ? [single] : null;
+  }
+  const latest = all.map(exportPageOf).find((page) => page !== null && page.count > 1);
+  if (!latest) return null;
+  const ordered: MediaAssetRow[] = [];
+  for (let page = 1; page <= latest.count; page++) {
+    const found = all.find((a) => {
+      const info = exportPageOf(a);
+      return info?.count === latest.count && info.page === page;
+    });
+    if (!found) return null;
+    ordered.push(found);
+  }
+  return ordered;
+}
+
 export function videosOf(assets: MediaAssetRow[]): MediaAssetRow[] {
   return assets.filter((a) => a.kind === 'video');
 }

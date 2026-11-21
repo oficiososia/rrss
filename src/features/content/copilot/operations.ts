@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ContentDocument } from '../document';
+import type { PageView } from '../document';
 
 // Contrato de la respuesta del copiloto por voz (`editor.copilot` de
 // `ai-generate`, docs/copiloto-voz.md) visto desde el navegador. El servidor ya
@@ -84,8 +84,11 @@ export interface CopilotLayerSummary {
   blur?: number;
 }
 
-/** Estado del documento que viaja a la IA (sin direcciones, recursos de otros ni el texto de la publicación). */
-export function summarizeDocument(document: ContentDocument): {
+/**
+ * Estado de la página activa que viaja a la IA (sin direcciones, recursos de
+ * otros ni el texto de la publicación): el copiloto solo ve y toca esa página.
+ */
+export function summarizeDocument(document: Pick<PageView, 'canvas' | 'layers'>): {
   canvas: { aspectRatio: string; width: number; height: number; backgroundColor: string };
   layers: CopilotLayerSummary[];
 } {

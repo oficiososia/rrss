@@ -30,7 +30,7 @@ function documentWithText(): ContentDocument {
   const doc = createEmptyDocument({ aspectRatio: '4:5' });
   return {
     ...doc,
-    layers: [
+    pages: [{ id: 'p1', name: '', layers: [
       {
         id: 'titular',
         type: 'text',
@@ -53,7 +53,7 @@ function documentWithText(): ContentDocument {
         align: 'center',
         lineHeight: 1.2,
       },
-    ],
+    ] }],
   };
 }
 

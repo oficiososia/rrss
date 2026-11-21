@@ -20,7 +20,7 @@ function documentWith(caption: string, textColor = '#111111'): ContentDocument {
     ...doc,
     canvas: { ...doc.canvas, backgroundColor: '#FFFFFF' },
     copy: { ...doc.copy, caption, altText: 'Plato de temporada' },
-    layers: [
+    pages: [{ id: 'p1', name: '', layers: [
       {
         id: 'titular',
         type: 'text',
@@ -43,7 +43,7 @@ function documentWith(caption: string, textColor = '#111111'): ContentDocument {
         align: 'center',
         lineHeight: 1.2,
       },
-    ],
+    ] }],
   };
 }
 

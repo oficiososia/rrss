@@ -39,6 +39,16 @@ export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
       : document.layers;
     return { ...document, layers };
   },
+  // 3 → 4: llegan las páginas. Las capas del documento pasan a ser las de su
+  // única página; el resto (lienzo, texto de la publicación) no cambia. Si
+  // trajera ya `pages` (no debería), se descarta: manda lo que se dibujaba.
+  3: (document) => {
+    const rest = { ...document };
+    const layers = rest.layers === undefined ? [] : rest.layers;
+    delete rest.layers;
+    delete rest.pages;
+    return { ...rest, pages: [{ id: 'p1', name: '', layers }] };
+  },
 };
 
 export type DocumentFailure =

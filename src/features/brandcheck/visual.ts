@@ -4,6 +4,11 @@ import { blendOver, contrastRatio, deltaE2000, isLargeText, parseHex, requiredCo
 import { DEFAULT_PALETTE_MATCH_DELTA_E, DEFAULT_PALETTE_MIN_COVERAGE, DEFAULT_PALETTE_MIN_WEIGHT } from './thresholds';
 import type { BrandCheckOptions, BrandColor, Finding, ImageKind, PaletteColor, SafeArea, TextLayer } from './types';
 
+/** «Un texto de la imagen» o, en un documento de varias páginas, «Un texto de la página 3». */
+export function textWhere(layer: Pick<TextLayer, 'page'>): string {
+  return layer.page ? `Un texto de la página ${layer.page}` : 'Un texto de la imagen';
+}
+
 const round = (n: number, digits = 2) => Math.round(n * 10 ** digits) / 10 ** digits;
 
 /**
@@ -24,8 +29,8 @@ export function checkContrast(layers: TextLayer[] | undefined): Finding[] {
         check: 'contrast',
         severity: 'info',
         message: !fg
-          ? `No se pudo leer el color de un texto de la imagen; no se comprueba su contraste.`
-          : `Se desconoce el color de fondo (opaco) de un texto de la imagen; no se comprueba su contraste.`,
+          ? `No se pudo leer el color de ${textWhere(layer).toLowerCase()}; no se comprueba su contraste.`
+          : `Se desconoce el color de fondo (opaco) de ${textWhere(layer).toLowerCase()}; no se comprueba su contraste.`,
         target,
         omitted: true,
       });
@@ -40,7 +45,7 @@ export function checkContrast(layers: TextLayer[] | undefined): Finding[] {
       code: 'CONTRAST_TOO_LOW',
       check: 'contrast',
       severity: absolute ? 'block' : 'warn',
-      message: `Un texto de la imagen tiene un contraste de ${ratio}:1 y debería tener al menos ${needed}:1 (${
+      message: `${textWhere(layer)} tiene un contraste de ${ratio}:1 y debería tener al menos ${needed}:1 (${
         large ? 'texto grande' : 'texto normal'
       }). Aclara el texto o oscurece el fondo.`,
       measured: ratio,
@@ -77,7 +82,7 @@ export function checkSafeZone(
       code: 'TEXT_IN_UNSAFE_ZONE',
       check: 'safe-zone',
       severity: 'warn',
-      message: `Un texto de la imagen tiene el ${outside} % de su caja donde la interfaz de ${
+      message: `${textWhere(layer)} tiene el ${outside} % de su caja donde la interfaz de ${
         networkLabel ?? 'la red'
       } puede taparlo. Muévelo hacia el centro.${
         safe.provenance === 'unverified' ? ' Zona orientativa: la red no publica la cifra.' : ''

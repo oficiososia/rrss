@@ -8,6 +8,8 @@ import {
   DocumentError,
   aspectRatioValue,
   createEmptyDocument,
+  MAX_LAYERS,
+  MAX_PAGES,
   migrateDocument,
   runMigrations,
   validateDocument,
@@ -19,12 +21,11 @@ import {
 const ASSET = '11111111-1111-4111-8111-111111111111';
 const GENERATION = '22222222-2222-4222-8222-222222222222';
 
-/** Documento de ejemplo con una capa de cada tipo, escrito como lo escribiría un editor o la IA. */
-function sample(): ContentDocumentInput {
-  return {
-    schemaVersion: DOCUMENT_SCHEMA_VERSION,
-    canvas: { aspectRatio: '4:5', width: 1080, height: 1350, backgroundColor: '#101010' },
-    layers: [
+type LayersInput = NonNullable<NonNullable<ContentDocumentInput['pages']>[number]['layers']>;
+
+/** Capas de ejemplo, una de cada tipo, escritas como las escribiría un editor o la IA. */
+function sampleLayers(): LayersInput {
+  return [
       {
         id: 'fondo',
         type: 'image',
@@ -49,10 +50,23 @@ function sample(): ContentDocumentInput {
         color: '#FFFFFF',
       },
       { id: 'logo', type: 'logo', x: 900, y: 60, width: 120, height: 120, assetId: ASSET },
-    ],
-    copy: { caption: 'Ya está aquí.', hashtags: ['#otoño', 'menu_del_dia'], mentions: ['@proveedor.local'] },
-  };
+  ];
 }
+
+const CANVAS = { aspectRatio: '4:5', width: 1080, height: 1350, backgroundColor: '#101010' } as const;
+const COPY = { caption: 'Ya está aquí.', hashtags: ['#otoño', 'menu_del_dia'], mentions: ['@proveedor.local'] };
+
+/** Documento de ejemplo (versión actual) de una página con esas capas. */
+function sample(layers: LayersInput = sampleLayers()): ContentDocumentInput {
+  return { schemaVersion: DOCUMENT_SCHEMA_VERSION, canvas: { ...CANVAS }, pages: [{ id: 'p1', layers }], copy: COPY };
+}
+
+/** El mismo documento tal y como lo guardaban las versiones 1 a 3 (sin páginas: una lista de capas). */
+function savedBefore(version: 1 | 2 | 3) {
+  return { schemaVersion: version, canvas: { ...CANVAS }, layers: sampleLayers(), copy: COPY };
+}
+
+const pageLayersOf = (input: ContentDocumentInput) => input.pages![0]!.layers!;
 
 const issuesOf = (input: unknown) => {
   const result = validateDocument(input);
@@ -75,7 +89,7 @@ describe('createEmptyDocument', () => {
     expect(document).toEqual({
       schemaVersion: DOCUMENT_SCHEMA_VERSION,
       canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
-      layers: [],
+      pages: [{ id: 'p1', name: '', layers: [] }],
       copy: { caption: '', hashtags: [], mentions: [], altText: '', callToAction: { label: '', url: '' } },
     });
     expect(validateDocument(document)).toEqual({ ok: true, document });
@@ -97,7 +111,7 @@ describe('validateDocument', () => {
   it('acepta un documento con las cuatro clases de capa y pone los valores por defecto', () => {
     const result = validateDocument(sample());
     if (!result.ok) throw new Error(JSON.stringify(result.issues));
-    const [fondo, banda, titular, logo] = result.document.layers;
+    const [fondo, banda, titular, logo] = result.document.pages[0]!.layers;
 
     expect(fondo).toMatchObject({
       type: 'image',
@@ -113,13 +127,13 @@ describe('validateDocument', () => {
     expect(titular).toMatchObject({ type: 'text', fontWeight: 400, italic: false, align: 'left', lineHeight: 1.2 });
     expect(logo).toMatchObject({ type: 'logo', assetId: ASSET });
     // El orden de las capas es el orden de apilado y se conserva.
-    expect(result.document.layers.map((l) => l.id)).toEqual(['fondo', 'banda', 'titular', 'logo']);
+    expect(result.document.pages[0]!.layers.map((l) => l.id)).toEqual(['fondo', 'banda', 'titular', 'logo']);
   });
 
   it('una imagen puede venir de la biblioteca o de una generación, nunca incrustada', () => {
     const withSource = (source: unknown) => {
       const document = sample();
-      (document.layers![0] as { source: unknown }).source = source;
+      (pageLayersOf(document)[0] as { source: unknown }).source = source;
       return issuesOf(document);
     };
     expect(withSource({ kind: 'generation', generationId: GENERATION })).toEqual([]);
@@ -149,23 +163,25 @@ describe('validateDocument', () => {
 
   it('dice qué falla y dónde', () => {
     const document = sample();
-    (document.layers![2] as { fontSize: number }).fontSize = 0;
-    (document.layers![3] as { opacity: number }).opacity = 1.5;
-    expect(issuesOf(document).map((issue) => issue.path)).toEqual(['layers.2.fontSize', 'layers.3.opacity']);
+    (pageLayersOf(document)[2] as { fontSize: number }).fontSize = 0;
+    (pageLayersOf(document)[3] as { opacity: number }).opacity = 1.5;
+    expect(issuesOf(document).map((issue) => issue.path)).toEqual([
+      'pages.0.layers.2.fontSize',
+      'pages.0.layers.3.opacity',
+    ]);
   });
 
   it('rechaza capas de un tipo desconocido, sin tamaño o con identificador repetido', () => {
-    const base = sample();
-    expect(issuesOf({ ...base, layers: [{ id: 'v', type: 'video', x: 0, y: 0, width: 1, height: 1 }] })[0]?.path).toBe(
-      'layers.0.type',
+    const withLayers = (layers: unknown[]) => issuesOf(sample(layers as LayersInput));
+    expect(withLayers([{ id: 'v', type: 'video', x: 0, y: 0, width: 1, height: 1 }])[0]?.path).toBe(
+      'pages.0.layers.0.type',
     );
-    expect(
-      issuesOf({ ...base, layers: [{ id: 'a', type: 'logo', x: 0, y: 0, width: 0, height: 10, assetId: ASSET }] })[0]
-        ?.path,
-    ).toBe('layers.0.width');
+    expect(withLayers([{ id: 'a', type: 'logo', x: 0, y: 0, width: 0, height: 10, assetId: ASSET }])[0]?.path).toBe(
+      'pages.0.layers.0.width',
+    );
     const repeated = { id: 'a', type: 'logo', x: 0, y: 0, width: 10, height: 10, assetId: ASSET };
-    expect(issuesOf({ ...base, layers: [repeated, repeated] })).toEqual([
-      { path: 'layers.1.id', message: 'Hay dos capas con el mismo identificador' },
+    expect(withLayers([repeated, repeated])).toEqual([
+      { path: 'pages.0.layers.1.id', message: 'Hay dos capas con el mismo identificador' },
     ]);
   });
 
@@ -178,7 +194,7 @@ describe('validateDocument', () => {
       'canvas.aspectRatio',
     );
     // Otro tamaño lógico con la misma proporción sí vale.
-    expect(issuesOf({ ...base, layers: [], canvas: { aspectRatio: '4:5', width: 2160, height: 2700 } })).toEqual([]);
+    expect(issuesOf({ ...sample([]), canvas: { aspectRatio: '4:5', width: 2160, height: 2700 } })).toEqual([]);
   });
 
   it('no migra: un documento de otra versión del esquema no es válido tal cual', () => {
@@ -262,7 +278,7 @@ describe('migrar entre versiones del esquema', () => {
     }
     expect(error).toBeInstanceOf(DocumentError);
     expect((error as DocumentError).reason).toBe('invalid');
-    expect((error as DocumentError).issues[0]?.path).toBe('layers.0.type');
+    expect((error as DocumentError).issues[0]?.path).toBe('pages.0.layers.0.type');
     expect((error as DocumentError).message).toBe('El documento no es válido.');
     expect(reasonOf(() => migrateDocument({ schemaVersion: 99 }))).toBe('newer_version');
   });
@@ -270,31 +286,31 @@ describe('migrar entre versiones del esquema', () => {
 
 describe('versión 2: grupos de capas', () => {
   /** Un documento tal y como lo guardaba la versión 1 de la aplicación (sin grupos). */
-  const savedV1 = () => ({ ...sample(), schemaVersion: 1 });
+  const savedV1 = () => savedBefore(1);
 
   it('un documento guardado con la versión 1 se lee igual, sin grupos', () => {
     const document = migrateDocument(savedV1());
     expect(document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
-    expect(document.layers).toHaveLength(sample().layers!.length);
-    expect(document.layers.every((layer) => layer.groupId === undefined)).toBe(true);
+    expect(document.pages[0]!.layers).toHaveLength(sampleLayers().length);
+    expect(document.pages[0]!.layers.every((layer) => layer.groupId === undefined)).toBe(true);
     // Lo demás no cambia: mismo resultado que validar el de la versión actual.
-    const current = validateDocument({ ...sample(), schemaVersion: DOCUMENT_SCHEMA_VERSION });
+    const current = validateDocument(sample());
     expect(current.ok && current.document).toEqual(document);
   });
 
   it('la migración 1 → 2 no agrupa nada que no estuviera agrupado y no toca el original', () => {
-    const raw = savedV1() as Record<string, unknown> & { layers: Record<string, unknown>[] };
+    const raw = savedV1() as unknown as Record<string, unknown> & { layers: Record<string, unknown>[] };
     raw.layers[0] = { ...raw.layers[0], groupId: 'colado' };
-    const migrated = runMigrations(raw) as { layers: Record<string, unknown>[] };
+    const migrated = runMigrations(raw, 2) as { layers: Record<string, unknown>[] };
     expect(migrated.layers[0]).not.toHaveProperty('groupId');
     expect(raw.layers[0]).toHaveProperty('groupId', 'colado');
   });
 
   it('acepta capas con grupo y rechaza un identificador de grupo mal formado', () => {
-    const layers = sample().layers!.map((layer) => ({ ...layer, groupId: 'g1' }));
-    const ok = validateDocument({ ...sample(), layers });
-    expect(ok.ok && ok.document.layers.every((layer) => layer.groupId === 'g1')).toBe(true);
-    const bad = validateDocument({ ...sample(), layers: [{ ...layers[0]!, groupId: 'con espacio' }] });
+    const layers = sampleLayers().map((layer) => ({ ...layer, groupId: 'g1' }));
+    const ok = validateDocument(sample(layers));
+    expect(ok.ok && ok.document.pages[0]!.layers.every((layer) => layer.groupId === 'g1')).toBe(true);
+    const bad = validateDocument(sample([{ ...layers[0]!, groupId: 'con espacio' }]));
     expect(bad.ok).toBe(false);
   });
 
@@ -307,28 +323,28 @@ describe('versión 2: grupos de capas', () => {
 });
 
 describe('versión 3: desenfoque de imágenes', () => {
-  const savedV2 = () => ({ ...sample(), schemaVersion: 2 });
+  const savedV2 = () => savedBefore(2);
 
   it('un documento de la versión 2 se lee igual, con las imágenes nítidas', () => {
     const document = migrateDocument(savedV2());
-    expect(document.schemaVersion).toBe(3);
-    expect(document.layers.every((layer) => layer.type !== 'image' || layer.blur === undefined)).toBe(true);
+    expect(document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
+    expect(document.pages[0]!.layers.every((layer) => layer.type !== 'image' || layer.blur === undefined)).toBe(true);
   });
 
   it('la migración 2 → 3 quita un desenfoque colado y no toca el original', () => {
-    const raw = savedV2() as Record<string, unknown> & { layers: Record<string, unknown>[] };
+    const raw = savedV2() as unknown as Record<string, unknown> & { layers: Record<string, unknown>[] };
     raw.layers[0] = { ...raw.layers[0], blur: 50 };
-    const migrated = runMigrations(raw) as { layers: Record<string, unknown>[] };
+    const migrated = runMigrations(raw, 3) as { layers: Record<string, unknown>[] };
     expect(migrated.layers[0]).not.toHaveProperty('blur');
     expect(raw.layers[0]).toHaveProperty('blur', 50);
   });
 
   it('acepta un desenfoque de 0 a 100 en las imágenes y rechaza lo que se sale', () => {
-    const image = sample().layers!.find((layer) => layer.type === 'image')!;
-    const ok = validateDocument({ ...sample(), layers: [{ ...image, blur: 40 }] });
-    expect(ok.ok && ok.document.layers[0]).toMatchObject({ blur: 40 });
-    expect(validateDocument({ ...sample(), layers: [{ ...image, blur: 101 }] }).ok).toBe(false);
-    expect(validateDocument({ ...sample(), layers: [{ ...image, blur: -1 }] }).ok).toBe(false);
+    const image = sampleLayers().find((layer) => layer.type === 'image')!;
+    const ok = validateDocument(sample([{ ...image, blur: 40 }]));
+    expect(ok.ok && ok.document.pages[0]!.layers[0]).toMatchObject({ blur: 40 });
+    expect(validateDocument(sample([{ ...image, blur: 101 }])).ok).toBe(false);
+    expect(validateDocument(sample([{ ...image, blur: -1 }])).ok).toBe(false);
   });
 
   it('el radio del desenfoque es relativo a la caja', () => {
@@ -336,5 +352,82 @@ describe('versión 3: desenfoque de imágenes', () => {
     expect(blurRadius(0, { width: 1080, height: 1080 })).toBe(0);
     expect(blurRadius(100, { width: 1080, height: 1350 })).toBeCloseTo(54);
     expect(blurRadius(50, { width: 540, height: 540 })).toBeCloseTo(13.5);
+  });
+});
+
+describe('versión 4: páginas', () => {
+  const page = (id: string, layers: LayersInput = []) => ({ id, layers });
+
+  it('un documento de la versión 3 se lee como uno de una sola página con las mismas capas', () => {
+    const document = migrateDocument(savedBefore(3));
+    expect(document.schemaVersion).toBe(4);
+    expect(document.pages).toHaveLength(1);
+    expect(document.pages[0]).toMatchObject({ id: 'p1', name: '' });
+    expect(document.pages[0]!.layers.map((l) => l.id)).toEqual(['fondo', 'banda', 'titular', 'logo']);
+    // El resto no cambia: mismo resultado que el documento actual de una página.
+    const current = validateDocument(sample());
+    expect(current.ok && current.document).toEqual(document);
+    expect(document).not.toHaveProperty('layers');
+  });
+
+  it('la migración 3 → 4 no toca el original y descarta unas `pages` coladas', () => {
+    const raw = { ...savedBefore(3), pages: [{ id: 'colada', layers: [] }] };
+    const migrated = runMigrations(raw) as { pages: { id: string; layers: unknown[] }[]; layers?: unknown };
+    expect(migrated.pages).toHaveLength(1);
+    expect(migrated.pages[0]!.id).toBe('p1');
+    expect(migrated.pages[0]!.layers).toHaveLength(4);
+    expect(migrated.layers).toBeUndefined();
+    expect(raw.layers).toHaveLength(4);
+  });
+
+  it('un documento de la versión 3 sin capas queda con una página vacía', () => {
+    const document = migrateDocument({ schemaVersion: 3, canvas: { ...CANVAS } });
+    expect(document.pages).toEqual([{ id: 'p1', name: '', layers: [] }]);
+  });
+
+  it('acepta varias páginas, cada una con sus capas, compartiendo lienzo y texto', () => {
+    const result = validateDocument({
+      ...sample(),
+      pages: [page('portada', sampleLayers()), page('dos'), page('tres', [{ ...sampleLayers()[1]!, id: 'otra' }])],
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.issues));
+    expect(result.document.pages.map((p) => p.id)).toEqual(['portada', 'dos', 'tres']);
+    expect(result.document.pages[1]).toEqual({ id: 'dos', name: '', layers: [] });
+    expect(result.document.copy.caption).toBe('Ya está aquí.');
+  });
+
+  it('sin páginas, una vacía; con más de 10 o ninguna, no es válido', () => {
+    const rest = { ...sample() };
+    delete rest.pages;
+    const empty = validateDocument(rest);
+    expect(empty.ok && empty.document.pages).toEqual([{ id: 'p1', name: '', layers: [] }]);
+    expect(issuesOf({ ...sample(), pages: [] })[0]?.path).toBe('pages');
+    const eleven = Array.from({ length: MAX_PAGES + 1 }, (_, i) => page(`p${i + 1}`));
+    expect(issuesOf({ ...sample(), pages: eleven })[0]).toMatchObject({ path: 'pages' });
+    expect(issuesOf({ ...sample(), pages: eleven.slice(0, MAX_PAGES) })).toEqual([]);
+  });
+
+  it('los identificadores de capa son únicos en todo el documento y los de página también', () => {
+    const layer = sampleLayers()[1]!;
+    expect(issuesOf({ ...sample(), pages: [page('a', [layer]), page('b', [layer])] })).toEqual([
+      { path: 'pages.1.layers.0.id', message: 'Hay dos capas con el mismo identificador' },
+    ]);
+    expect(issuesOf({ ...sample(), pages: [page('a'), page('a')] })).toEqual([
+      { path: 'pages.1.id', message: 'Hay dos páginas con el mismo identificador' },
+    ]);
+    expect(issuesOf({ ...sample(), pages: [page('con espacio')] })[0]?.path).toBe('pages.0.id');
+  });
+
+  it('el máximo de capas es por página', () => {
+    const many = (prefix: string) =>
+      Array.from({ length: MAX_LAYERS }, (_, i) => ({ ...sampleLayers()[1]!, id: `${prefix}${i}` }));
+    expect(issuesOf({ ...sample(), pages: [page('a', many('a')), page('b', many('b'))] })).toEqual([]);
+    expect(issuesOf(sample([...many('a'), { ...sampleLayers()[1]!, id: 'sobra' }]))[0]?.path).toBe('pages.0.layers');
+  });
+
+  it('createEmptyDocument crea las páginas pedidas (de 1 a 10)', () => {
+    expect(createEmptyDocument({ pages: 3 }).pages.map((p) => p.id)).toEqual(['p1', 'p2', 'p3']);
+    expect(createEmptyDocument({ pages: 0 }).pages).toHaveLength(1);
+    expect(createEmptyDocument({ pages: 50 }).pages).toHaveLength(MAX_PAGES);
   });
 });

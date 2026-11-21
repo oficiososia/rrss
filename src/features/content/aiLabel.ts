@@ -11,7 +11,7 @@
 //
 // La publicación (Fase 3) debe leer `content_versions.ai_generated` de la
 // versión exacta que publique, no esta función.
-import type { ContentDocument } from './document';
+import { allLayers, type ContentDocument } from './document';
 
 export type AiContentReason =
   | { kind: 'caption' }
@@ -37,7 +37,7 @@ export function aiContentReasons(document: ContentDocument, assets: AiAssetInfo[
   const byId = new Map(assets.map((a) => [a.id, a]));
   const reasons: AiContentReason[] = [];
   if (document.copy.aiGenerated === true) reasons.push({ kind: 'caption' });
-  for (const layer of document.layers) {
+  for (const layer of allLayers(document)) {
     const ref = { layerId: layer.id, name: layer.name };
     if (layer.aiGenerated === true) reasons.push({ kind: 'layer', ...ref });
     else if (layer.type === 'image' && layer.source.kind === 'generation') reasons.push({ kind: 'generation', ...ref });

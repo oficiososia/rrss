@@ -6,8 +6,8 @@ import { STATUS_LABEL } from '@/features/content/status';
 import { contentKeys } from '@/features/content/api';
 import { translateError } from '@/lib/errors';
 import {
-  exportsOf,
   kickPublisher,
+  publishableExportsOf,
   publishNowRequest,
   socialKeys,
   useCalendarContent,
@@ -24,13 +24,17 @@ interface PublishNowDialogProps {
   contentId: string;
   /** Cuenta ya elegida (diálogo de programar). Sin ella, la primera conectada de la red. */
   accountId?: string;
-  /** Recursos ya elegidos (diálogo de programar). Sin ellos, la exportación JPEG de la versión aprobada. */
+  /**
+   * Recursos ya elegidos (diálogo de programar). Sin ellos, la exportación JPEG
+   * de la versión aprobada (en un carrusel, la de cada página, en su orden).
+   */
   assetIds?: string[];
   /**
-   * Exporta la versión aprobada a JPEG y la guarda en la biblioteca; devuelve el
-   * identificador del recurso. Solo el editor puede (la exportación la hace el navegador).
+   * Exporta la versión aprobada a JPEG (una imagen por página) y la guarda en la
+   * biblioteca; devuelve los recursos en el orden de las páginas. Solo el editor
+   * puede (la exportación la hace el navegador).
    */
-  exportVersion?: () => Promise<string>;
+  exportVersion?: () => Promise<string[]>;
   /** Enlace al editor de la pieza, para cuando falta la exportación y aquí no se puede hacer. */
   editorPath?: string;
 }
@@ -74,12 +78,16 @@ export function PublishNowDialog({
   const account = (accounts.data ?? []).find((a) => a.id === accountId) ?? null;
   const pub = publication.data ?? null;
 
-  const exports = item && media.data ? exportsOf(media.data, item.id, item.current_version) : [];
+  const exported =
+    item && media.data && item.format !== 'reel'
+      ? publishableExportsOf(media.data, item.id, item.current_version, item.format)
+      : null;
   const existing = pub?.media_asset_ids ?? [];
+  const exportable = item?.format === 'post' || item?.format === 'carousel';
   let assetIds: string[] = forcedAssets ?? [];
-  if (assetIds.length === 0 && item?.format === 'post') assetIds = exports[0] ? [exports[0].id] : [];
-  if (assetIds.length === 0 && item && item.format !== 'post') assetIds = existing;
-  const needsExport = assetIds.length === 0 && item?.format === 'post' && Boolean(exportVersion);
+  if (assetIds.length === 0 && exportable) assetIds = exported?.map((a) => a.id) ?? [];
+  if (assetIds.length === 0 && item && item.format === 'reel') assetIds = existing;
+  const needsExport = assetIds.length === 0 && exportable && Boolean(exportVersion);
 
   // Por qué todavía no se puede (se dice antes de pedir confirmación).
   let blocker: string | null = null;
@@ -94,7 +102,9 @@ export function PublishNowDialog({
       blocker =
         item.format === 'post'
           ? `Falta la exportación JPEG de la versión ${item.current_version}: expórtala desde el editor (Exportar imagen → JPEG, guardar en la biblioteca).`
-          : HOLD_REASON_TEXT.no_media;
+          : item.format === 'carousel'
+            ? `Faltan las exportaciones JPEG de las páginas de la versión ${item.current_version}: expórtalas desde el editor (Exportar el carrusel, guardar en la biblioteca).`
+            : HOLD_REASON_TEXT.no_media;
   }
 
   // La hora de salida del sondeo largo: pasado un rato se avisa de que sigue en curso.
@@ -125,7 +135,7 @@ export function PublishNowDialog({
       let ids = assetIds;
       if (needsExport && exportVersion) {
         setPhase('exporting');
-        ids = [await exportVersion()];
+        ids = await exportVersion();
         await qc.invalidateQueries({ queryKey: socialKeys.media(brandId) });
       }
       setPhase('publishing');
@@ -205,7 +215,7 @@ export function PublishNowDialog({
         {!started && blocker && (
           <Notice tone="warning">
             <span data-testid="publish-now-blocker">{blocker}</span>
-            {editorPath && item?.format === 'post' && item.status === 'approved' && (
+            {editorPath && exportable && item?.status === 'approved' && (
               <>
                 {' '}
                 <a href={editorPath} className="text-primary underline">
@@ -237,8 +247,14 @@ export function PublishNowDialog({
             </p>
             {needsExport && (
               <p className="text-sm text-muted" data-testid="publish-now-export-note">
-                La versión {item?.current_version} aún no tiene su imagen exportada: se exportará a JPEG y se guardará
-                en la biblioteca en este mismo paso.
+                {item?.format === 'carousel'
+                  ? `La versión ${item.current_version} aún no tiene sus páginas exportadas: se exportarán a JPEG (una imagen por página, en orden) y se guardarán en la biblioteca en este mismo paso.`
+                  : `La versión ${item?.current_version} aún no tiene su imagen exportada: se exportará a JPEG y se guardará en la biblioteca en este mismo paso.`}
+              </p>
+            )}
+            {!needsExport && item?.format === 'carousel' && assetIds.length > 0 && (
+              <p className="text-sm text-muted" data-testid="publish-now-pages">
+                Se publican {assetIds.length} imágenes, en el orden de las páginas.
               </p>
             )}
           </>
@@ -246,7 +262,7 @@ export function PublishNowDialog({
 
         {phase === 'exporting' && !started && (
           <p role="status" className="text-sm" data-testid="publish-now-exporting">
-            Exportando la imagen…
+            {item?.format === 'carousel' ? 'Exportando las páginas…' : 'Exportando la imagen…'}
           </p>
         )}
         {phase === 'publishing' && !started && (

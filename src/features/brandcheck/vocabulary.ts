@@ -2,6 +2,7 @@
 
 import { findPhrase, pieceHashtagKeys, stripSigil, tagKey } from './text';
 import type { BrandRules, Finding, PieceText, TextLayer } from './types';
+import { textWhere } from './visual';
 
 function missingData(check: Finding['check'], what: string): Finding {
   return {
@@ -57,7 +58,7 @@ export function checkForbiddenPhrases(text: PieceText, layers: TextLayer[] | und
     }
   }
   for (const layer of layers ?? []) {
-    if (layer.text) scan(layer.text, { part: 'textLayer', layerId: layer.id }, ' (en un texto de la imagen)');
+    if (layer.text) scan(layer.text, { part: 'textLayer', layerId: layer.id }, ` (en ${textWhere(layer).toLowerCase()})`);
   }
   return findings;
 }

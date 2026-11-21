@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateDocument, HEX_COLOR, type ContentDocument } from '../content/document';
+import { validateDocumentFromAnyVersion, HEX_COLOR, type ContentDocument } from '../content/document';
 import { allowedCanvasRatios, getFormatSpec } from '../content/networks';
 
 // Plantillas de diseño de una marca, sacadas de las publicaciones que ya tiene
@@ -179,10 +179,12 @@ export function validateTemplate(
 
   let document: ContentDocument | null = null;
   const documentRaw = input.document;
-  if ((documentRaw as { schemaVersion?: unknown } | null)?.schemaVersion !== 3) {
-    issues.push({ path: `${at}.document.schemaVersion`, message: 'el documento debe ser de la versión 3' });
+  const schemaVersion = (documentRaw as { schemaVersion?: unknown } | null)?.schemaVersion;
+  if (schemaVersion !== 3 && schemaVersion !== 4) {
+    issues.push({ path: `${at}.document.schemaVersion`, message: 'el documento debe ser de la versión 3 o 4' });
   } else {
-    const parsed = validateDocument(documentRaw);
+    // Un documento v3 (una página) se guarda ya convertido a la versión vigente.
+    const parsed = validateDocumentFromAnyVersion(documentRaw);
     if (!parsed.ok) {
       issues.push(...parsed.issues.map((i) => ({ path: `${at}.document.${i.path}`, message: i.message })));
     } else {

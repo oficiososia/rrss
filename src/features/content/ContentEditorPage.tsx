@@ -75,16 +75,26 @@ import {
 import { aiContentReasons, describeAiReasons } from './aiLabel';
 import { toneOfPalette } from './copilot/legibility';
 import { speechRecognitionAvailable } from './copilot/speech';
-import { createEmptyDocument, DocumentError, MAX_LAYERS, type ContentDocument, type DocumentIssue } from './document';
+import {
+  allLayers,
+  createEmptyDocument,
+  DocumentError,
+  MAX_LAYERS,
+  pageLimits,
+  pageView,
+  type ContentDocument,
+  type DocumentIssue,
+} from './document';
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { assetIdsOf } from './editor/canvas/nodes';
 import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
-import { editorReducer, initEditor } from './editor/history';
+import { activePageIndex, editorReducer, initEditor } from './editor/history';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { ArrangeControls, MultiSelectionPanel } from './editor/panels/ArrangeControls';
 import { CopyPanel } from './editor/panels/CopyPanel';
 import { LayersPanel } from './editor/panels/LayersPanel';
+import { PageStrip } from './editor/panels/PageStrip';
 import { PropertiesPanel, type BrandStyle } from './editor/panels/PropertiesPanel';
 import { PieceSettingsDialog } from './editor/PieceSettingsDialog';
 import { NetworkPreviewDialog } from './editor/preview/NetworkPreviewDialog';
@@ -106,13 +116,17 @@ const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
 // El copiloto por voz, también aparte: solo se descarga al pulsar «Dictar».
 const VoiceCopilot = lazy(() => import('./copilot/VoiceCopilot').then((m) => ({ default: m.VoiceCopilot })));
 
-/** Documento de partida de una idea sin diseño: la proporción que recomienda la red, si es una de las del lienzo. */
+/**
+ * Documento de partida de una idea sin diseño: la proporción que recomienda la
+ * red, si es una de las del lienzo, y las páginas mínimas del formato (un
+ * carrusel empieza con dos).
+ */
 function startingDocument(spec: NetworkFormatSpec | undefined): ContentDocument {
   const media = spec?.media.includes('image') ? 'image' : spec?.media[0];
   const recommended = spec ? recommendedCanvasRatio(spec, media) : null;
   const allowed = spec ? allowedCanvasRatios(spec, media) : null;
   const aspectRatio = recommended?.ratio ?? (allowed?.ratios.includes('1:1') ? '1:1' : allowed?.ratios[0]) ?? '1:1';
-  return createEmptyDocument({ aspectRatio });
+  return createEmptyDocument({ aspectRatio, pages: pageLimits(spec).min });
 }
 
 /** Campo del panel «Publicación» al que lleva cada parte del texto señalada por el verificador. */
@@ -227,11 +241,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const voiceCopilot = voiceSupported && aiText;
   const [copilotOpen, setCopilotOpen] = useState(false);
 
-  const selected = state.document.layers.find((layer) => layer.id === state.selectedId) ?? null;
+  // Página activa: la que se ve en el lienzo y la que cambian las órdenes de capas.
+  const pageIndex = activePageIndex(state);
+  const page = useMemo(() => pageView(state.document, pageIndex), [state.document, pageIndex]);
+  const layers = page.layers;
+  // Las capas nuevas no repiten identificador con las de ninguna página.
+  const everyLayer = allLayers(state.document);
+  const pageRange = pageLimits(spec);
+  const showPages = pageRange.max > 1 || state.document.pages.length > 1;
+  const selected = layers.find((layer) => layer.id === state.selectedId) ?? null;
   const selectedLayers = useMemo(() => {
     const ids = new Set(state.selectedIds);
-    return state.document.layers.filter((layer) => ids.has(layer.id));
-  }, [state.document.layers, state.selectedIds]);
+    return layers.filter((layer) => ids.has(layer.id));
+  }, [layers, state.selectedIds]);
 
   // ── Zona segura de la red (orientativa) ──
   const safeZone = useMemo(() => safeZoneFor(spec, state.document.canvas), [spec, state.document.canvas]);
@@ -325,7 +347,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }, [focusCopy]);
 
   // ── Paleta de la imagen principal, para el verificador ──
-  const paletteLayer = mainImageLayer(state.document);
+  const paletteLayer = mainImageLayer(page);
   const palette = useImagePalette(imageUrlOf(paletteLayer, images));
   // Tono medio de esa imagen: el copiloto lo usa para que los textos se lean encima.
   const paletteAssetId = paletteLayer?.source.kind === 'asset' ? paletteLayer.source.assetId : null;
@@ -369,7 +391,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   };
   const onTextCommit: CanvasViewProps['onTextCommit'] = (id, text) => {
     setEditingTextId(null);
-    const layer = state.document.layers.find((l) => l.id === id);
+    const layer = layers.find((l) => l.id === id);
     if (layer?.type === 'text' && layer.text !== text) dispatch({ type: 'update', id, patch: { text } });
     // El foco vuelve al lienzo, para seguir con el teclado.
     canvasRef.current?.focus();
@@ -564,7 +586,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   }
 
   const canvas = state.document.canvas;
-  const full = state.document.layers.length >= MAX_LAYERS;
+  const full = layers.length >= MAX_LAYERS;
   const actions = statusActions(item, { edit: canEdit, approve: canApprove });
   const allowed = spec ? allowedCanvasRatios(spec, spec.media.includes('image') ? 'image' : spec.media[0]) : null;
   const publishingOn = useFeature('publishing');
@@ -799,7 +821,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             onClick={() =>
               dispatch({
                 type: 'add',
-                layer: newTextLayer(canvas, state.document.layers, {
+                layer: newTextLayer(canvas, everyLayer, {
                   fontFamily: brandStyle.fonts[0],
                   color: brandStyle.palette[0]?.hex,
                 }),
@@ -850,7 +872,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             onClick={() =>
               dispatch({
                 type: 'add',
-                layer: newShapeLayer(canvas, state.document.layers, 'rectangle', brandStyle.palette[1]?.hex),
+                layer: newShapeLayer(canvas, everyLayer, 'rectangle', brandStyle.palette[1]?.hex),
               })
             }
             data-testid="add-rectangle"
@@ -865,7 +887,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             onClick={() =>
               dispatch({
                 type: 'add',
-                layer: newShapeLayer(canvas, state.document.layers, 'ellipse', brandStyle.palette[1]?.hex),
+                layer: newShapeLayer(canvas, everyLayer, 'ellipse', brandStyle.palette[1]?.hex),
               })
             }
             data-testid="add-ellipse"
@@ -909,7 +931,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           >
             <Redo2 className="h-4 w-4" aria-hidden />
           </Button>
-          {full && <span className="text-xs text-muted">Has llegado al máximo de {MAX_LAYERS} capas.</span>}
+          {full && (
+            <span className="text-xs text-muted">
+              Has llegado al máximo de {MAX_LAYERS} capas{state.document.pages.length > 1 ? ' en esta página' : ''}.
+            </span>
+          )}
         </div>
       )}
       {!readOnly && voiceCopilot && copilotOpen && (
@@ -918,6 +944,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             orgId={org.id}
             brandId={brand.id}
             document={state.document}
+            pageIndex={pageIndex}
             brand={{
               palette: (profile?.visual.colors ?? []).map((c) => ({ hex: c.hex.toUpperCase(), role: c.role })),
               fonts: brandStyle.fonts,
@@ -969,7 +996,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             ) : (
               <Suspense fallback={<Spinner label="Preparando el lienzo…" />}>
                 <CanvasView
-                  document={state.document}
+                  document={page}
                   selectedIds={state.selectedIds}
                   readOnly={readOnly}
                   images={images}
@@ -981,11 +1008,24 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   onTextCommit={onTextCommit}
                   onTextCancel={onTextCancel}
                   safeZone={safeZoneOverlay}
-                  label={`Diseño de ${item.title}, ${state.document.layers.length} capas`}
+                  label={
+                    state.document.pages.length > 1
+                      ? `Diseño de ${item.title}, página ${pageIndex + 1} de ${state.document.pages.length}, ${layers.length} capas`
+                      : `Diseño de ${item.title}, ${layers.length} capas`
+                  }
                 />
               </Suspense>
             )}
           </div>
+          {showPages && (
+            <PageStrip
+              document={state.document}
+              activePageId={state.activePageId}
+              limits={pageRange}
+              readOnly={readOnly}
+              dispatch={dispatch}
+            />
+          )}
         </section>
 
         <aside
@@ -995,7 +1035,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <Tabs value={panel} onValueChange={setPanel}>
             <TabsList label="Paneles del editor">
               <TabsTrigger value="layer">Diseño</TabsTrigger>
-              <TabsTrigger value="layers">Capas ({state.document.layers.length})</TabsTrigger>
+              <TabsTrigger value="layers">Capas ({layers.length})</TabsTrigger>
               <TabsTrigger value="copy">Publicación</TabsTrigger>
               {BrandCheck && <TabsTrigger value="brand">Marca</TabsTrigger>}
             </TabsList>
@@ -1026,7 +1066,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             </TabsContent>
             <TabsContent value="layers" className="pt-4">
               <LayersPanel
-                layers={state.document.layers}
+                layers={layers}
                 selectedIds={state.selectedIds}
                 readOnly={readOnly}
                 dispatch={dispatch}
@@ -1133,7 +1173,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           onOpenChange={setPublishNowOpen}
           contentId={contentId}
           exportVersion={
-            item.format === 'post' && !dirty
+            (item.format === 'post' || item.format === 'carousel') && !dirty
               ? () =>
                   exportForPublishing({
                     document: state.document,
@@ -1188,7 +1228,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               setImagePicker(false);
               dispatch({
                 type: 'add',
-                layer: newImageLayer(canvas, state.document.layers, { id: asset.id, name: asset.file_name }),
+                layer: newImageLayer(canvas, everyLayer, { id: asset.id, name: asset.file_name }),
               });
             }}
           />
@@ -1201,7 +1241,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               // Una capa más: se deshace con Ctrl+Z como cualquier otra; la imagen queda en la biblioteca.
               onGenerated={(image) => {
                 setImageAi(false);
-                dispatch({ type: 'add', layer: newImageLayer(canvas, state.document.layers, image) });
+                dispatch({ type: 'add', layer: newImageLayer(canvas, everyLayer, image) });
                 toast.success('Imagen generada y añadida al diseño. Está también en la biblioteca.');
               }}
             />
@@ -1235,7 +1275,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               setLogoPicker(false);
               dispatch({
                 type: 'add',
-                layer: newLogoLayer(canvas, state.document.layers, {
+                layer: newLogoLayer(canvas, everyLayer, {
                   id: asset.id,
                   name: asset.file_name,
                   width: asset.width,

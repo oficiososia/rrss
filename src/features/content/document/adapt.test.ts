@@ -15,13 +15,13 @@ import {
 const ASSET = '11111111-1111-4111-8111-111111111111';
 
 function documentWith(aspectRatio: AspectRatio, layers: LayerInput[]): ContentDocument {
-  const result = validateDocument({ ...createEmptyDocument({ aspectRatio }), layers });
+  const result = validateDocument({ ...createEmptyDocument({ aspectRatio }), pages: [{ id: 'p1', layers }] });
   if (!result.ok) throw new Error(JSON.stringify(result.issues));
   return result.document;
 }
 
 const box = (document: ContentDocument, id: string) => {
-  const layer = document.layers.find((l) => l.id === id)!;
+  const layer = document.pages[0]!.layers.find((l) => l.id === id)!;
   return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
 };
 
@@ -132,10 +132,10 @@ describe('adaptDocument', () => {
     });
     // El titular sigue centrado, más pequeño, y su letra encoge igual.
     expect(box(back, 'titular')).toEqual({ x: 540 - 400 * s, y: 540 - 100 * s, width: 800 * s, height: 200 * s });
-    const titular = back.layers.find((l) => l.id === 'titular')!;
+    const titular = back.pages[0]!.layers.find((l) => l.id === 'titular')!;
     expect(titular.type === 'text' && titular.fontSize).toBe(96 * s);
     // Trazo y radio de las esquinas también.
-    const sello = back.layers.find((l) => l.id === 'sello')!;
+    const sello = back.pages[0]!.layers.find((l) => l.id === 'sello')!;
     expect(sello.type === 'shape' && [sello.stroke?.width, sello.cornerRadius]).toEqual([8 * s, 16 * s]);
   });
 
@@ -152,18 +152,18 @@ describe('adaptDocument', () => {
     const original = { ...square(), copy: { ...square().copy, caption: 'Pie', hashtags: ['uno'] } };
     const adapted = adaptDocument(original, '4:5');
 
-    expect(adapted.layers.map((l) => l.id)).toEqual(original.layers.map((l) => l.id));
+    expect(adapted.pages[0]!.layers.map((l) => l.id)).toEqual(original.pages[0]!.layers.map((l) => l.id));
     expect(adapted.copy).toEqual(original.copy);
     expect(adapted.schemaVersion).toBe(original.schemaVersion);
-    const sello = adapted.layers.find((l) => l.id === 'sello')!;
+    const sello = adapted.pages[0]!.layers.find((l) => l.id === 'sello')!;
     expect([sello.rotation, sello.opacity, sello.anchor]).toEqual([15, 0.8, { x: 'right', y: 'bottom' }]);
-    const fondo = adapted.layers.find((l) => l.id === 'fondo')!;
+    const fondo = adapted.pages[0]!.layers.find((l) => l.id === 'fondo')!;
     expect(fondo.type === 'image' && [fondo.source, fondo.focus, fondo.fit]).toEqual([
       { kind: 'asset', assetId: ASSET },
       { x: 0.3, y: 0.7 },
       'cover',
     ]);
-    const titular = adapted.layers.find((l) => l.id === 'titular')!;
+    const titular = adapted.pages[0]!.layers.find((l) => l.id === 'titular')!;
     expect(titular.type === 'text' && [titular.text, titular.fontFamily, titular.color, titular.align]).toEqual([
       'Hola',
       'Inter',
@@ -176,7 +176,7 @@ describe('adaptDocument', () => {
     const original = square();
     const snapshot = JSON.parse(JSON.stringify(original));
     const adapted = adaptDocument(original, '9:16');
-    adapted.layers[0]!.anchor.x = 'left';
+    adapted.pages[0]!.layers[0]!.anchor.x = 'left';
     adapted.copy.hashtags.push('nuevo');
     expect(original).toEqual(snapshot);
   });
@@ -186,7 +186,7 @@ describe('adaptDocument', () => {
     const same = adaptDocument(original, '1:1');
     expect(same).toEqual(original);
     expect(same).not.toBe(original);
-    expect(same.layers[0]).not.toBe(original.layers[0]);
+    expect(same.pages[0]!.layers[0]).not.toBe(original.pages[0]!.layers[0]);
   });
 
   it('entre cualquier par de proporciones: el resultado es válido y lo que cabía sigue cabiendo', () => {
@@ -212,7 +212,7 @@ describe('adaptDocument', () => {
       for (const to of ASPECT_RATIOS) {
         const adapted = adaptDocument(source, to);
         expect(validateDocument(adapted), `${from} → ${to}`).toEqual({ ok: true, document: adapted });
-        for (const layer of adapted.layers) {
+        for (const layer of adapted.pages[0]!.layers) {
           const label = `${from} → ${to} · ${layer.id}`;
           expect(layer.x, label).toBeGreaterThanOrEqual(-0.001);
           expect(layer.y, label).toBeGreaterThanOrEqual(-0.001);
@@ -225,7 +225,7 @@ describe('adaptDocument', () => {
 
   it('una capa que no se estira conserva sus proporciones', () => {
     for (const to of ASPECT_RATIOS) {
-      const logo = adaptDocument(square(), to).layers.find((l) => l.id === 'logo')!;
+      const logo = adaptDocument(square(), to).pages[0]!.layers.find((l) => l.id === 'logo')!;
       expect(logo.width / logo.height, to).toBeCloseTo(2, 6);
     }
   });
@@ -236,7 +236,7 @@ describe('adaptDocument', () => {
     const doubled: ContentDocument = {
       ...big,
       canvas: { ...big.canvas, width: 2160, height: 2160 },
-      layers: square().layers.map((l) => ({ ...l, x: l.x * 2, y: l.y * 2, width: l.width * 2, height: l.height * 2 })),
+      pages: [{ id: 'p1', name: '', layers: square().pages[0]!.layers.map((l) => ({ ...l, x: l.x * 2, y: l.y * 2, width: l.width * 2, height: l.height * 2 })) }],
     };
     const adapted = adaptDocument(doubled, '9:16');
     expect(adapted.canvas).toMatchObject({ width: 1080, height: 1920 });
@@ -251,7 +251,7 @@ describe('adaptDocument', () => {
 
 describe('adaptLayer', () => {
   it('recoloca una capa suelta sin modificarla', () => {
-    const [logo] = square().layers.filter((l) => l.id === 'logo');
+    const [logo] = square().pages[0]!.layers.filter((l) => l.id === 'logo');
     const adapted = adaptLayer(logo!, CANVAS_SIZES['1:1'], CANVAS_SIZES['4:5']);
     expect(adapted).toMatchObject({ id: 'logo', x: 60, y: 40, width: 200, height: 100 });
     expect(adapted).not.toBe(logo);

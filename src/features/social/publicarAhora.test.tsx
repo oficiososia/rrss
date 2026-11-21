@@ -268,3 +268,76 @@ describe('Publicar ahora desde «Programar una publicación»', () => {
     expect(fake.callsTo('publish_publication_now', 'rpc')).toHaveLength(0);
   });
 });
+
+describe('Carrusel: las páginas de la versión aprobada, en orden', () => {
+  function seedCarousel() {
+    seed();
+    fake.rows('content_items').push(content('c-car', { title: 'Carrusel de otoño', format: 'carousel' }));
+    // Exportadas en desorden (y una tanda vieja de 2 páginas): se eligen las 3 de la última tanda, en su orden.
+    const page = (id: string, n: number, count: number, at: string) => ({
+      id,
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      kind: 'image',
+      mime_type: 'image/jpeg',
+      file_name: `carrusel-v1-p${n}.jpg`,
+      provenance: { type: 'export', content_id: 'c-car', version: 1, unsaved_changes: false, page: n, page_count: count },
+      created_at: at,
+    });
+    fake.rows('media_assets').push(
+      page('car-3', 3, 3, '2026-11-20T10:00:03Z'),
+      page('car-1', 1, 3, '2026-11-20T10:00:01Z'),
+      page('vieja-1', 1, 2, '2026-11-19T10:00:00Z'),
+      page('car-2', 2, 3, '2026-11-20T10:00:02Z'),
+    );
+  }
+
+  it('al programar se eligen solas las páginas en orden y se guardan así', async () => {
+    seedCarousel();
+    fake.rpc('save_publication', (args) => {
+      const created = pub('p-car', String(args.p_content_id), {
+        format: 'carousel',
+        media_asset_ids: args.p_media_asset_ids as string[],
+      });
+      fake.rows('scheduled_publications').push(created);
+      return created;
+    });
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    await user.click(await screen.findByTestId('calendar-schedule'));
+    await user.selectOptions(await screen.findByTestId('schedule-content'), 'c-car');
+    expect(await screen.findByTestId('schedule-pages-hint')).toHaveTextContent('las 3 páginas de la versión 1');
+    const checked = screen.getAllByTestId('schedule-asset').filter((box) => (box as HTMLInputElement).checked);
+    expect(checked).toHaveLength(3);
+    await user.click(screen.getByTestId('schedule-submit'));
+    await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1));
+    expect(fake.callsTo('save_publication', 'rpc')[0]!.payload).toMatchObject({
+      p_content_id: 'c-car',
+      p_media_asset_ids: ['car-1', 'car-2', 'car-3'],
+    });
+  });
+
+  it('«Publicar ahora» manda las páginas en orden', async () => {
+    seedCarousel();
+    fake.rpc('publish_publication_now', (args) => {
+      const created = pub('p-car', String(args.p_content_id), {
+        format: 'carousel',
+        media_asset_ids: args.p_media_asset_ids as string[],
+      });
+      fake.rows('scheduled_publications').push(created);
+      return created;
+    });
+    fake.fn('social-publish/now', () => ({ status: 200, body: {} }));
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    await user.click(await screen.findByTestId('calendar-schedule'));
+    await user.selectOptions(await screen.findByTestId('schedule-content'), 'c-car');
+    await user.click(screen.getByTestId('schedule-mode-now'));
+    await user.click(screen.getByTestId('schedule-submit'));
+    await screen.findByTestId('publish-now');
+    await user.click(screen.getByTestId('publish-now-confirm'));
+    await waitFor(() => expect(fake.callsTo('publish_publication_now', 'rpc')).toHaveLength(1));
+    expect(fake.callsTo('publish_publication_now', 'rpc')[0]!.payload).toMatchObject({
+      p_content_id: 'c-car',
+      p_media_asset_ids: ['car-1', 'car-2', 'car-3'],
+    });
+  });
+});

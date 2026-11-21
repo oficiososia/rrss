@@ -1,6 +1,6 @@
 // Agregado: ejecuta todas las comprobaciones y devuelve veredicto y hallazgos ordenados.
 
-import { checkAltText, checkHashtagCount, checkLength, checkMentionCount } from './limits';
+import { checkAltText, checkHashtagCount, checkLength, checkMentionCount, checkPageCount } from './limits';
 import { checkEmojis, checkReadability } from './style';
 import { checkBrandHashtags, checkCallToAction, checkForbiddenPhrases } from './vocabulary';
 import { checkContrast, checkPalette, checkSafeZone } from './visual';
@@ -18,6 +18,7 @@ const SEVERITY_RANK: Record<Severity, number> = { block: 0, warn: 1, info: 2 };
 
 /** Orden estable de las comprobaciones (también el orden de desempate al ordenar). */
 export const CHECK_ORDER: CheckId[] = [
+  'pages',
   'length',
   'hashtags',
   'mentions',
@@ -43,6 +44,7 @@ function statusOf(findings: Finding[]): CheckStatus {
 export function verifyPiece(input: BrandCheckInput, options: BrandCheckOptions = {}): BrandCheckResult {
   const { text, limits, brand } = input;
   const byCheck: Record<CheckId, Finding[]> = {
+    pages: checkPageCount(input.pages),
     length: checkLength(text, limits),
     hashtags: checkHashtagCount(text, limits),
     mentions: checkMentionCount(text, limits),

@@ -1,4 +1,4 @@
-import { blurRadius, type ContentDocument, type Layer } from '../../document';
+import { allLayers, blurRadius, type ContentDocument, type Layer, type PageView } from '../../document';
 import { layerToNodeBox, type NodeBox } from '../geometry';
 
 // Descripción plana, sin Konva, de lo que hay que dibujar por cada capa. Es la
@@ -104,15 +104,15 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
   }
 }
 
-/** Nodos del documento, del fondo al frente (el orden del array de capas). */
-export function describeDocument(document: ContentDocument, images: ImageLookup, readOnly = false): NodeSpec[] {
-  return document.layers.map((layer) => describeLayer(layer, images, readOnly));
+/** Nodos de una página, del fondo al frente (el orden del array de capas). */
+export function describeDocument(page: Pick<PageView, 'layers'>, images: ImageLookup, readOnly = false): NodeSpec[] {
+  return page.layers.map((layer) => describeLayer(layer, images, readOnly));
 }
 
-/** Identificadores de la biblioteca que el documento necesita para dibujarse. */
+/** Identificadores de la biblioteca que el documento (todas sus páginas) necesita para dibujarse. */
 export function assetIdsOf(document: ContentDocument): string[] {
   const ids = new Set<string>();
-  for (const layer of document.layers) {
+  for (const layer of allLayers(document)) {
     if (layer.type === 'image' && layer.source.kind === 'asset') ids.add(layer.source.assetId);
     if (layer.type === 'logo') ids.add(layer.assetId);
   }

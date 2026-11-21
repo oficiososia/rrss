@@ -91,6 +91,10 @@ export function adaptDocument(document: ContentDocument, target: AspectRatio): C
   return {
     ...structuredClone(document),
     canvas: { ...document.canvas, aspectRatio: target, ...to },
-    layers: document.layers.map((layer) => adaptLayer(layer, from, to)),
+    // Todas las páginas a la vez: comparten el lienzo.
+    pages: document.pages.map((page) => ({
+      ...structuredClone(page),
+      layers: page.layers.map((layer) => adaptLayer(layer, from, to)),
+    })),
   };
 }

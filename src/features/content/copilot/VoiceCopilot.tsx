@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { requestEditorCopilot, toAiError } from '@/features/ai/api';
 import { useAssetsByIds } from '@/features/library/api';
-import type { ContentDocument } from '../document';
+import { pageView, type ContentDocument } from '../document';
 import { ImagePickerDialog } from '../editor/AssetPickerDialog';
 import {
   applyCopilotOperations,
@@ -46,6 +46,8 @@ export interface VoiceCopilotProps {
   orgId: string;
   brandId: string;
   document: ContentDocument;
+  /** Página activa del editor: el copiloto solo ve y cambia esa página. */
+  pageIndex: number;
   brand: CopilotBrandStyle;
   logoIds: string[];
   /** Tono medio de las fotos ya analizadas, por id de recurso (para que los textos se lean encima). */
@@ -64,6 +66,7 @@ export function VoiceCopilot({
   orgId,
   brandId,
   document,
+  pageIndex,
   brand,
   logoIds,
   imageTones,
@@ -78,9 +81,9 @@ export function VoiceCopilot({
   const logos = useAssetsByIds(brandId, logoIds);
 
   // Lo último de cada cosa, para las órdenes que se procesan en cola (fuera del ciclo de React).
-  const latest = useRef({ document, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply });
+  const latest = useRef({ document, pageIndex, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply });
   useEffect(() => {
-    latest.current = { document, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply };
+    latest.current = { document, pageIndex, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply };
   });
   const queue = useRef<Promise<void>>(Promise.resolve());
   /** Quien espera a que la persona elija una foto («esta foto» sin ninguna elegida). */
@@ -105,7 +108,7 @@ export function VoiceCopilot({
     try {
       const raw = await requestEditorCopilot(brandId, {
         transcript: order.transcript,
-        document: summarizeDocument(now.document),
+        document: summarizeDocument(pageView(now.document, now.pageIndex)),
         assets: chosen.map((asset) => ({ id: asset.id, name: asset.name })),
       });
       const response = parseCopilotResponse(raw);
@@ -135,6 +138,7 @@ export function VoiceCopilot({
         assets,
         logoIds: current.logoIds,
         imageTones: current.imageTones,
+        pageIndex: current.pageIndex,
       });
       const notes = [
         ...(response.note ? [response.note] : []),

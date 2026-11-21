@@ -116,7 +116,7 @@ function seed(
   const base = createEmptyDocument({ aspectRatio: options.ratio ?? '1:1' });
   const document: ContentDocument = {
     ...base,
-    layers: options.layers ?? [shape('a', 100, 100), shape('b', 400, 300), shape('c', 700, 600), text('t', 'Hola')],
+    pages: [{ id: 'p1', name: '', layers: options.layers ?? [shape('a', 100, 100), shape('b', 400, 300), shape('c', 700, 600), text('t', 'Hola')] }],
     copy: { ...base.copy, caption: options.caption ?? '' },
   };
   const item: ContentItemRow = {

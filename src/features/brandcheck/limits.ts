@@ -74,6 +74,45 @@ export function checkMentionCount(text: PieceText, limits: NetworkLimits): Findi
   ];
 }
 
+/** Número de páginas frente a lo que admite el formato (un carrusel de Instagram, de 2 a 10). */
+export function checkPageCount(pages: { count: number; min: number; max: number } | undefined): Finding[] {
+  if (!pages) return [];
+  const { count, min, max } = pages;
+  if (count < min) {
+    return [
+      {
+        code: 'PAGES_TOO_FEW',
+        check: 'pages',
+        severity: 'block',
+        message:
+          min === max
+            ? `Este formato lleva ${min} página${min === 1 ? '' : 's'} y tiene ${count}.`
+            : `Un carrusel necesita al menos ${min} páginas y tiene ${count}. Añade ${min - count}.`,
+        measured: count,
+        threshold: min,
+        target: { part: 'piece' },
+      },
+    ];
+  }
+  if (count > max) {
+    return [
+      {
+        code: 'PAGES_TOO_MANY',
+        check: 'pages',
+        severity: 'block',
+        message:
+          max === 1
+            ? `Este formato publica una sola imagen y la pieza tiene ${count} páginas: cambia el formato a carrusel o quita ${count - 1}.`
+            : `Tiene ${count} páginas y el máximo es ${max}. Quita ${count - max}.`,
+        measured: count,
+        threshold: max,
+        target: { part: 'piece' },
+      },
+    ];
+  }
+  return [];
+}
+
 /** Texto alternativo presente cuando hay imagen y, si la red lo limita, dentro del máximo. */
 export function checkAltText(text: PieceText, hasImage: boolean | undefined, limits: NetworkLimits): Finding[] {
   if (!hasImage) return [];

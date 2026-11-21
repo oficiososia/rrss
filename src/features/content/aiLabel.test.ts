@@ -34,14 +34,14 @@ const assets = [
 
 describe('marca de contenido generado con IA', () => {
   it('un documento sin nada de IA no lleva marca', () => {
-    expect(aiContentReasons(doc({ layers: [image('foto', { kind: 'asset', assetId: ASSET })] }), assets)).toEqual([]);
+    expect(aiContentReasons(doc({ pages: [{ id: 'p1', name: '', layers: [image('foto', { kind: 'asset', assetId: ASSET })] }] }), assets)).toEqual([]);
   });
 
   it('marca el texto redactado con IA y las capas generadas o que usan imágenes generadas', () => {
     const reasons = aiContentReasons(
       doc({
         copy: { caption: 'Hola', aiGenerated: true },
-        layers: [
+        pages: [{ id: 'p1', name: '', layers: [
           image('a', { kind: 'asset', assetId: AI_ASSET }),
           image('b', { kind: 'generation', generationId: GENERATION }),
           image('c', { kind: 'asset', assetId: ASSET }),
@@ -58,7 +58,7 @@ describe('marca de contenido generado con IA', () => {
             color: '#000000',
             aiGenerated: true,
           },
-        ],
+        ] }],
       }),
       assets,
     );

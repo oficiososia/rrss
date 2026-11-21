@@ -66,14 +66,29 @@ export interface FileNameInput {
   version: number | null;
   /** Hay cambios sin guardar en lo que se exporta. */
   unsaved: boolean;
+  /** Página (desde 1) de un documento de varias páginas; sin ella, no se dice. */
+  page?: number;
 }
 
-/** Nombre legible por omisión: `menu-de-otono-1080x1350-v3.png` (`-borrador` si hay cambios sin guardar). */
-export function suggestFileName({ title, format, width, height, version, unsaved }: FileNameInput): string {
+/**
+ * Nombre legible por omisión: `menu-de-otono-1080x1350-v3.png` (`-borrador` si
+ * hay cambios sin guardar; `-p2` en la página 2 de un carrusel).
+ */
+export function suggestFileName({ title, format, width, height, version, unsaved, page }: FileNameInput): string {
   const parts = [slug(title, 50) || 'diseno', `${width}x${height}`];
   if (version) parts.push(`v${version}`);
   if (unsaved) parts.push('borrador');
+  if (page) parts.push(`p${page}`);
   return `${parts.join('-')}.${EXPORT_FORMATS[format].extension}`;
+}
+
+/** Nombre de la página `page` a partir de uno elegido por la persona: `nombre-p2.jpg`. */
+export function pageFileName(fileName: string, page: number, format: ExportFormat): string {
+  const { extension } = EXPORT_FORMATS[format];
+  const base = fileName
+    .slice(0, fileName.toLowerCase().endsWith(`.${extension}`) ? -(extension.length + 1) : undefined)
+    .replace(/-p\d+$/, '');
+  return `${base.slice(0, 115)}-p${page}.${extension}`;
 }
 
 /** Lo que escribe la persona, saneado y con la extensión del formato (sin duplicarla). */
@@ -103,9 +118,18 @@ export interface ProvenanceInput {
   height: number;
   pixelRatio: number;
   exportedAt: Date;
+  /**
+   * Página exportada (desde 1) y cuántas tiene el documento. Solo en documentos
+   * de varias páginas (carruseles): la base de datos exige, para publicar un
+   * carrusel, una exportación de cada página de la versión, en su orden.
+   */
+  page?: { number: number; count: number };
 }
 
-/** Procedencia que se guarda en `media_assets.provenance` (la forma está documentada en la migración). */
+/**
+ * Procedencia que se guarda en `media_assets.provenance` (la forma está
+ * documentada en las migraciones 20261118120000 y 20261203010000).
+ */
 export function buildProvenance(input: ProvenanceInput) {
   return {
     type: 'export' as const,
@@ -117,6 +141,7 @@ export function buildProvenance(input: ProvenanceInput) {
     height: input.height,
     pixel_ratio: input.pixelRatio,
     exported_at: input.exportedAt.toISOString(),
+    ...(input.page ? { page: input.page.number, page_count: input.page.count } : {}),
   };
 }
 

@@ -12,7 +12,7 @@ function doc(layers: LayerInput[] = [], copy: object = {}): ContentDocument {
   return contentDocumentSchema.parse({
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
-    layers,
+    pages: [{ id: 'p1', layers }],
     copy,
   });
 }

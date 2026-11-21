@@ -1,7 +1,7 @@
-import { Bookmark, Heart, MessageCircle, MoreHorizontal, Send } from 'lucide-react';
+import { Bookmark, ChevronLeft, ChevronRight, Heart, MessageCircle, MoreHorizontal, Send } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, Notice, Spinner } from '@/components/ui';
-import type { ContentDocument } from '../../document';
+import { pageView, type ContentDocument } from '../../document';
 import type { NetworkFormatSpec } from '../../networks';
 import { safeZoneFor } from '../../safeZones';
 import type { ImageLookup } from '../canvas/nodes';
@@ -22,39 +22,42 @@ interface NetworkPreviewDialogProps {
 type Render = { status: 'loading' } | { status: 'ready'; url: string } | { status: 'error'; message: string };
 
 /**
- * Dibuja el diseño como imagen (con el mismo código que exportar, a media
- * resolución). El diálogo se monta al abrirse, así que empieza siempre cargando.
+ * Dibuja cada página del diseño como imagen (con el mismo código que exportar,
+ * a media resolución), una detrás de otra. El diálogo se monta al abrirse, así
+ * que empieza siempre cargando.
  */
-function useDesignImage(document: ContentDocument, images: ImageLookup): Render {
-  const [render, setRender] = useState<Render>({ status: 'loading' });
+function useDesignImages(document: ContentDocument, images: ImageLookup): Render[] {
+  const count = document.pages.length;
+  const [renders, setRenders] = useState<Render[]>(() => Array.from({ length: count }, () => ({ status: 'loading' })));
   useEffect(() => {
     let cancelled = false;
-    let url: string | null = null;
-    import('../canvas/exporter')
-      .then(({ renderDocument }) =>
-        renderDocument(document, images, { format: 'jpeg', quality: 0.85, pixelRatio: 0.5 }),
-      )
-      .then(
-        (result) => {
-          if (cancelled) return;
-          url = URL.createObjectURL(result.blob);
-          setRender({ status: 'ready', url });
-        },
-        (error: unknown) => {
-          if (!cancelled) {
-            setRender({
-              status: 'error',
-              message: error instanceof Error ? error.message : 'No se ha podido dibujar.',
-            });
-          }
-        },
-      );
+    const urls: string[] = [];
+    void import('../canvas/exporter').then(async ({ renderDocument }) => {
+      for (let index = 0; index < count; index++) {
+        if (cancelled) return;
+        let next: Render;
+        try {
+          const result = await renderDocument(pageView(document, index), images, {
+            format: 'jpeg',
+            quality: 0.85,
+            pixelRatio: 0.5,
+          });
+          const url = URL.createObjectURL(result.blob);
+          urls.push(url);
+          next = { status: 'ready', url };
+        } catch (error) {
+          next = { status: 'error', message: error instanceof Error ? error.message : 'No se ha podido dibujar.' };
+        }
+        if (cancelled) return;
+        setRenders((list) => list.map((item, i) => (i === index ? next : item)));
+      }
+    });
     return () => {
       cancelled = true;
-      if (url) URL.revokeObjectURL(url);
+      for (const url of urls) URL.revokeObjectURL(url);
     };
-  }, [document, images]);
-  return render;
+  }, [document, images, count]);
+  return renders;
 }
 
 /**
@@ -72,7 +75,11 @@ export function NetworkPreviewDialog({
   targetName,
   accountName,
 }: NetworkPreviewDialogProps) {
-  const render = useDesignImage(document, images);
+  const renders = useDesignImages(document, images);
+  const count = document.pages.length;
+  const [current, setCurrent] = useState(0);
+  const at = Math.min(current, count - 1);
+  const render = renders[at] ?? { status: 'loading' as const };
   const frame = previewFrameOf(spec);
   const caption = captionPreview(document.copy, spec);
   const zone = safeZoneFor(spec, document.canvas);
@@ -83,8 +90,13 @@ export function NetworkPreviewDialog({
     render.status === 'ready' ? (
       <img
         src={render.url}
-        alt={document.copy.altText || 'Diseño de la pieza'}
+        alt={
+          count > 1
+            ? `Página ${at + 1} de ${count}${document.copy.altText ? `. ${document.copy.altText}` : ''}`
+            : document.copy.altText || 'Diseño de la pieza'
+        }
         className="h-full w-full object-cover"
+        data-testid="preview-image"
       />
     ) : render.status === 'error' ? (
       <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted">
@@ -124,14 +136,60 @@ export function NetworkPreviewDialog({
               <span className="flex-1 font-semibold">{accountName}</span>
               <MoreHorizontal className="h-4 w-4 text-muted" aria-hidden />
             </div>
-            <div className="bg-subtle" style={{ aspectRatio: ratio }}>
+            <div className="relative bg-subtle" style={{ aspectRatio: ratio }}>
               {image}
+              {count > 1 && (
+                <>
+                  <span
+                    className="absolute right-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-xs text-white"
+                    data-testid="preview-counter"
+                  >
+                    {at + 1}/{count}
+                  </span>
+                  {at > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrent(at - 1)}
+                      className="absolute left-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-fg shadow"
+                      aria-label="Página anterior"
+                      data-testid="preview-prev"
+                    >
+                      <ChevronLeft className="h-4 w-4" aria-hidden />
+                    </button>
+                  )}
+                  {at < count - 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrent(at + 1)}
+                      className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-fg shadow"
+                      aria-label="Página siguiente"
+                      data-testid="preview-next"
+                    >
+                      <ChevronRight className="h-4 w-4" aria-hidden />
+                    </button>
+                  )}
+                </>
+              )}
             </div>
-            <div className="flex items-center gap-3 px-3 py-2 text-muted" aria-hidden>
-              <Heart className="h-5 w-5" />
-              <MessageCircle className="h-5 w-5" />
-              <Send className="h-5 w-5" />
-              <Bookmark className="ml-auto h-5 w-5" />
+            <div className="relative flex items-center gap-3 px-3 py-2 text-muted">
+              <Heart className="h-5 w-5" aria-hidden />
+              <MessageCircle className="h-5 w-5" aria-hidden />
+              <Send className="h-5 w-5" aria-hidden />
+              {count > 1 && (
+                <span className="absolute left-1/2 flex -translate-x-1/2 gap-1" data-testid="preview-dots">
+                  {Array.from({ length: count }, (_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => setCurrent(index)}
+                      aria-label={`Ir a la página ${index + 1}`}
+                      aria-current={index === at ? 'true' : undefined}
+                      className={`h-1.5 w-1.5 rounded-full ${index === at ? 'bg-primary' : 'bg-border'}`}
+                    />
+                  ))}
+                </span>
+              )}
+              <Bookmark className="ml-auto h-5 w-5" aria-hidden />
             </div>
             <div className="px-3 pb-3">{captionText}</div>
           </div>

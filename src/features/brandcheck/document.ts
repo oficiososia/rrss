@@ -2,7 +2,7 @@
 // marca a partir del documento por capas, la especificación de la red y el
 // perfil. Lógica pura: sin red, sin base de datos y sin interfaz.
 
-import type { ContentDocument, Layer, ShapeLayer } from '@/features/content/document';
+import { pageLimits, pageView, type ContentDocument, type Layer, type PageView, type ShapeLayer } from '@/features/content/document';
 import { NETWORKS, type NetworkFormatSpec } from '@/features/content/networks';
 import { safeZoneFor } from '@/features/content/safeZones';
 import { lengthUnitOf } from '@/features/content/textUnits';
@@ -138,12 +138,17 @@ const toHex = (rgb: Rgb) =>
  *  - formas sin relleno, capas ocultas y otros textos no cuentan;
  *  - si no hay nada más, el fondo del lienzo.
  */
-export function backgroundBehind(document: ContentDocument, index: number): string | null {
-  const rgb = resolveBackground(document, index, document.layers[index]!);
+export function backgroundBehind(
+  document: Pick<PageView, 'canvas' | 'layers'> | ContentDocument,
+  index: number,
+): string | null {
+  // Un documento entero: su primera página.
+  const page = 'pages' in document ? pageView(document, 0) : document;
+  const rgb = resolveBackground(page, index, page.layers[index]!);
   return rgb ? toHex(rgb) : null;
 }
 
-function resolveBackground(document: ContentDocument, above: number, box: Box): Rgb | null {
+function resolveBackground(document: Pick<PageView, 'canvas' | 'layers'>, above: number, box: Box): Rgb | null {
   for (let i = above - 1; i >= 0; i--) {
     const layer = document.layers[i]!;
     if (!isShown(layer) || !overlaps(layer, box)) continue;
@@ -168,26 +173,32 @@ const alphaHex = (opacity: number) =>
     .padStart(2, '0');
 
 /**
- * Capas de texto visibles y con contenido, con su color (con el alfa de la
- * capa), su fondo y su tamaño en puntos. Las capas ocultas o del todo
- * transparentes no se ven y no se revisan.
+ * Capas de texto visibles y con contenido de TODAS las páginas, con su color
+ * (con el alfa de la capa), su fondo (en su página) y su tamaño en puntos. Las
+ * capas ocultas o del todo transparentes no se ven y no se revisan. En un
+ * documento de varias páginas, cada una dice la suya (`page`, desde 1).
  */
 export function textLayersFromDocument(
   document: ContentDocument,
   viewportWidthPx: number = REFERENCE_VIEWPORT_PX,
 ): TextLayer[] {
   const pxPerUnit = viewportWidthPx / document.canvas.width;
+  const several = document.pages.length > 1;
   const result: TextLayer[] = [];
-  document.layers.forEach((layer, index) => {
-    if (layer.type !== 'text' || !isShown(layer) || !layer.text.trim()) return;
-    result.push({
-      id: layer.id,
-      text: layer.text,
-      color: layer.opacity < 1 ? `${layer.color}${alphaHex(layer.opacity)}` : layer.color,
-      background: backgroundBehind(document, index),
-      fontSizePt: Math.round(layer.fontSize * pxPerUnit * PT_PER_CSS_PX * 10) / 10,
-      bold: layer.fontWeight >= BOLD_WEIGHT,
-      bounds: bounds(corners(layer)),
+  document.pages.forEach((_, pageIndex) => {
+    const page = pageView(document, pageIndex);
+    page.layers.forEach((layer, index) => {
+      if (layer.type !== 'text' || !isShown(layer) || !layer.text.trim()) return;
+      result.push({
+        id: layer.id,
+        text: layer.text,
+        color: layer.opacity < 1 ? `${layer.color}${alphaHex(layer.opacity)}` : layer.color,
+        background: backgroundBehind(page, index),
+        fontSizePt: Math.round(layer.fontSize * pxPerUnit * PT_PER_CSS_PX * 10) / 10,
+        bold: layer.fontWeight >= BOLD_WEIGHT,
+        bounds: bounds(corners(layer)),
+        ...(several ? { page: pageIndex + 1 } : {}),
+      });
     });
   });
   return result;
@@ -210,7 +221,8 @@ export function buildBrandCheckInput(
   profile: ProfileLike | null | undefined,
   options: BuildInputOptions = {},
 ): BrandCheckInput {
-  const shown = document.layers.filter(isShown);
+  const shown = document.pages.flatMap((page) => page.layers).filter(isShown);
+  const pageRange = pageLimits(spec);
   const altTextSupported = spec?.text.altTextSupported?.value !== false;
   const { copy } = document;
   const zone = safeZoneFor(spec, document.canvas);
@@ -228,5 +240,6 @@ export function buildBrandCheckInput(
     imageKind: shown.length === 0 ? undefined : shown.some((l) => l.type === 'image') ? 'photo' : 'graphic',
     imagePalette: options.imagePalette,
     ...(zone ? { safeArea: { ...zone.safe, provenance: zone.provenance } } : {}),
+    ...(spec ? { pages: { count: document.pages.length, ...pageRange } } : {}),
   };
 }

@@ -3,7 +3,7 @@ import type { Shape } from 'konva/lib/Shape';
 import { Rect } from 'konva/lib/shapes/Rect';
 import { Text } from 'konva/lib/shapes/Text';
 import { fetchImageObjectUrl } from '../../../../lib/corsImage';
-import type { ContentDocument } from '../../document';
+import type { PageView } from '../../document';
 import { EXPORT_FORMATS, exportErrors, exportSize, layerLabel, type ExportOptions } from '../../export/options';
 import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
 import { describeDocument, type ImageLookup, type NodeSpec } from './nodes';
@@ -115,7 +115,7 @@ function createNode(spec: NodeSpec, images: ReadonlyMap<string, HTMLImageElement
 }
 
 /** Nombres de las capas de imagen y logotipo visibles, para explicar qué puede estar fallando. */
-function imageLayerNames(document: ContentDocument, only?: (layerId: string) => boolean): string[] {
+function imageLayerNames(document: PageView, only?: (layerId: string) => boolean): string[] {
   const names: string[] = [];
   document.layers.forEach((layer, index) => {
     if (!layer.visible || (layer.type !== 'image' && layer.type !== 'logo')) return;
@@ -126,12 +126,12 @@ function imageLayerNames(document: ContentDocument, only?: (layerId: string) => 
 }
 
 /**
- * Dibuja el documento y devuelve el archivo. Lanza `ExportError` con un mensaje
+ * Dibuja una página del documento (`pageView`) y devuelve el archivo. Lanza `ExportError` con un mensaje
  * para la persona si falta una imagen, no se puede cargar o el navegador bloquea
  * la lectura del lienzo.
  */
 export async function renderDocument(
-  document: ContentDocument,
+  document: PageView,
   lookup: ImageLookup,
   options: ExportOptions,
 ): Promise<RenderResult> {

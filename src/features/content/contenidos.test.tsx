@@ -43,7 +43,7 @@ function documentWithText(text = 'Titular de otoño'): ContentDocument {
   const doc = createEmptyDocument();
   return {
     ...doc,
-    layers: [
+    pages: [{ id: 'p1', name: '', layers: [
       {
         id: 'titular',
         type: 'text',
@@ -66,7 +66,7 @@ function documentWithText(text = 'Titular de otoño'): ContentDocument {
         align: 'center',
         lineHeight: 1.2,
       },
-    ],
+    ] }],
   };
 }
 
@@ -316,7 +316,7 @@ describe('Editor: versiones', () => {
       p_expected_version: 1,
       p_schema_version: DOCUMENT_SCHEMA_VERSION,
     });
-    expect((call.p_data as ContentDocument).layers).toHaveLength(2);
+    expect((call.p_data as ContentDocument).pages[0]!.layers).toHaveLength(2);
     expect(screen.getByTestId('editor-version')).toHaveTextContent('Versión 2');
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
   });

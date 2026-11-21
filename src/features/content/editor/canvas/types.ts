@@ -1,4 +1,4 @@
-import type { ContentDocument } from '../../document';
+import type { PageView } from '../../document';
 import type { Rect } from '../../safeZones';
 import type { LayerPatch } from '../history';
 import type { ImageLookup } from './nodes';
@@ -21,7 +21,8 @@ export interface SafeZoneOverlay {
  * componentes se sustituye por un doble sin Konva.
  */
 export interface CanvasViewProps {
-  document: ContentDocument;
+  /** La página que se dibuja (con el lienzo del documento). */
+  document: PageView;
   /** Capas elegidas (una o varias). */
   selectedIds: string[];
   readOnly: boolean;
