@@ -121,12 +121,12 @@ describe('Usar la versión aprobada', () => {
     seed({ exports: tresPaginas.slice(0, 2) });
     const { user } = await openFicha();
     expect(await screen.findByTestId('publication-rearm-problem')).toHaveTextContent(
-      'Faltan exportaciones de alguna página de la versión 2',
+      'exportar todas las páginas de la versión 2',
     );
     expect(screen.getByTestId('publication-use-approved')).toBeDisabled();
     expect(screen.getByTestId('publication-rearm-editor')).toHaveAttribute(
       'href',
-      expect.stringContaining('/contenidos/c-car'),
+      expect.stringContaining('/contenidos/c-car?exportar=1'),
     );
     await user.click(screen.getByTestId('publication-use-approved'));
     expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(0);
@@ -135,7 +135,7 @@ describe('Usar la versión aprobada', () => {
   it('si la pieza no está aprobada, no hay versión aprobada que usar', async () => {
     seed({ status: 'in_review', exports: tresPaginas });
     await openFicha();
-    expect(await screen.findByTestId('publication-rearm-problem')).toHaveTextContent('no está aprobada');
+    expect(await screen.findByTestId('publication-rearm-problem')).toHaveTextContent('aprobar la pieza');
     expect(screen.getByTestId('publication-use-approved')).toBeDisabled();
     expect(screen.queryByTestId('publication-rearm-editor')).toBeNull();
   });

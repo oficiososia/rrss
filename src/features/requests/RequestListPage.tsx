@@ -93,8 +93,20 @@ export function RequestListPage() {
               status
                 ? 'Prueba con otro estado.'
                 : canRequest
-                  ? 'Pide una publicación con «Nuevo encargo»: cuenta qué necesitas y adjunta fotos de la biblioteca.'
+                  ? 'Pide una publicación: cuenta qué necesitas y adjunta fotos de la biblioteca.'
                   : 'Cuando alguien pida una publicación, aparecerá aquí.'
+            }
+            action={
+              status ? (
+                <Button variant="secondary" onClick={() => setStatus('')} data-testid="request-clear-filter">
+                  Ver todos los encargos
+                </Button>
+              ) : canRequest ? (
+                <Button onClick={() => setCreating(true)} data-testid="request-empty-new">
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Nuevo encargo
+                </Button>
+              ) : null
             }
           />
         </Card>

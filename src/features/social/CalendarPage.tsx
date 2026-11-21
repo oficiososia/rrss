@@ -1,12 +1,32 @@
-import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, FileText, Plus } from 'lucide-react';
 import { useMemo, useState, type DragEvent } from 'react';
 import { toast } from 'sonner';
-import { Badge, Button, Card, ErrorState, Notice, PageHeader, Select, Skeleton } from '@/components/ui';
+import {
+  ActionNotice,
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  LinkButton,
+  Notice,
+  PageHeader,
+  Select,
+  Skeleton,
+} from '@/components/ui';
+import { contentPaths } from '@/features/content/labels';
 import { networkLabel } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
-import { useApproveContents, useCalendar, useReschedulePublication, type CalendarEntry } from './api';
+import {
+  useApproveContents,
+  useCalendar,
+  useReschedulePublication,
+  useSavePublication,
+  useSocialAccounts,
+  type CalendarEntry,
+} from './api';
 import {
   CALENDAR_VIEWS,
   DISPLAY_LABEL,
@@ -15,6 +35,7 @@ import {
   dayKey,
   displayState,
   formatTime,
+  HOLD_REASON_TEXT,
   isEditable,
   isPast,
   moveToDay,
@@ -26,12 +47,21 @@ import {
   type CalendarView,
   type DisplayState,
 } from './calendar';
+import { activeAccountOf, heldCountText, holdAdvice, type HoldAdvice } from './holdAdvice';
+import { connectedAccountsPath, exportPath } from './links';
 import { PublicationDialog } from './PublicationDialog';
 import { EntryThumb } from './preview';
 import { useEntryThumbs } from './previewData';
 import { PublishNowDialog } from './PublishNowDialog';
 import { ScheduleDialog } from './ScheduleDialog';
 import { useFeature } from '@/features/platform/integrations/useFeature';
+
+/** Motivo en una frase y botón que lo arregla, para una publicación detenida (o null si no lo está). */
+function entryAdvice(e: CalendarEntry, accounts: SocialAccountRow[] | undefined): HoldAdvice | null {
+  return e.status === 'planned' && e.hold_reason && displayState(e, e.content?.status ?? null) === 'held'
+    ? holdAdvice(e.hold_reason, activeAccountOf(accounts, e.network))
+    : null;
+}
 
 const WEEKDAYS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
@@ -58,6 +88,8 @@ export function CalendarPage() {
   const calendar = useCalendar(brand.id, range.from, range.to);
   const reschedule = useReschedulePublication(brand.id);
   const approve = useApproveContents(brand.id);
+  const accounts = useSocialAccounts(brand.id);
+  const rearm = useSavePublication(brand.id);
 
   const entries = useMemo(
     () =>
@@ -80,6 +112,95 @@ export function CalendarPage() {
   const thumbs = useEntryThumbs(brand.id, entries);
   const open = (calendar.data ?? []).find((e) => e.id === openId) ?? null;
   const reviewable = entries.filter((e) => e.content?.status === 'in_review');
+  const filtering = Boolean(network || state);
+
+  const adviceFor = (e: CalendarEntry) => entryAdvice(e, accounts.data);
+  // Un aviso por motivo encima del calendario, con cuántas hay en estas fechas.
+  const heldGroups = useMemo(() => {
+    const groups = new Map<string, { advice: HoldAdvice; reason: string; entries: CalendarEntry[] }>();
+    for (const e of calendar.data ?? []) {
+      const advice = entryAdvice(e, accounts.data);
+      if (!advice || !e.hold_reason) continue;
+      const key = `${advice.fix}:${advice.short}`;
+      const group = groups.get(key) ?? { advice, reason: e.hold_reason, entries: [] };
+      group.entries.push(e);
+      groups.set(key, group);
+    }
+    return [...groups.values()];
+  }, [calendar.data, accounts.data]);
+
+  /** Volver a guardar las publicaciones con la cuenta conectada (las que se detuvieron por no tenerla). */
+  const chooseAccount = async (list: CalendarEntry[]) => {
+    let ok = 0;
+    let firstError: unknown = null;
+    for (const e of list) {
+      const account = (accounts.data ?? []).find((a) => a.network === e.network && a.status === 'active');
+      if (!account) continue;
+      try {
+        await rearm.mutateAsync({
+          publicationId: e.id,
+          contentId: e.content_id,
+          scheduledAt: e.scheduled_at,
+          accountId: account.id,
+          mediaAssetIds: e.media_asset_ids,
+          contentVersion: e.content_version,
+        });
+        ok += 1;
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (ok) toast.success(ok === 1 ? 'Cuenta elegida' : `Cuenta elegida en ${ok} publicaciones`);
+    if (firstError) toast.error(translateError(firstError));
+  };
+
+  /** El botón de un aviso de publicación detenida. */
+  const fixButton = (advice: HoldAdvice, list: CalendarEntry[], testId: string) => {
+    const first = list[0]!;
+    switch (advice.fix) {
+      case 'connect':
+        return (
+          <LinkButton to={connectedAccountsPath(org.id, brand.id)} data-testid={testId}>
+            {advice.label}
+          </LinkButton>
+        );
+      case 'use_account':
+        return canEdit ? (
+          <Button size="sm" loading={rearm.isPending} onClick={() => void chooseAccount(list)} data-testid={testId}>
+            {advice.label}
+          </Button>
+        ) : null;
+      case 'export':
+        return list.length === 1 ? (
+          <LinkButton to={exportPath(org.id, brand.id, first.content_id)} data-testid={testId}>
+            {advice.label}
+          </LinkButton>
+        ) : (
+          <Button size="sm" variant="secondary" onClick={() => setOpenId(first.id)} data-testid={testId}>
+            Revisar
+          </Button>
+        );
+      case 'use_approved':
+        // Se hace en la ficha, que comprueba antes que la versión aprobada tenga su exportación.
+        return (
+          <Button size="sm" onClick={() => setOpenId(first.id)} data-testid={testId}>
+            {list.length === 1 ? advice.label : 'Revisar'}
+          </Button>
+        );
+      case 'open_editor':
+        return (
+          <LinkButton
+            to={contentPaths(org.id, brand.id).item(first.content_id)}
+            variant="secondary"
+            data-testid={testId}
+          >
+            {advice.label}
+          </LinkButton>
+        );
+      case 'none':
+        return null;
+    }
+  };
 
   const drop = (target: Date, event: DragEvent) => {
     event.preventDefault();
@@ -113,6 +234,7 @@ export function CalendarPage() {
 
   const chip = (e: CalendarEntry, compact = false) => {
     const s = displayState(e, e.content?.status ?? null);
+    const reason = adviceFor(e)?.short;
     const draggable = canEdit && isEditable(e.status);
     const selectable = selecting && e.content?.status === 'in_review';
     return (
@@ -144,6 +266,7 @@ export function CalendarPage() {
           )}
           data-testid="calendar-entry"
           data-state={s}
+          title={reason ? `Detenida: ${reason}` : undefined}
         >
           <EntryThumb thumb={thumbs.get(e.media_asset_ids[0] ?? '')} />
           <span className="shrink-0 tabular-nums text-muted">{formatTime(e.scheduled_at)}</span>
@@ -151,7 +274,13 @@ export function CalendarPage() {
           {!compact && <span className="shrink-0 text-muted">{networkLabel(e.network)}</span>}
           <Badge tone={DISPLAY_TONE[s]} className="shrink-0 px-1.5">
             {DISPLAY_LABEL[s]}
+            {reason && <span className="sr-only">: {reason}</span>}
           </Badge>
+          {reason && !compact && (
+            <span className="hidden shrink truncate text-warning sm:inline" data-testid="calendar-entry-reason">
+              {reason}
+            </span>
+          )}
         </button>
       </div>
     );
@@ -205,7 +334,33 @@ export function CalendarPage() {
             </Button>
           )
         }
+        more={[
+          canApprove && reviewable.length > 0 && !selecting
+            ? {
+                id: 'approve-many',
+                label: `Aprobar varias (${reviewable.length} en revisión)`,
+                icon: CheckSquare,
+                onSelect: () => setSelecting(true),
+                testId: 'calendar-approve-start',
+              }
+            : null,
+        ]}
+        moreTestId="calendar-more"
       />
+
+      {heldGroups.length > 0 && (
+        <div className="mb-4 space-y-2" data-testid="calendar-held">
+          {heldGroups.map(({ advice, reason, entries: list }) => (
+            <ActionNotice
+              key={`${advice.fix}:${advice.short}`}
+              title={`${heldCountText(list.length)}: ${advice.short.charAt(0).toLowerCase()}${advice.short.slice(1)}`}
+              action={fixButton(advice, list, `calendar-held-fix-${reason}`)}
+              why={HOLD_REASON_TEXT[reason as keyof typeof HOLD_REASON_TEXT]}
+              data-testid={`calendar-held-${reason}`}
+            />
+          ))}
+        </div>
+      )}
 
       {!publishing && (
         <div className="mb-4">
@@ -283,17 +438,16 @@ export function CalendarPage() {
             </option>
           ))}
         </Select>
-        {canApprove && reviewable.length > 0 && (
+        {canApprove && selecting && (
           <Button
-            variant={selecting ? 'primary' : 'secondary'}
             size="sm"
-            onClick={() => (selecting ? approveSelected() : setSelecting(true))}
+            onClick={approveSelected}
             loading={approve.isPending}
-            disabled={selecting && selected.size === 0}
+            disabled={selected.size === 0}
             data-testid="calendar-approve-batch"
           >
             <CheckSquare className="h-4 w-4" aria-hidden />
-            {selecting ? `Aprobar seleccionadas (${selected.size})` : 'Aprobar varias'}
+            {`Aprobar seleccionadas (${selected.size})`}
           </Button>
         )}
         {selecting && (
@@ -302,6 +456,34 @@ export function CalendarPage() {
           </Button>
         )}
       </div>
+
+      {calendar.isSuccess && entries.length === 0 && !filtering && (
+        <ActionNotice
+          tone="info"
+          icon={CalendarDays}
+          className="mb-4"
+          title="Nada programado en estas fechas"
+          action={
+            publishing && canEdit ? (
+              <Button size="sm" onClick={() => setScheduling({ date: null })} data-testid="calendar-empty-action">
+                <Plus className="h-4 w-4" aria-hidden />
+                Programar
+              </Button>
+            ) : (
+              <LinkButton
+                to={contentPaths(org.id, brand.id).list}
+                variant="secondary"
+                data-testid="calendar-empty-action"
+              >
+                <FileText className="h-4 w-4" aria-hidden />
+                Ver los contenidos
+              </LinkButton>
+            )
+          }
+          why="Al calendario llegan las piezas que se programan, desde aquí o desde el editor de una pieza aprobada."
+          data-testid="calendar-empty"
+        />
+      )}
 
       {calendar.isPending ? (
         <Skeleton className="h-96" />
