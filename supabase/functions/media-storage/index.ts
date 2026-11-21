@@ -16,6 +16,9 @@ import { createS3Storage } from '../_shared/storage/s3.ts';
 import { createSupabaseObjectStorage } from '../_shared/storage/supabase.ts';
 import { createMediaStorageHandler, type AssetLocation } from './handler.ts';
 
+/** Rutas por consulta a la base de datos (la URL de PostgREST tiene un tope de longitud). */
+const PATHS_PER_QUERY = 40;
+
 const env = Deno.env.toObject();
 const supabaseUrl = env.SUPABASE_URL ?? '';
 const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -49,32 +52,49 @@ const handlerFor = memoByEnv((effective) => {
     async assetsForPaths(accessToken, paths) {
       // Con la sesión de la persona, la RLS de media_assets decide qué ve.
       const client = accessToken ? asUser(accessToken) : admin;
-      const { data, error } = await client
-        .from('media_assets')
-        .select('storage_path, storage_backend')
-        .eq('source', 'storage')
-        .in('storage_path', paths);
-      if (error) throw new Error('No se pudieron leer los recursos');
-      // Las miniaturas (`thumb_path`) se firman como el original: mismo almacén y misma RLS.
-      const thumbs = await client
-        .from('media_assets')
-        .select('thumb_path, storage_backend')
-        .eq('source', 'storage')
-        .in('thumb_path', paths);
-      if (thumbs.error) throw new Error('No se pudieron leer los recursos');
-      const thumbRows = (thumbs.data ?? []).map((r) => ({
-        storage_path: r.thumb_path as string,
-        storage_backend: r.storage_backend,
-      }));
-      return [...(data ?? []), ...thumbRows] as AssetLocation[];
+      // `in.(…)` va en la URL de PostgREST: con cientos de rutas (la biblioteca
+      // entera) la URL pasa del límite de la pasarela y la consulta fallaba con
+      // un 500. Se consulta por tandas cortas.
+      const rows: AssetLocation[] = [];
+      for (let i = 0; i < paths.length; i += PATHS_PER_QUERY) {
+        const batch = paths.slice(i, i + PATHS_PER_QUERY);
+        const { data, error } = await client
+          .from('media_assets')
+          .select('storage_path, storage_backend')
+          .eq('source', 'storage')
+          .in('storage_path', batch);
+        if (error) {
+          log('assets_query_failed', { code: error.code });
+          throw new Error('No se pudieron leer los recursos');
+        }
+        // Las miniaturas (`thumb_path`) se firman como el original: mismo almacén y misma RLS.
+        const thumbs = await client
+          .from('media_assets')
+          .select('thumb_path, storage_backend')
+          .eq('source', 'storage')
+          .in('thumb_path', batch);
+        if (thumbs.error) {
+          log('assets_query_failed', { code: thumbs.error.code });
+          throw new Error('No se pudieron leer los recursos');
+        }
+        rows.push(...((data ?? []) as AssetLocation[]));
+        for (const r of thumbs.data ?? []) {
+          rows.push({ storage_path: r.thumb_path as string, storage_backend: r.storage_backend });
+        }
+      }
+      return rows;
     },
     async cleanupForPaths(accessToken, paths) {
-      const { data, error } = await asUser(accessToken)
-        .from('storage_cleanup_queue')
-        .select('storage_path, storage_backend')
-        .in('storage_path', paths);
-      if (error) throw new Error('No se pudo leer la cola de limpieza');
-      return (data ?? []) as AssetLocation[];
+      const rows: AssetLocation[] = [];
+      for (let i = 0; i < paths.length; i += PATHS_PER_QUERY) {
+        const { data, error } = await asUser(accessToken)
+          .from('storage_cleanup_queue')
+          .select('storage_path, storage_backend')
+          .in('storage_path', paths.slice(i, i + PATHS_PER_QUERY));
+        if (error) throw new Error('No se pudo leer la cola de limpieza');
+        rows.push(...((data ?? []) as AssetLocation[]));
+      }
+      return rows;
     },
     allowedOrigin: env.MEDIA_STORAGE_ALLOWED_ORIGIN?.trim() || undefined,
     log,
