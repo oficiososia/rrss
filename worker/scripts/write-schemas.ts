@@ -5,7 +5,13 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { reelPayloadSchema, reelPlanSchema, reelTemplateSchema } from '../src/reel/schema.ts';
+import {
+  reelPayloadSchema,
+  reelPayloadV1Schema,
+  reelPlanSchema,
+  reelPlanV2Schema,
+  reelTemplateSchema,
+} from '../src/reel/schema.ts';
 
 export const SCHEMAS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../schemas');
 
@@ -14,7 +20,9 @@ export function renderSchemas(): Record<string, string> {
   return {
     'reel-template.v1.schema.json': render(reelTemplateSchema),
     'reel-plan.v1.schema.json': render(reelPlanSchema),
-    'reel-payload.v1.schema.json': render(reelPayloadSchema),
+    'reel-payload.v1.schema.json': render(reelPayloadV1Schema),
+    'reel-plan.v2.schema.json': render(reelPlanV2Schema),
+    'reel-payload.v2.schema.json': render(reelPayloadSchema),
   };
 }
 

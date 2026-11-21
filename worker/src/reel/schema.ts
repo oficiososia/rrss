@@ -173,16 +173,248 @@ export const reelPlanSchema = z.strictObject({
 });
 export type ReelPlan = z.output<typeof reelPlanSchema>;
 
+// ───────────────────────────── Plan v2 (editor) ─────────────────────────────
+//
+// El editor de reels (src/features/reels/editor/project.ts) guarda y encarga
+// este plan. Lo que en v1 decidía la plantilla para todo el reel (transición,
+// estilo del texto, volúmenes) aquí va en cada elemento: la plantilla solo
+// rellena los valores de partida. Un plan v1 se migra a v2 al leerlo
+// (`migratePlanV1`) y se monta con el mismo motor.
+
+export const REEL_PLAN_V2_MAX_SECONDS = 90;
+export const REEL_PLAN_V2_MAX_CLIPS = 30;
+export const REEL_PLAN_V2_MAX_TEXTS = 30;
+export const REEL_PLAN_V2_MAX_CUES = 200;
+
+const elementIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
+const fontPathSchema = storagePathSchema.regex(/\.(ttf|otf)$/i, 'La tipografía debe ser .ttf u .otf');
+
+export const transitionSchema = z.strictObject({
+  type: transitionTypeSchema,
+  seconds: z.number().min(0).max(2),
+});
+export type ReelTransition = z.output<typeof transitionSchema>;
+
+/** Estilo de un texto o de los subtítulos. Mismas proporciones que el estilo de la plantilla. */
+export const textStyleSchema = z.strictObject({
+  /** Archivo .ttf/.otf de la marca (lo comprueba la base de datos). Sin él, la tipografía por defecto. */
+  fontPath: fontPathSchema.optional(),
+  /** Nombre de la familia, solo para la vista previa del navegador. */
+  fontFamily: z.string().max(100).optional(),
+  sizeRatio: z.number().min(0.02).max(0.15),
+  color: hexColor,
+  marginRatio: z.number().min(0).max(0.4),
+  maxWidthRatio: z.number().min(0.4).max(1),
+  lineHeight: z.number().min(1).max(2),
+  box: z
+    .strictObject({
+      color: hexColor,
+      opacity: z.number().min(0).max(1),
+      paddingRatio: z.number().min(0).max(1),
+    })
+    .nullable(),
+  outline: z.strictObject({ color: hexColor, widthRatio: z.number().min(0).max(0.2) }).nullable(),
+  fadeSeconds: z.number().min(0).max(1),
+});
+export type ReelTextStyle = z.output<typeof textStyleSchema>;
+
+/** Subtítulo de un clip, en segundos DEL ARCHIVO: sigue sincronizado al recortar o mover el clip. */
+export const cueSchema = z
+  .strictObject({
+    start: z.number().min(0),
+    end: z.number().positive(),
+    text: z.string().min(1).max(200),
+  })
+  .refine((c) => c.end > c.start, 'El subtítulo debe terminar después de empezar');
+export type ReelCue = z.output<typeof cueSchema>;
+
+const clipBase = {
+  id: elementIdSchema,
+  path: storagePathSchema,
+  focalPoint: focalPointSchema.optional(),
+  blur: blurSchema,
+  /** Transición que entra desde el elemento anterior (en el primero no cuenta). Por defecto, la de la plantilla. */
+  transition: transitionSchema.optional(),
+};
+
+export const clipV2Schema = z.discriminatedUnion('type', [
+  z.strictObject({
+    ...clipBase,
+    type: z.literal('photo'),
+    /** Segundos en pantalla. */
+    seconds: z.number().min(0.5).max(10),
+    /** Movimiento de la foto; por defecto, el de la plantilla. */
+    motion: z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left']).optional(),
+  }),
+  z.strictObject({
+    ...clipBase,
+    type: z.literal('video'),
+    /** Segundo del archivo en el que empieza el tramo. */
+    in: z.number().min(0),
+    /** Segundo del archivo en el que acaba (se recorta a lo que dure el archivo). */
+    out: z.number().positive(),
+    /** Volumen del sonido del clip: 0 = silenciado, 1 = original. */
+    volume: z.number().min(0).max(1),
+    subtitles: z.array(cueSchema).max(REEL_PLAN_V2_MAX_CUES).optional(),
+  }),
+]);
+export type ReelClipV2 = z.output<typeof clipV2Schema>;
+
+export const textV2Schema = z
+  .strictObject({
+    id: elementIdSchema,
+    text: z.string().min(1).max(200),
+    start: z.number().min(0),
+    end: z.number().positive(),
+    position: textPositionSchema,
+    style: textStyleSchema,
+  })
+  .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
+export type ReelTextV2 = z.output<typeof textV2Schema>;
+
+export const reelPlanV2Schema = z
+  .strictObject({
+    version: z.literal(2),
+    clips: z.array(clipV2Schema).min(1).max(REEL_PLAN_V2_MAX_CLIPS),
+    texts: z.array(textV2Schema).max(REEL_PLAN_V2_MAX_TEXTS).default([]),
+    /** Cómo se dibujan los subtítulos de los clips. Sin esto (o apagado), no se dibujan. */
+    subtitles: z
+      .strictObject({ enabled: z.boolean(), position: textPositionSchema, style: textStyleSchema })
+      .optional(),
+    music: z
+      .strictObject({
+        path: storagePathSchema,
+        startAt: z.number().min(0),
+        volume: z.number().min(0).max(1),
+        fadeInSeconds: z.number().min(0).max(5),
+        fadeOutSeconds: z.number().min(0).max(5),
+        /** La licencia es de la marca: queda dicho que se confirmó y con qué nota. */
+        license: z.strictObject({ confirmed: z.boolean(), note: z.string().max(300).optional() }).optional(),
+      })
+      .optional(),
+    /** Tipografía por defecto de la marca (la pone la base de datos si hay textos o subtítulos). */
+    fontPath: fontPathSchema.optional(),
+  })
+  .superRefine((plan, ctx) => {
+    plan.clips.forEach((clip, index) => {
+      if (clip.type !== 'video') return;
+      const length = clip.out - clip.in;
+      if (length < 0.5 || length > 60) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['clips', index],
+          message: 'El tramo de un clip debe durar entre 0,5 y 60 s',
+        });
+      }
+    });
+  });
+export type ReelPlanV2 = z.output<typeof reelPlanV2Schema>;
+export type ReelPlanV2Input = z.input<typeof reelPlanV2Schema>;
+
+/** Estilo de texto v2 a partir del de la plantilla. */
+export function templateTextStyle(template: ReelTemplate, fontPath?: string): ReelTextStyle {
+  const t = template.text;
+  return {
+    ...(fontPath ? { fontPath } : {}),
+    sizeRatio: t.sizeRatio,
+    color: t.color,
+    marginRatio: t.marginRatio,
+    maxWidthRatio: t.maxWidthRatio,
+    lineHeight: t.lineHeight,
+    box: t.box ? { ...t.box } : null,
+    outline: t.outline ? { ...t.outline } : null,
+    fadeSeconds: t.fadeSeconds,
+  };
+}
+
+/**
+ * Plan v1 → v2, con la plantilla con la que se encargó. Da el MISMO vídeo:
+ * mismas duraciones (los clips se recortan después a lo que duren), la
+ * transición de la plantilla en cada paso, el estilo de texto de la plantilla
+ * y sus volúmenes. Las fotos sin movimiento propio siguen el de la plantilla
+ * (también el ciclo de «alternate»).
+ */
+export function migratePlanV1(plan: ReelPlan, template: ReelTemplate): ReelPlanV2 {
+  const transition = { type: template.transition.type, seconds: template.transition.seconds };
+  return {
+    version: 2,
+    clips: plan.media.map((item, index): ReelClipV2 => {
+      const base = {
+        id: `m${index + 1}`,
+        path: item.path,
+        ...(item.focalPoint ? { focalPoint: item.focalPoint } : {}),
+        ...(item.blur !== undefined ? { blur: item.blur } : {}),
+        transition: { ...transition },
+      };
+      if (item.type === 'photo') {
+        return { ...base, type: 'photo', seconds: item.seconds ?? template.timing.photoSeconds };
+      }
+      const seconds = item.seconds ?? template.timing.maxClipSeconds;
+      return {
+        ...base,
+        type: 'video',
+        in: item.startAt,
+        out: item.startAt + seconds,
+        volume: template.audio.clipVolume,
+      };
+    }),
+    texts: plan.texts.map((text, index) => ({
+      id: `t${index + 1}`,
+      text: text.text,
+      start: text.start,
+      end: text.end,
+      position: text.position ?? template.text.position,
+      style: templateTextStyle(template),
+    })),
+    ...(plan.music
+      ? {
+          music: {
+            path: plan.music.path,
+            startAt: plan.music.startAt,
+            volume: plan.music.volume ?? template.audio.musicVolume,
+            fadeInSeconds: template.audio.fadeInSeconds,
+            fadeOutSeconds: template.audio.fadeOutSeconds,
+          },
+        }
+      : {}),
+    ...(plan.fontPath ? { fontPath: plan.fontPath } : {}),
+  };
+}
+
+const outputSchema = z.strictObject({
+  path: storagePathSchema.regex(/\.mp4$/i, 'La salida debe ser .mp4'),
+  /** Portada opcional (JPEG) sacada del propio reel. */
+  posterPath: storagePathSchema.regex(/\.jpe?g$/i, 'La portada debe ser .jpg').optional(),
+  /** Ancho de salida, para borradores más ligeros. Por defecto, el del lienzo. */
+  width: evenInt(180, 1080).optional(),
+});
+
+const templateRefSchema = z.union([z.strictObject({ id: z.string().min(1).max(60) }), reelTemplateSchema]);
+
+/** Pieza (contenido de formato reel) de la que sale el encargo: solo viaja a la procedencia. */
+const contentRefSchema = z.strictObject({
+  id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+  version: z.number().int().positive(),
+});
+
+/** Carga solo con el plan v1 (esquema publicado `reel-payload.v1`). */
+export const reelPayloadV1Schema = z.strictObject({
+  template: templateRefSchema,
+  plan: reelPlanSchema,
+  output: outputSchema,
+});
+
 export const reelPayloadSchema = z.strictObject({
   /** Una plantilla incluida en el trabajador (por su id) o una plantilla completa. */
-  template: z.union([z.strictObject({ id: z.string().min(1).max(60) }), reelTemplateSchema]),
-  plan: reelPlanSchema,
-  output: z.strictObject({
-    path: storagePathSchema.regex(/\.mp4$/i, 'La salida debe ser .mp4'),
-    /** Portada opcional (JPEG) sacada del propio reel. */
-    posterPath: storagePathSchema.regex(/\.jpe?g$/i, 'La portada debe ser .jpg').optional(),
-    /** Ancho de salida, para borradores más ligeros. Por defecto, el del lienzo. */
-    width: evenInt(180, 1080).optional(),
-  }),
+  template: templateRefSchema,
+  /** Plan v2 (con `version: 2`) o v1 (sin versión, se migra al leerlo). */
+  plan: z.union([reelPlanV2Schema, reelPlanSchema]),
+  content: contentRefSchema.optional(),
+  output: outputSchema,
 });
 export type ReelPayload = z.input<typeof reelPayloadSchema>;
+
+/** Plan de una carga ya validada, siempre en v2. */
+export function planAsV2(plan: ReelPlanV2 | ReelPlan, template: ReelTemplate): ReelPlanV2 {
+  return 'version' in plan ? plan : migratePlanV1(plan, template);
+}

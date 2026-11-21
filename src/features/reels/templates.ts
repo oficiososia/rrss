@@ -29,11 +29,40 @@ const templateSummarySchema = z.object({
     .passthrough(),
   transition: z
     .object({
-      type: z.string().default('fade'),
+      type: z.enum(['cut', 'fade', 'fadeblack', 'dissolve', 'slideleft', 'slideup']).default('fade'),
       seconds: z.number().min(0).default(0.4),
     })
     .passthrough(),
-  text: z.object({ position: z.enum(['top', 'center', 'bottom']).default('bottom') }).passthrough(),
+  photoMotion: z
+    .object({
+      type: z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'alternate']).default('alternate'),
+      amount: z.number().min(0).max(0.3).default(0.08),
+    })
+    .passthrough()
+    .default({}),
+  // Estilo del texto: el editor lo usa como punto de partida de cada texto nuevo.
+  text: z
+    .object({
+      position: z.enum(['top', 'center', 'bottom']).default('bottom'),
+      sizeRatio: z.number().default(0.06),
+      color: z.string().default('#FFFFFF'),
+      marginRatio: z.number().default(0.2),
+      maxWidthRatio: z.number().default(0.84),
+      lineHeight: z.number().default(1.3),
+      box: z.object({ color: z.string(), opacity: z.number(), paddingRatio: z.number() }).nullable().default(null),
+      outline: z.object({ color: z.string(), widthRatio: z.number() }).nullable().default(null),
+      fadeSeconds: z.number().default(0.25),
+    })
+    .passthrough(),
+  audio: z
+    .object({
+      musicVolume: z.number().default(0.35),
+      clipVolume: z.number().default(0),
+      fadeInSeconds: z.number().default(0.5),
+      fadeOutSeconds: z.number().default(1),
+    })
+    .passthrough()
+    .default({}),
   // Exportación (worker/src/reel/schema.ts): para estimar el peso antes de encargar.
   export: z
     .object({
