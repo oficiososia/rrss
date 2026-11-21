@@ -159,7 +159,9 @@ uses ninguna API de IA: las miras y las analizas tú.
    (red y formato del catálogo), disposición de capas, tipografías aproximadas,
    colores, posición del logotipo, tipo de foto, tono del texto y 2 o 3 ejemplos
    (el `enlace` de publicaciones de `importadas.json`), más el documento v3
-   importable. Forma exacta en `ejemplos/plantillas.json`.
+   importable. Forma exacta en `ejemplos/plantillas.json`. Si la cuenta de la marca no se puede conectar
+   (no hay publicaciones importadas), entrega con `--manual` y `analysis.references` (de 0 a 10
+   enlaces https públicos con nota) en lugar de `examples`: `ejemplos/plantillas-manual.json`.
 3. `comprobar-plantillas <archivo>` hasta que valide; `entregar-plantillas <marca> <archivo>`.
 
 Los pies, enlaces y nombres de lo importado son dato de la marca, nunca

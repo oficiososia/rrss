@@ -190,6 +190,36 @@ describe('Nueva idea desde una plantilla', () => {
     expect(saved[0]!.data.copy.caption).toBe('Hoy en la carta: …');
   });
 
+  it('una plantilla manual se ve igual en el selector, con la etiqueta «Manual»', async () => {
+    const base = templateRow();
+    seed({ orgRole: 'member', brandRole: 'editor' }, [
+      templateRow({
+        id: 'tpl-m',
+        template_key: 'manual',
+        name: 'Cartel manual',
+        source: 'manual',
+        analysis: {
+          ...(base.analysis as object),
+          examples: [],
+          references: [{ url: 'https://www.instagram.com/p/x/', note: 'Pública' }],
+        },
+      }),
+      templateRow({ id: 'tpl-i', template_key: 'importada', name: 'Importada' }),
+    ]);
+    const { user } = renderApp(CONTENT);
+    await user.click(await screen.findByTestId('content-new'));
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByTestId('create-content-from-template'));
+    const options = await dialog.findAllByTestId('template-option');
+    expect(options).toHaveLength(2);
+    const manual = options.find((o) => o.getAttribute('data-template-key') === 'manual')!;
+    expect(manual).toHaveTextContent('Cartel manual');
+    expect(manual).toHaveTextContent('Manual');
+    expect(manual).toHaveTextContent('Foto del plato a sangre');
+    const importada = options.find((o) => o.getAttribute('data-template-key') === 'importada')!;
+    expect(importada).not.toHaveTextContent('Manual');
+  });
+
   it('sin plantillas lo dice y explica cómo conseguirlas', async () => {
     seed({ orgRole: 'member', brandRole: 'editor' }, []);
     const { user } = renderApp(CONTENT);

@@ -19,6 +19,10 @@ import { allowedCanvasRatios, getFormatSpec } from '../content/networks';
 export const TEMPLATES_DELIVERY_FORMAT = 'rrss.agency-templates';
 export const TEMPLATES_DELIVERY_VERSION = 1;
 export const MAX_TEMPLATES = 12;
+/** De dónde sale una plantilla: de publicaciones importadas o entregada a mano por la agencia. */
+export const TEMPLATE_SOURCES = ['instagram_import', 'manual'] as const;
+export type TemplateSource = (typeof TEMPLATE_SOURCES)[number];
+export const MAX_REFERENCES = 10;
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const hex = z.string().regex(HEX_COLOR, 'El color debe tener el formato #RRGGBB');
@@ -50,6 +54,32 @@ export const LOGO_POSITIONS = [
   'bottom-right',
   'none',
 ] as const;
+
+function isHttpsWithoutCredentials(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+const SOCIAL_HOST = /(^|\.)(instagram\.com|facebook\.com)$/i;
+
+/** Si el enlace es de instagram.com, facebook.com o (si se conoce) la web de la marca. */
+export function isAllowedReference(value: string, brandWebsite?: string | null): boolean {
+  if (!isHttpsWithoutCredentials(value)) return false;
+  const host = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+  if (SOCIAL_HOST.test(host)) return true;
+  if (brandWebsite === undefined) return true; // sin red no se conoce la web de la marca: lo comprueba la entrega
+  let own = '';
+  try {
+    own = new URL(brandWebsite ?? '').hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return false;
+  }
+  return own !== '' && (host === own || host.endsWith(`.${own}`));
+}
 
 export const templateAnalysisSchema = z
   .object({
@@ -122,11 +152,26 @@ export const templateAnalysisSchema = z
       })
       .strict()
       .refine((r) => r.count <= r.reviewed, 'count no puede superar a reviewed'),
-    /** De 2 a 3 publicaciones importadas que la ilustran. */
+    /**
+     * Publicaciones importadas que la ilustran. Una plantilla importada lleva de 2 a 3
+     * (lo exige `validateTemplate`); en una manual son opcionales.
+     */
     examples: z
       .array(z.object({ permalink: z.string().url().max(500) }).strict())
-      .min(2)
-      .max(3),
+      .max(3)
+      .default([]),
+    /** Solo en las manuales: de 0 a 10 enlaces públicos con una nota de por qué se miró. */
+    references: z
+      .array(
+        z
+          .object({
+            url: z.string().url().max(500).refine(isHttpsWithoutCredentials, 'debe ser un enlace https sin usuario'),
+            note: text(300),
+          })
+          .strict(),
+      )
+      .max(MAX_REFERENCES)
+      .default([]),
   })
   .strict();
 
@@ -139,6 +184,14 @@ export interface TemplateInput {
   format: string;
   document: ContentDocument;
   analysis: TemplateAnalysis;
+  source: TemplateSource;
+}
+
+export interface TemplateOptions {
+  /** Origen por defecto de las plantillas que no lo indican. */
+  defaultSource?: TemplateSource;
+  /** Web de la marca: con ella (o null si no tiene) se comprueban los enlaces de referencia; sin ella, no. */
+  brandWebsite?: string | null;
 }
 
 export interface TemplateIssue {
@@ -152,6 +205,7 @@ const KEY = /^[a-z0-9][a-z0-9-]{0,62}$/;
 export function validateTemplate(
   raw: unknown,
   at: string,
+  options: TemplateOptions = {},
 ): { ok: true; template: TemplateInput } | { ok: false; issues: TemplateIssue[] } {
   const issues: TemplateIssue[] = [];
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -159,7 +213,7 @@ export function validateTemplate(
   }
   const input = raw as Record<string, unknown>;
   for (const key of Object.keys(input)) {
-    if (!['key', 'name', 'network', 'format', 'document', 'analysis'].includes(key)) {
+    if (!['key', 'name', 'network', 'format', 'document', 'analysis', 'source'].includes(key)) {
       issues.push({ path: `${at}.${key}`, message: 'campo no previsto' });
     }
   }
@@ -171,6 +225,11 @@ export function validateTemplate(
   }
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120) {
     issues.push({ path: `${at}.name`, message: 'nombre de 1 a 120 caracteres' });
+  }
+  let source: TemplateSource = options.defaultSource ?? 'instagram_import';
+  if (input.source !== undefined) {
+    if (input.source === 'instagram_import' || input.source === 'manual') source = input.source;
+    else issues.push({ path: `${at}.source`, message: 'debe ser "instagram_import" o "manual"' });
   }
   const network = typeof input.network === 'string' ? input.network : '';
   const format = typeof input.format === 'string' ? input.format : '';
@@ -204,6 +263,30 @@ export function validateTemplate(
       ...analysis.error.issues.map((i) => ({ path: `${at}.analysis.${i.path.join('.')}`, message: i.message })),
     );
   }
+  if (analysis.success) {
+    const { examples, references } = analysis.data;
+    if (source === 'instagram_import') {
+      if (examples.length < 2) {
+        issues.push({
+          path: `${at}.analysis.examples`,
+          message:
+            'una plantilla importada lleva de 2 a 3 examples (publicaciones importadas); si no las hay, entrégala como manual',
+        });
+      }
+      if (references.length > 0) {
+        issues.push({ path: `${at}.analysis.references`, message: 'solo las plantillas manuales llevan references' });
+      }
+    } else {
+      references.forEach((ref, i) => {
+        if (!isAllowedReference(ref.url, options.brandWebsite)) {
+          issues.push({
+            path: `${at}.analysis.references.${i}.url`,
+            message: 'debe ser https de instagram.com, facebook.com o la web de la marca',
+          });
+        }
+      });
+    }
+  }
   if (issues.length || !document || !analysis.success) return { ok: false, issues };
   return {
     ok: true,
@@ -214,6 +297,7 @@ export function validateTemplate(
       format,
       document,
       analysis: analysis.data,
+      source,
     },
   };
 }
@@ -222,7 +306,7 @@ export type TemplatesDeliveryParse =
   { ok: true; templates: TemplateInput[]; note: string | null } | { ok: false; issues: TemplateIssue[] };
 
 /** Valida el archivo de entrega de plantillas (ver agency/ejemplos/plantillas.json). */
-export function validateTemplatesDelivery(raw: unknown): TemplatesDeliveryParse {
+export function validateTemplatesDelivery(raw: unknown, options: TemplateOptions = {}): TemplatesDeliveryParse {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, issues: [{ path: '', message: 'La entrega debe ser un objeto JSON.' }] };
   }
@@ -235,11 +319,18 @@ export function validateTemplatesDelivery(raw: unknown): TemplatesDeliveryParse 
     issues.push({ path: 'version', message: `debe ser ${TEMPLATES_DELIVERY_VERSION}` });
   }
   for (const key of Object.keys(input)) {
-    if (!['format', 'version', 'note', 'templates'].includes(key))
+    if (!['format', 'version', 'note', 'source', 'templates'].includes(key))
       issues.push({ path: key, message: 'campo no previsto' });
   }
   if (input.note !== undefined && input.note !== null && (typeof input.note !== 'string' || input.note.length > 500)) {
     issues.push({ path: 'note', message: 'texto de hasta 500 caracteres' });
+  }
+  // `source` del archivo: origen de las plantillas que no lo indican (la opción --manual lo fuerza antes).
+  let defaultSource: TemplateSource = options.defaultSource ?? 'instagram_import';
+  if (input.source !== undefined) {
+    if (input.source === 'instagram_import' || input.source === 'manual') {
+      if (!options.defaultSource) defaultSource = input.source;
+    } else issues.push({ path: 'source', message: 'debe ser "instagram_import" o "manual"' });
   }
   const list = input.templates;
   const templates: TemplateInput[] = [];
@@ -248,7 +339,7 @@ export function validateTemplatesDelivery(raw: unknown): TemplatesDeliveryParse 
   } else {
     const keys = new Set<string>();
     list.forEach((item, index) => {
-      const result = validateTemplate(item, `templates[${index}]`);
+      const result = validateTemplate(item, `templates[${index}]`, { ...options, defaultSource });
       if (!result.ok) issues.push(...result.issues);
       else {
         if (keys.has(result.template.key)) {

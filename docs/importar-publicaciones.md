@@ -116,6 +116,21 @@ La base de datos exige que los recursos del documento sean de la biblioteca de l
 marca y que cada ejemplo sea una **publicación importada de esa marca**: no se
 pueden inventar ejemplos.
 
+#### Plantillas manuales (marca sin cuenta conectada)
+
+Si la cuenta de Instagram de la marca no se puede conectar, la agencia entrega
+plantillas con `source = 'manual'` (`--manual`, o `"source": "manual"` en el
+archivo o en cada plantilla). Cambia solo el análisis: `examples` pasa a ser
+opcional (si se dan, se validan igual) y se añade `references`, de 0 a 10
+enlaces públicos con nota, solo `https` de instagram.com, facebook.com o la web
+de la marca (`brands.website`). Una importada sigue exigiendo de 2 a 3 ejemplos
+y no admite `references`. En el selector se ve igual, con la etiqueta «Manual».
+Migración `20261205010000_manual_templates.sql` (vuelta atrás en `supabase/rollbacks/`).
+
+```sh
+npm run agencia -- entregar-plantillas <marca> ejemplos/plantillas-manual.json --manual
+```
+
 ### Cómo se sacan (modo agencia, sin API de IA)
 
 La sesión de Claude Code de la agencia (cuenta normal, ver `agency/README.md`)

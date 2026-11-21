@@ -9,6 +9,10 @@
 //   entregar-plantillas    lo valida otra vez contra la marca y llama a
 //                          `deliver_design_templates`
 //
+// Modo manual (`--manual`, o `"source": "manual"` en el archivo o en cada plantilla): para
+// una marca cuya cuenta no se puede conectar. El análisis lleva `references` (de 0 a 10
+// enlaces públicos con nota) en vez de `examples`, que pasan a ser opcionales.
+//
 // Archivo de entrega (ver ejemplos/plantillas.json):
 //   { "format": "rrss.agency-templates", "version": 1, "note": "…", "templates": [ … ] }
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -267,9 +271,22 @@ async function readJson(file: string): Promise<unknown> {
   }
 }
 
+export interface TemplatesFileOptions {
+  /** `--manual`: las plantillas que no indican su origen son manuales. */
+  manual?: boolean;
+  /** Web de la marca para comprobar los enlaces de referencia (null si no tiene); sin ella no se comprueba. */
+  brandWebsite?: string | null;
+}
+
 /** Valida el archivo de plantillas (forma, documento v3, formato y análisis); sin red. */
-export async function checkTemplatesFile(file: string): Promise<{ templates: TemplateInput[]; note: string | null }> {
-  const result = validateTemplatesDelivery(await readJson(file));
+export async function checkTemplatesFile(
+  file: string,
+  options: TemplatesFileOptions = {},
+): Promise<{ templates: TemplateInput[]; note: string | null }> {
+  const result = validateTemplatesDelivery(await readJson(file), {
+    defaultSource: options.manual ? 'manual' : undefined,
+    brandWebsite: options.brandWebsite,
+  });
   if (!result.ok) {
     throw new TemplatesError(
       `Las plantillas no son válidas:\n${result.issues.map((i) => `  - ${i.path || '(entrega)'}: ${i.message}`).join('\n')}`,
@@ -283,8 +300,15 @@ export async function deliverTemplates(
   client: SupabaseClient,
   brandId: string,
   file: string,
+  options: Pick<TemplatesFileOptions, 'manual'> = {},
 ): Promise<{ delivered: Array<{ id: string; template_key: string; name: string }> }> {
-  const { templates } = await checkTemplatesFile(file);
+  // Primero sin red: si algo falla, no se llega a la red.
+  let { templates } = await checkTemplatesFile(file, options);
+  // La web de la marca decide qué enlaces de referencia valen (la base de datos lo vuelve a comprobar).
+  if (templates.some((t) => t.source === 'manual' && t.analysis.references.length > 0)) {
+    const [brand] = await client.select<{ website: string | null }>('brands', `select=website&id=eq.${brandId}`);
+    ({ templates } = await checkTemplatesFile(file, { ...options, brandWebsite: brand?.website ?? null }));
+  }
   const rows = await client.rpc<Array<{ id: string; template_key: string; name: string }>>('deliver_design_templates', {
     p_brand_id: brandId,
     p_templates: templates,

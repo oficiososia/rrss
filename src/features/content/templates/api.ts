@@ -20,6 +20,8 @@ export interface BrandTemplate {
   document: ContentDocument | null;
   /** El análisis resumido; null si el registro no lo trae completo. */
   analysis: TemplateAnalysis | null;
+  /** `manual`: la entregó la agencia sin importar publicaciones (la interfaz la marca con «Manual»). */
+  source: BrandDesignTemplateRow['source'];
 }
 
 export const templateKeys = {
@@ -37,6 +39,7 @@ export function parseTemplate(row: BrandDesignTemplateRow): BrandTemplate {
     format: row.format,
     document: document.ok ? document.document : null,
     analysis: analysis.success ? analysis.data : null,
+    source: row.source,
   };
 }
 
