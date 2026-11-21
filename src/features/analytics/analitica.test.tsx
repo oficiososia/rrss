@@ -257,5 +257,11 @@ describe('Analítica', () => {
     renderApp(`${BRAND_BASE}/analitica`);
     expect(await screen.findByText('Todavía no hay nada que medir')).toBeInTheDocument();
     expect(screen.queryByTestId('analytics-kpis')).not.toBeInTheDocument();
+    // Un botón que lleva a conectarla, y nada de periodo ni informes mientras no hay qué medir.
+    expect(screen.getByTestId('analytics-connect')).toHaveAttribute(
+      'href',
+      `${BRAND_BASE}/marca?seccion=datos#cuentas-conectadas`,
+    );
+    expect(screen.queryByTestId('analytics-range')).not.toBeInTheDocument();
   });
 });

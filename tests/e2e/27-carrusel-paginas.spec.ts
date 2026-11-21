@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql } from './apoyo';
+import { abrir, aviso, dato, sinErrores, sql, accionDelMenu } from './apoyo';
 
 // Carrusel de varias páginas de extremo a extremo, contra el Supabase LOCAL y la
 // Graph API de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts),
@@ -62,7 +62,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   expect(version).toEqual({ paginas: 3, capas: 'shape,shape,text' });
 
   // Exportar el carrusel: tres JPEG, uno por página, guardados en la biblioteca.
-  await page.getByTestId('editor-export').click();
+  await accionDelMenu(page, 'editor-more', 'editor-export');
   await expect(page.getByTestId('export-pages-notice')).toContainText('3 páginas');
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-confirm').click();

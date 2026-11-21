@@ -1,6 +1,8 @@
 import {
   Archive,
   ArchiveRestore,
+  CalendarPlus,
+  CheckCircle2,
   ChevronLeft,
   Circle,
   Download,
@@ -13,6 +15,7 @@ import {
   ScanEye,
   Save,
   Send,
+  SendHorizontal,
   SearchX,
   Sparkles,
   Square,
@@ -32,7 +35,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -42,11 +45,14 @@ import {
   EmptyState,
   ErrorState,
   Notice,
+  PageHeader,
   Spinner,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
+  type MoreAction,
+  type MoreMenuItem,
 } from '@/components/ui';
 import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
@@ -104,13 +110,22 @@ import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePa
 import { VersionsDialog } from './editor/VersionsDialog';
 import { ApplyTemplateDialog } from './templates/ApplyTemplateDialog';
 import { PublishNowDialog } from '@/features/social/PublishNowDialog';
+import { ScheduleDialog } from '@/features/social/ScheduleDialog';
+import { EXPORT_PARAM } from '@/features/social/links';
 import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
 import { exportForPublishing } from './export/exportForPublishing';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
 import { safeZoneFor } from './safeZones';
-import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage } from './status';
+import {
+  editorPrimaryAction,
+  STATUS_LABEL,
+  STATUS_TONE,
+  statusActions,
+  statusChangedMessage,
+  type StatusAction,
+} from './status';
 import { useFeature } from '@/features/platform/integrations/useFeature';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
@@ -130,6 +145,9 @@ function startingDocument(spec: NetworkFormatSpec | undefined): ContentDocument 
   const aspectRatio = recommended?.ratio ?? (allowed?.ratios.includes('1:1') ? '1:1' : allowed?.ratios[0]) ?? '1:1';
   return createEmptyDocument({ aspectRatio, pages: pageLimits(spec).min });
 }
+
+/** Cambios de estado que hacen avanzar la pieza (el resto la devuelven atrás). */
+const FORWARD_STATUSES = new Set<ContentStatus>(['in_review', 'approved']);
 
 /** Campo del panel «Publicación» al que lleva cada parte del texto señalada por el verificador. */
 const COPY_FIELD: Partial<Record<FindingTarget['part'], string>> = {
@@ -186,6 +204,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const { org } = useOrg();
   const { brand, can, role } = useBrand();
   const navigate = useNavigate();
+  // `?exportar=1`: se llega desde un aviso del calendario («Falta la imagen exportada → Exportar»).
+  const [searchParams, setSearchParams] = useSearchParams();
   const item = content.item;
   const contentId = item.id;
   const paths = contentPaths(org.id, brand.id);
@@ -209,8 +229,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveIssues, setSaveIssues] = useState<DocumentIssue[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(() => searchParams.has(EXPORT_PARAM));
+  useEffect(() => {
+    if (searchParams.has(EXPORT_PARAM)) setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [publishNowOpen, setPublishNowOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState(false);
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
@@ -634,6 +658,162 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`);
   const BrandCheck = BRAND_CHECK_PANEL;
   const videoOnly = spec !== undefined && !spec.media.includes('image');
+  const canSchedule = publishingOn && canEdit && !item.archived_at && item.status === 'approved';
+  const primary = editorPrimaryAction(item, actions, {
+    edit: canEdit,
+    publishNow: canPublishNow,
+    schedule: canSchedule,
+  });
+
+  /** Por qué no se puede cambiar de estado ahora (o undefined si se puede). */
+  const statusBlocked = (action: StatusAction) =>
+    dirty
+      ? 'Guarda los cambios antes'
+      : action.needsVersion && expectedVersion === 0
+        ? 'Hace falta guardar una versión antes'
+        : undefined;
+
+  const primaryButton = (() => {
+    if (!primary) return null;
+    switch (primary.kind) {
+      case 'restore':
+        return (
+          <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="editor-archive">
+            <ArchiveRestore className="h-4 w-4" aria-hidden />
+            Recuperar
+          </Button>
+        );
+      case 'publishNow':
+        return (
+          <Button
+            size="sm"
+            disabled={dirty || busyStatus !== null}
+            title={dirty ? 'Guarda los cambios antes' : 'Pide confirmación antes de publicar'}
+            onClick={() => setPublishNowOpen(true)}
+            data-testid="editor-publish-now"
+          >
+            <Send className="h-4 w-4" aria-hidden />
+            Publicar ahora
+          </Button>
+        );
+      case 'schedule':
+        return (
+          <Button size="sm" disabled={dirty} onClick={() => setScheduleOpen(true)} data-testid="editor-schedule">
+            <CalendarPlus className="h-4 w-4" aria-hidden />
+            Programar
+          </Button>
+        );
+      case 'status': {
+        const { action } = primary;
+        const blocked = statusBlocked(action);
+        return (
+          <Button
+            size="sm"
+            disabled={Boolean(blocked) || busyStatus !== null}
+            loading={busyStatus === action.to}
+            title={blocked}
+            onClick={() => changeStatus(action.to)}
+            data-testid={`status-${action.to}`}
+          >
+            {action.to === 'approved' ? (
+              <CheckCircle2 className="h-4 w-4" aria-hidden />
+            ) : (
+              <SendHorizontal className="h-4 w-4" aria-hidden />
+            )}
+            {action.label}
+          </Button>
+        );
+      }
+    }
+  })();
+
+  // Lo que no es la acción principal, en «⋯», por grupos: ver, avanzar, ajustar y, al final, lo que deshace.
+  const primaryStatus = primary?.kind === 'status' ? primary.action.to : null;
+  const forward = actions.filter((a) => a.to !== primaryStatus && FORWARD_STATUSES.has(a.to));
+  const backward = actions.filter((a) => a.to !== primaryStatus && !FORWARD_STATUSES.has(a.to));
+  const statusItem = (action: StatusAction): MoreAction => {
+    const blocked = statusBlocked(action);
+    return {
+      id: `status-${action.to}`,
+      label: action.label,
+      icon: FORWARD_STATUSES.has(action.to) ? SendHorizontal : Undo2,
+      onSelect: () => changeStatus(action.to),
+      disabled: Boolean(blocked) || busyStatus !== null,
+      hint: blocked,
+      testId: `status-${action.to}`,
+    };
+  };
+  const when = <T,>(condition: boolean, item: T): T[] => (condition ? [item] : []);
+  const moreActions: MoreMenuItem[] = [
+    {
+      id: 'preview',
+      label: 'Vista previa',
+      icon: ScanEye,
+      onSelect: () => setPreviewOpen(true),
+      testId: 'editor-preview',
+    },
+    {
+      id: 'history',
+      label: 'Historial',
+      icon: History,
+      onSelect: () => setHistoryOpen(true),
+      testId: 'editor-history',
+    },
+    {
+      id: 'export',
+      label: 'Exportar imagen',
+      icon: Download,
+      onSelect: () => setExportOpen(true),
+      testId: 'editor-export',
+    },
+    null,
+    ...forward.map(statusItem),
+    ...when<MoreAction>(canPublishNow && primary?.kind !== 'publishNow', {
+      id: 'publish-now',
+      label: 'Publicar ahora',
+      icon: Send,
+      onSelect: () => setPublishNowOpen(true),
+      disabled: dirty || busyStatus !== null,
+      hint: dirty ? 'Guarda los cambios antes' : undefined,
+      testId: 'editor-publish-now',
+    }),
+    ...when<MoreAction>(canSchedule && primary?.kind !== 'schedule', {
+      id: 'schedule',
+      label: 'Programar',
+      icon: CalendarPlus,
+      onSelect: () => setScheduleOpen(true),
+      disabled: dirty,
+      hint: dirty ? 'Guarda los cambios antes' : undefined,
+      testId: 'editor-schedule',
+    }),
+    null,
+    ...when<MoreAction>(canEdit && !item.archived_at, {
+      id: 'settings',
+      label: 'Nombre y red',
+      icon: PencilLine,
+      onSelect: () => setSettingsOpen(true),
+      hint: 'Cambiar el nombre, la red o el formato',
+      testId: 'editor-settings',
+    }),
+    ...when<MoreAction>(!readOnly, {
+      id: 'template',
+      label: 'Desde una plantilla',
+      icon: LayoutTemplate,
+      onSelect: () => setTemplateOpen(true),
+      hint: 'Sustituir el diseño por una plantilla de la marca',
+      testId: 'editor-from-template',
+    }),
+    null,
+    ...backward.map(statusItem),
+    ...when<MoreAction>(canEdit && !item.archived_at, {
+      id: 'archive',
+      label: 'Archivar',
+      icon: Archive,
+      onSelect: () => setConfirmArchive(true),
+      destructive: true,
+      testId: 'editor-archive',
+    }),
+  ];
 
   if (unreadable) {
     return (
@@ -671,9 +851,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
   return (
     <div ref={rootRef} onKeyDown={onKeyDown} className="flex flex-col gap-3 lg:h-[calc(100dvh-6rem)]">
-      {/* Cabecera: dónde estoy, estado y acciones de la pieza */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      {/* Cabecera: dónde estoy, estado y UNA acción principal; lo demás, en «⋯» */}
+      <PageHeader
+        compact
+        back={
           <Link
             to={paths.list}
             onClick={leave}
@@ -683,10 +864,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <ChevronLeft className="h-4 w-4" aria-hidden />
             Contenidos
           </Link>
-          <h1 className="truncate text-xl" data-testid="editor-title">
-            {item.title}
-          </h1>
-          <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        }
+        title={item.title}
+        titleTestId="editor-title"
+        meta={
+          <>
             <span>{targetLabel(item.network, item.format)}</span>
             <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
             {item.archived_at && <Badge tone="warning">Archivada</Badge>}
@@ -707,114 +889,28 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                 · Cambios sin guardar
               </span>
             )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {canEdit && !item.archived_at && (
+          </>
+        }
+        secondary={
+          !readOnly && (
             <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-              data-testid="editor-settings"
-              title="Cambiar el nombre, la red o el formato"
-            >
-              <PencilLine className="h-4 w-4" aria-hidden />
-              Nombre y red
-            </Button>
-          )}
-          {!readOnly && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setTemplateOpen(true)}
-              data-testid="editor-from-template"
-              title="Sustituir el diseño por una plantilla de la marca"
-            >
-              <LayoutTemplate className="h-4 w-4" aria-hidden />
-              Desde una plantilla
-            </Button>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => setPreviewOpen(true)} data-testid="editor-preview">
-            <ScanEye className="h-4 w-4" aria-hidden />
-            Vista previa
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setHistoryOpen(true)} data-testid="editor-history">
-            <History className="h-4 w-4" aria-hidden />
-            Historial
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setExportOpen(true)} data-testid="editor-export">
-            <Download className="h-4 w-4" aria-hidden />
-            Exportar imagen
-          </Button>
-          {!readOnly && (
-            <Button
+              variant="secondary"
               size="sm"
               onClick={() => setSaveOpen(true)}
               disabled={!dirty && expectedVersion > 0}
+              title={!dirty && expectedVersion > 0 ? 'No hay cambios que guardar' : undefined}
               data-testid="editor-save"
             >
               <Save className="h-4 w-4" aria-hidden />
-              Guardar versión
+              Guardar<span className="max-sm:sr-only"> versión</span>
             </Button>
-          )}
-          {actions.map((action) => {
-            const missingVersion = action.needsVersion && expectedVersion === 0;
-            return (
-              <Button
-                key={action.to}
-                variant={action.to === 'approved' ? 'primary' : 'secondary'}
-                size="sm"
-                disabled={dirty || missingVersion || busyStatus !== null}
-                loading={busyStatus === action.to}
-                title={
-                  dirty
-                    ? 'Guarda los cambios antes'
-                    : missingVersion
-                      ? 'Hace falta guardar una versión antes'
-                      : undefined
-                }
-                onClick={() => changeStatus(action.to)}
-                data-testid={`status-${action.to}`}
-              >
-                {action.label}
-              </Button>
-            );
-          })}
-          {canPublishNow && (
-            <Button
-              size="sm"
-              disabled={dirty || busyStatus !== null}
-              title={dirty ? 'Guarda los cambios antes' : undefined}
-              onClick={() => setPublishNowOpen(true)}
-              data-testid="editor-publish-now"
-            >
-              <Send className="h-4 w-4" aria-hidden />
-              Publicar ahora
-            </Button>
-          )}
-          {canEdit && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => (item.archived_at ? toggleArchive() : setConfirmArchive(true))}
-              loading={mutations.archive.isPending}
-              data-testid="editor-archive"
-            >
-              {item.archived_at ? (
-                <>
-                  <ArchiveRestore className="h-4 w-4" aria-hidden />
-                  Recuperar
-                </>
-              ) : (
-                <>
-                  <Archive className="h-4 w-4" aria-hidden />
-                  Archivar
-                </>
-              )}
-            </Button>
-          )}
-        </div>
-      </div>
+          )
+        }
+        action={primaryButton}
+        more={moreActions}
+        moreLabel="Más acciones de la pieza"
+        moreTestId="editor-more"
+      />
 
       {conflict && (
         <div
@@ -1220,6 +1316,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         issues={saveIssues}
         onSave={(note) => void save(note)}
       />
+      {canSchedule && scheduleOpen && (
+        <ScheduleDialog brandId={brand.id} open onOpenChange={setScheduleOpen} initialContentId={contentId} />
+      )}
       {canPublishNow && (
         <PublishNowDialog
           brandId={brand.id}

@@ -1,8 +1,9 @@
-import { AlertTriangle, AtSign, KeyRound, Link2, Unlink } from 'lucide-react';
+import { AlertTriangle, AtSign, KeyRound, Link2, Settings2, Unlink } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
+  ActionNotice,
   Badge,
   Button,
   Card,
@@ -13,10 +14,13 @@ import {
   ErrorState,
   Field,
   Input,
+  LinkButton,
   Notice,
   Skeleton,
   Textarea,
 } from '@/components/ui';
+import { useUser } from '@/features/auth/AuthProvider';
+import { useIsPlatformAdmin } from '@/features/orgs/api';
 import { useBrand } from '@/features/orgs/context';
 import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
 import type { SocialAccountRow } from '@/lib/database.types';
@@ -26,6 +30,7 @@ import { startSocialConnect, useConnectWithToken, useDisconnectAccount, useSocia
 import { quotaWarning, tokenExpiresSoon } from './calendar';
 import { CONNECT_RESULT } from './connectResult';
 import { ImportPostsPanel } from './ImportPostsPanel';
+import { CONNECTED_ACCOUNTS_ANCHOR } from './links';
 
 /**
  * Ajustes de la marca · Cuentas conectadas. Solo aparece si el entorno tiene la
@@ -45,6 +50,16 @@ export function ConnectedAccountsCard() {
   const [connecting, setConnecting] = useState(false);
   const [confirming, setConfirming] = useState<SocialAccountRow | null>(null);
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const user = useUser();
+  const platformAdmin = useIsPlatformAdmin(user.id).data === true;
+
+  // Desde un aviso («Conectar cuenta»): bajar hasta esta tarjeta en cuanto se pinta.
+  const linked = location.hash === `#${CONNECTED_ACCOUNTS_ANCHOR}`;
+  useEffect(() => {
+    if (!linked || !enabled) return;
+    document.getElementById(CONNECTED_ACCOUNTS_ANCHOR)?.scrollIntoView({ block: 'start' });
+  }, [linked, enabled]);
 
   // Vuelta de Meta: decir cómo fue y limpiar la dirección.
   useEffect(() => {
@@ -72,11 +87,24 @@ export function ConnectedAccountsCard() {
     }
   };
 
+  const needsConnecting = !instagram || instagram.status === 'needs_reauth';
+  const tokenLabel = instagram?.connection_method === 'token' ? 'Renovar la conexión avanzada' : 'Conexión avanzada (agencia)';
+  const tokenButton = (variant: 'primary' | 'secondary') => (
+    <Button variant={variant} size="sm" onClick={() => setPasting(true)} data-testid="social-connect-token">
+      <KeyRound className="h-4 w-4" aria-hidden />
+      {tokenLabel}
+    </Button>
+  );
+
   return (
-    <Card data-testid="social-accounts">
+    <Card data-testid="social-accounts" id={CONNECTED_ACCOUNTS_ANCHOR} className="scroll-mt-6">
       <CardHeader
         title="Cuentas conectadas"
-        description="Las redes donde se publica lo que se programa en el calendario. Se conectan con el inicio de sesión oficial de Meta: nunca se guarda una contraseña y el acceso va cifrado."
+        description={
+          modes.socialOAuth
+            ? 'Las redes donde se publica lo que se programa en el calendario. Se conectan con el inicio de sesión de Meta: nunca se guarda una contraseña.'
+            : 'Las redes donde se publica lo que se programa en el calendario. El acceso se guarda cifrado.'
+        }
       />
       <CardBody className="space-y-3">
         {accounts.isPending ? (
@@ -91,32 +119,59 @@ export function ConnectedAccountsCard() {
           </p>
         )}
         {canManage && instagram?.status === 'active' && <ImportPostsPanel brandId={brand.id} account={instagram} />}
-        {canManage && accounts.isSuccess && (!instagram || instagram.status === 'needs_reauth') && (
-          <div className="flex flex-wrap gap-2">
-            {modes.socialOAuth && (
+        {canManage && accounts.isSuccess && needsConnecting && modes.socialOAuth && (
+          <div className="space-y-3" data-testid="social-connect-meta">
+            <div className="flex flex-wrap items-center gap-3">
               <Button onClick={() => void connect()} loading={connecting} data-testid="social-connect-instagram">
                 <Link2 className="h-4 w-4" aria-hidden />
-                {instagram ? 'Volver a conectar Instagram' : 'Conectar Instagram'}
+                {instagram ? 'Volver a conectar con Meta' : 'Conectar con Meta'}
               </Button>
-            )}
+              {!instagram && (
+                <p className="min-w-[12rem] flex-1 text-xs text-muted">
+                  Hace falta una cuenta profesional de Instagram (de empresa o de creador) unida a una página de
+                  Facebook.
+                </p>
+              )}
+            </div>
             {modes.socialToken && (
-              <Button
-                variant={modes.socialOAuth ? 'secondary' : 'primary'}
-                onClick={() => setPasting(true)}
-                data-testid="social-connect-token"
-              >
-                <KeyRound className="h-4 w-4" aria-hidden />
-                {instagram?.connection_method === 'token'
-                  ? 'Renovar la conexión avanzada'
-                  : 'Conexión avanzada (agencia)'}
-              </Button>
+              <details className="rounded-lg border border-border px-3 py-2" data-testid="social-connect-advanced">
+                <summary className="cursor-pointer select-none text-sm font-medium text-muted hover:text-fg">
+                  Opciones avanzadas
+                </summary>
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-muted">
+                    Para agencias que ya tienen su propia aplicación de Meta y una clave de acceso de página de larga duración.
+                  </p>
+                  {tokenButton('secondary')}
+                </div>
+              </details>
             )}
           </div>
         )}
-        {canManage && accounts.isSuccess && !instagram && (
-          <p className="text-xs text-muted">
-            Hace falta una cuenta profesional de Instagram (de empresa o de creador) unida a una página de Facebook.
-          </p>
+        {canManage && accounts.isSuccess && needsConnecting && !modes.socialOAuth && modes.socialToken && (
+          <ActionNotice
+            tone="info"
+            icon={Settings2}
+            title="La conexión con Meta aún no está activada en la plataforma"
+            action={
+              <>
+                {platformAdmin && (
+                  <LinkButton to="/plataforma/integraciones" variant="secondary" data-testid="social-oauth-setup">
+                    Activarla
+                  </LinkButton>
+                )}
+                {tokenButton('primary')}
+              </>
+            }
+            why={
+              <>
+                El botón «Conectar con Meta» sale cuando la plataforma tiene completa su aplicación de Meta, incluida la
+                dirección de vuelta a la aplicación. Mientras tanto, se puede conectar la cuenta con la conexión avanzada,
+                que suele preparar la agencia.
+              </>
+            }
+            data-testid="social-oauth-off"
+          />
         )}
       </CardBody>
       <TokenConnectDialog brandId={brand.id} open={pasting} onOpenChange={setPasting} />

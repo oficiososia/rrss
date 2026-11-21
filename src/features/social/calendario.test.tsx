@@ -9,6 +9,7 @@ import type {
 } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { chooseMoreAction } from '@/test/moreMenu';
 
 // Calendario y cuentas conectadas (Fase 3): lo que se ve según el estado real
 // de cada publicación, el interruptor del entorno, aprobar por lotes, mover y
@@ -199,7 +200,7 @@ describe('Calendario', () => {
     seed({ orgRole: 'member', brandRole: 'reviewer' });
     fake.rpc('approve_content_items', () => [{ content_id: 'c-rev', ok: true, message: null }]);
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
-    await user.click(await screen.findByTestId('calendar-approve-batch'));
+    await chooseMoreAction(user, 'calendar-more', 'calendar-approve-start');
     const checks = await screen.findAllByTestId('calendar-select');
     expect(checks).toHaveLength(1);
     await user.click(checks[0]!);

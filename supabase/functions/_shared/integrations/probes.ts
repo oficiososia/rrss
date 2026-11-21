@@ -159,6 +159,21 @@ async function probeMeta(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
     const social = loadSocialConfig(env, async () => {
       throw new Error('sin red');
     });
+    // El botón «Conectar con Meta» necesita además la dirección de vuelta: sin
+    // ella la aplicación solo ofrece conectar con un token (availability.ts).
+    if (social.meta) {
+      checks.push(
+        social.callbackUrl && social.appUrl
+          ? { name: 'Conectar con Meta', ok: true, message: 'Sale el botón «Conectar con Meta».' }
+          : {
+              name: 'Conectar con Meta',
+              ok: false,
+              message: social.appUrl
+                ? 'Falta la dirección de retorno de Meta (SOCIAL_CALLBACK_URL): no sale el botón «Conectar con Meta».'
+                : 'Falta la dirección de la aplicación (SOCIAL_APP_URL): no sale el botón «Conectar con Meta», solo «Conectar con un token».',
+            },
+      );
+    }
     const keyProblem = social.problems.find((p) => p.includes('SOCIAL_TOKEN_KEY'));
     checks.push(
       social.keyRing

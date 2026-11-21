@@ -5,6 +5,7 @@ import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, type ContentDocument, type Layer } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
+import { chooseEditorAction, openMoreMenu } from '@/test/moreMenu';
 
 // Crear una pieza a partir de una plantilla de la marca: desde «Nueva idea» y
 // desde el editor. El lienzo de Konva se sustituye por un doble que cuenta capas.
@@ -260,7 +261,7 @@ describe('Empezar desde una plantilla en el editor', () => {
     await screen.findByTestId('editor-title');
     expect(await screen.findByTestId('canvas-stub')).toHaveAttribute('data-layers', '0');
 
-    await user.click(screen.getByTestId('editor-from-template'));
+    await chooseEditorAction(user, 'editor-from-template');
     const dialog = within(await screen.findByRole('dialog'));
     const options = await dialog.findAllByTestId('template-option');
     expect(options).toHaveLength(1);
@@ -284,14 +285,15 @@ describe('Empezar desde una plantilla en el editor', () => {
     fake.tables.content_items = [idea()];
     const first = renderApp(`${CONTENT}/content-1`);
     await screen.findByTestId('editor-title');
-    await first.user.click(screen.getByTestId('editor-from-template'));
+    await chooseEditorAction(first.user, 'editor-from-template');
     expect(await screen.findByTestId('template-empty')).toBeInTheDocument();
     first.unmount();
 
     seed({ orgRole: 'member', brandRole: 'viewer' }, []);
     fake.tables.content_items = [idea()];
-    renderApp(`${CONTENT}/content-1`);
+    const viewer = renderApp(`${CONTENT}/content-1`);
     await screen.findByTestId('editor-title');
+    await openMoreMenu(viewer.user, 'editor-more');
     expect(screen.queryByTestId('editor-from-template')).not.toBeInTheDocument();
   });
 });

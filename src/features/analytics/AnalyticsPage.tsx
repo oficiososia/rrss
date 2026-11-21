@@ -1,5 +1,5 @@
 import { cleanText } from '@/lib/texts';
-import { BarChart3, Download, FileText, Lightbulb, Ruler, Sparkles } from 'lucide-react';
+import { BarChart3, Download, FileText, Lightbulb, Link2, Ruler, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -10,6 +10,7 @@ import {
   CardHeader,
   EmptyState,
   ErrorState,
+  LinkButton,
   Notice,
   PageHeader,
   Select,
@@ -17,7 +18,8 @@ import {
 } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { summarizeAnalytics, type AnalyticsSummaryResult } from '@/features/ai/api';
-import { useBrand } from '@/features/orgs/context';
+import { useBrand, useOrg } from '@/features/orgs/context';
+import { connectedAccountsPath } from '@/features/social/links';
 import type { AnalyticsReportStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import {
@@ -86,6 +88,7 @@ const REPORT_STATUS: Record<
 
 /** Panel de analítica de la marca (Fase 5): cifras medidas, comparación, publicaciones, dato frente a hipótesis. */
 export function AnalyticsPage() {
+  const { org } = useOrg();
   const { brand, can } = useBrand();
   const aiText = useFeature('aiText');
   const [range, setRange] = useState<RangeKey>('last28');
@@ -116,24 +119,28 @@ export function AnalyticsPage() {
   }, [definitions.data, points.data, media.data, previousMedia.data, accounts.data, runs.data, period, previous]);
 
   const failed = queries.find((q) => q.error);
+  // Sin cuenta no hay nada que medir: ni periodo ni informes, solo el botón para conectarla.
+  const hasAccount = Boolean(accounts.data?.length);
   return (
     <div className="space-y-6">
       <PageHeader
         title="Analítica"
         description="Cifras medidas en las redes de la marca. Lo que es interpretación se marca como tal, y lo que no se puede medir se dice."
         action={
-          <Select
-            aria-label="Periodo"
-            value={range}
-            onChange={(e) => setRange(e.target.value as RangeKey)}
-            data-testid="analytics-range"
-          >
-            {Object.entries(RANGES).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </Select>
+          hasAccount && (
+            <Select
+              aria-label="Periodo"
+              value={range}
+              onChange={(e) => setRange(e.target.value as RangeKey)}
+              data-testid="analytics-range"
+            >
+              {Object.entries(RANGES).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          )
         }
       />
       {failed ? (
@@ -145,7 +152,19 @@ export function AnalyticsPage() {
           <EmptyState
             icon={BarChart3}
             title="Todavía no hay nada que medir"
-            description="Conecta una cuenta de Instagram en Marca → Datos de la marca → Cuentas conectadas. Las cifras se capturan una vez al día; las primeras llegan al día siguiente."
+            description={
+              can('manage')
+                ? 'Conecta la cuenta de Instagram de la marca. Las cifras se recogen una vez al día: las primeras llegan al día siguiente.'
+                : 'Cuando quien gestiona la marca conecte su cuenta de Instagram, las cifras llegarán al día siguiente.'
+            }
+            action={
+              can('manage') && (
+                <LinkButton to={connectedAccountsPath(org.id, brand.id)} size="md" data-testid="analytics-connect">
+                  <Link2 className="h-4 w-4" aria-hidden />
+                  Conectar Instagram
+                </LinkButton>
+              )
+            }
           />
         </Card>
       ) : (
@@ -168,7 +187,7 @@ export function AnalyticsPage() {
           <Captures runs={runs.data ?? []} />
         </>
       )}
-      <Reports brandId={brand.id} canEdit={can('edit')} />
+      {hasAccount && <Reports brandId={brand.id} canEdit={can('edit')} />}
     </div>
   );
 }

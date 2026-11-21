@@ -139,6 +139,8 @@ export function visibleTexts(source: string): string[] {
     /=>|&&|\|\||\?\?|[;=]|\b(?:const|return|import|export)\b/.test(s) ||
     // Trozos de una expresión JSX partida por las etiquetas: «) : null}», «{x ? (», «cond ? (».
     /^\s*[)}\]]/.test(s) ||
+    // Llamadas de función pegadas al paréntesis («setOpen(true)», «.map(item)»): código, no texto.
+    /[A-Za-z_]\w*\(/.test(s) ||
     /[({]\s*$/.test(s) ||
     /\s[?:]\s|\?\./.test(s);
   for (const m of source.matchAll(/>([^<>]*[A-Za-zÁ-ú][^<>]*)</g)) {

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execSync } from 'node:child_process';
-import { abrir, aviso, dato, LOCAL, sinErrores, sql } from './apoyo';
+import { abrir, aviso, dato, LOCAL, sinErrores, sql, accionDelMenu } from './apoyo';
 
 // Publicación de extremo a extremo (Fase 3), contra el Supabase LOCAL y la
 // Graph API de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts,
@@ -66,7 +66,7 @@ async function piezaConTexto(page: Page, titulo: string, texto: string): Promise
 
 /** Exporta la versión guardada como JPEG a la biblioteca (sin descargarla). */
 async function exportarJpeg(page: Page): Promise<void> {
-  await page.getByTestId('editor-export').click();
+  await accionDelMenu(page, 'editor-more', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();

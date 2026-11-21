@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql } from './apoyo';
+import { abrir, aviso, dato, sinErrores, sql, accionDelMenu } from './apoyo';
 
 // Biblioteca con Google Drive de extremo a extremo, contra el Supabase LOCAL y
 // Google Drive SIMULADO (supabase/functions/_shared/drive/local-test.ts,
@@ -104,7 +104,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   expect(version!.capas.some((c) => c.type === 'image' && c.source?.assetId === version!.recurso)).toBe(true);
 
   // Exportar lee la imagen del lienzo: si la de Drive llegara sin CORS, el lienzo quedaría «manchado» y fallaría.
-  await page.getByTestId('editor-export').click();
+  await accionDelMenu(page, 'editor-more', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();

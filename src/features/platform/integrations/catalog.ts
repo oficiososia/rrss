@@ -88,7 +88,7 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             label: 'Dirección de la aplicación',
             secret: false,
             placeholder: 'https://…',
-            help: 'A dónde vuelve la persona tras conectar su cuenta.',
+            help: 'A dónde vuelve la persona tras conectar su cuenta. Sin ella no sale el botón «Conectar con Meta».',
           },
         ],
       },

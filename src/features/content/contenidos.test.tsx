@@ -5,6 +5,7 @@ import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
+import { chooseEditorAction, chooseMoreAction, openMoreMenu } from '@/test/moreMenu';
 
 // El lienzo de Konva necesita un <canvas> de verdad, que jsdom no tiene: aquí se
 // sustituye por un doble que enseña cuántas capas recibe. La lógica del lienzo
@@ -205,7 +206,9 @@ describe('Lista de contenidos', () => {
     expect(screen.getByTestId('content-row')).toHaveTextContent('Vídeo de la terraza');
 
     await user.clear(screen.getByTestId('content-search'));
-    await user.selectOptions(screen.getByTestId('content-archived-filter'), 'archived');
+    // Las archivadas, desde «⋯»: no ocupan un filtro más.
+    await chooseMoreAction(user, 'content-more', 'content-show-archived');
+    expect(await screen.findByTestId('content-archived-notice')).toHaveTextContent('Estás viendo las archivadas');
     await waitFor(() => expect(screen.getAllByTestId('content-row')).toHaveLength(1));
     expect(screen.getByTestId('content-row')).toHaveTextContent('Navidad 2025');
   });
@@ -360,7 +363,7 @@ describe('Editor: versiones', () => {
 
   it('enseña el historial y restaura una versión anterior como versión nueva', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'manager' }, { versions: 2 });
-    await user.click(screen.getByTestId('editor-history'));
+    await chooseEditorAction(user, 'editor-history');
     const dialog = within(await screen.findByRole('dialog'));
     const rows = within(await dialog.findByTestId('versions-list')).getAllByRole('listitem');
     expect(rows).toHaveLength(2);
@@ -382,7 +385,7 @@ describe('Editor: versiones', () => {
   it('con cambios sin guardar, restaurar pide confirmación', async () => {
     const { user } = await openEditor({ orgRole: 'owner' }, { versions: 2 });
     await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-history'));
+    await chooseEditorAction(user, 'editor-history');
     const rows = within(await screen.findByTestId('versions-list')).getAllByRole('listitem');
     await user.click(within(rows[1]!).getByTestId('version-view'));
     await user.click(await screen.findByTestId('version-restore'));
@@ -462,8 +465,11 @@ describe('Editor: estados según el rol', () => {
     expect(screen.getByText('Puedes revisarla y cambiar su estado, pero no editarla.')).toBeInTheDocument();
     expect(screen.queryByTestId('editor-save')).not.toBeInTheDocument();
     expect(screen.queryByTestId('add-text')).not.toBeInTheDocument();
+    // Aprobar es la acción principal; devolver a borrador está en «⋯», sin archivar (no edita).
+    await openMoreMenu(user, 'editor-more');
     expect(screen.queryByTestId('editor-archive')).not.toBeInTheDocument();
     expect(screen.getByTestId('status-draft')).toHaveTextContent('Devolver a borrador');
+    await user.keyboard('{Escape}');
     await user.click(screen.getByTestId('status-approved'));
     await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1));
     // El aviso y la etiqueta de estado dicen lo mismo.
@@ -484,7 +490,7 @@ describe('Editor: estados según el rol', () => {
 
   it('archivar pide confirmación y deja la pieza en solo lectura', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    await user.click(screen.getByTestId('editor-archive'));
+    await chooseEditorAction(user, 'editor-archive');
     await user.click(within(await screen.findByRole('dialog')).getByTestId('confirm-action'));
     expect(await screen.findByText('Contenido archivado')).toBeInTheDocument();
     expect(await screen.findByText(/Está archivada/)).toBeInTheDocument();
@@ -497,5 +503,110 @@ describe('Editor: estados según el rol', () => {
     seedWorkspace({ orgRole: 'owner' });
     renderApp(`${CONTENT}/no-existe`);
     expect(await screen.findByText('No encontramos este contenido')).toBeInTheDocument();
+  });
+});
+
+describe('Editor: una sola acción principal según el estado', () => {
+  const igAccount = {
+    id: 'acc-1',
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    network: 'instagram',
+    status: 'active',
+    external_id: '1784',
+    username: 'casa_demo',
+  };
+  /** Los botones de la cabecera que están a la vista (sin abrir «⋯»). */
+  const visibleActions = () =>
+    within(screen.getByTestId('page-actions'))
+      .getAllByRole('button')
+      .map((b) => b.textContent?.trim());
+
+  it('borrador con permiso de aprobar: «Aprobar» es la principal; lo demás, en «⋯» y separado', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    expect(screen.getByTestId('status-approved')).toHaveTextContent('Aprobar');
+    expect(visibleActions()).toEqual(['Guardar versión', 'Aprobar', '']);
+    await openMoreMenu(user, 'editor-more');
+    const menu = within(screen.getByRole('menu'));
+    const items = menu.getAllByRole('menuitem').map((i) => i.textContent);
+    expect(items).toEqual([
+      'Vista previa',
+      'Historial',
+      'Exportar imagen',
+      'Enviar a revisión',
+      'Nombre y red',
+      'Desde una plantilla',
+      'Devolver a idea',
+      'Archivar',
+    ]);
+    // Archivar va al final, separado de lo que hace avanzar la pieza.
+    expect(menu.getAllByRole('separator')).toHaveLength(3);
+  });
+
+  it('quien edita sin aprobar: «Enviar a revisión» es la principal', async () => {
+    await openEditor({ orgRole: 'member', brandRole: 'editor' });
+    expect(screen.getByTestId('status-in_review')).toHaveTextContent('Enviar a revisión');
+    expect(screen.queryByTestId('status-approved')).toBeNull();
+  });
+
+  it('aprobada y publicable: «Publicar ahora» es la principal; Programar y Retirar la aprobación, en «⋯»', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    seedContent({ orgRole: 'owner' }, { status: 'approved' });
+    fake.tables.social_accounts = [igAccount];
+    fake.tables.scheduled_publications = [];
+    fake.tables.media_assets = [];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    expect(await screen.findByTestId('editor-publish-now')).toHaveTextContent('Publicar ahora');
+    await openMoreMenu(user, 'editor-more');
+    expect(screen.getByTestId('editor-schedule')).toHaveTextContent('Programar');
+    expect(screen.getByTestId('status-draft')).toHaveTextContent('Retirar la aprobación');
+    // «Programar» abre el diálogo con la pieza ya elegida.
+    await user.click(screen.getByTestId('editor-schedule'));
+    expect(await screen.findByTestId('schedule-content')).toHaveValue('content-1');
+    vi.unstubAllEnvs();
+  });
+
+  it('aprobada sin la publicación activa: no hay botón principal que no funcione', async () => {
+    await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+    expect(screen.queryByTestId('editor-schedule')).toBeNull();
+    expect(visibleActions()).toEqual(['Guardar versión', '']);
+  });
+
+  it('con cambios sin guardar, la principal se desactiva y dice por qué', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    await user.click(screen.getByTestId('add-text'));
+    expect(screen.getByTestId('status-approved')).toBeDisabled();
+    expect(screen.getByTestId('status-approved')).toHaveAttribute('title', 'Guarda los cambios antes');
+    expect(screen.getByTestId('editor-save')).toBeEnabled();
+  });
+
+  it('el menú «⋯» se maneja con el teclado y devuelve el foco al cerrarlo', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    const trigger = screen.getByTestId('editor-more');
+    expect(trigger).toHaveAccessibleName('Más acciones de la pieza');
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    const menu = await screen.findByRole('menu');
+    await waitFor(() => expect(within(menu).getAllByRole('menuitem')[0]).toHaveFocus());
+    await user.keyboard('{ArrowDown}');
+    expect(within(menu).getByText('Historial').closest('[role="menuitem"]')).toHaveFocus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  it('archivada: la principal es «Recuperar»', async () => {
+    await openEditor({ orgRole: 'owner' }, { archived: true });
+    expect(screen.getByTestId('editor-archive')).toHaveTextContent('Recuperar');
+    expect(visibleActions()).toEqual(['Recuperar', '']);
+  });
+
+  it('desde un aviso del calendario («Exportar») abre el diálogo de exportar', async () => {
+    seedContent({ orgRole: 'owner' }, { status: 'approved' });
+    renderApp(`${EDITOR}?exportar=1`);
+    await screen.findByTestId('editor-title');
+    expect(await screen.findByRole('dialog', { name: /Exportar/ })).toBeInTheDocument();
   });
 });

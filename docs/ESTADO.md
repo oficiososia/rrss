@@ -314,6 +314,41 @@ Respuesta a los problemas 1, 2 y 4 y al cambio transversal 5 de la auditoría de
   que la pestaña no pinta nada aunque el JS ya ha llegado (primer pintado a 8,5 s con el
   JS descargado a los 0,04 s): son de la pestaña, no de la app; el cliente de Supabase
   2.119 ya no usa el cerrojo entre pestañas que señalaba la auditoría.
+### Acciones claras y avisos que se resuelven (rama `f11/acciones-claras`, 21/11/2026)
+
+Problemas 6, 7 y 9 y cambios transversales 1 y 2 de la auditoría de UX
+(`energym-demo-datos/capturas/auditoria/INFORME.md`); capturas del antes y el
+después en `energym-demo-datos/capturas/tanda2/f13-*`.
+
+- **Cabecera común** (`src/components/ui/PageHeader.tsx` + `MoreMenu.tsx`): título, una
+  línea de contexto, **una** acción principal y el resto en «⋯» (Radix, por teclado).
+  Editor: la principal sale del estado (`editorPrimaryAction` en `content/status.ts`):
+  Enviar a revisión → Aprobar → Publicar ahora (o Programar) → Recuperar si está
+  archivada; «Guardar versión» visible y discreto; Archivar, Devolver a idea/borrador,
+  Retirar la aprobación, Historial, Exportar, Nombre y red y Plantilla, en «⋯» por
+  grupos. Contenidos (las archivadas, en «⋯»), Biblioteca (Drive y reels, en «⋯») y
+  Calendario («Aprobar varias», en «⋯»).
+- **Avisos que se resuelven** (`ActionNotice`): una frase, el botón que lleva a
+  arreglarlo y «¿Por qué?» plegado. Calendario: un aviso por motivo de «Detenida»
+  (`social/holdAdvice.ts`) con «Conectar cuenta», «Usar @cuenta» (vuelve a guardar
+  con la cuenta conectada), «Usar la versión aprobada» o «Exportar» (abre el editor
+  con `?exportar=1`); la ficha, igual. Estados vacíos con botón en Contenidos,
+  Calendario, Biblioteca, Encargos y Analítica (sin cuenta: «Conectar Instagram»,
+  sin periodo ni informes).
+- **Conectar Instagram:** con OAuth disponible, «Conectar con Meta» es el principal y
+  el token pasa a «Opciones avanzadas»; sin él, una frase lo explica («La conexión
+  con Meta aún no está activada en la plataforma») y a quien administra la
+  plataforma le lleva a Integraciones.
+- **Por qué no salía el botón de Meta en staging:** es **configuración**. El botón
+  necesita App ID, App Secret, claves de cifrado, la dirección de retorno (se deduce
+  de `SUPABASE_URL`) y `SOCIAL_APP_URL`; en staging falta **`SOCIAL_APP_URL`**
+  (`META_LOGIN_CONFIG_ID` es opcional). «Probar conexión» daba OK porque no lo
+  comprobaba: ahora lo comprueba (`integrations/probes.ts`, hay que redesplegar
+  `platform-integrations`) y «Qué ve la gente» enseña la fila del botón de Meta.
+- Pruebas: `components/…` en `contenidos.test.tsx` (cabecera del editor, teclado),
+  `social/avisosResolubles.test.tsx`, `status.test.ts`, `holdAdvice.test.ts`, caso
+  nuevo en `tests/db/integraciones.test.ts`; e2e 09, 11, 13, 20, 21 y 27 abren «⋯»
+  con `accionDelMenu` (`tests/e2e/apoyo.ts`), **sin ejecutar** la tanda e2e.
 
 ## Sin probar contra el servicio real
 

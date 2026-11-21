@@ -2,7 +2,7 @@ import { ExternalLink, MessageSquare, RefreshCw, RotateCcw, Send, XCircle } from
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Badge, Button, Dialog, Field, Input, Notice, Textarea } from '@/components/ui';
+import { ActionNotice, Badge, Button, Dialog, Field, Input, LinkButton, Notice, Textarea } from '@/components/ui';
 import { contentPaths, targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
 import type { PublicationAttemptOutcome } from '@/lib/database.types';
@@ -20,6 +20,7 @@ import {
   useReschedulePublication,
   useRetryPublication,
   useSavePublication,
+  useSocialAccounts,
   type CalendarEntry,
 } from './api';
 import {
@@ -32,6 +33,8 @@ import {
   toLocalInput,
 } from './calendar';
 import { useFeature } from '@/features/platform/integrations/useFeature';
+import { activeAccountOf, holdAdvice } from './holdAdvice';
+import { connectedAccountsPath, exportPath } from './links';
 import { PublicationPreview } from './preview';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
@@ -84,6 +87,7 @@ export function PublicationDialog({
   const changes = useRequestChanges(brandId);
   const comment = useCommentContent(brandId);
   const rearm = useSavePublication(brandId);
+  const accounts = useSocialAccounts(brandId);
   // Solo hace falta la biblioteca si la publicación está detenida porque la pieza cambió.
   const changed = Boolean(entry && entry.status === 'planned' && entry.hold_reason === 'content_changed');
   const media = usePublishableMedia(brandId, changed);
@@ -102,6 +106,109 @@ export function PublicationDialog({
     changed && editable && content && media.data
       ? approvedVersionPlan(content, media.data, entry.media_asset_ids)
       : null;
+  const held = entry.status === 'planned' && entry.hold_reason ? entry.hold_reason : null;
+  const account = activeAccountOf(accounts.data, entry.network);
+  const advice = held ? holdAdvice(held, account) : null;
+
+  const approvedButton = plan && content && (
+    <Button
+      size="sm"
+      disabled={!plan.ok}
+      loading={rearm.isPending}
+      onClick={() => {
+        if (!plan.ok) return;
+        rearm.mutate(
+          {
+            publicationId: entry.id,
+            contentId: content.id,
+            scheduledAt: entry.scheduled_at,
+            accountId: entry.social_account_id,
+            mediaAssetIds: plan.mediaAssetIds,
+            contentVersion: plan.version,
+          },
+          {
+            onSuccess: (pub) =>
+              pub.status === 'scheduled'
+                ? toast.success(`Programada con la versión ${plan.version}`)
+                : toast.info(
+                    `Guardada, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+                  ),
+            onError: failed,
+          },
+        );
+      }}
+      data-testid="publication-use-approved"
+    >
+      <RefreshCw className="h-4 w-4" aria-hidden />
+      Usar la versión aprobada
+    </Button>
+  );
+
+  /** El botón que arregla el motivo de la detención. */
+  const fix = (() => {
+    if (!advice) return null;
+    switch (advice.fix) {
+      case 'connect':
+        return (
+          <LinkButton to={connectedAccountsPath(orgId, brandId)} data-testid="publication-hold-fix">
+            {advice.label}
+          </LinkButton>
+        );
+      case 'use_account': {
+        const live = (accounts.data ?? []).find((a) => a.network === entry.network && a.status === 'active');
+        return editable && live ? (
+          <Button
+            size="sm"
+            loading={rearm.isPending}
+            onClick={() =>
+              rearm.mutate(
+                {
+                  publicationId: entry.id,
+                  contentId: entry.content_id,
+                  scheduledAt: entry.scheduled_at,
+                  accountId: live.id,
+                  mediaAssetIds: entry.media_asset_ids,
+                  contentVersion: entry.content_version,
+                },
+                {
+                  onSuccess: (pub) =>
+                    pub.status === 'scheduled'
+                      ? toast.success('Programada')
+                      : toast.info(
+                          `Cuenta elegida, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+                        ),
+                  onError: failed,
+                },
+              )
+            }
+            data-testid="publication-hold-fix"
+          >
+            {advice.label}
+          </Button>
+        ) : null;
+      }
+      case 'use_approved':
+        return approvedButton || null;
+      case 'export':
+        return (
+          <LinkButton to={exportPath(orgId, brandId, entry.content_id)} data-testid="publication-hold-fix">
+            {advice.label}
+          </LinkButton>
+        );
+      case 'open_editor':
+        return (
+          <LinkButton
+            to={contentPaths(orgId, brandId).item(entry.content_id)}
+            variant="secondary"
+            data-testid="publication-hold-fix"
+          >
+            {advice.label}
+          </LinkButton>
+        );
+      case 'none':
+        return null;
+    }
+  })();
 
   return (
     <Dialog
@@ -153,10 +260,14 @@ export function PublicationDialog({
             )}
           </Notice>
         )}
-        {entry.status === 'planned' && entry.hold_reason && (
-          <Notice tone="warning">
-            <span data-testid="publication-hold">{HOLD_REASON_TEXT[entry.hold_reason]}</span>
-          </Notice>
+        {held && advice && (
+          <ActionNotice
+            tone={state === 'held' ? 'warning' : 'info'}
+            title={advice.short}
+            action={fix}
+            why={<span data-testid="publication-hold">{HOLD_REASON_TEXT[held]}</span>}
+            data-testid="publication-hold-notice"
+          />
         )}
         {entry.last_error && entry.status !== 'published' && (
           <Notice tone="warning">
@@ -189,60 +300,25 @@ export function PublicationDialog({
           </div>
         )}
 
-        {plan && content && (
-          <div className="space-y-2" data-testid="publication-rearm">
-            {!plan.ok && (
-              <Notice tone="warning">
-                <span data-testid="publication-rearm-problem">
-                  {plan.reason === 'not_approved'
-                    ? 'La pieza no está aprobada: cuando se apruebe podrás usar su versión aprobada.'
-                    : content.format === 'carousel'
-                      ? `Faltan exportaciones de alguna página de la versión ${plan.version}: expórtalas desde el editor (Exportar el carrusel).`
-                      : `Falta la exportación de la versión ${plan.version}: expórtala desde el editor.`}
-                </span>{' '}
-                {plan.reason === 'no_exports' && (
-                  <Link
-                    to={contentPaths(orgId, brandId).item(content.id)}
-                    className="text-primary underline"
-                    data-testid="publication-rearm-editor"
-                  >
-                    Ir al editor a exportarlas
-                  </Link>
-                )}
-              </Notice>
+        {plan && content && !plan.ok && (
+          <p className="flex flex-wrap items-center gap-2 text-sm text-muted" data-testid="publication-rearm">
+            <span data-testid="publication-rearm-problem">
+              {plan.reason === 'not_approved'
+                ? 'Antes hay que aprobar la pieza: luego podrás usar su versión aprobada.'
+                : content.format === 'carousel'
+                  ? `Antes hay que exportar todas las páginas de la versión ${plan.version}.`
+                  : `Antes hay que exportar la versión ${plan.version}.`}
+            </span>
+            {plan.reason === 'no_exports' && (
+              <Link
+                to={exportPath(orgId, brandId, content.id)}
+                className="font-medium text-primary underline"
+                data-testid="publication-rearm-editor"
+              >
+                Exportar
+              </Link>
             )}
-            <Button
-              variant="secondary"
-              disabled={!plan.ok}
-              loading={rearm.isPending}
-              onClick={() => {
-                if (!plan.ok) return;
-                rearm.mutate(
-                  {
-                    publicationId: entry.id,
-                    contentId: content.id,
-                    scheduledAt: entry.scheduled_at,
-                    accountId: entry.social_account_id,
-                    mediaAssetIds: plan.mediaAssetIds,
-                    contentVersion: plan.version,
-                  },
-                  {
-                    onSuccess: (pub) =>
-                      pub.status === 'scheduled'
-                        ? toast.success(`Programada con la versión ${plan.version}`)
-                        : toast.info(
-                            `Guardada, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
-                          ),
-                    onError: failed,
-                  },
-                );
-              }}
-              data-testid="publication-use-approved"
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden />
-              Usar la versión aprobada
-            </Button>
-          </div>
+          </p>
         )}
 
         <div className="flex flex-wrap gap-2">

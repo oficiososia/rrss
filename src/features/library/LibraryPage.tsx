@@ -1,6 +1,6 @@
-import { Clapperboard, FileText, Film, HardDrive, Images, Music, Search, Upload } from 'lucide-react';
+import { Clapperboard, FileText, FilterX, Film, HardDrive, Images, Music, Search, Upload } from 'lucide-react';
 import { useDeferredValue, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, EmptyState, ErrorState, Input, PageHeader, Select, Skeleton } from '@/components/ui';
 import { mediaWorkerEnabled } from '@/config/app';
 import { isDriveAsset, useDriveConnections } from '@/features/drive/api';
@@ -43,6 +43,7 @@ export function LibraryPage() {
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const canEdit = can('edit');
+  const navigate = useNavigate();
   useStorageCleanup(brand.id, canEdit);
   const [uploading, setUploading] = useState(false);
   // Google Drive: solo si el entorno lo tiene, el servidor está configurado y la
@@ -95,34 +96,41 @@ export function LibraryPage() {
         description={`Fotos, vídeos, logotipos y documentos de ${brand.name}.`}
         action={
           canEdit && (
-            <>
-              {mediaWorkerEnabled() && (
-                <Link
-                  to="reels"
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
-                  data-testid="library-reels"
-                >
-                  <Clapperboard className="h-4 w-4" aria-hidden />
-                  Montar un reel
-                </Link>
-              )}
-              {canUseDrive && (
-                <Button variant="secondary" onClick={() => setDrivePicking(true)} data-testid="library-drive">
-                  <HardDrive className="h-4 w-4" aria-hidden />
-                  Desde Google Drive
-                </Button>
-              )}
-              <Button
-                onClick={() => setUploading((v) => !v)}
-                aria-expanded={uploading}
-                data-testid="library-upload-toggle"
-              >
-                <Upload className="h-4 w-4" aria-hidden />
-                {uploading ? 'Ocultar subida' : 'Subir archivos'}
-              </Button>
-            </>
+            <Button
+              onClick={() => setUploading((v) => !v)}
+              aria-expanded={uploading}
+              data-testid="library-upload-toggle"
+            >
+              <Upload className="h-4 w-4" aria-hidden />
+              {uploading ? 'Ocultar subida' : 'Subir archivos'}
+            </Button>
           )
         }
+        more={
+          canEdit
+            ? [
+                canUseDrive
+                  ? {
+                      id: 'drive',
+                      label: 'Traer de Google Drive',
+                      icon: HardDrive,
+                      onSelect: () => setDrivePicking(true),
+                      testId: 'library-drive',
+                    }
+                  : null,
+                mediaWorkerEnabled()
+                  ? {
+                      id: 'reels',
+                      label: 'Montar un reel',
+                      icon: Clapperboard,
+                      onSelect: () => navigate('reels'),
+                      testId: 'library-reels',
+                    }
+                  : null,
+              ]
+            : undefined
+        }
+        moreTestId="library-more"
       />
 
       {canEdit && uploading && (
@@ -211,13 +219,28 @@ export function LibraryPage() {
                   : 'Todavía no se ha subido ningún archivo.'
             }
             action={
-              !filtering &&
-              canEdit &&
-              !uploading && (
-                <Button onClick={() => setUploading(true)}>
-                  <Upload className="h-4 w-4" aria-hidden />
-                  Subir archivos
+              filtering ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setKind('');
+                    setTag('');
+                    setFolder('');
+                    setSearch('');
+                  }}
+                  data-testid="library-clear-filters"
+                >
+                  <FilterX className="h-4 w-4" aria-hidden />
+                  Quitar filtros
                 </Button>
+              ) : (
+                canEdit &&
+                !uploading && (
+                  <Button onClick={() => setUploading(true)} data-testid="library-empty-upload">
+                    <Upload className="h-4 w-4" aria-hidden />
+                    Subir archivos
+                  </Button>
+                )
               )
             }
           />
