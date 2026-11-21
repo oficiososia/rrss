@@ -2828,6 +2828,73 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
     await db.query(`update public.brands set website = '' where id = $1`, [marcaA1]);
   });
 
+  it('una plantilla guardada desde el editor la entrega quien edita, con tope por marca, y no cruza organizaciones', async () => {
+    const delEditor = (key: string, analysis: object = {}) =>
+      JSON.stringify([{ ...JSON.parse(manualTemplate(analysis, key))[0], source: 'editor', name: 'Mi plantilla' }]);
+    const [row] = await as<{ source: string; created_by: string }>(
+      db,
+      editorA,
+      `select t.source, t.created_by from public.deliver_design_templates($1, $2::jsonb) t`,
+      [marcaA1, delEditor('del-editor')],
+    );
+    expect(row!.source).toBe('editor');
+    expect(row!.created_by).toBe(editorA.id);
+    // Guardarla otra vez con la misma clave la actualiza, no la duplica.
+    await as(db, editorA, deliver, [marcaA1, delEditor('del-editor')]);
+    expect(
+      await as(db, ana, `select 1 from public.brand_design_templates where brand_id = $1 and source = 'editor'`, [
+        marcaA1,
+      ]),
+    ).toHaveLength(1);
+    // Quien solo ve la marca no puede guardar; otra organización, ni guardar en ella ni verla.
+    await denied(db, clienteA, deliver, [marcaA1, delEditor('x1')], /edita/);
+    await denied(db, berta, deliver, [marcaA1, delEditor('x2')], /edita/);
+    expect(
+      await as(db, berta, `select 1 from public.brand_design_templates where source = 'editor' and brand_id = $1`, [
+        marcaA1,
+      ]),
+    ).toEqual([]);
+    // Sin sesión tampoco.
+    await denied(db, null, deliver, [marcaA1, delEditor('x3')], /permission denied|sesión/);
+    // Un origen que no existe sigue rechazado.
+    await denied(
+      db,
+      editorA,
+      deliver,
+      [marcaA1, JSON.stringify([{ ...JSON.parse(delEditor('x4'))[0], source: 'nube' }])],
+      /origen/,
+    );
+    // El documento solo puede usar recursos de la biblioteca de esa marca (comprobado también para el origen editor).
+    await db.query(
+      `insert into public.media_assets (id, brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ('99999999-9999-4999-8999-999999999999', $1, $2, 'image', $3, 'x.jpg', 'image/jpeg', 1)`,
+      [marcaB1, orgB, assetPath(orgB, marcaB1)],
+    );
+    const conFotoAjena = JSON.parse(delEditor('x5'));
+    conFotoAjena[0].document = doc('99999999-9999-4999-8999-999999999999');
+    await denied(db, editorA, deliver, [marcaA1, JSON.stringify(conFotoAjena)], /recurso/);
+    await db.query(`delete from public.media_assets where id = '99999999-9999-4999-8999-999999999999'`);
+    // Tope de 50 por marca: la 51 se rechaza, pero actualizar una existente sigue valiendo.
+    await db.query(
+      `insert into public.brand_design_templates (brand_id, organization_id, template_key, name, network, format, document, source)
+       select $1, $2, 'relleno-' || g, 'Relleno', 'instagram', 'post',
+              (select document from public.brand_design_templates where template_key = 'del-editor' and brand_id = $1), 'editor'
+       from generate_series(1, 49) g`,
+      [marcaA1, orgA],
+    );
+    await denied(db, editorA, deliver, [marcaA1, delEditor('la-51')], /50 plantillas/);
+    await as(db, editorA, deliver, [marcaA1, delEditor('relleno-7')]);
+    // Quien edita la marca puede borrar la suya (y cualquiera de la marca) con la función de siempre.
+    const [propia] = await as<{ id: string }>(
+      db,
+      editorA,
+      `select id from public.brand_design_templates where brand_id = $1 and template_key = 'del-editor'`,
+      [marcaA1],
+    );
+    await as(db, editorA, `select public.delete_design_template($1)`, [propia!.id]);
+    await db.query(`delete from public.brand_design_templates where source = 'editor'`);
+  });
+
   it('las funciones del servidor no se ejecutan desde la API', async () => {
     const calls: Array<[string, unknown[]]> = [
       [`select public.social_import_claim($1, $2)`, [runA1, ana.id]],

@@ -112,6 +112,7 @@ import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
 import { ApplyTemplateDialog } from './templates/ApplyTemplateDialog';
+import { SaveTemplateDialog } from './templates/SaveTemplateDialog';
 import { PublishNowDialog } from '@/features/social/PublishNowDialog';
 import { ScheduleDialog } from '@/features/social/ScheduleDialog';
 import { EXPORT_PARAM } from '@/features/social/links';
@@ -264,6 +265,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [photoEditing, setPhotoEditing] = useState(false);
   const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai'>('enhance');
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   /** En pantallas estrechas, los paneles son una hoja inferior que se abre con las pestañas. */
   const [sheetOpen, setSheetOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
@@ -851,6 +853,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       onSelect: () => setTemplateOpen(true),
       hint: 'Sustituir el diseño por una plantilla de la marca',
       testId: 'editor-from-template',
+    }),
+    ...when<MoreAction>(!readOnly, {
+      id: 'save-template',
+      label: 'Guardar como plantilla…',
+      icon: LayoutTemplate,
+      onSelect: () => setSaveTemplateOpen(true),
+      hint: 'Guardar este diseño para empezar otras piezas con él',
+      disabled: allLayers(state.document).length === 0,
+      testId: 'editor-save-template',
     }),
     null,
     ...backward.map(statusItem),
@@ -1504,11 +1515,30 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           open={templateOpen}
           onOpenChange={setTemplateOpen}
           target={{ network: item.network, format: item.format }}
+          currentRatio={canvas.aspectRatio}
+          canDelete={canEdit}
           hasDesign={allLayers(state.document).length > 0}
-          onApply={(document, template) => {
+          onApply={(document, template, changes) => {
             dispatch({ type: 'replace', document });
-            toast.success(`Plantilla «${template.name}» aplicada. Sustituye las fotos y ajusta el texto.`);
+            toast.success(
+              changes.length > 0
+                ? `Plantilla «${template.name}» adaptada y aplicada. Revisa la composición: ${changes.join(' ')}`
+                : `Plantilla «${template.name}» aplicada. Sustituye las fotos y ajusta el texto.`,
+              changes.length > 0 ? { duration: 12_000 } : undefined,
+            );
           }}
+        />
+      )}
+      {!readOnly && saveTemplateOpen && (
+        <SaveTemplateDialog
+          open
+          onOpenChange={setSaveTemplateOpen}
+          brandId={brand.id}
+          defaultName={item.title}
+          network={item.network}
+          format={item.format}
+          document={state.document}
+          onSaved={(name) => toast.success(`Plantilla «${name}» guardada. La verás en «Desde una plantilla».`)}
         />
       )}
       {!readOnly && (

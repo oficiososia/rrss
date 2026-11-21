@@ -1,7 +1,7 @@
-import { LayoutTemplate } from 'lucide-react';
-import { useMemo } from 'react';
+import { LayoutTemplate, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
+import { Badge, Button, EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { assetIdsOf } from '../editor/canvas/nodes';
 import { PageThumb } from '../editor/panels/PageThumb';
@@ -12,23 +12,25 @@ import { useImageLookup } from './useImageLookup';
 interface TemplatePickerProps {
   orgId: string;
   brandId: string;
-  /** Si se da, solo valen las plantillas que caben en esa red y formato (proporción y páginas). */
+  /**
+   * Si se da, es la red y el formato de la pieza: las plantillas que no encajan (otra proporción u otro
+   * número de páginas) se ofrecen igual, marcadas «Se adaptará», y se adaptan al usarlas.
+   */
   target?: { network: string; format: string };
   selectedId: string | null;
   onSelect: (template: BrandTemplate) => void;
+  /** Si se da, las plantillas guardadas desde el editor se pueden borrar (quien edita la marca). */
+  onDelete?: (template: BrandTemplate) => void;
 }
 
 /**
  * Plantillas de la marca con su vista previa, nombre y análisis resumido. Sin
  * plantillas, explica cómo se consiguen (importar publicaciones y la agencia).
  */
-export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }: TemplatePickerProps) {
+export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, onDelete }: TemplatePickerProps) {
   const templates = useBrandTemplates(brandId);
-  const usable = useMemo(
-    () =>
-      (templates.data ?? []).filter((t) => t.document && (!target || templateFits(t, target.network, target.format))),
-    [templates.data, target],
-  );
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const usable = useMemo(() => (templates.data ?? []).filter((t) => t.document), [templates.data]);
   const assetIds = useMemo(() => usable.flatMap((t) => (t.document ? assetIdsOf(t.document) : [])), [usable]);
   const images = useImageLookup(brandId, assetIds);
 
@@ -54,11 +56,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }:
   if (usable.length === 0) {
     return (
       <div data-testid="template-none-fit">
-        <Notice>
-          {target
-            ? `Ninguna plantilla de la marca encaja con ${targetLabel(target.network, target.format)} (proporción o número de páginas distintos). Cambia la red o el formato de la pieza, o diséñala desde cero.`
-            : 'Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.'}
-        </Notice>
+        <Notice>Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.</Notice>
       </div>
     );
   }
@@ -70,7 +68,8 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }:
         const first = document.pages[0]!;
         const selected = template.id === selectedId;
         const photos = photoCount(document);
-        const recurrence = template.analysis?.recurrence;
+        const recurrence = template.source === 'editor' ? undefined : template.analysis?.recurrence;
+        const adapts = Boolean(target) && !templateFits(template, target!.network, target!.format);
         return (
           <li key={template.id}>
             <button
@@ -95,6 +94,16 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }:
                       Manual
                     </Badge>
                   )}
+                  {template.source === 'editor' && (
+                    <Badge tone="neutral" className="shrink-0">
+                      Guardada aquí
+                    </Badge>
+                  )}
+                  {adapts && (
+                    <span className="shrink-0" data-testid="template-adapts">
+                      <Badge tone="warning">Se adaptará</Badge>
+                    </span>
+                  )}
                 </span>
                 <span className="block text-xs text-muted">
                   {targetLabel(template.network, template.format)}
@@ -111,6 +120,41 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect }:
                 </span>
               </span>
             </button>
+            {onDelete && template.source === 'editor' && (
+              <div className="mt-1 flex items-center justify-end gap-2 text-xs">
+                {deleting === template.id ? (
+                  <>
+                    <span>¿Borrar esta plantilla?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      className="h-7 px-2"
+                      onClick={() => {
+                        setDeleting(null);
+                        onDelete(template);
+                      }}
+                      data-testid="template-delete-confirm"
+                    >
+                      Sí, borrar
+                    </Button>
+                    <Button size="sm" variant="secondary" className="h-7 px-2" onClick={() => setDeleting(null)}>
+                      No
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-danger"
+                    onClick={() => setDeleting(template.id)}
+                    data-testid="template-delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                    Borrar
+                  </Button>
+                )}
+              </div>
+            )}
           </li>
         );
       })}
