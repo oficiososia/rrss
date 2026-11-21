@@ -277,6 +277,44 @@ imagen (FLUX.2 klein 9B ≈ 0,015 USD el primer megapíxel) y texto, pero no qui
 fondo, ampliar ni editar fotos de platos (entradas menores de 512×512, sin máscara,
 inpainting obsoleto desde el 20/11/2026) ni garantiza la UE. No sustituye al Colab.
 
+### Base robusta: despliegues, carga inicial y móvil (rama `f11/base-robusta`, 21/11/2026)
+
+Respuesta a los problemas 1, 2 y 4 y al cambio transversal 5 de la auditoría de diseño
+(`energym-demo-datos/capturas/auditoria/INFORME.md`). Implementado y probado en local
+(componentes); sin desplegar.
+
+- **Pantalla en negro tras un despliegue.** Todas las pantallas se cargan con
+  `lazyRoute` (`src/lib/lazyRoute.ts`): si el trozo de código ya no existe, recarga la
+  página una vez (marca con la hora en `sessionStorage`, como mucho una vez cada 30 s) y,
+  si vuelve a fallar, el límite de errores enseña «Hay una versión nueva de la
+  aplicación · Recargar». También se atiende `vite:preloadError`. Límite de errores
+  (`src/layout/ErrorBoundary.tsx`) en toda la app y otro alrededor de cada sección: el
+  menú se queda y sale «Esta sección no se ha podido mostrar · Reintentar».
+- **Carga inicial.** La pantalla de la dirección de entrada se descarga a la vez que la
+  sesión (antes esperaba a organizaciones y marcas); las 4 secciones principales se
+  precargan cuando el navegador está libre. «/» con una visita anterior va directo a la
+  última marca (organizaciones y marcas en paralelo: una ida y vuelta menos). Las
+  integraciones se piden a la vez que la organización. Siluetas grises del armazón y de
+  la sección en lugar de «Cargando…» a pantalla completa. Primer paquete: 236 → 203 kB
+  comprimido (lucide-react y zod ya no van en los trozos fijos; todas las pantallas,
+  también acceso y Configuración, se cargan al visitarlas).
+- **Móvil.** Barra inferior con Inicio, Contenidos, Calendario, Biblioteca y «Más» (hoja
+  con el resto, con la insignia de Encargos); etiquetas enteras; la pestaña activa lleva
+  color y una raya, y «Más» queda marcada si la sección está dentro.
+- **Sección activa.** En el lateral, la activa (solo por ruta, `aria-current`) lleva
+  fondo, negrita y una raya, para no confundirla con el fondo de «pasar por encima».
+  Configuración mantiene la última marca de la organización en el menú y en el selector.
+- **Medidas.** Publicada (antes), entrando en frío por «/» con renovación del token: JS
+  listo a 0,80 s, primera petición a 1,07 s, trozo de la pantalla pedido a 1,34 s (tras
+  organizaciones y marcas) y contenido completo a 2,19 s; en caliente, 0,15 s y 0,54 s.
+  En local (compilado contra staging, «/», antes → después): trozo de la pantalla 567 →
+  141–401 ms, marcas 380 → 135–280 ms, peticiones de la sección 590 → 351–465 ms; total
+  450–750 → 520–660 ms (con la máquina cargada el total no es concluyente). Olas de
+  peticiones en cascada: 5 → 4. En el navegador integrado se ven parones de 4–8 s en los
+  que la pestaña no pinta nada aunque el JS ya ha llegado (primer pintado a 8,5 s con el
+  JS descargado a los 0,04 s): son de la pestaña, no de la app; el cliente de Supabase
+  2.119 ya no usa el cerrojo entre pestañas que señalaba la auditoría.
+
 ## Sin probar contra el servicio real
 
 | Servicio | Estado | Detalle |

@@ -21,9 +21,11 @@ export default defineConfig({
             '@radix-ui/react-dropdown-menu',
             '@radix-ui/react-tabs',
             'sonner',
-            'lucide-react',
           ],
-          data: ['@tanstack/react-query', 'zod'],
+          // Sin lucide-react ni zod: metidos aquí arrastraban todos los iconos
+          // (unos 4.700) y el validador al primer paquete. Fuera, cada pantalla
+          // carga solo los iconos que usa y zod llega con las pantallas que lo piden.
+          data: ['@tanstack/react-query'],
         },
       },
     },
