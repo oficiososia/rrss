@@ -10,7 +10,7 @@ import type { Rect as Bounds } from '../../safeZones';
 import { layersInRect, normalizeRect, snapBox, snapTargets } from '../arrange';
 import { layerToNodeBox, nodeToLayerBox, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
-import { loadCorsImage } from '@/lib/corsImage';
+import { ImageStore } from './imageStore';
 import { editKey, editNeedsPixels } from '../imageEffects/imageEdit';
 import { BitmapCache, EDITOR_BITMAP_SIDE, prepareBitmap } from '../imageEffects/prepare';
 import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
@@ -85,10 +85,7 @@ export class Scene {
   private marqueeStart: { x: number; y: number; additive: boolean } | null = null;
   private nodes = new Map<string, AnyNode>();
   private specs = new Map<string, NodeSpec>();
-  private images = new Map<string, HTMLImageElement | 'error'>();
-  /** Direcciones cargadas con permiso de lectura de píxeles (hace falta para la luz y el color). */
-  private readable = new Set<string>();
-  private loadingReadable = new Set<string>();
+  private images = new ImageStore(() => this.content.batchDraw());
   private bitmaps = new BitmapCache();
   private input: SceneInput | null = null;
   private pendingEmit = false;
@@ -196,6 +193,7 @@ export class Scene {
     this.nodes.clear();
     this.specs.clear();
     this.bitmaps.clear();
+    this.images.destroy();
   }
 
   // ── Selección y zona segura ────────────────────────────────────────────
@@ -306,7 +304,6 @@ export class Scene {
 
   private apply(node: AnyNode, spec: NodeSpec): void {
     applySpecAttrs(node, spec);
-    if (spec.kind === 'image' && spec.url) this.loadImage(spec.url, editNeedsPixels(spec.edit));
   }
 
   private drawShape(context: Context, shape: Shape): void {
@@ -320,7 +317,7 @@ export class Scene {
     if (spec.kind !== 'image' || !spec.url) return undefined;
     const base = this.images.get(spec.url);
     if (!(base instanceof HTMLImageElement) || !spec.edit) return base;
-    if (editNeedsPixels(spec.edit) && !this.readable.has(spec.url)) return base;
+    if (editNeedsPixels(spec.edit) && !this.images.isReadable(spec.url)) return base;
     const key = `${spec.url}|${editKey(spec.edit)}`;
     let bitmap = this.bitmaps.get(key);
     if (!bitmap) {
@@ -335,42 +332,6 @@ export class Scene {
     return bitmap;
   }
 
-  private loadImage(url: string, needsPixels = false): void {
-    const known = this.images.get(url);
-    // Ya cargada: solo se vuelve a pedir si ahora hace falta leer sus píxeles y no se podía.
-    if (known && !(needsPixels && !this.readable.has(url) && known instanceof HTMLImageElement)) return;
-    if (needsPixels) {
-      if (this.loadingReadable.has(url)) return;
-      this.loadingReadable.add(url);
-      // Sin pasar por la caché del navegador, que puede tener la copia sin permisos de origen (lib/corsImage).
-      void loadCorsImage(url).then(
-        (image) => {
-          this.readable.add(url);
-          this.images.set(url, image);
-          this.content.batchDraw();
-        },
-        () => {
-          // No se reintenta: se queda la foto sin editar (la exportación avisará).
-          if (!known) this.loadPlain(url);
-        },
-      );
-      return;
-    }
-    this.loadPlain(url);
-  }
-
-  private loadPlain(url: string): void {
-    const image = new window.Image();
-    image.crossOrigin = 'anonymous';
-    this.images.set(url, image);
-    image.onload = () => this.content.batchDraw();
-    image.onerror = () => {
-      this.images.set(url, 'error');
-      this.content.batchDraw();
-    };
-    image.src = url;
-  }
-
   // ── Interacción ────────────────────────────────────────────────────────
 
   /** Manda las cajas de varios nodos como un solo cambio; si llegan varios avisos seguidos, solo el primero. */
@@ -380,7 +341,22 @@ export class Scene {
     queueMicrotask(() => {
       this.pendingEmit = false;
     });
-    this.callbacks.onChange(nodes.map((node) => ({ id: node.id(), patch: boxOf(node) })));
+    // Al soltar, la posición y el tamaño quedan en números enteros (sin 12,3456 en el panel).
+    this.callbacks.onChange(
+      nodes.map((node) => {
+        const box = boxOf(node);
+        return {
+          id: node.id(),
+          patch: {
+            ...box,
+            x: Math.round(box.x),
+            y: Math.round(box.y),
+            width: Math.max(1, Math.round(box.width)),
+            height: Math.max(1, Math.round(box.height)),
+          },
+        };
+      }),
+    );
   }
 
   private pointer(): { x: number; y: number } | null {

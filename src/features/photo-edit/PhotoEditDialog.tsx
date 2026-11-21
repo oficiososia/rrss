@@ -86,6 +86,8 @@ interface PhotoEditDialogProps {
    * retocar el plato.
    */
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
+  /** Pestaña con la que se abre (por defecto, «Mejorar»). */
+  initialTab?: Tab;
 }
 
 const PREVIEW_SIDE = 480;
@@ -128,6 +130,7 @@ export function PhotoEditDialog({
   onResult,
   resultLabel,
   getSubjectMask,
+  initialTab,
 }: PhotoEditDialogProps) {
   // Se puede pasar a editar un resultado (p. ej., la foto sin fondo para ponerle otro).
   const [asset, setAsset] = useState(initial);
@@ -142,7 +145,7 @@ export function PhotoEditDialog({
   } | null>(null);
   const loaded = load && load.url === url ? (load.result ?? null) : null;
   const loadError = load && load.url === url ? (load.error ?? null) : null;
-  const [tab, setTab] = useState<Tab>('enhance');
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'enhance');
   const [results, setResults] = useState<MediaAssetRow[]>([]);
   const save = useSaveEdit(asset.brand_id);
   const aiOptions = useAiEditOptions(asset.brand_id, open && canEditWithAi(asset));

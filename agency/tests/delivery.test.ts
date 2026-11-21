@@ -2,6 +2,7 @@
 // la aplicación, documento final y verificador de marca. Sin red.
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+import { DOCUMENT_SCHEMA_VERSION } from '../../src/features/content/document/index.ts';
 import {
   buildDocument,
   canvasRatioFor,
@@ -30,7 +31,7 @@ describe('parseDelivery', () => {
     // El documento lleva el texto de `copy`, normalizado como en el editor.
     expect(delivery.document?.copy.caption).toMatch(/guiso de la casa/);
     // Escrito con la versión 1 del documento (sin páginas): queda en una sola página.
-    expect(delivery.document?.schemaVersion).toBe(4);
+    expect(delivery.document?.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
     expect(delivery.document?.pages).toHaveLength(1);
     expect(delivery.document?.pages[0]!.layers.map((l) => l.id)).toEqual(['foto', 'franja', 'titular']);
   });

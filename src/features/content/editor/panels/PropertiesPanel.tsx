@@ -15,6 +15,9 @@ import {
 import type { EditorAction, LayerPatch } from '../history';
 import { FALLBACK_FONTS, LAYER_TYPE_LABEL, layerLabel } from '../layers';
 import { CheckInput, ColorInput, Labeled, NumberInput, SelectInput } from './controls';
+import { PhotoPanel, type PhotoToolsContext } from './PhotoPanel';
+import { ShadowFields } from './ShadowFields';
+import { TextEffectsFields } from './TextEffectsFields';
 
 export interface BrandStyle {
   palette: { hex: string; name: string }[];
@@ -32,6 +35,8 @@ interface PropertiesPanelProps {
   textRef: Ref<HTMLTextAreaElement>;
   /** Abre «Editar foto» con la imagen de la capa (solo si es de la biblioteca y se puede editar). */
   onEditPhoto?: () => void;
+  /** Lo que necesitan las ediciones de foto que crean una foto nueva (quitar el fondo…). */
+  photoTools?: PhotoToolsContext;
 }
 
 const ANCHOR_X_LABEL: Record<(typeof ANCHORS_X)[number], string> = {
@@ -58,6 +63,7 @@ export function PropertiesPanel({
   allowedRatios,
   textRef,
   onEditPhoto,
+  photoTools,
 }: PropertiesPanelProps) {
   const checkpoint = () => dispatch({ type: 'checkpoint' });
 
@@ -127,6 +133,15 @@ export function PropertiesPanel({
           checkpoint={checkpoint}
         />
       )}
+      {layer.type === 'text' && (
+        <TextEffectsFields
+          layer={layer}
+          readOnly={readOnly}
+          palette={brandStyle.palette}
+          update={update}
+          checkpoint={checkpoint}
+        />
+      )}
       {layer.type === 'shape' && (
         <ShapeFields
           layer={layer}
@@ -189,6 +204,17 @@ export function PropertiesPanel({
             </Button>
           )}
         </div>
+      )}
+
+      {layer.type === 'image' && (
+        <PhotoPanel
+          layer={layer}
+          readOnly={readOnly}
+          palette={brandStyle.palette}
+          update={update}
+          checkpoint={checkpoint}
+          tools={photoTools ?? { row: null, url: undefined, onUseResult: () => undefined }}
+        />
       )}
 
       <section className="space-y-3">
@@ -485,6 +511,13 @@ function ShapeFields({
           onCommit={checkpoint}
         />
       )}
+      <ShadowFields
+        shadow={layer.shadow}
+        palette={brandStyle.palette}
+        readOnly={readOnly}
+        onChange={(shadow, field) => update({ shadow }, field)}
+        onCommit={checkpoint}
+      />
     </section>
   );
 }

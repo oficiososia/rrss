@@ -175,6 +175,51 @@ export function ColorInput({
   );
 }
 
+/** Deslizador con su valor a la vista. Avisa al mover y corta el paso de deshacer al soltar. */
+export function RangeInput({
+  label,
+  value,
+  onChange,
+  onCommit,
+  min,
+  max,
+  step = 1,
+  disabled,
+  testId,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  onCommit?: () => void;
+  min: number;
+  max: number;
+  step?: number;
+  disabled?: boolean;
+  testId?: string;
+}) {
+  return (
+    <Labeled label={`${label}: ${Math.round(value * 100) / 100}`}>
+      {(id) => (
+        <input
+          id={id}
+          type="range"
+          className="w-full accent-primary disabled:opacity-60"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          disabled={disabled}
+          data-testid={testId}
+          onChange={(e) => onChange(Number(e.target.value))}
+          onPointerUp={onCommit}
+          onKeyUp={onCommit}
+          onBlur={onCommit}
+        />
+      )}
+    </Labeled>
+  );
+}
+
 export function CheckInput({
   label,
   checked,

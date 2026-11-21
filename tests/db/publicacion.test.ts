@@ -7,7 +7,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { validateDocument } from '../../src/features/content/document/index.ts';
+import { validateDocumentFromAnyVersion } from '../../src/features/content/document/index.ts';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import type { ClaimedSocialJob } from '../../supabase/functions/_shared/social/contract.ts';
 import { encryptToken, parseKeyRing, tokenBinding } from '../../supabase/functions/_shared/social/crypto.ts';
@@ -907,8 +907,9 @@ describe('carrusel: una versión con varias páginas', () => {
        where content_id = $1 order by version desc limit 1`,
       [item!.id],
     );
+    // El SQL del integrador escribe documentos v4: se leen migrándolos, como hace la aplicación.
     expect(saved).toMatchObject({ version: 5, schema_version: 4, created_by: editor.id });
-    const checked = validateDocument(saved!.data);
+    const checked = validateDocumentFromAnyVersion(saved!.data);
     if (!checked.ok) throw new Error(JSON.stringify(checked.issues));
     expect(checked.document.pages.map((p) => p.layers.map((l) => l.id))).toEqual([
       ['s1-fondo', 's1-titulo'],
