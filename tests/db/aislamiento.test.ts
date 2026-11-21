@@ -2588,6 +2588,18 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
       copy: v3.copy,
     };
     await denied(db, ana, deliver, [marcaA1, JSON.stringify(paged)], /recurso/);
+    // Con recursos de la marca, un documento v4 (carrusel) sí se guarda.
+    const ownV3 = doc(assetA1);
+    paged[0]!.document = {
+      schemaVersion: 4,
+      canvas: ownV3.canvas,
+      pages: [
+        { id: 'p1', layers: [] },
+        { id: 'p2', layers: ownV3.layers },
+      ],
+      copy: ownV3.copy,
+    };
+    await as(db, editorA, deliver, [marcaA1, JSON.stringify(paged)]);
     // Entregarla otra vez la actualiza, no la duplica.
     await as(db, editorA, deliver, [marcaA1, template(importadaA1, assetA1)]);
     expect(
