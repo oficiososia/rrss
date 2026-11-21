@@ -148,3 +148,47 @@ Dónde está cada cosa:
 2. Función nueva `ai-transcribe` y redesplegar `platform-integrations` (disponibilidad `reelSubtitles` y ajuste `AI_TRANSCRIPTION_MODEL`).
 3. Vercel: `VITE_REEL_SUBTITLES_ENABLED=true` cuando haya clave de OpenAI (con el endpoint de la UE).
 4. El trabajador, cuando se aloje, con esta versión (plan v2). Sin trabajador, el editor deja montar, previsualizar, guardar y aprobar, pero no «Montar el vídeo».
+
+## 7. Editor más intuitivo (rama `f14/reels-intuitivo`, 21/11/2026)
+
+Auditoría con el navegador en staging (escritorio y 375 px) y mejoras. **No cambia el plan v2 ni el
+trabajador ni la base de datos**: todo es de la aplicación (y un arreglo en `media-storage`).
+
+### Fricciones encontradas
+
+| Fricción | Qué se hizo |
+| --- | --- |
+| Un reel nuevo era una pantalla negra con tres botones sueltos | Pantalla de salida «Empieza tu reel en tres pasos» (`Starter.tsx`): estilo, texto de apertura opcional y fotos, y el reel queda armado de un golpe (`startReel` en `ops.ts`) |
+| El selector «Foto o clip» enseñaba 280 claquetas y añadía de una en una | `MediaPicker.tsx`: varias a la vez con número de orden, miniaturas de fotos y primer fotograma de los clips, filtro Todo/Fotos/Vídeos, buscador y «Ver más» por tandas de 48 |
+| Las fotos salían como claquetas | Causa real: `media-storage/sign` devolvía 500 con ≥ ~100 rutas (la URL `in.(…)` de PostgREST pasaba el tope; reproducido en staging: 80 rutas 200, 150 rutas 500). Ahora consulta de 40 en 40 y registra el fallo. Hay que **redesplegar `media-storage`** |
+| 4-5 respuestas 500 de `media-storage/sign` | La misma causa |
+| En 375 px la página se salía de lado (scroll horizontal de 540 px) y la vista previa quedaba cortada | La rejilla no tenía `minmax(0,1fr)`; ahora una columna en móvil con este orden: vista previa, añadir, línea de tiempo, propiedades; en escritorio, como antes |
+| Cabecera de tres filas de botones y título cortado | `PageHeader` común con el del editor de imagen: una acción principal, «Guardar versión» y «⋯» (Historial, cambiar nombre, pasos de estado, Publicar ahora, **Archivar**/Recuperar) |
+| Sin «Archivar» ni cambiar el nombre | En «⋯» (con confirmación) |
+| Montar exigía guardar antes (botón apagado sin explicación) y el estado del montaje estaba al final de la página | Panel «Vídeo final» bajo la vista previa: «Guardar y montar el vídeo» en un clic, estado (montando / listo con «Ver el vídeo» / fallo con el motivo) y «Montar otra vez» |
+| Cambiar de plantilla era un desplegable sin pistas | Tarjetas con una muestra en movimiento (transición, zoom y posición del texto de cada estilo); «Estilo» en la barra, con aviso de qué se vuelve a poner |
+| Duración y límites poco visibles | Barra de duración y texto de límites bajo la vista previa (máximo del reel y recomendación del estilo) |
+| Instagram tapa partes del vídeo | Botón «Zonas que tapa Instagram» sobre la vista previa (arriba 12 %, abajo 22 %, derecha 14 %: aproximadas) |
+| Asas de recorte de 8 px, imposibles con el dedo | 20 px en pantallas táctiles y sin que el gesto desplace la página |
+| Mover/duplicar/quitar quedaba al final del panel | Arriba del panel del clip |
+| Deshacer y rehacer eran dos iconos sin nombre | Botones con texto bajo la barra de añadir |
+
+### Cómo probarlo
+
+1. `media-storage`: en staging, tras redesplegar, abrir Biblioteca → Reels → Crear con el editor → «Elegir fotos y clips»: sin 500 en la red y con miniaturas.
+2. Reel en un paso: Estilo (muestras en movimiento), texto de apertura, elegir 3 fotos en un orden → «Crear el reel con 3»: clips en ese orden y un texto al principio.
+3. «Guardar y montar el vídeo» con cambios sin guardar: guarda la versión y encarga el montaje; el panel pasa por «Montando…» y acaba en «Listo · Ver el vídeo».
+4. A 375 px: sin scroll lateral, vista previa entera, cabecera de una fila, asas de recorte grandes.
+5. «⋯» → Archivar (pide confirmación) y Recuperar; «Cambiar el nombre».
+
+### Comprobaciones de la auditoría que no cambian
+
+- **Tipografía de marca**: si la marca no tiene .ttf/.otf el vídeo usa DejaVu Sans; ya se avisa en «Se verá distinto en el vídeo».
+- **Subtítulos**: los automáticos solo salen con el interruptor y OpenAI en el servidor; sin ellos, el panel del clip dice que no están disponibles y deja escribirlos a mano. No se simula nada.
+
+### Valorado y no hecho (pendiente)
+
+- **Cortes al compás de la música** y **portada del reel**: necesitan detectar el ritmo (decodificar el audio) y un campo nuevo en el plan v2 con cambio a la vez en el trabajador, la base de datos y la publicación; es una fase aparte.
+- **Textos con animaciones prediseñadas**: requieren que el trabajador anime `drawtext`; también cambia el plan.
+- **Arrastrar para reordenar con el dedo** sigue dependiendo de los botones «Antes/Después» (un gesto sobre el clip choca con desplazar la línea de tiempo); un agarre largo sería la mejora.
+- Probado solo con jsdom y con FFmpeg del trabajador sin cambios; **no se ha visto la pantalla nueva en un navegador** (la rama no trae `.env` y no se despliega): hay que mirarla en staging, sobre todo el móvil y las miniaturas de clips (`<video>` con `#t=0.1`, que depende del navegador y del CORS de R2).
