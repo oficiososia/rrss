@@ -14,6 +14,7 @@
 import { z } from 'zod';
 import type { Json } from '@/lib/database.types';
 import type { ReelTemplateSummary } from '../templates';
+import { TEXT_IN_ANIMATIONS, TEXT_OUT_ANIMATIONS, type TextAnimation } from './animation';
 
 export const PROJECT_KIND = 'reel';
 /** Versión del plan (y `schema_version` de la versión de la pieza). */
@@ -33,7 +34,7 @@ export const AVERAGE_GLYPH_WIDTH = 0.56;
 
 export const TRANSITION_TYPES = ['cut', 'fade', 'fadeblack', 'dissolve', 'slideleft', 'slideup'] as const;
 export type TransitionType = (typeof TRANSITION_TYPES)[number];
-export const PHOTO_MOTIONS = ['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left'] as const;
+export const PHOTO_MOTIONS = ['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'pan-up', 'pan-down'] as const;
 export type PhotoMotion = (typeof PHOTO_MOTIONS)[number];
 export const TEXT_POSITIONS = ['top', 'center', 'bottom'] as const;
 export type TextPosition = (typeof TEXT_POSITIONS)[number];
@@ -78,6 +79,21 @@ export const cueSchema = z
   .refine((c) => c.end > c.start, 'El subtítulo debe terminar después de empezar');
 export type Cue = z.infer<typeof cueSchema>;
 
+export const textAnimationSchema = z
+  .object({
+    in: z.enum(TEXT_IN_ANIMATIONS),
+    out: z.enum(TEXT_OUT_ANIMATIONS),
+    seconds: z.number().min(0.1).max(1.5).optional(),
+  })
+  .strict();
+
+/** Portada: un fotograma del reel (segundo del reel) o una foto de la biblioteca. */
+export const coverSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('frame'), at: z.number().min(0).max(REEL_MAX_SECONDS) }).strict(),
+  z.object({ type: z.literal('photo'), path: storagePath }).strict(),
+]);
+export type Cover = z.infer<typeof coverSchema>;
+
 const photoClipSchema = z
   .object({
     id: elementId,
@@ -88,6 +104,7 @@ const photoClipSchema = z
     transition: transitionSchema.optional(),
     seconds: z.number().min(PHOTO_SECONDS.min).max(PHOTO_SECONDS.max),
     motion: z.enum(PHOTO_MOTIONS).optional(),
+    motionAmount: z.number().min(0).max(0.3).optional(),
   })
   .strict();
 const videoClipSchema = z
@@ -117,6 +134,7 @@ export const textSchema = z
     end: z.number().positive(),
     position: z.enum(TEXT_POSITIONS),
     style: textStyleSchema,
+    animation: textAnimationSchema.optional(),
   })
   .strict()
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
@@ -149,6 +167,7 @@ export const planSchema = z
     texts: z.array(textSchema).max(REEL_MAX_TEXTS).default([]),
     subtitles: subtitlesSchema.optional(),
     music: musicSchema.optional(),
+    cover: coverSchema.optional(),
     fontPath: fontPath.optional(),
   })
   .strict()
@@ -166,6 +185,7 @@ export const planSchema = z
     });
   });
 export type ReelPlan = z.infer<typeof planSchema>;
+export type { TextAnimation };
 
 /** Plan en edición: puede no tener todavía ningún elemento. */
 export type DraftPlan = Omit<ReelPlan, 'clips'> & { clips: Clip[] };
@@ -547,6 +567,14 @@ export function projectProblems(
       if (!cue.text.trim()) problems.push(`El subtítulo ${cueIndex + 1} del clip ${index + 1} está vacío.`);
     });
   });
+  if (plan.cover?.type === 'frame' && template && plan.clips.length > 0) {
+    const { total } = planTimeline(plan.clips, template, (c) => context.fileSeconds?.(c.path) ?? null);
+    if (plan.cover.at > total + 1e-6) problems.push('La portada está después del final del vídeo: elige otro fotograma.');
+  }
+  const coverPhoto = plan.cover?.type === 'photo' ? plan.cover.path : null;
+  if (coverPhoto && !plan.clips.some((c) => c.type === 'photo' && c.path === coverPhoto)) {
+    problems.push('La foto de la portada ya no está en el reel: elige otra.');
+  }
   if (plan.music && plan.music.license?.confirmed !== true) {
     problems.push('Confirma que la marca tiene licencia para usar la música elegida.');
   }

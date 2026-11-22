@@ -38,6 +38,8 @@ export interface TimelineProps {
   onTrimText: (id: string, edge: 'start' | 'end', value: number, dragKey: string) => void;
   /** Fin de un arrastre: el siguiente cambio ya es otro paso del historial. */
   onDragEnd: () => void;
+  /** Golpes de la música en segundos del reel (tras «Ajustar los cortes a la música»). */
+  beats?: number[];
 }
 
 type Drag =
@@ -48,6 +50,14 @@ type Drag =
   | { kind: 'seek' };
 
 let dragSeed = 0;
+
+/** Lo que hay que mantener pulsado un clip con el dedo antes de poder arrastrarlo (así el dedo sigue desplazando la línea). */
+export const LONG_PRESS_MS = 350;
+/** Cuánto se puede mover el dedo durante la pulsación larga sin que cuente como desplazamiento. */
+const LONG_PRESS_SLOP = 8;
+/** Pasos del teclado en las asas de recorte: flechas y con Mayús. */
+export const KEY_STEP = 0.1;
+export const KEY_STEP_BIG = 1;
 
 /** Posición de destino de un elemento arrastrado al segundo `t`: cuántos centros de los demás quedan a su izquierda. */
 export function clipTarget(from: number, t: number, timeline: Pick<PlanTimeline, 'starts' | 'durations'>): number {
@@ -63,6 +73,8 @@ export function Timeline(props: TimelineProps) {
   const { plan, timeline, pxPerSecond: pps, playhead, selection, readOnly } = props;
   const trackRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  /** Pulsación larga en curso (dedo): se convierte en arrastre al cumplirse el tiempo. */
+  const pending = useRef<{ timer: number; x: number; y: number; id: number } | null>(null);
   const latest = useRef(props);
   useLayoutEffect(() => {
     latest.current = props;
@@ -110,6 +122,74 @@ export function Timeline(props: TimelineProps) {
       window.removeEventListener('pointercancel', up);
     };
   }, [drag]);
+
+  const cancelPending = () => {
+    if (pending.current) window.clearTimeout(pending.current.timer);
+    pending.current = null;
+  };
+
+  // Pulsación larga: con el dedo, el clip solo se arrastra tras mantenerlo pulsado; antes, el gesto desplaza la línea.
+  const pressClip = (event: ReactPointerEvent, index: number) => {
+    if (event.pointerType !== 'touch') {
+      start(event, { kind: 'clip', index, x: event.clientX, dx: 0, left: trackLeft() });
+      return;
+    }
+    cancelPending();
+    const x = event.clientX;
+    const left = trackLeft();
+    const id = event.pointerId;
+    pending.current = {
+      x,
+      y: event.clientY,
+      id,
+      timer: window.setTimeout(() => {
+        pending.current = null;
+        navigator.vibrate?.(15);
+        setDrag({ kind: 'clip', index, x, dx: 0, left });
+      }, LONG_PRESS_MS),
+    };
+  };
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const p = pending.current;
+      if (p && (Math.abs(event.clientX - p.x) > LONG_PRESS_SLOP || Math.abs(event.clientY - p.y) > LONG_PRESS_SLOP)) {
+        cancelPending();
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', cancelPending);
+    window.addEventListener('pointercancel', cancelPending);
+    return () => {
+      cancelPending();
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', cancelPending);
+      window.removeEventListener('pointercancel', cancelPending);
+    };
+  }, []);
+
+  // Durante el arrastre con el dedo, la página no se desplaza.
+  useEffect(() => {
+    if (!drag) return;
+    const block = (event: TouchEvent) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    document.addEventListener('touchmove', block, { passive: false });
+    return () => document.removeEventListener('touchmove', block);
+  }, [drag]);
+
+  /** Recorte con el teclado desde un asa: flechas ±0,1 s (Mayús ±1 s). */
+  const trimKey = (
+    event: KeyboardEvent,
+    current: number,
+    apply: (value: number, key: string) => void,
+    id: string,
+  ) => {
+    if (readOnly || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    event.preventDefault();
+    const step = event.shiftKey ? KEY_STEP_BIG : KEY_STEP;
+    apply(Number((current + (event.key === 'ArrowRight' ? step : -step)).toFixed(2)), `kbd:${id}`);
+  };
 
   const start = (event: ReactPointerEvent, next: Drag) => {
     if (event.button !== 0 && event.pointerType === 'mouse') return;
@@ -182,11 +262,13 @@ export function Timeline(props: TimelineProps) {
               >
                 <button
                   type="button"
-                  className="flex h-full w-full cursor-grab items-center gap-1 px-2 text-left active:cursor-grabbing"
+                  className="flex h-full w-full cursor-grab select-none items-center gap-1 px-2 text-left [-webkit-touch-callout:none] active:cursor-grabbing"
+                  aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
                   onPointerDown={(e) => {
                     props.onSelect({ kind: 'clip', id: clip.id });
-                    if (!readOnly) start(e, { kind: 'clip', index, x: e.clientX, dx: 0, left: trackLeft() });
+                    if (!readOnly) pressClip(e, index);
                   }}
+                  onContextMenu={(e) => e.preventDefault()}
                   onClick={() => props.onSelect({ kind: 'clip', id: clip.id })}
                   onKeyDown={(e) => onClipKey(e, index)}
                   aria-label={`${index + 1}. ${clip.type === 'video' ? 'Clip' : 'Foto'} ${props.labelOf(clip.path)}, ${fmt(
@@ -208,6 +290,11 @@ export function Timeline(props: TimelineProps) {
                   <Handle
                     side="start"
                     label={`Recortar el principio del clip ${index + 1}`}
+                    value={clip.in}
+                    onKeyDown={(e) =>
+                      trimKey(e, clip.in, (v, k) => props.onTrimClip(clip.id, 'start', v, k), `${clip.id}:start`)
+                    }
+                    onKeyUp={() => props.onDragEnd()}
                     onPointerDown={(e) =>
                       start(e, {
                         kind: 'trim-clip',
@@ -228,6 +315,16 @@ export function Timeline(props: TimelineProps) {
                         ? `Recortar el final del clip ${index + 1}`
                         : `Duración de la foto ${index + 1}`
                     }
+                    value={clip.type === 'video' ? clip.out : clip.seconds}
+                    onKeyDown={(e) =>
+                      trimKey(
+                        e,
+                        clip.type === 'video' ? Math.min(clip.out, fileSeconds ?? clip.out) : clip.seconds,
+                        (v, k) => props.onTrimClip(clip.id, 'end', v, k),
+                        `${clip.id}:end`,
+                      )
+                    }
+                    onKeyUp={() => props.onDragEnd()}
                     onPointerDown={(e) =>
                       start(e, {
                         kind: 'trim-clip',
@@ -307,6 +404,11 @@ export function Timeline(props: TimelineProps) {
                     <Handle
                       side="start"
                       label={`Cuándo entra el texto ${index + 1}`}
+                      value={text.start}
+                      onKeyDown={(e) =>
+                        trimKey(e, text.start, (v, k) => props.onTrimText(text.id, 'start', v, k), `${text.id}:start`)
+                      }
+                      onKeyUp={() => props.onDragEnd()}
                       onPointerDown={(e) =>
                         start(e, {
                           kind: 'trim-text',
@@ -321,6 +423,11 @@ export function Timeline(props: TimelineProps) {
                     <Handle
                       side="end"
                       label={`Cuándo sale el texto ${index + 1}`}
+                      value={text.end}
+                      onKeyDown={(e) =>
+                        trimKey(e, text.end, (v, k) => props.onTrimText(text.id, 'end', v, k), `${text.id}:end`)
+                      }
+                      onKeyUp={() => props.onDragEnd()}
                       onPointerDown={(e) =>
                         start(e, {
                           kind: 'trim-text',
@@ -358,6 +465,17 @@ export function Timeline(props: TimelineProps) {
         )}
 
         <Lane label="Música">
+          {music &&
+            (props.beats ?? [])
+              .filter((b) => b <= timeline.total)
+              .map((b) => (
+                <span
+                  key={b}
+                  className="pointer-events-none absolute bottom-0 z-10 h-2 w-px bg-success"
+                  style={{ left: b * pps }}
+                  data-testid="reel-beat"
+                />
+              ))}
           {music && (
             <button
               type="button"
@@ -411,24 +529,38 @@ function Lane({ label, muted = false, children }: { label: string; muted?: boole
 function Handle({
   side,
   label,
+  value,
   onPointerDown,
+  onKeyDown,
+  onKeyUp,
 }: {
   side: 'start' | 'end';
   label: string;
+  /** Valor actual en segundos, para los lectores de pantalla. */
+  value: number;
   onPointerDown: (event: ReactPointerEvent) => void;
+  onKeyDown: (event: KeyboardEvent) => void;
+  onKeyUp: () => void;
 }) {
   return (
     <span
       role="slider"
       aria-label={label}
-      aria-valuenow={0}
-      tabIndex={-1}
+      aria-valuenow={Number(value.toFixed(2))}
+      aria-valuemin={0}
+      aria-valuetext={`${fmt(value)} s`}
+      aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight"
+      tabIndex={0}
       className={cn(
-        'absolute top-0 bottom-0 z-10 w-2 cursor-ew-resize touch-none bg-fg/20 hover:bg-primary [@media(pointer:coarse)]:w-5',
+        'absolute top-0 bottom-0 z-10 flex w-2.5 cursor-ew-resize touch-none items-center justify-center bg-fg/20 hover:bg-primary focus-visible:bg-primary focus-visible:outline-none [@media(pointer:coarse)]:w-6',
         side === 'start' ? 'left-0' : 'right-0',
       )}
       onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
       data-testid={`reel-handle-${side}`}
-    />
+    >
+      <span className="h-4 w-0.5 rounded bg-white/80" aria-hidden />
+    </span>
   );
 }

@@ -206,7 +206,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
       const zw = cw / layer.zoom;
       const zh = ch / layer.zoom;
       const zx = cx + (cw - zw) * layer.panX;
-      const zy = cy + (ch - zh) / 2;
+      const zy = cy + (ch - zh) * layer.panY;
       ctx.save();
       ctx.globalAlpha = layer.alpha;
       const sigma = previewBlur(clip.blur, W, H);
@@ -347,27 +347,34 @@ function drawText(ctx: CanvasRenderingContext2D, item: FrameText, W: number, H: 
   const { style } = item;
   const layout = textLayout(style, item.position, item.lines.length, W, H);
   const family = style.fontFamily ?? (style.fontPath ? null : defaultFamily);
+  // Con el zoom la letra crece del 60 % al 100 % y el texto sigue centrado en su línea.
+  const size = layout.fontSize * item.scale;
   ctx.save();
   ctx.globalAlpha = item.alpha;
-  ctx.font = `${layout.fontSize}px ${family ? `"${family}", ` : ''}"DejaVu Sans", Arial, sans-serif`;
-  ctx.textAlign = 'center';
+  ctx.font = `${size}px ${family ? `"${family}", ` : ''}"DejaVu Sans", Arial, sans-serif`;
+  // Máquina de escribir: alineada a la izquierda del ancho útil (como en el vídeo).
+  const left = Math.round(((1 - style.maxWidthRatio) * W) / 2);
+  ctx.textAlign = item.typewriter ? 'left' : 'center';
   ctx.textBaseline = 'top';
   ctx.lineJoin = 'round';
+  const originX = (item.typewriter ? left : W / 2) + item.dx * W;
   item.lines.forEach((line, index) => {
-    const y = layout.top + index * layout.lineStep;
+    if (!line) return;
+    const y = layout.top + index * layout.lineStep + (layout.fontSize - size) / 2 + item.dy * H;
+    const width = ctx.measureText(line).width;
     if (style.box) {
       const pad = Math.round(style.box.paddingRatio * layout.fontSize);
-      const width = ctx.measureText(line).width;
+      const boxX = item.typewriter ? originX : originX - width / 2;
       ctx.fillStyle = hexToRgba(style.box.color, style.box.opacity);
-      ctx.fillRect(W / 2 - width / 2 - pad, y - pad, width + pad * 2, layout.fontSize + pad * 2);
+      ctx.fillRect(boxX - pad, y - pad, width + pad * 2, size + pad * 2);
     }
     if (style.outline) {
       ctx.lineWidth = Math.max(1, Math.round(style.outline.widthRatio * layout.fontSize)) * 2;
       ctx.strokeStyle = style.outline.color;
-      ctx.strokeText(line, W / 2, y);
+      ctx.strokeText(line, originX, y);
     }
     ctx.fillStyle = style.color;
-    ctx.fillText(line, W / 2, y);
+    ctx.fillText(line, originX, y);
   });
   ctx.restore();
 }

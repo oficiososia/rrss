@@ -7,6 +7,7 @@
 // desenfoque relativo y las mismas cuentas de texto. Las transiciones de
 // FFmpeg (`xfade`) se aproximan: fundido, a negro y deslizamientos.
 import type { ReelTemplateSummary } from '../templates';
+import { textAnimState, visiblePerLine } from './animation';
 import {
   MAX_SUBTITLE_LINES,
   MAX_TEXT_LINES,
@@ -31,9 +32,10 @@ export interface FrameLayer {
   dy: number;
   /** Segundo del archivo (clips). */
   sourceTime: number | null;
-  /** Fotos: ampliación y desplazamiento horizontal del recorte (0 = izquierda, 1 = derecha). */
+  /** Fotos: ampliación y desplazamiento del recorte (0 = izquierda o arriba, 1 = derecha o abajo). */
   zoom: number;
   panX: number;
+  panY: number;
 }
 
 export interface FrameText {
@@ -42,6 +44,11 @@ export interface FrameText {
   style: TextStyle;
   position: TextPosition;
   alpha: number;
+  /** Animación: desplazamiento (fracción del ancho y del alto), tamaño y si se escribe letra a letra (alineado a la izquierda). */
+  dx: number;
+  dy: number;
+  scale: number;
+  typewriter: boolean;
 }
 
 export interface Frame {
@@ -74,15 +81,19 @@ export function photoTransform(kind: PhotoMotion, amount: number, progress: numb
   const p = clamp01(progress);
   switch (kind) {
     case 'zoom-in':
-      return { zoom: 1 + amount * p, panX: 0.5 };
+      return { zoom: 1 + amount * p, panX: 0.5, panY: 0.5 };
     case 'zoom-out':
-      return { zoom: 1 + amount - amount * p, panX: 0.5 };
+      return { zoom: 1 + amount - amount * p, panX: 0.5, panY: 0.5 };
     case 'pan-right':
-      return { zoom: 1 + amount, panX: p };
+      return { zoom: 1 + amount, panX: p, panY: 0.5 };
     case 'pan-left':
-      return { zoom: 1 + amount, panX: 1 - p };
+      return { zoom: 1 + amount, panX: 1 - p, panY: 0.5 };
+    case 'pan-up':
+      return { zoom: 1 + amount, panX: 0.5, panY: 1 - p };
+    case 'pan-down':
+      return { zoom: 1 + amount, panX: 0.5, panY: p };
     default:
-      return { zoom: 1, panX: 0.5 };
+      return { zoom: 1, panX: 0.5, panY: 0.5 };
   }
 }
 
@@ -129,11 +140,15 @@ export function frameAt(
     const start = timeline.starts[index]!;
     const duration = timeline.durations[index]!;
     if (clip.type === 'video') {
-      return { clip: index, alpha, dx, dy, sourceTime: clip.in + (time - start), zoom: 1, panX: 0.5 };
+      return { clip: index, alpha, dx, dy, sourceTime: clip.in + (time - start), zoom: 1, panX: 0.5, panY: 0.5 };
     }
     const progress = duration > 0 ? (time - start) / duration : 0;
-    const { zoom, panX } = photoTransform(motions[index]!, template.photoMotion.amount, progress);
-    return { clip: index, alpha, dx, dy, sourceTime: null, zoom, panX };
+    const { zoom, panX, panY } = photoTransform(
+      motions[index]!,
+      clip.motionAmount ?? template.photoMotion.amount,
+      progress,
+    );
+    return { clip: index, alpha, dx, dy, sourceTime: null, zoom, panX, panY };
   };
 
   for (let i = 0; i < clips.length; i += 1) {
@@ -170,10 +185,26 @@ export function frameAt(
 
   const texts: FrameText[] = [];
   for (const text of plan.texts) {
-    const alpha = fadeAlpha(time, text.start, Math.min(text.end, timeline.total), text.style.fadeSeconds);
-    if (alpha <= 0) continue;
+    const end = Math.min(text.end, timeline.total);
+    if (time < text.start || time > end) continue;
     const { lines } = textLines(text.text, text.style, text.position, size.width, size.height, MAX_TEXT_LINES);
-    if (lines.length) texts.push({ key: text.id, lines, style: text.style, position: text.position, alpha });
+    if (!lines.length) continue;
+    const chars = lines.reduce((n, line) => n + line.length, 0);
+    const state = textAnimState(text.animation, text.style, time, text.start, end, chars);
+    if (state.alpha <= 0) continue;
+    const typewriter = text.animation?.in === 'typewriter';
+    const shown = typewriter ? visiblePerLine(lines, state.visibleChars).map((n, i) => lines[i]!.slice(0, n)) : lines;
+    texts.push({
+      key: text.id,
+      lines: shown,
+      style: text.style,
+      position: text.position,
+      alpha: state.alpha,
+      dx: state.dx,
+      dy: state.dy,
+      scale: state.scale,
+      typewriter,
+    });
   }
 
   const subtitles: FrameText[] = [];
@@ -197,6 +228,10 @@ export function frameAt(
           style: settings.style,
           position: settings.position,
           alpha,
+          dx: 0,
+          dy: 0,
+          scale: 1,
+          typewriter: false,
         });
       }
     }

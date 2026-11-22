@@ -83,6 +83,7 @@ import {
   addText,
   brandTextStyle,
   moveClip,
+  setCover,
   moveText,
   newId,
   setMusic,
@@ -107,7 +108,10 @@ import { MediaPicker } from './MediaPicker';
 import { ReelPlayer } from './ReelPlayer';
 import { Starter } from './Starter';
 import { TemplateCards } from './TemplateCards';
+import { CoverPicker } from './CoverPicker';
+import { reelBeats } from './rhythm';
 import { Timeline, ZOOM_LEVELS } from './Timeline';
+import { useBeats } from './useBeats';
 import { useQueryClient } from '@tanstack/react-query';
 
 const DEFAULT_TEMPLATE_ID = 'fundido-suave';
@@ -237,12 +241,20 @@ function Editor({
         ...new Set([
           ...project.plan.clips.map((c) => c.path),
           ...(project.plan.music ? [project.plan.music.path] : []),
+          ...(project.plan.cover?.type === 'photo' ? [project.plan.cover.path] : []),
         ]),
       ].sort(),
-    [project.plan.clips, project.plan.music],
+    [project.plan.clips, project.plan.music, project.plan.cover],
   );
   const signed = useSignedUrls(usedPaths);
   const urls = useMemo(() => signed.data ?? new Map<string, string>(), [signed.data]);
+  // Ritmo de la música: se analiza solo al pedir «Ajustar los cortes a la música».
+  const beats = useBeats(project.plan.music?.path, project.plan.music ? urls.get(project.plan.music.path) : undefined);
+  const beatTimes = useMemo(
+    () =>
+      beats.analysis && project.plan.music ? reelBeats(beats.analysis.beats, project.plan.music.startAt) : [],
+    [beats.analysis, project.plan.music],
+  );
 
   // Marca: paleta del perfil y tipografías .ttf/.otf (las que puede usar el trabajador).
   const profileRow = useActiveProfile(brand.id);
@@ -677,6 +689,22 @@ function Editor({
             onPlayingChange={setPlaying}
             maxSeconds={REEL_MAX_SECONDS}
           />
+          {!empty && (
+            <Card>
+              <CardBody>
+                <CoverPicker
+                  plan={project.plan}
+                  playhead={playhead}
+                  total={timeline.total}
+                  readOnly={readOnly}
+                  urlOf={(path) => urls.get(path)}
+                  labelOf={labelOf}
+                  onChange={(cover) => apply((p) => setCover(p, cover))}
+                  onSeek={seek}
+                />
+              </CardBody>
+            </Card>
+          )}
           <p className="text-center text-xs text-muted" data-testid="reel-limits">
             {timeline.total > template.timing.maxTotalSeconds
               ? `Dura ${fmt(timeline.total)} s; este estilo está pensado para hasta ${fmt(template.timing.maxTotalSeconds)} s. El máximo es ${REEL_MAX_SECONDS} s.`
@@ -867,6 +895,11 @@ function Editor({
                   fonts={fonts}
                   autoSubtitles={autoSubtitles}
                   brandId={brand.id}
+                  beats={beats}
+                  onPlayFrom={(seconds) => {
+                    setPlayhead(Math.max(0, seconds));
+                    setPlaying(true);
+                  }}
                 />
               </CardBody>
             </Card>
@@ -922,6 +955,7 @@ function Editor({
               onMoveText={(id, value, key) => apply((p) => moveText(p, id, value), key)}
               onTrimText={(id, edge, value, key) => apply((p) => trimText(p, id, edge, value), key)}
               onDragEnd={() => dispatch({ type: 'commit' })}
+              beats={beatTimes}
             />
             {problems.length > 0 && (
               <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
