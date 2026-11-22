@@ -87,6 +87,54 @@ general, la tarjeta lo recuerda y ofrece «Volver al servidor europeo».
 Ojo: el permiso de fuera de la UE es global (afecta también a otros proveedores de imagen y a
 fal.ai); al volver al servidor europeo **no se retira**, porque otros servicios pueden depender de él.
 
+### «Probar conexión» de la IA de texto genera de verdad (22/11/2026, rama `f37/copiloto-herramientas`)
+
+**Antes.** La prueba de la IA de texto solo hacía la comprobación gratuita de cada proveedor
+(listar modelos en Anthropic, Mistral, OpenAI y Bedrock; pedir un token en Vertex). El 22/11/2026
+dio «Funciona» con una clave de OpenAI que `eu.api.openai.com` aceptaba en `GET /v1/models` y
+rechazaba con un 401 al generar: la pantalla decía que funcionaba y el copiloto fallaba.
+
+**Ahora.** Si la comprobación gratuita de un proveedor va bien, la prueba hace además **una
+generación mínima real por cada par proveedor/modelo distinto** que usan las tareas de texto (como
+mucho seis, que son las tareas; las que comparten modelo no repiten), en paralelo:
+
+- Con **el mismo adaptador que usará la tarea** (`provider.generate` de
+  `_shared/ai/text/*`): misma dirección (en OpenAI, la de `OPENAI_BASE_URL`, que es lo que
+  fallaba), mismas cabeceras y misma autenticación (token de Google en Vertex, firma SigV4 o token
+  en Bedrock). No hay una segunda forma de construir la petición.
+- Petición: la palabra «Hola» y **1 token de salida** (`max_completion_tokens: 1` en OpenAI;
+  `max_tokens: 1` en Anthropic, Vertex, Bedrock y Mistral). En OpenAI se envía además
+  `reasoning_effort: "none"` (en los modelos que razonan el tope incluye el razonamiento); si el
+  modelo responde 400 nombrando ese parámetro, **se reintenta una vez sin él**. Las tareas no
+  envían `reasoning_effort`: el adaptador solo lo pasa si se le pide en `params`.
+- Cada generación es un elemento de `checks` («Generar con `<proveedor>/<modelo>`») y hay uno más,
+  «Coste de la prueba», que dice cuántas se han hecho.
+- **Mensajes** (nunca citan la clave ni cabeceras; en los 401/403 no se copia el texto del
+  proveedor, que puede llevar parte de la clave):
+  - 401/403 al generar: «La clave lista modelos, pero el servidor europeo de OpenAI
+    (eu.api.openai.com) la rechaza al generar con «…» (401): revisa que la clave sea de un proyecto
+    con región Europa y, si es una clave restringida, que tenga permiso para generar…», y ofrece el
+    mismo arreglo de un clic (**Usar el servidor general de OpenAI**). Con el servidor general y
+    con los demás proveedores, el mensaje equivalente sin ese arreglo.
+  - 404 (o un error de «modelo no encontrado»): «… no encuentra el modelo «…» (404): revisa el
+    nombre del modelo elegido para la tarea…».
+  - Otro 400, 429, sin red o sin respuesta: el motivo que da el adaptador (ya sin secretos) y una
+    pista («suele ser el nombre del modelo o un parámetro…», «falta de saldo o un límite…»).
+  - Un 400 de OpenAI que dice que se alcanzó el tope de salida cuenta como que genera (clave,
+    dirección y modelo valen; el modelo razonó antes de contestar).
+- Si la comprobación gratuita ya falla (clave rechazada al listar), **no se intenta generar**.
+- **Coste.** Unos pocos tokens de entrada y uno de salida por modelo: despreciable, pero **no
+  cero**. Se dice junto al botón de las tarjetas de OpenAI y de Claude («Probar conexión hace una
+  generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero
+  no cero.») y en el resultado. **No pasa por el cupo de ninguna organización** ni queda en
+  `ai_generations`: es una prueba de plataforma de un superadministrador y no usa `AiService`.
+- Las demás integraciones siguen igual: su prueba no genera ni gasta nada.
+
+**Sin probar contra ningún proveedor real**: solo con respuestas HTTP simuladas. En particular,
+no está confirmado con el servicio que todos los modelos de OpenAI acepten `max_completion_tokens: 1`
+ni la forma exacta del 400 de `reasoning_effort` (se reconoce por `error.param` o porque el mensaje
+lo nombra).
+
 ## 4. Precios al día
 
 ### De dónde salen (investigado el 22/11/2026)
@@ -182,7 +230,15 @@ en «Opciones avanzadas».
   Claude solo precios), «Probar conexión» y la región, y la función con la base de datos real
   (permisos, guardar/deshacer, cambio de servidor con precios ajustados) y `platform_cost_per_operation`.
   **Fuentes y proveedores simulados: ninguna llamada de pago ni de red.**
-- `src/features/platform/integrations/integraciones.test.tsx` y `services.test.ts`: la vista
+- `tests/db/integraciones.test.ts`, «Probar conexión de la IA de texto: generación mínima real»:
+  listar 200 y generar 401 en `eu.api.openai.com` (no funciona, lo explica y ofrece el servidor
+  general), todo bien (con el elemento de generación y el de coste), modelo inexistente (404), el
+  reintento sin `reasoning_effort`, que la petición va a la dirección configurada con las cabeceras
+  del adaptador y pide 1 token, una sola generación por par proveedor/modelo, que no se genera si
+  la clave ya falla al listar, y Mistral, Anthropic, Bedrock y Vertex con sus direcciones.
+  **Proveedores simulados.**
+- `src/features/platform/integrations/integraciones.test.tsx` (también: el aviso de coste junto al
+  botón en las tarjetas de OpenAI y Claude, y el detalle del resultado) y `services.test.ts`: la vista
   sencilla (una tarjeta por servicio, una sola clave a la vista en OpenAI, nada de nombres de
   variable fuera de avanzadas), el resumen, los estados, los valores por defecto al guardar la
   clave, el cambio de servidor, los precios y el coste real.

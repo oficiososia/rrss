@@ -85,8 +85,21 @@ export interface CampaignPlanRequest {
   assets?: CampaignAssetRef[];
   /** Fuentes de texto de la marca (ya extraído). Son dato. */
   sources?: CampaignSource[];
-  /** Máximo de piezas (1–30). Por defecto, una cada dos días. */
+  /** Máximo de piezas (1–30). Por defecto, una cada dos días (o, con acuerdo, las que salen de su ritmo). */
   maxPieces?: number;
+  /** Lo acordado antes con la persona (duración, ritmo, formatos): `campaign.brief`. Es dato. */
+  agreement?: CampaignAgreement;
+}
+
+/** Ritmo y fases acordados al preparar el formulario con la IA. */
+export interface CampaignAgreement {
+  objective?: string;
+  /** Publicaciones por semana, en total (1–14). */
+  perWeek?: number;
+  /** Reparto por red y formato, en publicaciones por semana. */
+  mix?: Array<{ network: string; format: string; perWeek: number }>;
+  /** Una fase por semana, en orden. */
+  phases?: Array<{ title: string; focus: string }>;
 }
 
 export interface CampaignPiece {
@@ -146,6 +159,7 @@ export const CAMPAIGN_PLAN_INSTRUCTIONS = [
   'Reparte las piezas con sentido (no todas el mismo día) y explica en «why» por qué cada una va en esa red y en ese día.',
   'El pie («caption») es un borrador en el tono y el idioma de la marca, sin las etiquetas (van en «hashtags», sin #). No uses expresiones prohibidas ni temas vetados por la marca.',
   'No inventes datos (precios, fechas, promociones, direcciones) que no estén en el perfil, la instrucción o las fuentes.',
+  'Si llega el material «acuerdo previo», es lo que la persona ya aceptó: respétalo. Su «objetivo» es el del plan; cada fase de «phases» es una semana del plan, en orden, y las piezas de esa semana cuentan lo que dice su «focus»; «mix» dice cuántas piezas por semana van en cada red y formato.',
   'En «assetIds» sugiere, si encajan, identificadores del material «biblioteca»; solo esos identificadores, ninguno más. Si ninguno encaja, deja la lista vacía.',
   'Separa el razonamiento: en «observed», lo que ves en el material; en «dataBacked», solo conclusiones apoyadas en el material «datos de resultados» (si no llega ese material, deja la lista vacía); en «hypotheses», lo que supones y convendría comprobar.',
   DATA_RULE,
@@ -260,6 +274,52 @@ function validSources(sources: unknown): CampaignSource[] {
   return out;
 }
 
+const MAX_PER_WEEK = 14;
+
+function clip(value: unknown, max: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+/** Valida lo acordado: solo destinos pedidos, ritmos acotados y textos cortos. Devuelve null si no hay nada. */
+export function validAgreement(raw: unknown, targets: CampaignTarget[]): CampaignAgreement | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new AiTaskInputError('El acuerdo previo no es válido.');
+  const a = raw as Record<string, unknown>;
+  const out: CampaignAgreement = {};
+  const objective = clip(a.objective, 600);
+  if (objective) out.objective = objective;
+  if (a.perWeek !== undefined) {
+    if (!Number.isInteger(a.perWeek) || (a.perWeek as number) < 1 || (a.perWeek as number) > MAX_PER_WEEK) {
+      throw new AiTaskInputError(`El ritmo debe estar entre 1 y ${MAX_PER_WEEK} publicaciones por semana.`);
+    }
+    out.perWeek = a.perWeek as number;
+  }
+  if (a.mix !== undefined) {
+    if (!Array.isArray(a.mix) || a.mix.length > MAX_TARGETS) throw new AiTaskInputError('El reparto no es válido.');
+    out.mix = (a.mix as unknown[]).flatMap((entry) => {
+      const m = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
+      const ok = targets.some((t) => t.network === m.network && t.format === m.format);
+      if (!ok || !Number.isInteger(m.perWeek) || (m.perWeek as number) < 1 || (m.perWeek as number) > 7) return [];
+      return [{ network: m.network as string, format: m.format as string, perWeek: m.perWeek as number }];
+    });
+  }
+  if (a.phases !== undefined) {
+    if (!Array.isArray(a.phases) || a.phases.length > 9) throw new AiTaskInputError('Las fases no son válidas.');
+    out.phases = (a.phases as unknown[])
+      .map((entry) => {
+        const f = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>;
+        return { title: clip(f.title, 80), focus: clip(f.focus, 240) };
+      })
+      .filter((phase) => phase.title);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Piezas que salen de un ritmo semanal en un plan de `days` días (1–30). */
+export function piecesForRhythm(days: number, perWeek: number): number {
+  return Math.max(1, Math.min(MAX_PIECES, Math.ceil((days / 7) * perWeek)));
+}
+
 /** Máximo de piezas por defecto: una cada dos días, entre 1 y 30. */
 export function defaultMaxPieces(days: number): number {
   return Math.max(1, Math.min(MAX_PIECES, Math.ceil(days / 2)));
@@ -366,7 +426,13 @@ export function sanitizePlan(raw: RawPlan, ctx: SanitizeContext): { plan: Campai
 
 // ── Tarea ────────────────────────────────────────────────────────────────
 
-function buildPrompt(startDate: string, endDate: string, targets: CampaignTarget[], maxPieces: number): string {
+function buildPrompt(
+  startDate: string,
+  endDate: string,
+  targets: CampaignTarget[],
+  maxPieces: number,
+  perWeek?: number,
+): string {
   // Todo lo de aquí está validado (fechas reales, identificadores con formato
   // fijo, número entero): ningún texto libre del cliente entra en el prompt.
   return [
@@ -374,6 +440,7 @@ function buildPrompt(startDate: string, endDate: string, targets: CampaignTarget
     'Destinos (red/formato):',
     ...targets.map((t) => `- Destino: ${t.network}/${t.format}`),
     `Máximo de piezas: ${maxPieces}.`,
+    ...(perWeek ? [`Ritmo acordado: ${perWeek} piezas por semana.`] : []),
     '',
     'Prepara el plan que pide el material «instrucción».',
   ].join('\n');
@@ -394,7 +461,9 @@ export async function planCampaign(
   const targets = validTargets(request.targets);
   const assets = validAssets(request.assets);
   const sources = validSources(request.sources);
-  const maxPieces = request.maxPieces ?? defaultMaxPieces(days);
+  const agreement = validAgreement(request.agreement, targets);
+  const maxPieces =
+    request.maxPieces ?? (agreement?.perWeek ? piecesForRhythm(days, agreement.perWeek) : defaultMaxPieces(days));
   if (!Number.isInteger(maxPieces) || maxPieces < 1 || maxPieces > MAX_PIECES) {
     throw new AiTaskInputError(`El máximo de piezas debe estar entre 1 y ${MAX_PIECES}.`);
   }
@@ -404,6 +473,7 @@ export async function planCampaign(
     // Lo que escribe el cliente (instrucción, fuentes, nombres de archivos) viaja como material.
     { label: 'instrucción', content: instruction },
     { label: 'biblioteca', content: JSON.stringify(assets) },
+    ...(agreement ? [{ label: 'acuerdo previo', content: JSON.stringify(agreement) }] : []),
     ...sources.map((source) => ({ label: `fuente: ${source.title}`, content: source.text })),
   ];
 
@@ -412,7 +482,7 @@ export async function planCampaign(
     purpose: CAMPAIGN_PLAN_PURPOSE,
     instructions: CAMPAIGN_PLAN_INSTRUCTIONS,
     context,
-    prompt: buildPrompt(request.startDate, request.endDate, targets, maxPieces),
+    prompt: buildPrompt(request.startDate, request.endDate, targets, maxPieces, agreement?.perWeek),
     schema: CAMPAIGN_PLAN_SCHEMA,
     maxOutputTokens: Math.min(16_000, 1500 + maxPieces * 700),
   });

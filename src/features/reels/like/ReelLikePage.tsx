@@ -43,8 +43,8 @@ import {
   Notice,
   PageHeader,
   Skeleton,
-  Textarea,
 } from '@/components/ui';
+import { DictableField } from '@/features/ai/DictableField';
 import { reelLikeEnabled, STORAGE_BUCKET } from '@/config/app';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { formatMicros, moneyEstimateNote } from '@/features/ai/money';
@@ -290,12 +290,13 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
             hint="Si no lo sabes, te proponemos una idea a partir del perfil de la marca."
           >
             {(props) => (
-              <Textarea
+              <DictableField
                 {...props}
+                brandId={brand.id}
                 rows={2}
                 maxLength={600}
                 value={idea}
-                onChange={(event) => setIdea(event.target.value)}
+                onValueChange={setIdea}
                 placeholder="Por ejemplo: cómo preparamos el menú del día"
                 data-testid="reel-like-idea"
               />

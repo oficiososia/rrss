@@ -35,7 +35,9 @@ export default defineConfig({
       },
       {
         // Pruebas de base de datos: aplican las migraciones reales a un
-        // Postgres en memoria (PGlite) o al de DATABASE_URL.
+        // Postgres en memoria (PGlite) o al de DATABASE_URL. El alias hace falta
+        // para las pruebas que ejecutan código del editor (el banco del copiloto).
+        resolve: { alias },
         test: {
           name: 'db',
           environment: 'node',

@@ -24,9 +24,18 @@ import {
   runEditorCopilot,
   type CopilotAssetRef,
   type CopilotDocumentSummary,
+  type CopilotMode,
+  type EditorCopilotOptions,
 } from '../_shared/ai/text/tasks/editor-copilot.ts';
 import {
+  proposeCampaignBrief,
+  type BriefAdjustment,
+  type BriefProposal,
+  type CampaignBriefRequest,
+} from '../_shared/ai/text/tasks/campaign-brief.ts';
+import {
   planCampaign,
+  type CampaignAgreement,
   type CampaignAssetRef,
   type CampaignSource,
   type CampaignTarget,
@@ -40,6 +49,7 @@ export const AI_GENERATE_ACTIONS = [
   'profile.proposal',
   'brand.check',
   'campaign.plan',
+  'campaign.brief',
   'analytics.summary',
   'editor.copilot',
 ] as const;
@@ -76,6 +86,8 @@ export interface AiGenerateDeps {
    * llegan (el documento solo se dibuja con lo que la RLS deja ver).
    */
   filterVisibleImages?(accessToken: string, brandId: string, ids: string[]): Promise<string[]>;
+  /** Ajustes del copiloto del editor (AI_TEXT_EDITOR_COPILOT_MODE y _EFFORT). */
+  copilot?: EditorCopilotOptions;
   /** Registro del servidor. Nunca recibe claves ni el contenido de la petición. */
   log?: (event: string, data: Record<string, unknown>) => void;
   /** Origen permitido para CORS (por defecto, cualquiera: la sesión va en cabecera, no en cookie). */
@@ -108,7 +120,7 @@ const STATUS: Record<AiErrorCode, number> = {
 /** Lo que la interfaz necesita de la generación; el coste se consulta en `ai_generations`. */
 function strip(result: TaskMeta): Record<string, unknown> {
   const rest: Record<string, unknown> = { ...result };
-  for (const key of ['provider', 'model', 'usage', 'costMicros', 'latencyMs']) delete rest[key];
+  for (const key of ['provider', 'model', 'usage', 'costMicros', 'latencyMs', 'mode']) delete rest[key];
   return rest;
 }
 
@@ -177,7 +189,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
         return fail(
           409,
           'agency_mode',
-          action === 'campaign.plan'
+          action === 'campaign.plan' || action === 'campaign.brief'
             ? 'Esta marca trabaja por encargo a la agencia: pide el plan de campaña desde «Campañas».'
             : action === 'analytics.summary'
               ? 'Esta marca trabaja en modo agencia: la interpretación con IA no está disponible.'
@@ -245,18 +257,39 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
           );
           assets = assets.filter((_, index) => visible.has(ids[index]!));
         }
+        // `input.mode` (tools | json) deja pedir una ruta para comparar; las dos
+        // devuelven lo mismo y pasan por el mismo saneado. Sin él, la del ajuste.
         result = strip(
-          await runEditorCopilot(deps.service, actor, {
-            brandProfile: lookup.profile,
-            transcript: data.transcript as string,
-            document: data.document as CopilotDocumentSummary,
-            assets,
-          }),
+          await runEditorCopilot(
+            deps.service,
+            actor,
+            {
+              brandProfile: lookup.profile,
+              transcript: data.transcript as string,
+              document: data.document as CopilotDocumentSummary,
+              assets,
+              mode: data.mode === 'tools' || data.mode === 'json' ? (data.mode as CopilotMode) : undefined,
+            },
+            deps.copilot,
+          ),
         );
       } else if (action === 'brand.check') {
         result = strip(
           await checkBrandCompliance(deps.service, actor, { brandProfile: lookup.profile, text: data.text as string }),
         );
+      } else if (action === 'campaign.brief') {
+        // Solo propone los datos del formulario; no crea nada. Mismo cupo y registro que `campaign.plan`.
+        const brief = await proposeCampaignBrief(deps.service, actor, {
+          brandProfile: lookup.profile,
+          instruction: data.instruction as string,
+          today: data.today as string,
+          targets: data.targets as CampaignBriefRequest['targets'],
+          current: data.current as BriefProposal | undefined,
+          adjust: data.adjust as BriefAdjustment | undefined,
+          answer: data.answer as CampaignBriefRequest['answer'],
+        });
+        // Aquí sí se dice lo que ha costado: la pantalla lo enseña en pequeño junto a la propuesta.
+        result = { ...strip(brief), costMicros: brief.costMicros };
       } else if (action === 'campaign.plan') {
         // Solo propone: el plan no se guarda aquí ni crea nada (ver campaign-plan.ts).
         result = strip(
@@ -269,6 +302,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
             assets: data.assets as CampaignAssetRef[] | undefined,
             sources: data.sources as CampaignSource[] | undefined,
             maxPieces: data.maxPieces as number | undefined,
+            agreement: data.agreement as CampaignAgreement | undefined,
           }),
         );
       } else {

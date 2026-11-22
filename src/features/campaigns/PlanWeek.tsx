@@ -10,6 +10,7 @@ import type { CampaignPieceLink } from './api';
 import type { CampaignPiece, PlanIssue } from './plan';
 import { PiecePreview } from './PiecePreview';
 import type { PiecePreviewSource } from './previews';
+import { hintText, type TemplateHint } from './templateHints';
 import { campaignDays, dayParts, longDayLabel } from './week';
 
 // La semana de un plan: una columna por día con la miniatura, el formato y el
@@ -28,6 +29,8 @@ export interface WeekPiece {
   piece: CampaignPiece | null;
   content: CampaignPieceLink | null;
   issues: PlanIssue[];
+  /** Plantilla de la marca que encaja con la pieza (solo una sugerencia), si la hay. */
+  templateHint?: TemplateHint | null;
 }
 
 export const PIECE_PANEL_ID = 'campaign-piece-panel';
@@ -292,6 +295,11 @@ export function PieceSheet({
             <p className="max-w-prose text-sm">
               <span className="font-medium">Motivo: </span>
               <span className="text-muted">{piece.why}</span>
+            </p>
+          )}
+          {item.templateHint && (
+            <p className="text-xs text-muted" data-testid="campaign-piece-template">
+              {hintText(item.templateHint)}. Es una sugerencia: se elige al preparar la pieza.
             </p>
           )}
           {piece && piece.assetIds.length > 0 && (

@@ -1,7 +1,9 @@
 // «Probar conexión» de cada integración: una llamada inocua y gratuita a cada
 // servicio con la configuración efectiva (base de datos y, si no, entorno).
-// Nunca genera, publica ni cobra nada, y los mensajes nunca citan un valor
-// secreto (ni partes de él).
+// Nunca publica ni cobra nada, y los mensajes nunca citan un valor secreto (ni
+// partes de él). La ÚNICA que genera algo es la de IA de texto: una generación
+// mínima real por modelo (ver más abajo «generación mínima real»), con un coste
+// despreciable pero no nulo, que se dice en el resultado y en la pantalla.
 //
 //   meta      GET /{app-id}?fields=id,name con el token de aplicación
 //             (App ID|App Secret): Meta dice si reconoce la aplicación.
@@ -9,6 +11,9 @@
 //   ai_text   por cada adaptador elegido: Anthropic, Mistral y OpenAI, listar modelos;
 //             Vertex, pedir un token de acceso con la cuenta de servicio;
 //             Bedrock, listar los modelos de Anthropic de la región.
+//             Y, si eso va bien, por cada par adaptador/modelo distinto de las
+//             tareas: UNA generación de 1 token de salida con el mismo adaptador
+//             que usará la tarea (misma dirección, cabeceras y autenticación).
 //   ai_image  Vertex, pedir un token; Black Forest Labs, consultar el saldo
 //             (/v1/credits). Ideogram no documenta ninguna llamada gratuita:
 //             se dice así, sin gastar.
@@ -27,7 +32,9 @@
 //
 // ⚠ Escrito contra la documentación de cada servicio y probado solo con
 // servicios simulados (tests/db/integraciones-funciones.test.ts).
+import { AiProviderFailure, type AiProvider } from '../ai/contract.ts';
 import { parseServiceAccountKey, createGoogleTokenSource, GOOGLE_TOKEN_URL } from '../ai/text/google-auth.ts';
+import { field, type FetchLike } from '../ai/text/http.ts';
 import { signAwsRequest } from '../ai/text/sigv4.ts';
 import { ANTHROPIC_API_VERSION } from '../ai/text/anthropic-messages.ts';
 import { loadAiTextConfig } from '../ai/text/config.ts';
@@ -276,6 +283,262 @@ async function googleToken(json: string, deps: ProbeDeps): Promise<ProbeCheck> {
   }
 }
 
+// ───────────────── IA de texto: generación mínima real ─────────────────
+//
+// Listar modelos o pedir un token no prueba que se pueda GENERAR: el 22/11/2026
+// «Probar conexión» dio «Funciona» con una clave de OpenAI que el servidor
+// europeo (eu.api.openai.com) rechazaba al generar (401). Por eso, por cada par
+// adaptador/modelo distinto que usan las tareas de texto, se hace UNA
+// generación mínima real con el MISMO adaptador que usará la tarea
+// (`provider.generate`: misma dirección, mismas cabeceras, misma autenticación):
+// una palabra de entrada y el mínimo de salida (1 token).
+//
+// Coste: unos pocos tokens de entrada y uno de salida por modelo. Despreciable,
+// pero no cero: se dice en el resultado y en la pantalla. NO pasa por
+// `AiService`: no reserva ni descuenta el cupo de ninguna organización ni queda
+// en `ai_generations` (es una prueba de plataforma de un superadministrador; lo
+// único que queda es el registro de pruebas de la integración).
+//
+// ⚠ Probado solo con proveedores simulados: ninguna llamada real.
+
+/** La palabra que se envía. Una sola, sin datos de nadie. */
+const GENERATION_PROMPT = 'Hola';
+/** Lo mínimo que admiten las API: `max_tokens` / `max_completion_tokens` = 1. */
+const GENERATION_MAX_OUTPUT_TOKENS = 1;
+/** Las tareas de texto son seis, así que nunca hay más pares distintos: el tope es un seguro. */
+const MAX_GENERATION_PROBES = 6;
+
+const TEXT_SERVICE_NAME: Record<string, string> = {
+  anthropic: 'Anthropic',
+  mistral: 'Mistral',
+  openai: 'OpenAI',
+  'anthropic-vertex': 'Google Vertex AI',
+  'anthropic-bedrock': 'Amazon Bedrock',
+};
+
+/**
+ * Lo que se apunta de la respuesta HTTP de una generación de prueba. Nunca el
+ * mensaje del proveedor (puede citar parte de la clave): solo el estado y dos
+ * identificadores cortos del error.
+ */
+interface GenerationTrace {
+  status: number | null;
+  errorCode: string | null;
+  errorParam: string | null;
+}
+/** Cada generación de prueba lleva su propia señal: sirve de llave aunque vayan en paralelo. */
+type GenerationTraces = WeakMap<AbortSignal, GenerationTrace>;
+
+const shortWord = (raw: unknown): string | null =>
+  typeof raw === 'string' && /^[\w.-]{1,60}$/.test(raw) ? raw : null;
+
+/** El `fetch` de los adaptadores, apuntando el estado HTTP de las generaciones de prueba. */
+function tracingFetch(deps: ProbeDeps, traces: GenerationTraces): FetchLike {
+  return async (url, init) => {
+    const response = await deps.fetch(url, init);
+    const trace = traces.get(init.signal);
+    if (trace) {
+      trace.status = response.status;
+      trace.errorCode = null;
+      trace.errorParam = null;
+      if (!response.ok) {
+        let body: unknown = null;
+        try {
+          body = await response.clone().json();
+        } catch {
+          body = null;
+        }
+        // OpenAI: error.code y error.param. Anthropic: error.type. Google: error.status. Mistral: type.
+        const error = field(body, 'error');
+        trace.errorCode =
+          shortWord(field(error, 'code')) ??
+          shortWord(field(error, 'type')) ??
+          shortWord(field(error, 'status')) ??
+          shortWord(field(body, 'type'));
+        trace.errorParam = shortWord(field(error, 'param'));
+      }
+    }
+    return response;
+  };
+}
+
+async function attemptGeneration(
+  provider: AiProvider,
+  model: string,
+  params: Record<string, string | number>,
+  deps: ProbeDeps,
+  traces: GenerationTraces,
+): Promise<{ trace: GenerationTrace; failure: AiProviderFailure | null }> {
+  const signal = AbortSignal.timeout(deps.timeoutMs ?? 10_000);
+  const trace: GenerationTrace = { status: null, errorCode: null, errorParam: null };
+  traces.set(signal, trace);
+  try {
+    await provider.generate({ task: 'text', model, input: { prompt: GENERATION_PROMPT, params }, signal });
+    return { trace, failure: null };
+  } catch (e) {
+    // Un error que no es del adaptador no se copia: puede llevar cualquier cosa.
+    const failure =
+      e instanceof AiProviderFailure ? e : new AiProviderFailure('internal', 'fallo inesperado al preparar la petición');
+    return { trace, failure };
+  }
+}
+
+const MODEL_NOT_FOUND_CODES = new Set(['model_not_found', 'invalid_model', 'not_found_error', 'NOT_FOUND']);
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
+/** Una generación mínima real con el adaptador de la tarea, explicada en llano. */
+async function probeGeneration(
+  provider: AiProvider,
+  model: string,
+  env: Env,
+  deps: ProbeDeps,
+  traces: GenerationTraces,
+): Promise<ProbeCheck> {
+  const service = TEXT_SERVICE_NAME[provider.id] ?? provider.id;
+  const shown = `«${model.slice(0, 80)}»`;
+  const name = `Generar con ${provider.id}/${model.slice(0, 80)}`;
+  const isOpenAi = provider.id === 'openai';
+  let host: string | null = null;
+  if (isOpenAi) {
+    try {
+      host = new URL(normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'))).hostname;
+    } catch {
+      host = null;
+    }
+  }
+  const where = host ? ` en ${host}` : '';
+
+  const minimal = { max_output_tokens: GENERATION_MAX_OUTPUT_TOKENS };
+  // OpenAI: en los modelos que razonan, el tope de salida incluye el
+  // razonamiento. Se pide no razonar; si el modelo no admite ese parámetro
+  // (400 que lo nombra), se reintenta UNA vez sin él.
+  let { trace, failure } = await attemptGeneration(
+    provider,
+    model,
+    isOpenAi ? { ...minimal, reasoning_effort: 'none' } : minimal,
+    deps,
+    traces,
+  );
+  if (
+    isOpenAi &&
+    failure &&
+    trace.status === 400 &&
+    (trace.errorParam === 'reasoning_effort' || /reasoning/i.test(failure.message))
+  ) {
+    ({ trace, failure } = await attemptGeneration(provider, model, minimal, deps, traces));
+  }
+
+  if (!failure) {
+    return {
+      name,
+      ok: true,
+      message: `${service} genera con ${shown}${where} (generación mínima real: 1 token de salida).`,
+    };
+  }
+  const status = trace.status;
+  if (status !== null && status >= 200 && status < 300) {
+    // El proveedor aceptó clave, modelo y petición. Una negativa a la palabra de
+    // prueba no dice nada malo de la conexión; una respuesta que el adaptador no
+    // entiende, sí: las tareas usan el mismo adaptador y fallarían igual.
+    return failure.code === 'refused'
+      ? {
+          name,
+          ok: true,
+          message: `${service} acepta generar con ${shown}${where} (generación mínima real; el modelo no contestó a la palabra de prueba).`,
+        }
+      : {
+          name,
+          ok: false,
+          message: `${service} respondió al generar con ${shown}${where}, pero con una forma que la aplicación no entiende: las tareas fallarían igual.`,
+        };
+  }
+  const modelMissing =
+    status === 404 ||
+    (trace.errorCode !== null && MODEL_NOT_FOUND_CODES.has(trace.errorCode)) ||
+    (status === 400 &&
+      /model/i.test(failure.message) &&
+      /(not exist|not found|invalid model|unknown model)/i.test(failure.message));
+  if (status === 401 || status === 403) {
+    if (modelMissing) {
+      return {
+        name,
+        ok: false,
+        message: `${service} acepta la clave, pero no le da acceso al modelo ${shown}${where} (${status}): revisa el nombre del modelo elegido para la tarea o da acceso a ese modelo al proyecto de la clave.`,
+      };
+    }
+    // Sin el detalle del proveedor: en los errores de credenciales puede citar parte de la clave.
+    if (isOpenAi && host === 'eu.api.openai.com') {
+      return {
+        name,
+        ok: false,
+        message: `La clave lista modelos, pero el servidor europeo de OpenAI (${host}) la rechaza al generar con ${shown} (${status}): revisa que la clave sea de un proyecto con región Europa y, si es una clave restringida, que tenga permiso para generar («Model capabilities»). Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).`,
+        fix: 'openai_global',
+      };
+    }
+    if (isOpenAi) {
+      return {
+        name,
+        ok: false,
+        message: `La clave lista modelos, pero OpenAI${host ? ` (${host})` : ''} la rechaza al generar con ${shown} (${status}): revisa que sea la clave del proyecto correcto y, si es una clave restringida, que tenga permiso para generar («Model capabilities»).`,
+      };
+    }
+    if (provider.id === 'anthropic-vertex') {
+      return {
+        name,
+        ok: false,
+        message: `Google da el token de acceso, pero Vertex AI lo rechaza al generar con ${shown} (${status}): revisa que la cuenta de servicio tenga permiso para usar Vertex AI en ese proyecto y que el modelo esté habilitado.`,
+      };
+    }
+    if (provider.id === 'anthropic-bedrock') {
+      return {
+        name,
+        ok: false,
+        message: `Amazon Bedrock lista modelos, pero rechaza las credenciales al generar con ${shown} (${status}): revisa el permiso de IAM para invocar modelos y el acceso a ese modelo en la región.`,
+      };
+    }
+    return {
+      name,
+      ok: false,
+      message: `La clave lista modelos, pero ${service} la rechaza al generar con ${shown} (${status}): revisa los permisos de la clave y el acceso de la cuenta a ese modelo.`,
+    };
+  }
+  if (modelMissing) {
+    const hint = isOpenAi
+      ? ' y que el proyecto de la clave tenga acceso a él'
+      : provider.id === 'anthropic-vertex'
+        ? ' y, en Vertex, el proyecto y la ubicación'
+        : provider.id === 'anthropic-bedrock'
+          ? ' (con su prefijo «anthropic.») y que esté disponible en esa región'
+          : '';
+    return {
+      name,
+      ok: false,
+      message: `${service} no encuentra el modelo ${shown}${where} (${status ?? 'sin respuesta'}): revisa el nombre del modelo elegido para la tarea${hint}.`,
+    };
+  }
+  if (isOpenAi && status === 400 && /(could not finish|output limit|limit was reached)/i.test(failure.message)) {
+    // Algunos modelos que razonan no devuelven un 200 cortado, sino un 400 que
+    // dice que se alcanzó el tope de salida: clave, dirección y modelo valen.
+    return {
+      name,
+      ok: true,
+      message: `${service} acepta generar con ${shown}${where}: la clave y el modelo valen; la respuesta se cortó por el tope de 1 token de la prueba (el modelo razona antes de contestar).`,
+    };
+  }
+  // El mensaje del adaptador ya viene sin secretos (text/http.ts) y recortado.
+  const tip =
+    status === 400
+      ? ' Suele ser el nombre del modelo o un parámetro que ese modelo no admite.'
+      : status === 429
+        ? ' Suele ser falta de saldo o un límite de uso de la cuenta.'
+        : '';
+  return {
+    name,
+    ok: false,
+    message: `${service} no genera con ${shown}${where}: ${sentence(failure.message)}${tip}`,
+  };
+}
+
 async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   const local = loadLocalTestTextConfig(env);
   if (local) {
@@ -284,12 +547,16 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       '',
     );
   }
-  const config = loadAiTextConfig(env, { fetch: (u, init) => deps.fetch(u, init) });
+  const traces: GenerationTraces = new WeakMap();
+  const config = loadAiTextConfig(env, { fetch: tracingFetch(deps, traces) });
   const checks: ProbeCheck[] = [];
   for (const [id, reason] of Object.entries(config.unavailable)) {
     checks.push({ name: id, ok: false, message: reason });
   }
+  /** Adaptadores cuya comprobación gratuita ha ido bien: solo con esos se prueba a generar. */
+  const ready = new Set<string>();
   for (const provider of config.providers) {
+    const before = checks.length;
     if (provider.id === 'anthropic') {
       const r = await call(deps, 'https://api.anthropic.com/v1/models?limit=1', {
         headers: { 'x-api-key': value(env, 'ANTHROPIC_API_KEY') ?? '', 'anthropic-version': ANTHROPIC_API_VERSION },
@@ -394,7 +661,35 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
             : { name: 'Amazon Bedrock', ok: false, message: rejected('Amazon Bedrock', r.status) },
       );
     }
+    if (!checks.slice(before).some((c) => c.ok === false)) ready.add(provider.id);
   }
+
+  // Generación mínima real: una por par adaptador/modelo distinto de las tareas
+  // (ver arriba). Si la comprobación gratuita del adaptador ya falló, no se
+  // gasta nada: ese fallo ya dice qué pasa.
+  const loaded = new Map(config.providers.map((p) => [p.id, p] as const));
+  const pairs = new Map<string, { provider: AiProvider; model: string }>();
+  for (const spec of config.models) {
+    const provider = loaded.get(spec.provider);
+    if (provider && ready.has(spec.provider)) pairs.set(`${spec.provider}/${spec.model}`, { provider, model: spec.model });
+  }
+  const selected = [...pairs.values()].slice(0, MAX_GENERATION_PROBES);
+  const generated = await Promise.all(
+    selected.map((pair) => probeGeneration(pair.provider, pair.model, env, deps, traces)),
+  );
+  checks.push(...generated);
+  if (generated.length > 0) {
+    checks.push({
+      name: 'Coste de la prueba',
+      ok: null,
+      message: `${
+        generated.length === 1
+          ? 'Se ha hecho 1 generación mínima real'
+          : `Se han hecho ${generated.length} generaciones mínimas reales`
+      } (1 token de salida por cada modelo configurado): coste despreciable, pero no cero. No consume el cupo de ninguna organización.`,
+    });
+  }
+
   const priceProblems = config.problems.filter((p) => p.startsWith('AI_PRICES'));
   if (priceProblems.length > 0 && config.providers.length > 0) {
     checks.push({

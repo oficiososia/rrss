@@ -50,7 +50,8 @@ export function costLines(rows: PlatformCostRow[], provider: AiProviderId): Cost
       const minutes = Number(r.audio_seconds) / 60;
       return {
         key: `${r.purpose}/${r.model}`,
-        label: 'Subtítulos',
+        // El dictado del copiloto (motor «transcriptor») usa el mismo modelo, apuntado con su uso.
+        label: r.purpose === 'editor.dictation' ? 'Dictado del copiloto' : 'Subtítulos',
         unit: 'minuto transcrito',
         operations,
         totalUsd,

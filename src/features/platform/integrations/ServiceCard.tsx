@@ -259,7 +259,7 @@ export function ServiceCard({ service, status }: { service: ServiceDef; status: 
               Probar conexión
             </Button>
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-xs text-muted" data-testid="integration-test-hint">
             {service.testHint} Se prueba lo guardado{dirty ? ': guarda antes los cambios' : ''}.
           </p>
           <TestSentence test={lastTest} live={probe} />

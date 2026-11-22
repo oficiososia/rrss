@@ -18,8 +18,11 @@ import { createLocalTestProvider } from '../../supabase/functions/_shared/ai/tex
 import {
   EDITOR_COPILOT_INSTRUCTIONS,
   EDITOR_COPILOT_SCHEMA,
+  emptyOperation,
   isDictated,
   runEditorCopilot,
+  toResponseOperation,
+  type CopilotMode,
   type CopilotOperation,
 } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot.ts';
 import { AiTaskInputError } from '../../supabase/functions/_shared/ai/text/tasks/shared.ts';
@@ -69,25 +72,25 @@ const DOCUMENT = {
 const DICTADO =
   'Quiero hacer el menú de Navidad, foto difuminada detrás, esta, con el logotipo arriba. Título: Menú de Navidad. Platos: crema de marisco, cordero asado, turrón casero. Precio: 45 euros por persona.';
 
-const op = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>): CopilotOperation => ({
-  target: null,
-  text: null,
-  style: null,
-  assetId: null,
-  position: null,
-  align: null,
-  color: null,
-  font: null,
-  blur: null,
-  dx: null,
-  dy: null,
-  ...fields,
-});
-/** Como sale hacia el navegador: `dx`/`dy` solo si se usan. */
-const out = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>) => {
-  const { dx, dy, ...rest } = op(fields);
-  return { ...rest, ...(dx !== null ? { dx } : {}), ...(dy !== null ? { dy } : {}) };
-};
+/** Como la devuelve la IA por la ruta JSON: las doce claves de siempre, a null las que no aplican. */
+const op = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>): CopilotOperation =>
+  ({
+    target: null,
+    text: null,
+    style: null,
+    assetId: null,
+    position: null,
+    align: null,
+    color: null,
+    font: null,
+    blur: null,
+    dx: null,
+    dy: null,
+    ...fields,
+  }) as CopilotOperation;
+/** Como sale hacia el navegador: los campos de siempre y, de los demás, solo los que se usan. */
+const out = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>) =>
+  toResponseOperation({ ...emptyOperation(fields.op), ...fields });
 
 let db: Db;
 let root: TestUser;
@@ -113,7 +116,11 @@ afterAll(async () => {
   await db?.close();
 });
 
-async function setup(options: { respond?: SimulatedProviderOptions['respond']; localTest?: boolean } = {}) {
+// Este archivo prueba la ruta JSON (la de siempre): se fija con el ajuste del
+// copiloto. La ruta de herramientas tiene sus pruebas en ia-copiloto-herramientas.test.ts.
+async function setup(
+  options: { respond?: SimulatedProviderOptions['respond']; localTest?: boolean; mode?: CopilotMode } = {},
+) {
   n += 1;
   const owner = await createUser(db, `copiloto${n}@marca${n}.test`);
   const org = await createOrg(db, owner, `Organización copiloto ${n}`);
@@ -130,6 +137,7 @@ async function setup(options: { respond?: SimulatedProviderOptions['respond']; l
   const service = createAiService({ rpc, providers: [provider], models: MODELS });
   const handler = createAiGenerateHandler({
     service,
+    copilot: { mode: options.mode ?? 'json' },
     authenticate: async (t) => (sessions.has(t) ? { userId: sessions.get(t)!.id } : null),
     loadBrandProfile: async (t, brandId) => {
       const user = sessions.get(t)!;

@@ -7,7 +7,8 @@
 // y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI y en
 // 20261208010000 con el trabajador de medios en Fly.io, y en 20261210010000
 // con el token de su intermediario `worker-gateway`, y en 20261222010000 con la
-// última lectura de precios)
+// última lectura de precios, y en 20261226010000 con la ruta y el esfuerzo del
+// copiloto del editor)
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -156,6 +157,14 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     { key: `${prefix}_PROVIDER`, integration: 'ai_text' as const, secret: false, validate: textProvider },
     { key: `${prefix}_MODEL`, integration: 'ai_text' as const, secret: false, validate: providerModel },
   ]),
+  // Copiloto del editor: ruta (herramientas o JSON) y esfuerzo de razonamiento.
+  { key: 'AI_TEXT_EDITOR_COPILOT_MODE', integration: 'ai_text', secret: false, validate: oneOf(['tools', 'json']) },
+  {
+    key: 'AI_TEXT_EDITOR_COPILOT_EFFORT',
+    integration: 'ai_text',
+    secret: false,
+    validate: oneOf(['off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+  },
   {
     key: 'AI_VERTEX_PROJECT_ID',
     integration: 'ai_text',

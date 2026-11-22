@@ -22,7 +22,13 @@
 //   * No se envían `temperature`, `top_p` ni `top_k`: la versión de API
 //     2026-10-21 los rechaza. Tampoco `thinking`: cada modelo usa su valor por
 //     defecto, y el razonamiento se factura como salida dentro de `max_tokens`.
-import { AiProviderFailure, type AiFinishReason, type AiProviderRequest, type AiProviderResult } from '../contract.ts';
+import {
+  AiProviderFailure,
+  type AiFinishReason,
+  type AiProviderRequest,
+  type AiProviderResult,
+  type Json,
+} from '../contract.ts';
 import { toProviderSchema } from '../schema.ts';
 import { field, tokenCount } from './http.ts';
 import { maxOutputTokens, orderedContext, renderContextPart, TEXT_UNITS } from './prompt.ts';
@@ -67,6 +73,24 @@ export function buildMessagesBody(request: Omit<AiProviderRequest, 'signal'>): R
   };
   if (input.instructions) body.system = [{ type: 'text', text: input.instructions }];
 
+  // Herramientas (tool use): modo estricto y elección automática (las llamadas
+  // en paralelo vienen activadas; `tool_choice` forzado da 400 en los modelos
+  // actuales). La caché se construye en el orden herramientas → instrucciones →
+  // mensajes: con herramientas, las instrucciones llevan su marca de caché para
+  // que «herramientas + instrucciones» se lea de caché en cualquier marca.
+  if (input.tools && input.tools.length > 0) {
+    body.tools = input.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: toProviderSchema(tool.parameters),
+      strict: true,
+    }));
+    body.tool_choice = { type: 'auto' };
+    if (input.instructions) {
+      body.system = [{ type: 'text', text: input.instructions, cache_control: { type: 'ephemeral' } }];
+    }
+  }
+
   const outputConfig: Record<string, unknown> = {};
   if (input.outputSchema) {
     outputConfig.format = { type: 'json_schema', schema: toProviderSchema(input.outputSchema.schema) };
@@ -79,7 +103,7 @@ export function buildMessagesBody(request: Omit<AiProviderRequest, 'signal'>): R
 }
 
 function finishReason(stopReason: unknown): AiFinishReason {
-  if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return 'stop';
+  if (stopReason === 'end_turn' || stopReason === 'stop_sequence' || stopReason === 'tool_use') return 'stop';
   if (stopReason === 'max_tokens') return 'length';
   if (stopReason === 'refusal') return 'refusal';
   return 'other';
@@ -101,8 +125,21 @@ export function parseMessagesResponse(body: unknown, headers: Headers, providerN
     .map((block) => field(block, 'text') as string)
     .join('');
 
+  // Llamadas a herramientas: bloques `tool_use` con `input` ya como objeto.
+  const toolCalls = blocks
+    .filter((block) => field(block, 'type') === 'tool_use' && typeof field(block, 'name') === 'string')
+    .map((block) => {
+      const input = field(block, 'input');
+      const args = typeof input === 'object' && input !== null && !Array.isArray(input) ? (input as Json) : null;
+      return { name: field(block, 'name') as string, arguments: args };
+    });
+
   const result: AiProviderResult = {
-    output: { text, finish_reason: finishReason(field(body, 'stop_reason')) },
+    output: {
+      text,
+      finish_reason: finishReason(field(body, 'stop_reason')),
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    },
     usage: {
       [TEXT_UNITS.input]: input,
       [TEXT_UNITS.output]: output,

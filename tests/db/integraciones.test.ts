@@ -3,7 +3,7 @@
 // andamiaje), que solo ve y escribe un superadministrador; la función
 // `platform-integrations` con servicios simulados; la configuración efectiva
 // (base de datos y, si no, entorno) y conectar Instagram pegando un token.
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { computeAvailability, textTaskReadiness } from '../../supabase/functions/_shared/integrations/availability.ts';
@@ -594,6 +594,13 @@ describe('Probar conexión (servicios simulados)', () => {
   it('IA de texto: lista modelos de Mistral y Anthropic; avisa si faltan precios', async () => {
     const providers = fake({
       'https://api.mistral.ai/v1/models': () => ok({ data: [] }),
+      // La generación mínima real que sigue a listar modelos (simulada).
+      'https://api.mistral.ai/v1/chat/completions': () =>
+        ok({
+          id: 'cmpl-1',
+          choices: [{ message: { content: 'H' }, finish_reason: 'length' }],
+          usage: { prompt_tokens: 4, completion_tokens: 1 },
+        }),
       'https://api.anthropic.com/v1/models': () => new Response('{}', { status: 401 }),
     });
     const prices = JSON.stringify({
@@ -609,7 +616,10 @@ describe('Probar conexión (servicios simulados)', () => {
       },
       { fetch: providers },
     );
-    expect(r).toMatchObject({ ok: true, message: 'Mistral acepta la clave.' });
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/^Mistral acepta la clave\. Mistral genera con «mistral-medium»/);
+    // Con la clave rechazada al listar, no se intenta generar (no se gasta nada).
+    calls.length = 0;
     const anthropic = await probeIntegration(
       'ai_text',
       {
@@ -622,6 +632,7 @@ describe('Probar conexión (servicios simulados)', () => {
     );
     expect(anthropic.ok).toBe(false);
     expect(anthropic.message).toMatch(/rechaza la clave.*Precios|rechaza la clave/);
+    expect(calls).toEqual(['https://api.anthropic.com/v1/models?limit=1']);
     const empty = await probeIntegration('ai_text', {}, { fetch: providers });
     expect(empty).toMatchObject({ ok: false });
     expect(empty.message).toMatch(/ninguna tarea/);
@@ -634,6 +645,13 @@ describe('Probar conexión (servicios simulados)', () => {
         seen.push(init?.headers as Record<string, string>);
         return ok({ data: [] });
       },
+      // La generación mínima real que sigue a listar modelos (simulada).
+      'https://eu.api.openai.com/v1/chat/completions': () =>
+        ok({
+          id: 'chatcmpl-1',
+          choices: [{ message: { content: 'H' }, finish_reason: 'length' }],
+          usage: { prompt_tokens: 8, completion_tokens: 1 },
+        }),
     });
     const prices = JSON.stringify({
       'openai/gpt-x': { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 },
@@ -650,7 +668,8 @@ describe('Probar conexión (servicios simulados)', () => {
       },
       { fetch: providers },
     );
-    expect(r).toMatchObject({ ok: true, message: 'OpenAI acepta la clave (eu.api.openai.com).' });
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/^OpenAI acepta la clave \(eu\.api\.openai\.com\)\./);
     expect(seen[0]).toMatchObject({ Authorization: 'Bearer clave-openai', 'OpenAI-Project': 'proj_x' });
     expect(JSON.stringify(r)).not.toContain('clave-openai');
     // Sin admitir otro tratamiento, la dirección global no se prueba ni se carga.
@@ -682,6 +701,377 @@ describe('Probar conexión (servicios simulados)', () => {
     expect(r).toMatchObject({ ok: true });
     expect(r.message).toMatch(/modo de pruebas/);
     expect(calls.filter((c) => c.includes('stripe'))).toHaveLength(1);
+  });
+});
+
+// «Probar conexión» de la IA de texto hace además una generación mínima REAL por
+// cada par adaptador/modelo de las tareas, con el mismo adaptador que usará la
+// tarea. Aquí todo es simulado: ninguna llamada sale de la máquina.
+describe('Probar conexión de la IA de texto: generación mínima real (proveedores simulados)', () => {
+  interface Call {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    body: Record<string, unknown> | null;
+  }
+  const KEY = 'sk-clave-de-prueba-0123456789';
+  const EU = 'https://eu.api.openai.com';
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  const chatOk = () =>
+    json(200, {
+      id: 'chatcmpl-1',
+      choices: [{ message: { content: 'H' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 8, completion_tokens: 1 },
+    });
+  const messagesOk = () =>
+    json(200, {
+      id: 'msg_1',
+      content: [{ type: 'text', text: 'H' }],
+      stop_reason: 'max_tokens',
+      usage: { input_tokens: 8, output_tokens: 1 },
+    });
+  /** `fetch` simulado que apunta cada llamada (dirección, cabeceras en minúsculas y cuerpo). */
+  function server(reply: (call: Call) => Response) {
+    const calls: Call[] = [];
+    const fetch: ProbeFetch = async (url, init) => {
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((v, k) => (headers[k] = v));
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      } catch {
+        body = null;
+      }
+      const call = { url, method: init?.method ?? 'GET', headers, body };
+      calls.push(call);
+      return reply(call);
+    };
+    return { fetch, calls, generations: () => calls.filter((c) => c.method === 'POST' && !c.url.includes('/token')) };
+  }
+  const openaiEnv = (model = 'gpt-x', extra: Record<string, string> = {}) => ({
+    AI_TEXT_PROVIDER: 'openai',
+    AI_TEXT_MODEL: model,
+    OPENAI_API_KEY: KEY,
+    OPENAI_BASE_URL: EU,
+    OPENAI_PROJECT: 'proj_x',
+    AI_PRICES: JSON.stringify({
+      [`openai/${model}`]: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 },
+    }),
+    ...extra,
+  });
+  const generation = (r: { checks: Array<{ name: string; ok: boolean | null; message: string }> }, pair: string) =>
+    r.checks.find((c) => c.name === `Generar con ${pair}`);
+
+  it('el caso real: la clave lista modelos, pero el servidor europeo la rechaza al generar (401) → no funciona y lo explica', async () => {
+    const s = server((c) =>
+      c.url.endsWith('/v1/models')
+        ? json(200, { data: [{ id: 'gpt-x' }] })
+        : // Como OpenAI: el mensaje del 401 cita parte de la clave. No debe salir.
+          json(401, { error: { message: `Incorrect API key provided: ${KEY}`, code: 'invalid_api_key' } }),
+    );
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === 'OpenAI')).toMatchObject({ ok: true });
+    expect(generation(r, 'openai/gpt-x')).toMatchObject({ ok: false });
+    expect(r.message).toMatch(/lista modelos, pero el servidor europeo de OpenAI \(eu\.api\.openai\.com\) la rechaza al generar/);
+    expect(r.message).toMatch(/«gpt-x» \(401\)/);
+    expect(r.message).toMatch(/proyecto con región Europa/);
+    // Ofrece el arreglo de un clic (servidor general), como cuando falla al listar.
+    expect(r.fix).toBe('openai_global');
+    // Ni la clave ni cabeceras, en ningún sitio del resultado.
+    expect(JSON.stringify(r)).not.toContain(KEY);
+    expect(JSON.stringify(r)).not.toMatch(/Bearer|authorization/i);
+  });
+
+  it('con el servidor general, el 401 al generar se explica sin ofrecer cambiar de región', async () => {
+    const s = server((c) => (c.url.endsWith('/v1/models') ? json(200, { data: [] }) : json(403, { error: { message: 'no' } })));
+    const r = await probeIntegration(
+      'ai_text',
+      openaiEnv('gpt-x', { OPENAI_BASE_URL: 'https://api.openai.com', AI_ALLOW_NON_EU_PROCESSING: 'true' }),
+      { fetch: s.fetch },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/OpenAI \(api\.openai\.com\) la rechaza al generar con «gpt-x» \(403\)/);
+    expect(r.fix).toBeUndefined();
+  });
+
+  it('todo bien: funciona, con la comprobación de generación y el aviso de coste en el resultado', async () => {
+    const s = server((c) => (c.url.endsWith('/v1/models') ? json(200, { data: [] }) : chatOk()));
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(true);
+    expect(generation(r, 'openai/gpt-x')).toMatchObject({
+      ok: true,
+      message: 'OpenAI genera con «gpt-x» en eu.api.openai.com (generación mínima real: 1 token de salida).',
+    });
+    expect(r.message).toContain('generación mínima real: 1 token de salida');
+    const cost = r.checks.find((c) => c.name === 'Coste de la prueba');
+    expect(cost).toMatchObject({ ok: null });
+    expect(cost!.message).toMatch(/1 generación mínima real/);
+    expect(cost!.message).toMatch(/coste despreciable, pero no cero/);
+    expect(cost!.message).toMatch(/No consume el cupo de ninguna organización/);
+    expect(JSON.stringify(r)).not.toContain(KEY);
+  });
+
+  it('la generación va a la dirección configurada, con las cabeceras del adaptador, y pide la salida mínima', async () => {
+    const s = server((c) => (c.url.endsWith('/v1/models') ? json(200, { data: [] }) : chatOk()));
+    await probeIntegration('ai_text', openaiEnv('gpt-x', { OPENAI_ORGANIZATION: 'org_x' }), { fetch: s.fetch });
+    expect(s.generations()).toHaveLength(1);
+    const call = s.generations()[0]!;
+    // La MISMA base que usará la tarea (el caso de la UE), no api.openai.com.
+    expect(call.url).toBe('https://eu.api.openai.com/v1/chat/completions');
+    expect(call.headers).toMatchObject({
+      authorization: `Bearer ${KEY}`,
+      'content-type': 'application/json',
+      'openai-project': 'proj_x',
+      'openai-organization': 'org_x',
+    });
+    expect(call.body).toEqual({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'Hola' }],
+      max_completion_tokens: 1,
+      reasoning_effort: 'none',
+    });
+    expect(s.calls.every((c) => c.url.startsWith(EU))).toBe(true);
+  });
+
+  it('un modelo que no existe (404) falla y dice qué revisar', async () => {
+    const s = server((c) =>
+      c.url.endsWith('/v1/models')
+        ? json(200, { data: [] })
+        : json(404, { error: { message: 'The model `gpt-inexistente` does not exist', code: 'model_not_found' } }),
+    );
+    const r = await probeIntegration('ai_text', openaiEnv('gpt-inexistente'), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/OpenAI no encuentra el modelo «gpt-inexistente» en eu\.api\.openai\.com \(404\)/);
+    expect(r.message).toMatch(/revisa el nombre del modelo/);
+    // No es cosa de la región: no ofrece el servidor general.
+    expect(r.fix).toBeUndefined();
+    // Un 404 no tiene que ver con `reasoning_effort`: no se reintenta.
+    expect(s.generations()).toHaveLength(1);
+  });
+
+  it('un 400 de otra cosa falla con el motivo del proveedor, sin secretos y sin reintentar', async () => {
+    const s = server((c) =>
+      c.url.endsWith('/v1/models')
+        ? json(200, { data: [] })
+        : json(400, { error: { message: `Invalid value for 'model' with key ${KEY}`, param: 'model' } }),
+    );
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/OpenAI no genera con «gpt-x» en eu\.api\.openai\.com: OpenAI ha rechazado la petición \(400\)/);
+    expect(r.message).toMatch(/nombre del modelo o un parámetro/);
+    expect(JSON.stringify(r)).not.toContain(KEY);
+    expect(s.generations()).toHaveLength(1);
+  });
+
+  it('si el modelo no admite `reasoning_effort` (400 que lo nombra), reintenta una vez sin él', async () => {
+    const s = server((c) => {
+      if (c.url.endsWith('/v1/models')) return json(200, { data: [] });
+      return c.body && 'reasoning_effort' in c.body
+        ? json(400, {
+            error: {
+              message: "Unsupported parameter: 'reasoning_effort' is not supported with this model.",
+              type: 'invalid_request_error',
+              param: 'reasoning_effort',
+              code: 'unsupported_parameter',
+            },
+          })
+        : chatOk();
+    });
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(true);
+    expect(generation(r, 'openai/gpt-x')).toMatchObject({ ok: true });
+    const tries = s.generations();
+    expect(tries).toHaveLength(2);
+    expect(tries[0]!.body).toMatchObject({ reasoning_effort: 'none', max_completion_tokens: 1 });
+    expect(tries[1]!.body).toEqual({
+      model: 'gpt-x',
+      messages: [{ role: 'user', content: 'Hola' }],
+      max_completion_tokens: 1,
+    });
+    // Mismo servidor en el reintento.
+    expect(tries[1]!.url).toBe('https://eu.api.openai.com/v1/chat/completions');
+  });
+
+  it('si sin `reasoning_effort` tampoco va, falla (un solo reintento)', async () => {
+    const s = server((c) => {
+      if (c.url.endsWith('/v1/models')) return json(200, { data: [] });
+      return c.body && 'reasoning_effort' in c.body
+        ? json(400, { error: { message: 'Unrecognized request argument supplied: reasoning_effort' } })
+        : json(401, { error: { message: 'no' } });
+    });
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/la rechaza al generar con «gpt-x» \(401\)/);
+    expect(s.generations()).toHaveLength(2);
+  });
+
+  it('un modelo que razona y corta con un 400 de «tope de salida» cuenta como que genera', async () => {
+    const s = server((c) =>
+      c.url.endsWith('/v1/models')
+        ? json(200, { data: [] })
+        : json(400, {
+            error: {
+              message: 'Could not finish the message because max_tokens or model output limit was reached.',
+              type: 'invalid_request_error',
+            },
+          }),
+    );
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(true);
+    expect(generation(r, 'openai/gpt-x')!.message).toMatch(/la clave y el modelo valen/);
+  });
+
+  it('una generación por par adaptador/modelo distinto: las tareas que comparten modelo no repiten', async () => {
+    const s = server((c) => (c.url.endsWith('/v1/models') ? json(200, { data: [] }) : chatOk()));
+    const price = { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 };
+    const r = await probeIntegration(
+      'ai_text',
+      {
+        ...openaiEnv('barato'),
+        // Seis tareas: cinco con el modelo por defecto y una con otro.
+        AI_TEXT_POST_CAPTION_MODEL: 'bueno',
+        AI_PRICES: JSON.stringify({ 'openai/barato': price, 'openai/bueno': price }),
+      },
+      { fetch: s.fetch },
+    );
+    expect(r.ok).toBe(true);
+    expect(s.generations().map((c) => c.body!.model).sort()).toEqual(['barato', 'bueno']);
+    expect(r.checks.find((c) => c.name === 'Coste de la prueba')!.message).toMatch(/2 generaciones mínimas reales/);
+    // Listar modelos, una sola vez.
+    expect(s.calls.filter((c) => c.url.endsWith('/v1/models'))).toHaveLength(1);
+  });
+
+  it('si la clave ya falla al listar, no se intenta generar: no se gasta nada', async () => {
+    const s = server(() => json(401, { error: { message: 'no' } }));
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(s.generations()).toEqual([]);
+    expect(r.checks.find((c) => c.name === 'Coste de la prueba')).toBeUndefined();
+  });
+
+  it('si el proveedor no contesta al generar, lo dice', async () => {
+    const s = server((c) => {
+      if (c.url.endsWith('/v1/models')) return json(200, { data: [] });
+      throw new TypeError('sin red');
+    });
+    const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/OpenAI no genera con «gpt-x».*No se pudo conectar con OpenAI/);
+  });
+
+  it('Mistral y Anthropic: `max_tokens: 1` contra su punto de generación, con sus cabeceras', async () => {
+    const s = server((c) => {
+      if (c.method === 'GET') return json(200, { data: [] });
+      return c.url.includes('anthropic') ? messagesOk() : chatOk();
+    });
+    const mistral = await probeIntegration(
+      'ai_text',
+      { AI_TEXT_PROVIDER: 'mistral', AI_TEXT_MODEL: 'mistral-medium', MISTRAL_API_KEY: 'clave-mistral-0123' },
+      { fetch: s.fetch },
+    );
+    expect(generation(mistral, 'mistral/mistral-medium')).toMatchObject({
+      ok: true,
+      message: 'Mistral genera con «mistral-medium» (generación mínima real: 1 token de salida).',
+    });
+    const m = s.generations()[0]!;
+    expect(m.url).toBe('https://api.mistral.ai/v1/chat/completions');
+    expect(m.headers.authorization).toBe('Bearer clave-mistral-0123');
+    expect(m.body).toEqual({ model: 'mistral-medium', messages: [{ role: 'user', content: 'Hola' }], max_tokens: 1 });
+
+    s.calls.length = 0;
+    const anthropic = await probeIntegration(
+      'ai_text',
+      {
+        AI_TEXT_PROVIDER: 'anthropic',
+        AI_TEXT_MODEL: 'claude-x',
+        ANTHROPIC_API_KEY: 'clave-anthropic-0123',
+        AI_ALLOW_NON_EU_PROCESSING: 'true',
+      },
+      { fetch: s.fetch },
+    );
+    expect(generation(anthropic, 'anthropic/claude-x')).toMatchObject({ ok: true });
+    const a = s.generations()[0]!;
+    expect(a.url).toBe('https://api.anthropic.com/v1/messages');
+    expect(a.headers['x-api-key']).toBe('clave-anthropic-0123');
+    expect(a.body).toEqual({
+      model: 'claude-x',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hola' }] }],
+    });
+    expect(JSON.stringify([mistral, anthropic])).not.toMatch(/clave-(mistral|anthropic)/);
+  });
+
+  it('Bedrock: lista modelos en un servidor y genera en otro; si ese rechaza las credenciales, lo dice', async () => {
+    const s = server((c) =>
+      c.method === 'GET' ? json(200, { modelSummaries: [] }) : json(403, { type: 'error', error: { type: 'permission_error', message: 'no' } }),
+    );
+    const r = await probeIntegration(
+      'ai_text',
+      {
+        AI_TEXT_PROVIDER: 'anthropic-bedrock',
+        AI_TEXT_MODEL: 'anthropic.claude-x',
+        AI_BEDROCK_REGION: 'eu-west-1',
+        AI_BEDROCK_BEARER_TOKEN: 'token-bedrock-0123',
+      },
+      { fetch: s.fetch },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/Amazon Bedrock lista modelos, pero rechaza las credenciales al generar con «anthropic\.claude-x» \(403\)/);
+    const g = s.generations()[0]!;
+    expect(g.url).toBe('https://bedrock-mantle.eu-west-1.api.aws/anthropic/v1/messages');
+    expect(g.body).toMatchObject({ model: 'anthropic.claude-x', max_tokens: 1 });
+    expect(JSON.stringify(r)).not.toContain('token-bedrock-0123');
+  });
+
+  it('Vertex: con el token de Google y el modelo en la dirección; un 404 dice que revise modelo, proyecto y ubicación', async () => {
+    // Clave generada para esta prueba: no es la de ninguna cuenta.
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    let found = true;
+    const s = server((c) => {
+      if (c.url.startsWith('https://oauth2.googleapis.com/token')) return json(200, { access_token: 'ya29.token-de-prueba', expires_in: 3600 });
+      return found ? messagesOk() : json(404, { error: { code: 404, message: 'Publisher Model not found', status: 'NOT_FOUND' } });
+    });
+    const env = {
+      AI_TEXT_PROVIDER: 'anthropic-vertex',
+      AI_TEXT_MODEL: 'claude-x',
+      AI_VERTEX_PROJECT_ID: 'proyecto-prueba',
+      AI_VERTEX_LOCATION: 'eu',
+      AI_VERTEX_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        client_email: 'rrss@proyecto-prueba.iam.gserviceaccount.com',
+        private_key: privateKey,
+      }),
+    };
+    const good = await probeIntegration('ai_text', env, { fetch: s.fetch });
+    expect(generation(good, 'anthropic-vertex/claude-x')).toMatchObject({ ok: true });
+    const g = s.generations()[0]!;
+    expect(g.url).toBe(
+      'https://aiplatform.eu.rep.googleapis.com/v1/projects/proyecto-prueba/locations/eu/publishers/anthropic/models/claude-x:rawPredict',
+    );
+    expect(g.headers.authorization).toBe('Bearer ya29.token-de-prueba');
+    expect(g.body).toMatchObject({ max_tokens: 1, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hola' }] }] });
+    expect(g.body).not.toHaveProperty('model');
+
+    found = false;
+    const bad = await probeIntegration('ai_text', env, { fetch: s.fetch });
+    expect(bad.ok).toBe(false);
+    expect(bad.message).toMatch(/Google Vertex AI no encuentra el modelo «claude-x» \(404\).*el proyecto y la ubicación/);
+    expect(JSON.stringify([good, bad])).not.toContain('ya29.token-de-prueba');
+  });
+
+  it('el proveedor simulado de las pruebas locales sigue sin llamar a nadie', async () => {
+    const s = server(() => json(500, {}));
+    const r = await probeIntegration(
+      'ai_text',
+      { AI_E2E_SIMULATED_PROVIDER: 'true', SUPABASE_URL: 'http://127.0.0.1:54321' },
+      { fetch: s.fetch },
+    );
+    expect(r.ok).toBe(true);
+    expect(s.calls).toEqual([]);
   });
 });
 

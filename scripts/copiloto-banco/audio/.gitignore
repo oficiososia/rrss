@@ -1,0 +1,4 @@
+# Las grabaciones son de quien las hace: no se suben al repositorio (ver LEEME.md).
+*.wav
+*.m4a
+*.webm

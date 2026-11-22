@@ -81,6 +81,7 @@ export function createVertexProvider(options: VertexProviderOptions): AiProvider
 
   return {
     id: VERTEX_PROVIDER_ID,
+    supportsTools: true,
 
     estimateUsage(request): AiUsage {
       return estimateTextUsage(request.input, { cacheWrites: true });

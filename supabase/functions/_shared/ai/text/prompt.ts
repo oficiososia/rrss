@@ -45,8 +45,8 @@ export function maxOutputTokens(input: AiInput): number {
 
 // Cota superior aproximada, sin llamar al proveedor: un token cada 2,5
 // caracteres (el español real ronda 3-4) más un margen fijo por el envoltorio
-// y, con salida estructurada, por el esquema y las instrucciones que añade el
-// proveedor. No sustituye al recuento del proveedor: solo sirve para reservar.
+// y, con salida estructurada o con herramientas, por el esquema y las
+// instrucciones que añade el proveedor. No sustituye al recuento del proveedor: solo sirve para reservar.
 const CHARS_PER_TOKEN_FLOOR = 2.5;
 const BASE_OVERHEAD_TOKENS = 60;
 const SCHEMA_OVERHEAD_TOKENS = 400;
@@ -72,13 +72,24 @@ export function estimateTextUsage(input: AiInput, options: { cacheWrites: boolea
   const { cacheable, volatile } = orderedContext(input);
   const chars = (parts: ContextPart[]) => parts.reduce((sum, part) => sum + renderContextPart(part).length, 0);
   const schemaChars = input.outputSchema ? JSON.stringify(input.outputSchema.schema).length : 0;
+  // Las herramientas viajan en cada petición y se cobran como entrada: cuentan
+  // en la reserva (son la mayor parte del prompt del copiloto del editor).
+  const toolChars = input.tools && input.tools.length > 0 ? JSON.stringify(input.tools).length : 0;
+  const instructionChars = (input.instructions ?? '').length;
+  // Con herramientas, donde escribir en caché se cobra (Anthropic), el adaptador
+  // marca «herramientas + instrucciones» para la caché: se reservan a ese precio.
+  const cachedPrefixChars = options.cacheWrites && toolChars > 0 ? toolChars + instructionChars : 0;
 
   const fixed =
-    upperTokens((input.instructions ?? '').length + input.prompt.length + chars(volatile) + schemaChars) +
+    upperTokens(
+      (cachedPrefixChars > 0 ? 0 : instructionChars + toolChars) + input.prompt.length + chars(volatile) + schemaChars,
+    ) +
     BASE_OVERHEAD_TOKENS +
     (input.outputSchema ? SCHEMA_OVERHEAD_TOKENS : 0) +
+    (toolChars > 0 ? SCHEMA_OVERHEAD_TOKENS : 0) +
     (input.images?.length ?? 0) * (IMAGE_TOKENS_UPPER + IMAGE_LABEL_TOKENS);
-  const stable = cacheable.length > 0 ? upperTokens(chars(cacheable)) : 0;
+  const stableChars = chars(cacheable) + cachedPrefixChars;
+  const stable = stableChars > 0 ? upperTokens(stableChars) : 0;
 
   const usage: AiUsage = { [TEXT_UNITS.output]: maxOutputTokens(input) };
   if (options.cacheWrites && stable > 0) {

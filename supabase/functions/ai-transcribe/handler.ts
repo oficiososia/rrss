@@ -1,13 +1,19 @@
 // Lógica de la Edge Function `ai-transcribe` (subtítulos automáticos de los
-// reels), sin nada de Deno: recibe sus dependencias y devuelve una `Response`.
+// reels y dictado del copiloto por voz del editor), sin nada de Deno: recibe sus dependencias y devuelve una `Response`.
 // Las pruebas la ejecutan en Node con la base de datos real y el proveedor
 // simulado (tests/db/ia-transcripcion.test.ts).
 //
 //   POST application/json      { action: "options", brandId }
 //        → { available, microsPerSecond }   (para enseñar el coste antes)
-//   POST multipart/form-data   brandId, meta = { chunks: [{ seconds }], language? },
-//                              chunk-0, chunk-1, … (WAV)
+//   POST multipart/form-data   brandId, meta = { chunks: [{ seconds }], language?,
+//                              purpose?, hints? }, chunk-0, chunk-1, … (WAV)
 //        → { segments: [{ index, text }], generationId }
+//
+// `purpose` dice para qué es («reel.subtitles», por defecto, o
+// «editor.dictation»): mismo modelo y mismo precio, pero cada uso queda apuntado
+// con su nombre en `ai_generations`. `hints` es vocabulario de pista (nombres de
+// la marca, de platos, de capas…): se sanea aquí y solo ayuda al modelo a
+// acertar con esas palabras; no se guarda.
 //
 // El navegador ya ha cortado el sonido del tramo usado de cada clip en trozos
 // de voz; aquí se transcribe cada trozo (un trozo = un subtítulo). El permiso
@@ -18,7 +24,12 @@
 // En marcas en modo agencia se admite (decisión provisional, como el copiloto
 // por voz): transcribir no redacta, copia lo que se dice en el clip.
 import { AiError, type AiErrorCode, type AiService } from '../_shared/ai/contract.ts';
-import { TRANSCRIPTION_PURPOSE } from '../_shared/ai/transcription/config.ts';
+import {
+  TRANSCRIPTION_PURPOSE,
+  TRANSCRIPTION_PURPOSES,
+  type TranscriptionPurpose,
+} from '../_shared/ai/transcription/config.ts';
+import { sanitizeTranscriptionHints } from '../_shared/ai/transcription/openai.ts';
 
 export const MAX_CHUNKS = 40;
 export const MAX_CHUNK_SECONDS = 15;
@@ -126,7 +137,7 @@ export function createAiTranscribeHandler(deps: AiTranscribeDeps): (request: Req
     if (typeof brandId !== 'string' || !UUID.test(brandId)) {
       return fail(400, 'invalid_request', 'Indica la marca (brandId).');
     }
-    let meta: { chunks?: Array<{ seconds?: unknown }>; language?: unknown };
+    let meta: { chunks?: Array<{ seconds?: unknown }>; language?: unknown; purpose?: unknown; hints?: unknown };
     try {
       meta = JSON.parse(String(form.get('meta') ?? '')) as typeof meta;
     } catch {
@@ -137,6 +148,14 @@ export function createAiTranscribeHandler(deps: AiTranscribeDeps): (request: Req
       return fail(400, 'invalid_request', `Manda entre 1 y ${MAX_CHUNKS} trozos de sonido.`);
     }
     const language = typeof meta.language === 'string' && /^[a-z]{2}$/.test(meta.language) ? meta.language : undefined;
+    // Para qué es: solo los usos conocidos; sin indicarlo, subtítulos (como antes).
+    let purpose: TranscriptionPurpose = TRANSCRIPTION_PURPOSE;
+    if (meta.purpose !== undefined) {
+      const wanted = TRANSCRIPTION_PURPOSES.find((known) => known === meta.purpose);
+      if (!wanted) return fail(400, 'invalid_request', 'Uso de la transcripción no admitido (purpose).');
+      purpose = wanted;
+    }
+    const hints = sanitizeTranscriptionHints(meta.hints);
     const chunks: Array<{ data: Uint8Array; mimeType: string; seconds: number }> = [];
     let total = 0;
     let bytes = 0;
@@ -166,8 +185,11 @@ export function createAiTranscribeHandler(deps: AiTranscribeDeps): (request: Req
         userId: user.userId,
         brandId,
         task: 'transcription',
-        purpose: TRANSCRIPTION_PURPOSE,
-        input: { prompt: 'Transcribe literalmente lo que se dice.', audio: { chunks, language } },
+        purpose,
+        input: {
+          prompt: 'Transcribe literalmente lo que se dice.',
+          audio: { chunks, language, ...(hints.length > 0 ? { hints } : {}) },
+        },
       });
       const segments = Array.isArray(result.output.segments) ? result.output.segments : [];
       return json(200, { segments, generationId: result.generationId });
@@ -176,7 +198,7 @@ export function createAiTranscribeHandler(deps: AiTranscribeDeps): (request: Req
         deps.log?.('ai_error', { brandId, code: error.code, generationId: error.generationId });
         const message =
           error.code === 'not_configured'
-            ? 'Los subtítulos automáticos no están disponibles. Avisa a quien administra la plataforma.'
+            ? 'La transcripción no está disponible. Avisa a quien administra la plataforma.'
             : error.message;
         return json(STATUS[error.code], {
           error: { code: error.code, message, retryable: error.retryable, generationId: error.generationId },

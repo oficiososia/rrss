@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f38/autogestion`; antes, `f36/reel-como-este`).
+Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -878,6 +878,46 @@ Detalle en `docs/integraciones-sencillas.md`. Migración `20261222010000_precios
   implementar: `docs/integraciones-sencillas.md` §6); medir con nuestros casos los modelos que hoy
   salen como «sin medir con nuestros casos»; precio por imagen (la fuente solo da precio por token de imagen).
 
+## Copiloto del editor por herramientas, teclado y transcriptor (rama `f37/copiloto-herramientas`, 22/11/2026)
+
+Detalle en `docs/copiloto-voz.md`. Decisión del dueño: «vamos con luna y todo con
+herramientas para ver si sale mejor».
+
+- **Antes:** el copiloto solo admitía voz (dictado del navegador), devolvía un JSON con 8
+  operaciones, mandaba el perfil de marca entero en cada orden y «deshaz» contestaba «No
+  puedo deshacer desde aquí». «Probar conexión» de IA de texto solo listaba modelos.
+- **Ahora:**
+  - **Herramientas** (function calling) por defecto: 23 herramientas, una por operación, con
+    todo lo que el editor hace a mano (textos y efectos, capas, figuras, fotos, lienzo,
+    páginas, deshacer, guardar, plantillas y los flujos de foto). Adaptadores de OpenAI y de
+    Claude por la misma interfaz (`AiInput.tools`). La ruta JSON sigue detrás de
+    `AI_TEXT_EDITOR_COPILOT_MODE=json`.
+  - **Órdenes frecuentes sin IA** (intérprete local): «deshaz», «guarda», «más grande»,
+    «siguiente página»… coste cero y respuesta inmediata.
+  - **Órdenes por teclado**: campo de texto en el panel; el copiloto sale y funciona sin
+    micrófono.
+  - **Dos motores de voz**: dictado del navegador o transcriptor de OpenAI (`ai-transcribe`,
+    con cupo), a elegir; aviso de privacidad por motor.
+  - **Prompt compacto**: herramientas e instrucciones comunes delante (cacheables), marca en
+    tres líneas, documento en una línea por capa.
+  - **«Probar conexión» de IA de texto hace una generación mínima real** (1 token de salida
+    por modelo configurado) con el mismo endpoint que las tareas: una clave que lista modelos
+    pero no puede generar ya no da «Funciona».
+  - **Banco** `scripts/copiloto-banco.ts`: 75 órdenes; en seco por defecto.
+- **Probado:** unitarias, componentes y base de datos (proveedores y micrófono simulados);
+  e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI).
+- **Sin probar contra nada real:** la ruta de herramientas con OpenAI o Claude (formato,
+  `strict`, `reasoning_effort: "none"`, caché), el transcriptor, el micrófono, la sonda de
+  generación y el banco con `--apply`. Los objetivos de latencia (< 1,5 s) y de tokens sin
+  caché (< 1.500) **no están medidos**: con el contador del simulado el total por orden sube
+  de 2.455 a 3.122 tokens y lo no compartible entre marcas baja de 1.065 a 149; que se cumpla
+  depende de que el proveedor lea de caché el prefijo común.
+- **Para llevar a staging (en este orden):** aplicación → migración `20261226010000` (dos
+  ajustes de Integraciones, con vuelta atrás) → funciones `ai-generate`, `ai-transcribe` y
+  `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13).
+- **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
+  política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.
+
 ## «Hacer un reel como este» (rama `f36/reel-como-este`, 22/11/2026)
 
 Una persona sube un reel que le gusta (o pega su enlace) y el sistema lo estudia y lo rehace con las
@@ -907,3 +947,34 @@ ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs
 - **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
   `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
   `VITE_REEL_LIKE_ENABLED=true`.
+
+## Preparar un plan de campaña dictando y con la IA que rellena el formulario (rama `f40/campanas-voz`, 22/11/2026)
+
+Petición del dueño: «aquí hay que meter también el copiloto con IA para que puedas dictar lo que quieres, y la IA te
+tiene que ayudar a hacer la duración y todo». Detalle: `docs/ia-texto.md` («Rellenar el formulario de la campaña») y
+`docs/copiloto-voz.md` («Dictar en cualquier campo»).
+
+- **Antes:** el diálogo «Preparar un plan con IA» era un formulario con la instrucción, las ocho redes marcables, dos
+  fechas y un nombre; la duración y el ritmo se decidían a mano y el texto solo se escribía.
+- **Ahora:**
+  - Arriba, solo «¿Qué quieres preparar?», con micrófono (mismo motor y aviso que el copiloto del editor), y un botón
+    para que la IA proponga. La propuesta trae una frase de por qué («Te propongo 3 semanas porque…»), la duración,
+    el ritmo por formato, las redes, el objetivo y la semana a semana; queda **rellenada** en «Detalles» (plegados,
+    con un resumen de una línea) para corregirla. Se ajusta con «Más corta», «Más larga» (llaman a la IA) y «Solo
+    Instagram» (sin IA). Si falta un dato, UNA pregunta corta. El coste de la propuesta se ve en pequeño.
+  - Por defecto, «Detalles» enseña solo las redes de la marca (conectadas o con plantillas; Instagram si no hay);
+    «Otras redes» enseña el resto, desmarcadas.
+  - «Preparar el plan» lleva lo acordado (ritmo, reparto, fases, objetivo) a `campaign.plan`, que fija el máximo de
+    piezas con él; cada pieza del plan dice de qué plantilla de diseño o de reel de la marca encajaría
+    (**sugerencia**: el motor al aceptar todavía no aplica la plantilla; se elige al preparar la pieza).
+  - Componente reutilizable `DictableField`, en los campos de texto libre de «Editar foto» (fondo con IA), «Hacer
+    un reel como este», «Animar con IA» y «Generar imagen con IA», sin cambiar su comportamiento.
+- **Probado:** componentes (dictado y aviso, propuesta, ajustes, pregunta única, sin IA/sin cupo, modo agencia,
+  acuerdo hacia el plan, sugerencias de plantilla), base de datos (`campaign.brief`: saneado de redes/fechas/ritmo,
+  pregunta, ajustes, agencia, cupo, `agreement`), maquetación a 375 px en Chromium.
+- **Sin probar:** ningún modelo real con `campaign.brief` (la calidad de la duración y del ritmo propuestos); el
+  micrófono real en el diálogo; que «Más corta/larga» devuelva siempre una semana menos/más (el producto no lo
+  comprueba, solo sanea).
+- **Decisiones:** `campaign.brief` se registra como `campaign.plan` (sin variable ni migración nuevas); si se quiere
+  un modelo más barato solo para esto habrá que separar el propósito (migración del catálogo de Integraciones).
+- **Para llevarlo a staging:** redesplegar `ai-generate`; la aplicación. Sin migraciones.

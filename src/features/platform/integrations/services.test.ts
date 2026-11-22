@@ -112,4 +112,18 @@ describe('formato del coste', () => {
     expect(openai[1]!.centsPerUnit).toBeCloseTo(0.45, 6);
     expect(costLines(rows, 'claude')).toHaveLength(1);
   });
+
+  it('el dictado del copiloto con el transcriptor sale con su nombre, no como subtítulos', () => {
+    const rows = [
+      { task: 'transcription', purpose: 'reel.subtitles', provider: 'openai', model: 'c', operations: 2, cost_micros: 9000, audio_seconds: 120 },
+      { task: 'transcription', purpose: 'editor.dictation', provider: 'openai', model: 'c', operations: 30, cost_micros: 13_500, audio_seconds: 180 },
+    ] as Parameters<typeof costLines>[0];
+    const lines = costLines(rows, 'openai');
+    expect(lines.map((l) => [l.label, l.unit])).toEqual([
+      ['Subtítulos', 'minuto transcrito'],
+      ['Dictado del copiloto', 'minuto transcrito'],
+    ]);
+    expect(new Set(lines.map((l) => l.key)).size).toBe(2);
+    expect(lines[1]!.centsPerUnit).toBeCloseTo(0.45, 6);
+  });
 });
