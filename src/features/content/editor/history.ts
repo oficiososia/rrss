@@ -21,6 +21,7 @@ import {
   type TextLayer,
 } from '../document';
 import { isFullCrop } from './imageEffects/imageEdit';
+import { newLayerId } from './layers';
 import {
   alignMoves,
   distributeMoves,
@@ -91,6 +92,8 @@ export type EditorAction =
   /** Varios cambios de capa como un solo paso de deshacer (mover o transformar varias a la vez). */
   | { type: 'updateMany'; changes: { id: string; patch: LayerPatch }[]; key?: string }
   | { type: 'remove'; id: string }
+  /** Copia de una capa, un poco desplazada, delante de todo y ya elegida. */
+  | { type: 'duplicate'; id: string }
   | { type: 'reorder'; id: string; to: ReorderTarget }
   | { type: 'nudge'; id: string; dx: number; dy: number }
   /** Mueve todas las capas elegidas (las bloqueadas no). */
@@ -312,7 +315,10 @@ function goToPage(state: EditorState, pageId: string): EditorState {
 }
 
 /** Deshacer y rehacer: vuelve a la página del paso (si existe) y conserva la selección si no se cambia de página. */
-function travel(state: EditorState, entry: HistoryEntry): Pick<EditorState, 'document' | 'activePageId' | 'selectedIds' | 'selectedId'> {
+function travel(
+  state: EditorState,
+  entry: HistoryEntry,
+): Pick<EditorState, 'document' | 'activePageId' | 'selectedIds' | 'selectedId'> {
   const activePageId = existingPage(entry.document, entry.pageId, activePageIndex(state));
   const keep = activePageId === state.activePageId ? state.selectedIds : [];
   return {
@@ -397,6 +403,21 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         null,
         state.selectedIds.filter((id) => id !== action.id),
       );
+    }
+    case 'duplicate': {
+      const source = layers.find((layer) => layer.id === action.id);
+      if (!source || layers.length >= MAX_LAYERS) return state;
+      const step = Math.max(10, Math.round(Math.min(source.width, source.height) * 0.04));
+      const copy = {
+        ...source,
+        id: newLayerId(layers),
+        name: source.name ? `${source.name} (copia)`.slice(0, 120) : '',
+        x: source.x + step,
+        y: source.y + step,
+        locked: false,
+      } as Layer;
+      delete copy.groupId; // la copia no entra en el grupo de la original
+      return commitLayers(state, [...layers, copy], null, [copy.id]);
     }
     case 'removeSelection': {
       const doomed = new Set(

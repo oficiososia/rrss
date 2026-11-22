@@ -1,11 +1,8 @@
-import { BringToFront, SendToBack, SlidersHorizontal, Trash2, Undo2 } from 'lucide-react';
 import type { Dispatch, Ref } from 'react';
-import { Button } from '@/components/ui';
 import {
   ANCHORS_X,
   ANCHORS_Y,
   ASPECT_RATIOS,
-  MAX_IMAGE_BLUR,
   type AspectRatio,
   type Canvas,
   type Layer,
@@ -13,8 +10,17 @@ import {
   type TextLayer,
 } from '../../document';
 import type { EditorAction, LayerPatch } from '../history';
-import { FALLBACK_FONTS, LAYER_TYPE_LABEL, layerLabel } from '../layers';
+import { FALLBACK_FONTS, layerLabel } from '../layers';
 import { CheckInput, ColorInput, Labeled, NumberInput, Section, SelectInput } from './controls';
+import { LayerActions } from './LayerActions';
+import {
+  anchorSummary,
+  nameSummary,
+  opacitySummary,
+  positionSummary,
+  shapeExtrasSummary,
+  textSpacingSummary,
+} from './panelSummary';
 import { PhotoPanel, type PhotoToolsContext } from './PhotoPanel';
 import { ShadowFields } from './ShadowFields';
 import { TextEffectsFields } from './TextEffectsFields';
@@ -106,25 +112,8 @@ export function PropertiesPanel({
   const geometryLocked = readOnly || layer.locked;
 
   return (
-    <div className="space-y-5" data-testid="properties-panel">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold">{layerLabel(layer)}</h3>
-          <p className="text-xs text-muted">{LAYER_TYPE_LABEL[layer.type]}</p>
-        </div>
-        {!readOnly && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-danger"
-            onClick={() => dispatch({ type: 'remove', id })}
-            data-testid="layer-delete"
-          >
-            <Trash2 className="h-4 w-4" aria-hidden />
-            Borrar
-          </Button>
-        )}
-      </div>
+    <div className="space-y-3" data-testid="properties-panel">
+      <LayerActions layer={layer} readOnly={readOnly} dispatch={dispatch} />
 
       {layer.type === 'text' && (
         <TextFields
@@ -133,15 +122,6 @@ export function PropertiesPanel({
           update={update}
           brandStyle={brandStyle}
           textRef={textRef}
-          checkpoint={checkpoint}
-        />
-      )}
-      {layer.type === 'text' && (
-        <TextEffectsFields
-          layer={layer}
-          readOnly={readOnly}
-          palette={brandStyle.palette}
-          update={update}
           checkpoint={checkpoint}
         />
       )}
@@ -155,72 +135,6 @@ export function PropertiesPanel({
         />
       )}
       {layer.type === 'image' && (
-        <div className="grid grid-cols-2 gap-3">
-          <SelectInput<'cover' | 'contain'>
-            label="Encaje"
-            value={layer.fit}
-            disabled={readOnly}
-            onChange={(fit) => update({ fit })}
-            options={[
-              { value: 'cover', label: 'Llenar (recorta)' },
-              { value: 'contain', label: 'Entera' },
-            ]}
-          />
-          <NumberInput
-            label="Desenfoque (%)"
-            value={layer.blur ?? 0}
-            min={0}
-            max={MAX_IMAGE_BLUR}
-            disabled={readOnly}
-            onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
-            onCommit={checkpoint}
-          />
-          <NumberInput
-            label="Punto de interés X (%)"
-            value={layer.focus.x * 100}
-            min={0}
-            max={100}
-            disabled={readOnly}
-            onChange={(v) => update({ focus: { ...layer.focus, x: v / 100 } }, 'focus')}
-            onCommit={checkpoint}
-          />
-          <NumberInput
-            label="Punto de interés Y (%)"
-            value={layer.focus.y * 100}
-            min={0}
-            max={100}
-            disabled={readOnly}
-            onChange={(v) => update({ focus: { ...layer.focus, y: v / 100 } }, 'focus')}
-            onCommit={checkpoint}
-          />
-          {onEditPhoto && !readOnly && layer.source.kind === 'asset' && (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="col-span-2"
-              onClick={onEditPhoto}
-              data-testid="layer-edit-photo"
-            >
-              <SlidersHorizontal className="h-4 w-4" aria-hidden />
-              Editar foto
-            </Button>
-          )}
-          {onRestoreOriginal && !readOnly && layer.source.kind === 'asset' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="col-span-2"
-              onClick={onRestoreOriginal}
-              data-testid="layer-restore-original"
-            >
-              <Undo2 className="h-4 w-4" aria-hidden />
-              Volver a la foto original
-            </Button>
-          )}
-        </div>
-      )}
-
-      {layer.type === 'image' && (
         <PhotoPanel
           layer={layer}
           readOnly={readOnly}
@@ -228,10 +142,39 @@ export function PropertiesPanel({
           update={update}
           checkpoint={checkpoint}
           tools={photoTools ?? { row: null, url: undefined, onUseResult: () => undefined }}
+          onEditPhoto={onEditPhoto}
+          onRestoreOriginal={onRestoreOriginal}
         />
       )}
 
-      <Section title="Posición y tamaño" defaultOpen>
+      <Section id="common.opacity" title="Transparencia y visibilidad" summary={opacitySummary(layer)}>
+        <NumberInput
+          label="Opacidad (%)"
+          value={layer.opacity * 100}
+          min={0}
+          max={100}
+          disabled={readOnly}
+          onChange={(v) => update({ opacity: v / 100 }, 'opacity')}
+          onCommit={checkpoint}
+        />
+        <div className="flex flex-wrap gap-4">
+          <CheckInput
+            label="Visible"
+            checked={layer.visible}
+            disabled={readOnly}
+            onChange={(visible) => update({ visible })}
+          />
+          <CheckInput
+            label="Bloqueada"
+            checked={layer.locked}
+            disabled={readOnly}
+            onChange={(locked) => update({ locked })}
+          />
+        </div>
+      </Section>
+
+      {/* Lo técnico, al final y plegado. */}
+      <Section id="tech.position" title="Posición exacta y tamaño" summary={positionSummary(layer)}>
         <div className="grid grid-cols-2 gap-3">
           <NumberInput
             label="X"
@@ -272,33 +215,10 @@ export function PropertiesPanel({
             onChange={(rotation) => update({ rotation }, 'rotation')}
             onCommit={checkpoint}
           />
-          <NumberInput
-            label="Opacidad (%)"
-            value={layer.opacity * 100}
-            min={0}
-            max={100}
-            disabled={readOnly}
-            onChange={(v) => update({ opacity: v / 100 }, 'opacity')}
-            onCommit={checkpoint}
-          />
-        </div>
-        <div className="flex flex-wrap gap-4">
-          <CheckInput
-            label="Visible"
-            checked={layer.visible}
-            disabled={readOnly}
-            onChange={(visible) => update({ visible })}
-          />
-          <CheckInput
-            label="Bloqueada"
-            checked={layer.locked}
-            disabled={readOnly}
-            onChange={(locked) => update({ locked })}
-          />
         </div>
       </Section>
 
-      <Section title="Al cambiar de proporción">
+      <Section id="tech.anchor" title="Al cambiar de proporción" summary={anchorSummary(layer)}>
         <div className="grid grid-cols-2 gap-3">
           <SelectInput
             label="Horizontal: conserva"
@@ -318,35 +238,21 @@ export function PropertiesPanel({
       </Section>
 
       {!readOnly && (
-        <section className="space-y-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Orden</h4>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" size="sm" onClick={() => dispatch({ type: 'reorder', id, to: 'front' })}>
-              <BringToFront className="h-4 w-4" aria-hidden />
-              Al frente
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => dispatch({ type: 'reorder', id, to: 'back' })}>
-              <SendToBack className="h-4 w-4" aria-hidden />
-              Al fondo
-            </Button>
-          </div>
-        </section>
-      )}
-
-      {!readOnly && (
-        <Labeled label="Nombre de la capa">
-          {(inputId) => (
-            <input
-              id={inputId}
-              className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
-              value={layer.name}
-              maxLength={120}
-              placeholder={layerLabel({ ...layer, name: '' })}
-              onChange={(e) => update({ name: e.target.value }, 'name')}
-              onBlur={checkpoint}
-            />
-          )}
-        </Labeled>
+        <Section id="tech.name" title="Nombre de la capa" summary={nameSummary(layer)}>
+          <Labeled label="Nombre en la lista de capas">
+            {(inputId) => (
+              <input
+                id={inputId}
+                className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm"
+                value={layer.name}
+                maxLength={120}
+                placeholder={layerLabel({ ...layer, name: '' })}
+                onChange={(e) => update({ name: e.target.value }, 'name')}
+                onBlur={checkpoint}
+              />
+            )}
+          </Labeled>
+        </Section>
       )}
     </div>
   );
@@ -369,89 +275,104 @@ function TextFields({
 }) {
   const fonts = [...new Set([...brandStyle.fonts, ...FALLBACK_FONTS, layer.fontFamily])];
   return (
-    <section className="space-y-3">
-      <Labeled label="Texto">
-        {(id) => (
-          <textarea
-            id={id}
-            ref={textRef}
-            rows={3}
-            maxLength={2000}
-            className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-            value={layer.text}
+    <>
+      <section className="space-y-3" data-testid="text-main">
+        <Labeled label="Texto">
+          {(id) => (
+            <textarea
+              id={id}
+              ref={textRef}
+              rows={3}
+              maxLength={2000}
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
+              value={layer.text}
+              disabled={readOnly}
+              onChange={(e) => update({ text: e.target.value }, 'text')}
+              onBlur={checkpoint}
+              data-testid="layer-text"
+            />
+          )}
+        </Labeled>
+        <div className="grid grid-cols-2 gap-3">
+          <SelectInput
+            label="Tipografía"
+            value={layer.fontFamily}
             disabled={readOnly}
-            onChange={(e) => update({ text: e.target.value }, 'text')}
-            onBlur={checkpoint}
-            data-testid="layer-text"
+            onChange={(fontFamily) => update({ fontFamily })}
+            options={fonts.map((font) => ({
+              value: font,
+              label: brandStyle.fonts.includes(font) ? `${font} (marca)` : font,
+            }))}
           />
-        )}
-      </Labeled>
-      <div className="grid grid-cols-2 gap-3">
-        <SelectInput
-          label="Tipografía"
-          value={layer.fontFamily}
-          disabled={readOnly}
-          onChange={(fontFamily) => update({ fontFamily })}
-          options={fonts.map((font) => ({
-            value: font,
-            label: brandStyle.fonts.includes(font) ? `${font} (marca)` : font,
-          }))}
-        />
-        <NumberInput
-          label="Cuerpo"
-          value={layer.fontSize}
-          min={1}
-          max={2000}
-          disabled={readOnly}
-          onChange={(fontSize) => update({ fontSize }, 'fontSize')}
-          onCommit={checkpoint}
-        />
-        <SelectInput
-          label="Grosor"
-          value={String(layer.fontWeight)}
-          disabled={readOnly}
-          onChange={(w) => update({ fontWeight: Number(w) })}
-          options={WEIGHTS.map((w) => ({ value: String(w), label: String(w) }))}
-        />
-        <SelectInput<'left' | 'center' | 'right'>
-          label="Alineación"
-          value={layer.align}
-          disabled={readOnly}
-          onChange={(align) => update({ align })}
-          options={[
-            { value: 'left', label: 'Izquierda' },
-            { value: 'center', label: 'Centro' },
-            { value: 'right', label: 'Derecha' },
-          ]}
-        />
-        <NumberInput
-          label="Interlineado"
-          value={layer.lineHeight}
-          min={0.5}
-          max={4}
-          step={0.05}
-          disabled={readOnly}
-          onChange={(lineHeight) => update({ lineHeight }, 'lineHeight')}
-          onCommit={checkpoint}
-        />
-        <div className="flex items-end pb-2">
-          <CheckInput
-            label="Cursiva"
-            checked={layer.italic}
+          <NumberInput
+            label="Tamaño de letra"
+            value={layer.fontSize}
+            min={1}
+            max={2000}
             disabled={readOnly}
-            onChange={(italic) => update({ italic })}
+            onChange={(fontSize) => update({ fontSize }, 'fontSize')}
+            onCommit={checkpoint}
+          />
+          <SelectInput
+            label="Grosor"
+            value={String(layer.fontWeight)}
+            disabled={readOnly}
+            onChange={(w) => update({ fontWeight: Number(w) })}
+            options={WEIGHTS.map((w) => ({ value: String(w), label: String(w) }))}
+          />
+          <SelectInput<'left' | 'center' | 'right'>
+            label="Alineación"
+            value={layer.align}
+            disabled={readOnly}
+            onChange={(align) => update({ align })}
+            options={[
+              { value: 'left', label: 'Izquierda' },
+              { value: 'center', label: 'Centro' },
+              { value: 'right', label: 'Derecha' },
+            ]}
           />
         </div>
-      </div>
-      <ColorInput
-        label="Color del texto"
-        value={layer.color}
+        <ColorInput
+          label="Color del texto"
+          value={layer.color}
+          palette={brandStyle.palette}
+          disabled={readOnly}
+          onChange={(color) => update({ color }, 'color')}
+          onCommit={checkpoint}
+        />
+      </section>
+
+      <Section id="text.spacing" title="Interlineado y cursiva" summary={textSpacingSummary(layer)}>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberInput
+            label="Interlineado"
+            value={layer.lineHeight}
+            min={0.5}
+            max={4}
+            step={0.05}
+            disabled={readOnly}
+            onChange={(lineHeight) => update({ lineHeight }, 'lineHeight')}
+            onCommit={checkpoint}
+          />
+          <div className="flex items-end pb-2">
+            <CheckInput
+              label="Cursiva"
+              checked={layer.italic}
+              disabled={readOnly}
+              onChange={(italic) => update({ italic })}
+            />
+          </div>
+        </div>
+      </Section>
+
+      <TextEffectsFields
+        layer={layer}
+        readOnly={readOnly}
         palette={brandStyle.palette}
-        disabled={readOnly}
-        onChange={(color) => update({ color }, 'color')}
-        onCommit={checkpoint}
+        update={update}
+        checkpoint={checkpoint}
       />
-    </section>
+    </>
   );
 }
 
@@ -469,67 +390,71 @@ function ShapeFields({
   checkpoint: () => void;
 }) {
   return (
-    <section className="space-y-3">
-      <CheckInput
-        label="Relleno"
-        checked={layer.fill !== null}
-        disabled={readOnly}
-        onChange={(on) => update({ fill: on ? (brandStyle.palette[0]?.hex ?? '#E5E7EB') : null })}
-      />
-      {layer.fill !== null && (
-        <ColorInput
-          label="Color de relleno"
-          value={layer.fill}
-          palette={brandStyle.palette}
+    <>
+      <section className="space-y-3" data-testid="shape-main">
+        <CheckInput
+          label="Relleno"
+          checked={layer.fill !== null}
           disabled={readOnly}
-          onChange={(fill) => update({ fill }, 'fill')}
-          onCommit={checkpoint}
+          onChange={(on) => update({ fill: on ? (brandStyle.palette[0]?.hex ?? '#E5E7EB') : null })}
         />
-      )}
-      <CheckInput
-        label="Borde"
-        checked={layer.stroke !== null}
-        disabled={readOnly}
-        onChange={(on) => update({ stroke: on ? { color: '#111111', width: 4 } : null })}
-      />
-      {layer.stroke !== null && (
-        <>
+        {layer.fill !== null && (
           <ColorInput
-            label="Color del borde"
-            value={layer.stroke.color}
+            label="Color de relleno"
+            value={layer.fill}
             palette={brandStyle.palette}
             disabled={readOnly}
-            onChange={(color) => update({ stroke: { width: layer.stroke?.width ?? 4, color } }, 'stroke')}
+            onChange={(fill) => update({ fill }, 'fill')}
             onCommit={checkpoint}
           />
-          <NumberInput
-            label="Grosor del borde"
-            value={layer.stroke.width}
-            min={0.5}
-            max={1000}
-            disabled={readOnly}
-            onChange={(width) => update({ stroke: { color: layer.stroke?.color ?? '#111111', width } }, 'stroke')}
-            onCommit={checkpoint}
-          />
-        </>
-      )}
-      {layer.shape === 'rectangle' && (
-        <NumberInput
-          label="Radio de las esquinas"
-          value={layer.cornerRadius}
-          min={0}
+        )}
+        <CheckInput
+          label="Borde"
+          checked={layer.stroke !== null}
           disabled={readOnly}
-          onChange={(cornerRadius) => update({ cornerRadius }, 'cornerRadius')}
+          onChange={(on) => update({ stroke: on ? { color: '#111111', width: 4 } : null })}
+        />
+        {layer.stroke !== null && (
+          <>
+            <ColorInput
+              label="Color del borde"
+              value={layer.stroke.color}
+              palette={brandStyle.palette}
+              disabled={readOnly}
+              onChange={(color) => update({ stroke: { width: layer.stroke?.width ?? 4, color } }, 'stroke')}
+              onCommit={checkpoint}
+            />
+            <NumberInput
+              label="Grosor del borde"
+              value={layer.stroke.width}
+              min={0.5}
+              max={1000}
+              disabled={readOnly}
+              onChange={(width) => update({ stroke: { color: layer.stroke?.color ?? '#111111', width } }, 'stroke')}
+              onCommit={checkpoint}
+            />
+          </>
+        )}
+      </section>
+      <Section id="shape.extras" title="Esquinas y sombra" summary={shapeExtrasSummary(layer)}>
+        {layer.shape === 'rectangle' && (
+          <NumberInput
+            label="Radio de las esquinas"
+            value={layer.cornerRadius}
+            min={0}
+            disabled={readOnly}
+            onChange={(cornerRadius) => update({ cornerRadius }, 'cornerRadius')}
+            onCommit={checkpoint}
+          />
+        )}
+        <ShadowFields
+          shadow={layer.shadow}
+          palette={brandStyle.palette}
+          readOnly={readOnly}
+          onChange={(shadow, field) => update({ shadow }, field)}
           onCommit={checkpoint}
         />
-      )}
-      <ShadowFields
-        shadow={layer.shadow}
-        palette={brandStyle.palette}
-        readOnly={readOnly}
-        onChange={(shadow, field) => update({ shadow }, field)}
-        onCommit={checkpoint}
-      />
-    </section>
+      </Section>
+    </>
   );
 }
