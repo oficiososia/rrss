@@ -223,13 +223,29 @@ export async function setAiQuota(db: Db, platformAdmin: TestUser, orgId: string,
   await as(db, platformAdmin, `select public.admin_set_ai_quota($1, $2)`, [orgId, limitMicros]);
 }
 
-export async function createOrg(db: Db, user: TestUser, name: string, kind = 'business'): Promise<string> {
+/**
+ * Crea una organización. Las pruebas anteriores a la autogestión cuentan con que
+ * cualquier organización admite el modo agencia en sus marcas, así que por
+ * defecto se deja en `agency`; las pruebas de autogestión piden `'self'`
+ * (como nace una organización de verdad) o `'default'` (lo que decide
+ * `create_organization` según el tipo).
+ */
+export async function createOrg(
+  db: Db,
+  user: TestUser,
+  name: string,
+  kind = 'business',
+  workMode: 'self' | 'agency' | 'default' = 'agency',
+): Promise<string> {
   const [row] = await as<{ id: string }>(
     db,
     user,
     `select id from public.create_organization($1, $2::public.org_kind)`,
     [name, kind],
   );
+  if (workMode !== 'default') {
+    await db.query(`update public.organizations set work_mode = $2 where id = $1`, [row!.id, workMode]);
+  }
   return row!.id;
 }
 

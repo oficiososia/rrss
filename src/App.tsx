@@ -7,6 +7,7 @@ import { Card, EmptyState } from '@/components/ui';
 import { APP_NAME } from '@/config/app';
 import { LegalGate } from '@/features/privacy/LegalGate';
 import { AuthProvider, RequireAuth, RequireGuest } from '@/features/auth/AuthProvider';
+import { AgencyOnly } from '@/features/orgs/AgencyOnly';
 import { BrandLayout, OrgLayout, RootRedirect } from '@/features/orgs/layouts';
 import { RouteErrorBoundary } from '@/layout/ErrorBoundary';
 import { ShellSkeleton } from '@/layout/Skeletons';
@@ -204,8 +205,22 @@ export function App() {
                           <Route path="inicio" element={<BrandHomePage />} />
                           <Route path="contenidos" element={<ContentListPage />} />
                           <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
-                          <Route path="encargos" element={<RequestListPage />} />
-                          <Route path="encargos/:requestId" element={<RequestDetailPage />} />
+                          <Route
+                            path="encargos"
+                            element={
+                              <AgencyOnly>
+                                <RequestListPage />
+                              </AgencyOnly>
+                            }
+                          />
+                          <Route
+                            path="encargos/:requestId"
+                            element={
+                              <AgencyOnly>
+                                <RequestDetailPage />
+                              </AgencyOnly>
+                            }
+                          />
                           <Route path="calendario" element={<CalendarPage />} />
                           {/* Sin IA de texto y fuera del modo agencia, la lista vuelve al inicio. */}
                           <Route path="campanas" element={<CampaignListPage />} />

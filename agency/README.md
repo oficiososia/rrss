@@ -28,6 +28,8 @@ cd agency
 npm ci              # solo para las pruebas (vitest y typescript)
 ```
 
+> Desde `f38/autogestion` el catálogo también se carga desde la aplicación (Marca → Plantillas → «Cargar plantillas del catálogo», solo en organizaciones que lo llevan por su cuenta); `agency/catalogo/construir.ts` es el código común. Ver `docs/modo-de-trabajo.md`.
+
 ## Credenciales
 
 Archivo JSON **fuera del repositorio**, por defecto

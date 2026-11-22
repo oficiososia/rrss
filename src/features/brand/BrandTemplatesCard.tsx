@@ -1,5 +1,5 @@
-import { Copy, LayoutTemplate, Pencil, Trash2 } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { Copy, LayoutTemplate, Library, Pencil, Trash2 } from 'lucide-react';
+import { lazy, Suspense, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -24,7 +24,11 @@ import { TemplateThumb } from '@/features/content/templates/TemplateThumb';
 import { templateBlurb } from '@/features/content/templates/summary';
 import { useTemplatePreviews } from '@/features/content/templates/useTemplatePreviews';
 import { targetLabel } from '@/features/content/labels';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { translateError } from '@/lib/errors';
+
+// El catálogo (unos 125 KB de plantillas) solo se descarga al abrir el diálogo.
+const CatalogDialog = lazy(() => import('./CatalogDialog').then((m) => ({ default: m.CatalogDialog })));
 
 /** De dónde viene cada plantilla, en palabras de quien no es técnico. */
 const TEMPLATE_ORIGIN: Record<BrandTemplate['source'], { label: string; help: string }> = {
@@ -42,6 +46,8 @@ const TEMPLATE_ORIGIN: Record<BrandTemplate['source'], { label: string; help: st
  */
 export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; canManage: boolean }) {
   const templates = useBrandTemplates(brandId);
+  const { selfManaged } = useWorkMode();
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
   const rename = useRenameTemplate(brandId);
   const duplicate = useDuplicateTemplate(brandId);
   const remove = useDeleteTemplate(brandId);
@@ -72,6 +78,15 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
       <CardHeader
         title="Plantillas de la marca"
         description="Diseños para crear piezas nuevas («Desde una plantilla»). Aquí se renombran, se duplican y se borran."
+        action={
+          selfManaged &&
+          canManage && (
+            <Button size="sm" variant="secondary" onClick={() => setLoadingCatalog(true)} data-testid="catalog-open">
+              <Library className="h-4 w-4" aria-hidden />
+              Cargar plantillas del catálogo
+            </Button>
+          )
+        }
       />
       <CardBody className="space-y-3">
         {templates.isPending ? (
@@ -83,14 +98,21 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
             <EmptyState
               icon={LayoutTemplate}
               title="Todavía no hay plantillas"
-              description="Se crean desde el editor de piezas («Guardar como plantilla») o importando las publicaciones de Instagram."
+              description={
+                selfManaged
+                  ? 'Carga las del catálogo (botón de arriba), guarda una desde el editor de piezas («Guardar como plantilla») o importa las publicaciones de Instagram.'
+                  : 'Se crean desde el editor de piezas («Guardar como plantilla») o importando las publicaciones de Instagram.'
+              }
             />
           </div>
         ) : (
           <ul className="divide-y divide-border" data-testid="brand-templates" aria-label="Plantillas de la marca">
             {templates.data.map((template) => {
               const document = template.document;
-              const origin = TEMPLATE_ORIGIN[template.source];
+              const origin =
+                selfManaged && template.source === 'manual'
+                  ? { label: 'Nuestra', help: 'Del catálogo o preparada por vosotros.' }
+                  : TEMPLATE_ORIGIN[template.source];
               const editing = renaming?.id === template.id;
               return (
                 <li key={template.id} className="flex flex-wrap items-start gap-3 py-3" data-testid="brand-template">
@@ -204,6 +226,11 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
           <p className="text-xs text-muted">Solo quien edita la marca puede cambiar sus plantillas.</p>
         )}
       </CardBody>
+      {loadingCatalog && (
+        <Suspense fallback={null}>
+          <CatalogDialog brandId={brandId} open onOpenChange={setLoadingCatalog} />
+        </Suspense>
+      )}
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(open) => !open && setDeleting(null)}
@@ -213,7 +240,9 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
             ? `«${deleting.name}» dejará de ofrecerse en «Desde una plantilla». Las piezas que ya se hicieron con ella no cambian.${
                 deleting.source === 'editor'
                   ? ''
-                  : ' Esta no la creaste aquí: si la necesitas, habrá que volver a pedirla.'
+                  : selfManaged
+                    ? ' Esta no la creaste aquí: si la necesitas, vuelve a cargarla del catálogo.'
+                    : ' Esta no la creaste aquí: si la necesitas, habrá que volver a pedirla.'
               }`
             : ''
         }

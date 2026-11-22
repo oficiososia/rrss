@@ -4,7 +4,7 @@ Lista única de lo que falta para pasar de «probado en local y en staging con
 proveedores simulados» a «clientes de pago usándolo». Para saber qué hay hecho y
 cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 
-Última revisión: 22/11/2026 (ramas `f30/instagram-pendientes`, `f31/flecos-editor` y `f36/reel-como-este`).
+Última revisión: 22/11/2026 (ramas `f30/instagram-pendientes`, `f31/flecos-editor`, `f36/reel-como-este` y `f38/autogestion`).
 
 - **Quién:** `Dueño` = necesita una cuenta, una decisión, dinero o una firma suya;
   `Desarrollo` = trabajo de código o de despliegue que se puede hacer sin él (o
@@ -66,6 +66,15 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P2 | Vídeo con IA: sigue apagado por criterio de datos; decidir si se activa | Dueño | |
 | P2 | Copiloto por voz en modo agencia: mantener, quitar o hacerlo configurable por marca | Dueño | `docs/copiloto-voz.md` §4 |
 | ~~P2~~ | ~~Aviso dentro del copiloto antes del primer dictado~~ | Hecho | `f32/operacion-gasto`: aviso con «No volver a mostrar» (`docs/operacion-gasto.md` §9) |
+
+## 4b. Modo de trabajo (autogestión o agencia)
+
+| P | Qué falta | Quién | Notas |
+| --- | --- | --- | --- |
+| P1 | Aplicar `20261227010000_work_mode.sql` en staging y, si la organización del dueño es de tipo agencia, pasarla a «Lo llevamos nosotros» en Configuración | Ambos | No hay funciones que redesplegar. `docs/modo-de-trabajo.md` |
+| P1 | Ver en un navegador real (escritorio y 375 px) Configuración → «Cómo trabajáis», «Cargar plantillas del catálogo» y «Gasto del mes» | Ambos | Probado solo en componentes y base de datos |
+| P2 | «Tareas» internas para un equipo propio en lugar de Encargos (hoy en autogestión Encargos se oculta) | Desarrollo | No es trivial: ciclo de estados, comentarios y avisos del encargo |
+| P2 | Decidir quién cuenta como «personal de la agencia» en una organización de tipo empresa que elija modo agencia (hoy solo superadministradores y propietarios o administradores de organizaciones de tipo agencia) | Dueño | `ai_brand_access` |
 
 ## 5. Facturación y planes
 

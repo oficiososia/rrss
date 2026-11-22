@@ -2,6 +2,7 @@ import { LayoutTemplate, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { cn } from '@/lib/utils';
 import { targetLabel } from '../labels';
 import { getFormatSpec } from '../networks';
@@ -30,6 +31,7 @@ interface TemplatePickerProps {
  */
 export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, onDelete }: TemplatePickerProps) {
   const templates = useBrandTemplates(brandId);
+  const { selfManaged } = useWorkMode();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -45,7 +47,11 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
         <EmptyState
           icon={LayoutTemplate}
           title="Esta marca todavía no tiene plantillas"
-          description="Las plantillas salen de las publicaciones que la marca ya tiene en Instagram: importa las publicaciones desde Marca → Datos de la marca → Cuentas conectadas y pide a la agencia que las prepare. Mientras tanto, puedes diseñar la pieza desde cero."
+          description={
+            selfManaged
+              ? 'Carga las del catálogo desde Marca → Identidad visual → Plantillas, guarda una desde el editor o importa las publicaciones que la marca ya tiene en Instagram. Mientras tanto, puedes diseñar la pieza desde cero.'
+              : 'Las plantillas salen de las publicaciones que la marca ya tiene en Instagram: importa las publicaciones desde Marca → Datos de la marca → Cuentas conectadas y pide a la agencia que las prepare. Mientras tanto, puedes diseñar la pieza desde cero.'
+          }
           action={
             <Link className="text-sm font-medium text-primary underline" to={`/o/${orgId}/m/${brandId}/marca`}>
               Ir a los datos de la marca
@@ -58,7 +64,11 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
   if (usable.length === 0) {
     return (
       <div data-testid="template-none-fit">
-        <Notice>Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.</Notice>
+        <Notice>
+          {selfManaged
+            ? 'Las plantillas de la marca no se pueden leer ahora mismo. Vuelve a intentarlo en unos minutos.'
+            : 'Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.'}
+        </Notice>
       </div>
     );
   }
@@ -131,7 +141,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
                     </span>
                     {template.source === 'manual' && (
                       <Badge tone="neutral" className="shrink-0">
-                        De la agencia
+                        {selfManaged ? 'Nuestra' : 'De la agencia'}
                       </Badge>
                     )}
                     {template.source === 'editor' && (
@@ -176,7 +186,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
                     >
                       {detail.summary && (
                         <p>
-                          {detail.proposal ? 'Propuesta de la agencia: ' : ''}
+                          {detail.proposal ? (selfManaged ? 'Propuesta: ' : 'Propuesta de la agencia: ') : ''}
                           {detail.summary}
                         </p>
                       )}
