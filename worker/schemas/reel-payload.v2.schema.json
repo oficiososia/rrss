@@ -417,8 +417,15 @@
                           "zoom-in",
                           "zoom-out",
                           "pan-right",
-                          "pan-left"
+                          "pan-left",
+                          "pan-up",
+                          "pan-down"
                         ]
+                      },
+                      "motionAmount": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 0.3
                       }
                     },
                     "required": [
@@ -695,6 +702,41 @@
                       "fadeSeconds"
                     ],
                     "additionalProperties": false
+                  },
+                  "animation": {
+                    "type": "object",
+                    "properties": {
+                      "in": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "fade",
+                          "rise",
+                          "typewriter",
+                          "zoom",
+                          "slide"
+                        ]
+                      },
+                      "out": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "fade",
+                          "fall",
+                          "slide"
+                        ]
+                      },
+                      "seconds": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 1.5
+                      }
+                    },
+                    "required": [
+                      "in",
+                      "out"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -895,6 +937,48 @@
                 "fadeOutSeconds"
               ],
               "additionalProperties": false
+            },
+            "cover": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "frame"
+                    },
+                    "at": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 90
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "at"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "photo"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 5,
+                      "maxLength": 600
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
             },
             "fontPath": {
               "type": "string",

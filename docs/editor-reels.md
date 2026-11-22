@@ -188,7 +188,113 @@ trabajador ni la base de datos**: todo es de la aplicación (y un arreglo en `me
 
 ### Valorado y no hecho (pendiente)
 
-- **Cortes al compás de la música** y **portada del reel**: necesitan detectar el ritmo (decodificar el audio) y un campo nuevo en el plan v2 con cambio a la vez en el trabajador, la base de datos y la publicación; es una fase aparte.
+- **(Hecho en §8)** **Cortes al compás de la música** y **portada del reel**: necesitan detectar el ritmo (decodificar el audio) y un campo nuevo en el plan v2 con cambio a la vez en el trabajador, la base de datos y la publicación; es una fase aparte.
 - **Textos con animaciones prediseñadas**: requieren que el trabajador anime `drawtext`; también cambia el plan.
 - **Arrastrar para reordenar con el dedo** sigue dependiendo de los botones «Antes/Después» (un gesto sobre el clip choca con desplazar la línea de tiempo); un agarre largo sería la mejora.
 - Probado solo con jsdom y con FFmpeg del trabajador sin cambios; **no se ha visto la pantalla nueva en un navegador** (la rama no trae `.env` y no se despliega): hay que mirarla en staging, sobre todo el móvil y las miniaturas de clips (`<video>` con `#t=0.1`, que depende del navegador y del CORS de R2).
+
+## 8. Ritmo, textos animados, movimientos de cámara, portada y arrastrar (rama `f25/reels-ritmo-animacion`, 22/11/2026)
+
+Lo que §7 dejó como «valorado y no hecho», hecho a la vez en la aplicación, el trabajador y la base de datos.
+
+### Decisión: el plan v2 se amplía, no pasa a v3
+
+Todo lo nuevo es **opcional** dentro del plan v2 (`version: 2`): los montajes ya guardados y los encargos
+antiguos siguen siendo válidos y dan el mismo vídeo (sin `animation` el texto entra y sale con fundido, como
+antes; la cadena de `drawtext` de un fundido no ha cambiado). Un v3 habría obligado a migrar versiones
+guardadas sin ganar nada. Campos nuevos, sin ningún `null` (`request_media_job` pasa por `jsonb_strip_nulls`;
+«sin valor» es campo ausente):
+
+| Dónde | Campo | Valores |
+| --- | --- | --- |
+| Texto | `animation` | `{ in, out, seconds? }` con `in` ∈ none, fade, rise, typewriter, zoom, slide y `out` ∈ none, fade, fall, slide |
+| Foto | `motion` | los de siempre + `pan-up`, `pan-down` |
+| Foto | `motionAmount` | 0 a 0,3 (0,04 suave, 0,08 normal, 0,15 fuerte); sin él, el de la plantilla |
+| Reel | `cover` | `{ type: 'frame', at }` (segundo del reel) o `{ type: 'photo', path }` (imagen de la marca) |
+
+### 1. Música y cortes al ritmo (solo aplicación: `rhythm.ts`, `useBeats.ts`, `RhythmAndMotion.tsx`)
+
+- `detectBeats`: curva de «novedad» del sonido (subida de energía por ventanas de ~12 ms) → autocorrelación entre 60 y
+  180 pulsaciones por minuto (con preferencia por la gama media, para no confundir una octava) → fase con más energía
+  en los golpes. Da `bpm`, `beats` (segundos de la canción) y `confidence`. `analyzeMusic` descarga y decodifica la
+  canción con Web Audio, **solo al pulsar el botón**; el resultado se recuerda por ruta durante la sesión.
+- «Ajustar los cortes a la música» (panel de la música): `fitCutsToBeats` reparte las duraciones para que cada
+  corte (el centro de la transición) caiga en un golpe: de uno en uno, de 2 o de 4 (por defecto el que más se parezca
+  al ritmo de ahora). Una foto dura de 0,5 a 10 s; un vídeo cambia su salida (nunca su entrada) sin pasar de lo que dura
+  su archivo; si un clip no llega a su golpe se avisa y el siguiente corte se busca desde ahí. El orden no cambia.
+  Es un cambio más del historial: **«Deshacer» lo quita** (probado: la función no toca el proyecto anterior).
+- La línea de tiempo marca los golpes en la pista de música tras analizarla. Con música sin pulso claro
+  (`confidence` < 0,25) se avisa.
+- Límite: la fase es una estimación; si la música cambia de tempo, los cortes solo siguen el pulso global.
+  La música con el principio en un silencio largo puede desplazar la fase.
+
+### 2. Textos animados y movimientos de cámara
+
+- **Una sola cuenta** para la vista previa y el vídeo: `textAnimState` (`worker/src/reel/animation.ts` y
+  `src/features/reels/editor/animation.ts`, idénticas) y un ejemplo compartido
+  (`worker/tests/fixtures/text-animation.json`) que las dos pruebas comparan. El trabajador la traduce a
+  expresiones de `drawtext` (`alpha`, `x`, `y`, `fontsize`); la máquina de escribir, a un `drawtext` por línea y paso
+  con el texto escrito hasta ese paso. Con FFmpeg real se comprueba **dónde está el texto** en fotogramas
+  (deslizar, subir, zoom, máquina de escribir y bajar) contra la cuenta.
+- Entradas: aparecer (la de siempre), subir (5 % del alto, con fundido), máquina de escribir (alineada a la
+  izquierda del ancho útil, ~20 letras/s o la duración elegida), zoom (del 60 % al 100 %, con fundido), deslizar (desde
+  la izquierda, con fundido). Salidas: desvanecer, bajar, deslizar (a la derecha), de golpe.
+  Cada una dura `animation.seconds` o, por defecto, el fundido de la plantilla (0,4 s como mínimo en las nuevas) y
+  nunca más de la mitad del texto.
+- Panel del texto → «Animación»: dos desplegables y «Ver la animación» (reproduce la vista previa desde un poco antes).
+- Panel de la foto → «Movimiento de cámara»: ocho tarjetas con la propia foto moviéndose en bucle (CSS; se paran con
+  «reducir movimiento» del sistema) e «Intensidad» (suave/normal/fuerte). Nuevos: subir y bajar la cámara.
+  La vista previa del reel dibuja el mismo movimiento (`panY`).
+- Diferencias conocidas: en zoom, FFmpeg redondea el tamaño de letra a píxeles enteros y la franja detrás del texto no
+  crece con la letra; la máquina de escribir con franja crece con el texto escrito.
+- **No probado**: la imagen del trabajador es Alpine (FFmpeg 6.x probablemente). Las pruebas se hicieron con FFmpeg
+  9.0.2 local; `fontsize` como expresión necesita FFmpeg ≥ 4.4. Comprobar con el despliegue en Fly.
+
+### 3. Portada
+
+- Panel «Portada» bajo la vista previa: «Usar el fotograma de ahora» (el del cabezal) o una de las fotos del reel.
+- Al encargar el montaje, la base de datos pone `output.posterPath` (`<org>/<marca>/reels/<id>-cover.jpg`); el
+  trabajador deja un JPEG: el fotograma del vídeo ya montado (con textos) o la foto girada y recortada a 9:16.
+  Al terminar, el disparador nuevo `jobs_publish_reel_cover` lo da de alta en la biblioteca (carpeta «Reels», imagen,
+  procedencia `role: 'cover'`, `cover_of_path` = ruta del vídeo, pieza y versión) y lo deja en `jobs.result.poster`
+  (con `asset_id`). `jobs.result.assets` sigue empezando por el vídeo.
+- **La publicación todavía no usa la portada**: el publicador (`meta-graph.ts`) crea el contenedor `REELS` solo con
+  `video_url`, sin `cover_url` ni `thumb_offset`. Por eso se deja guardada y documentada; no se simula. Cuando se
+  añada, bastará con buscar el recurso con `provenance->>'role' = 'cover'` y `cover_of_path` igual al vídeo.
+- Sin portada elegida, no se pide ninguna (como antes).
+
+### 4. Arrastrar y recortar (solo aplicación: `Timeline.tsx`)
+
+- Reordenar con el ratón, como antes (al instante). **Con el dedo, agarre largo** (350 ms, con vibración corta si el
+  dispositivo la tiene): antes de eso el gesto sigue desplazando la línea; durante el arrastre la página no se mueve.
+- Asas de recorte con el pulgar: 24 px en pantallas táctiles (antes 20) y con un agarre visible.
+- Teclado: las asas son controles enfocables con el tabulador (`role="slider"`, valor leído por el lector de pantalla);
+  flechas ±0,1 s y Mayús + flechas ±1 s, en el principio y final de clips, duración de fotos y entrada/salida de
+  textos; Alt + flechas mueve el clip elegido. Cada ráfaga de teclas es un solo paso de «Deshacer».
+
+### Probado
+
+- Trabajador (FFmpeg real, `reel-animation.test.ts`): cuenta = ejemplo compartido; esquema (admite lo nuevo, rechaza lo
+  inventado, sin nulos); posición real del texto en fotogramas para cada animación; subir/bajar la cámara; portada de
+  fotograma y de foto (JPEG) y aviso si se pasa del final.
+- Base de datos (`tests/db/editor-reels.test.ts`, +3): admite y rechaza (portada, animación, foto de otra marca), pone la
+  ruta de la portada, y la portada del trabajo queda en la biblioteca unida al vídeo y a la pieza. Vuelta atrás en
+  `supabase/rollbacks/20261215010000_reel_animation_cover.sql`.
+- Aplicación: cuenta de animación igual que el trabajador, vista previa (compose) con máquina de escribir y subir,
+  detección de ritmo con una pista sintética (120 y 90 pulsaciones, silencio), reparto de cortes (en un golpe, vídeo
+  corto, sin música), portada y problemas, línea de tiempo (teclado, pulsación larga con el dedo, ratón, golpes) y
+  paneles (animación, movimiento, cortes al ritmo).
+- Reel de ejemplo con las animaciones, la cámara que sube y la portada, montado con el trabajador real.
+
+### Sin probar
+
+- En un navegador real: el análisis de ritmo con una canción de verdad (Web Audio; el formato depende del navegador y
+  del CORS de R2), el agarre largo en un móvil real y la vista previa de animaciones (jsdom no dibuja).
+- FFmpeg 6 de la imagen Alpine (ver arriba) y el despliegue de la migración en staging.
+
+### Para llevarlo a staging
+
+1. Migración `20261215010000_reel_animation_cover.sql` (vuelta atrás en `supabase/rollbacks/`).
+2. Redesplegar el trabajador (Action `worker-fly.yml`): sin él, un plan con animaciones o portada falla en el esquema
+   estricto del trabajador viejo.
+3. La aplicación (Vercel), después de lo anterior.

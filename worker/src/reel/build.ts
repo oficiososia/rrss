@@ -24,6 +24,13 @@ import { orientationFilters } from '../ffmpeg/exif.ts';
 import { num } from '../ffmpeg/run.ts';
 import { CENTER, focalCropExpr, h264Args, type FocalPoint } from '../handlers/shared.ts';
 import {
+  animationDurations,
+  RISE_TRAVEL,
+  SLIDE_TRAVEL,
+  ZOOM_FROM,
+  type TextAnimation,
+} from './animation.ts';
+import {
   REEL_PLAN_V2_MAX_SECONDS,
   templateTextStyle,
   type ReelCue,
@@ -56,7 +63,7 @@ export interface ResolvedText {
   position?: 'top' | 'center' | 'bottom';
 }
 
-export type PhotoMotion = 'none' | 'zoom-in' | 'zoom-out' | 'pan-right' | 'pan-left';
+export type PhotoMotion = 'none' | 'zoom-in' | 'zoom-out' | 'pan-right' | 'pan-left' | 'pan-up' | 'pan-down';
 
 /** Elemento de un plan v2 ya bajado y medido. */
 export type ResolvedClip =
@@ -68,6 +75,8 @@ export type ResolvedClip =
       blur?: number;
       seconds: number;
       motion?: PhotoMotion;
+      /** Cuánto se amplía o se desplaza; por defecto, el de la plantilla. */
+      motionAmount?: number;
       transition?: ReelTransition;
     }
   | {
@@ -381,7 +390,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       const sh = height * SUPERSAMPLE;
       const count = frames(seconds);
       const progress = `on/${Math.max(1, count - 1)}`;
-      const amount = num(template.photoMotion.amount);
+      const amount = num(item.motionAmount ?? template.photoMotion.amount);
       const kind: PhotoMotion =
         item.motion ??
         (template.photoMotion.type === 'alternate'
@@ -391,11 +400,14 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       const centerX = 'iw/2-(iw/zoom/2)';
       const centerY = 'ih/2-(ih/zoom/2)';
       const motion = {
-        none: { z: '1', x: centerX },
-        'zoom-in': { z: `1+${amount}*${progress}`, x: centerX },
-        'zoom-out': { z: `1+${amount}-${amount}*${progress}`, x: centerX },
-        'pan-right': { z: `1+${amount}`, x: `(iw-iw/zoom)*${progress}` },
-        'pan-left': { z: `1+${amount}`, x: `(iw-iw/zoom)*(1-${progress})` },
+        none: { z: '1', x: centerX, y: centerY },
+        'zoom-in': { z: `1+${amount}*${progress}`, x: centerX, y: centerY },
+        'zoom-out': { z: `1+${amount}-${amount}*${progress}`, x: centerX, y: centerY },
+        'pan-right': { z: `1+${amount}`, x: `(iw-iw/zoom)*${progress}`, y: centerY },
+        'pan-left': { z: `1+${amount}`, x: `(iw-iw/zoom)*(1-${progress})`, y: centerY },
+        // La cámara sube (la ventana va de abajo arriba) o baja.
+        'pan-up': { z: `1+${amount}`, x: centerX, y: `(ih-ih/zoom)*(1-${progress})` },
+        'pan-down': { z: `1+${amount}`, x: centerX, y: `(ih-ih/zoom)*${progress}` },
       }[kind];
       chains.push(
         `[${index}:v]${[
@@ -405,7 +417,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=lanczos:out_range=tv`,
           crop(sw, sh, item.focalPoint),
           ...blurFilter(item.blur, sw, sh),
-          `zoompan=z='${motion.z}':x='${motion.x}':y='${centerY}':d=${count}:s=${width}x${height}:fps=${fps}`,
+          `zoompan=z='${motion.z}':x='${motion.x}':y='${motion.y}':d=${count}:s=${width}x${height}:fps=${fps}`,
           `trim=duration=${num(seconds)}`,
           finish,
         ].join(',')}[v${index}]`,
@@ -466,22 +478,62 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     position: 'top' | 'center' | 'bottom',
     start: number,
     end: number,
+    animation?: TextAnimation,
   ) => {
     const layout = textLayout(style, position, lines.length, width, height);
-    const fade = Math.min(style.fadeSeconds, (end - start) / 2);
     const fontFile = fontFor(style);
-    lines.forEach((line, lineIndex) => {
-      const name = `${prefix}-${lineIndex}.txt`;
-      textFiles.push({ name, content: line });
+    const chars = lines.reduce((n, line) => n + line.length, 0);
+    const d = animationDurations(animation, style, start, end, chars);
+    const a = animation ?? { in: 'fade' as const, out: 'fade' as const };
+    const typewriter = a.in === 'typewriter' && d.steps > 0;
+    // Expresiones de FFmpeg: P y Q son el avance de la entrada y de la salida (0 a 1), E y F su suavizado.
+    const P = `clip((t-${num(start)})/${num(d.inSeconds)},0,1)`;
+    const Q = `clip((${num(end)}-t)/${num(d.outSeconds)},0,1)`;
+    const E = `(1-pow(1-${P},3))`;
+    const F = `(1-pow(1-${Q},3))`;
+
+    // Opacidad: los fundidos de siempre se escriben como antes (misma cadena).
+    const alphaIn = d.inSeconds > 0 && ['fade', 'rise', 'zoom', 'slide'].includes(a.in);
+    const alphaOut = d.outSeconds > 0 && ['fade', 'fall', 'slide'].includes(a.out);
+    let alpha: string | null = null;
+    if (a.in === 'fade' && a.out === 'fade' && d.inSeconds === d.outSeconds) {
+      const f = num(d.inSeconds);
+      alpha = `if(lt(t,${num(start + d.inSeconds)}),(t-${num(start)})/${f},if(gt(t,${num(end - d.inSeconds)}),(${num(end)}-t)/${f},1))`;
+    } else if (alphaIn || alphaOut) {
+      alpha = [alphaIn ? P : null, alphaOut ? Q : null].filter(Boolean).join('*');
+    }
+    // Posición: deslizar (x) y subir o bajar (y).
+    const slideIn = a.in === 'slide' && d.inSeconds > 0;
+    const slideOut = a.out === 'slide' && d.outSeconds > 0;
+    const riseIn = a.in === 'rise' && d.inSeconds > 0;
+    const fallOut = a.out === 'fall' && d.outSeconds > 0;
+    const zoom = a.in === 'zoom' && d.inSeconds > 0;
+    const travelX = num(SLIDE_TRAVEL * width);
+    const travelY = num(RISE_TRAVEL * height);
+    const x =
+      (typewriter ? `${Math.round(((1 - style.maxWidthRatio) * width) / 2)}` : '(w-text_w)/2') +
+      (slideIn ? `-(1-${E})*${travelX}` : '') +
+      (slideOut ? `+(1-${F})*${travelX}` : '');
+
+    const draws1 = (name: string, enable: string, firstLine: number) => {
+      const baseY = layout.top + firstLine * layout.lineStep;
+      const y =
+        `${baseY}` +
+        (riseIn ? `+(1-${E})*${travelY}` : '') +
+        (fallOut ? `+(1-${F})*${travelY}` : '') +
+        (zoom ? `+${num((layout.fontSize * (1 - ZOOM_FROM)) / 2)}*(1-${E})` : '');
       const options = [
         `fontfile=${fontFile}`,
         `textfile=${name}`,
         'expansion=none',
-        `fontsize=${layout.fontSize}`,
+        zoom
+          ? `fontsize='${layout.fontSize}*(${ZOOM_FROM}+${num(1 - ZOOM_FROM)}*${E})'`
+          : `fontsize=${layout.fontSize}`,
         `fontcolor=${hex(style.color)}`,
-        'x=(w-text_w)/2',
-        `y=${layout.top + lineIndex * layout.lineStep}`,
-        `enable='between(t,${num(start)},${num(end)})'`,
+        x === '(w-text_w)/2' ? `x=${x}` : `x='${x}'`,
+        // Sin operaciones: la `y` de siempre es un número suelto.
+        y === `${baseY}` ? `y=${baseY}` : `y='${y}'`,
+        `enable='${enable}'`,
       ];
       if (style.box) {
         options.push(
@@ -496,13 +548,40 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           `bordercolor=${hex(style.outline.color)}`,
         );
       }
-      if (fade >= 0.02) {
-        const f = num(fade);
-        options.push(
-          `alpha='if(lt(t,${num(start + fade)}),(t-${num(start)})/${f},if(gt(t,${num(end - fade)}),(${num(end)}-t)/${f},1))'`,
-        );
-      }
+      if (alpha) options.push(`alpha='${alpha}'`);
       draws.push(`drawtext=${options.join(':')}`);
+    };
+
+    if (typewriter) {
+      // Letra a letra: un `drawtext` por línea y por paso, con el texto escrito hasta ese paso.
+      let offset = 0;
+      lines.forEach((line, lineIndex) => {
+        const entries: Array<{ from: number; chars: number }> = [];
+        let shown = 0;
+        for (let step = 1; step <= d.steps; step += 1) {
+          const visible = Math.min(line.length, Math.max(0, Math.round((chars * step) / d.steps) - offset));
+          if (visible > shown) {
+            entries.push({ from: start + ((step - 1) * d.inSeconds) / d.steps, chars: visible });
+            shown = visible;
+          }
+        }
+        offset += line.length;
+        entries.forEach((entry, entryIndex) => {
+          const name = `${prefix}-${lineIndex}-${entryIndex}.txt`;
+          textFiles.push({ name, content: line.slice(0, entry.chars).trimEnd() });
+          const next = entries[entryIndex + 1];
+          const enable = next
+            ? `gte(t,${num(entry.from)})*lt(t,${num(next.from)})`
+            : `between(t,${num(entry.from)},${num(end)})`;
+          draws1(name, enable, lineIndex);
+        });
+      });
+      return;
+    }
+    lines.forEach((line, lineIndex) => {
+      const name = `${prefix}-${lineIndex}.txt`;
+      textFiles.push({ name, content: line });
+      draws1(name, `between(t,${num(start)},${num(end)})`, lineIndex);
     });
   };
 
@@ -521,7 +600,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       lines = lines.slice(0, MAX_TEXT_LINES);
       warnings.push(`El texto ${index + 1} no cabe: se han dejado ${MAX_TEXT_LINES} líneas`);
     }
-    draw(`text-${index}`, lines, item.style, item.position, start, end);
+    draw(`text-${index}`, lines, item.style, item.position, start, end, item.animation);
   });
 
   const subtitles: ReelBuild['subtitles'] = [];

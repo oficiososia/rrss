@@ -2,6 +2,7 @@
 // devuelven otro (nunca lo modifican). El historial (history.ts) las guarda
 // para deshacer y rehacer.
 import type { ReelTemplateSummary } from '../templates';
+import type { TextAnimation } from './animation';
 import {
   MAX_CLIP_SEGMENT_SECONDS,
   MIN_SEGMENT_SECONDS,
@@ -12,6 +13,7 @@ import {
   templateTextStyle,
   templateTransition,
   type Clip,
+  type Cover,
   type Cue,
   type Music,
   type PhotoClip,
@@ -175,6 +177,7 @@ export function setTransition(project: ReelProject, id: string, transition: Tran
 export type ClipPatch = Partial<{
   blur: number | undefined;
   motion: PhotoClip['motion'];
+  motionAmount: number | undefined;
   volume: number;
   focalPoint: Clip['focalPoint'];
 }>;
@@ -183,7 +186,7 @@ export function updateClip(project: ReelProject, id: string, patch: ClipPatch) {
   return mapClip(project, id, (c) => {
     const next: Record<string, unknown> = { ...c };
     for (const [key, value] of Object.entries(patch)) {
-      if ((key === 'motion' && c.type !== 'photo') || (key === 'volume' && c.type !== 'video')) continue;
+      if (((key === 'motion' || key === 'motionAmount') && c.type !== 'photo') || (key === 'volume' && c.type !== 'video')) continue;
       if (value === undefined) delete next[key];
       else next[key] = value;
     }
@@ -318,3 +321,23 @@ export function addCue(project: ReelProject, clipId: string, at: number) {
 }
 
 export const isVideo = (clip: Clip | undefined): clip is VideoClip => clip?.type === 'video';
+
+// ───────────────────────────── Animación de textos y portada ─────────────────────────────
+
+/** Entrada y salida de un texto; `undefined` vuelve al fundido de siempre. */
+export function setTextAnimation(project: ReelProject, id: string, animation: TextAnimation | undefined) {
+  return mapText(project, id, (t) => {
+    const next = { ...t };
+    if (animation) next.animation = animation;
+    else delete next.animation;
+    return next;
+  });
+}
+
+/** Elige la portada (`undefined` la quita). */
+export function setCover(project: ReelProject, cover: Cover | undefined) {
+  const plan = { ...project.plan };
+  if (cover) plan.cover = cover;
+  else delete plan.cover;
+  return { ...project, plan };
+}

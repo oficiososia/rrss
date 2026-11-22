@@ -161,8 +161,19 @@ selector de fotos y clips con miniaturas, varias a la vez, filtros y tandas, «G
 montaje a la vista, cabecera común con «⋯» (Archivar, cambiar el nombre, Historial), diseño de una columna en móvil sin
 scroll lateral, barra de duración, zonas que tapa Instagram y asas de recorte táctiles. **Arreglo en `media-storage`**:
 `sign` daba 500 con ≥ ~100 rutas (URL de PostgREST demasiado larga); ahora consulta de 40 en 40, **hay que redesplegar la
-función**. Pendiente: cortes al compás de la música, portada del reel, animaciones de texto (cambian el plan: fase aparte)
-y mirar la pantalla nueva en staging (no se ha visto en un navegador real). Detalle y cómo probar en `docs/editor-reels.md` §7.
+función**. Pendiente: mirar la pantalla nueva en staging (no se ha visto en un navegador real). Detalle y cómo probar en `docs/editor-reels.md` §7.
+
+#### Reels: ritmo, textos animados, cámara, portada y arrastrar (rama `f25/reels-ritmo-animacion`, 22/11/2026)
+
+El plan v2 se **amplía de forma compatible** (campos opcionales, sin nulos): `texts[].animation` (6 entradas y 4
+salidas), `clips[].motion` con subir/bajar la cámara y `motionAmount`, y `cover` (fotograma o foto). Aplicación,
+trabajador y base de datos a la vez: migración `20261215010000_reel_animation_cover` (+ vuelta atrás; el disparador de la
+portada no toca `request_media_job`), esquemas JSON regenerados. «Ajustar los cortes a la música» detecta el compás en el
+navegador (Web Audio) y reparte las duraciones en los golpes (se deshace); la portada queda en la biblioteca (carpeta
+Reels, `provenance.role = 'cover'`) pero **la publicación todavía no la envía** (el publicador no manda `cover_url`);
+reordenar con el dedo con agarre largo, asas de 24 px y recorte con teclado. Probado: unitarias, componentes, trabajador
+con FFmpeg real (posición del texto en fotogramas), base de datos. Sin probar: análisis de música real y agarre largo en un
+móvil real, FFmpeg 6 de Alpine (`fontsize` como expresión), migración en staging. Detalle y despliegue en `docs/editor-reels.md` §8.
 
 ### Fase 4 · Campañas (primera parte)
 

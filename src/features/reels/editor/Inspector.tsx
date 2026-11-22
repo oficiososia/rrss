@@ -9,6 +9,13 @@ import { Button, Dialog, Input, Select, Textarea } from '@/components/ui';
 import { formatMicros } from '@/features/ai/money';
 import { cn } from '@/lib/utils';
 import type { ReelTemplateSummary } from '../templates';
+import {
+  DEFAULT_TEXT_ANIMATION,
+  TEXT_IN_ANIMATIONS,
+  TEXT_IN_LABEL,
+  TEXT_OUT_ANIMATIONS,
+  TEXT_OUT_LABEL,
+} from './animation';
 import type { Selection } from './history';
 import {
   addCue,
@@ -20,6 +27,7 @@ import {
   removeText,
   setClipCues,
   setSubtitleSettings,
+  setTextAnimation,
   setTransition,
   trimClip,
   updateClip,
@@ -38,6 +46,8 @@ import {
   type TextStyle,
   type VideoClip,
 } from './project';
+import { MotionChoice, RhythmSection } from './RhythmAndMotion';
+import type { BeatsState } from './useBeats';
 import { extractClipAudio, transcribeSamples, transcriptionOptions } from './subtitles';
 
 export type Apply = (change: (project: ReelProject) => ReelProject, merge?: string) => void;
@@ -65,6 +75,10 @@ export interface InspectorProps {
   /** Subtítulos automáticos disponibles (interruptor y OpenAI en el servidor). */
   autoSubtitles: boolean;
   brandId: string;
+  /** Ritmo de la música elegida (análisis a petición). */
+  beats: BeatsState;
+  /** Reproduce la vista previa desde un segundo (para ver la animación de un texto). */
+  onPlayFrom?: (seconds: number) => void;
 }
 
 const TRANSITION_LABEL: Record<(typeof TRANSITION_TYPES)[number], string> = {
@@ -81,7 +95,14 @@ const MOTION_LABEL: Record<(typeof PHOTO_MOTIONS)[number], string> = {
   'zoom-out': 'Alejar',
   'pan-right': 'Recorrer a la derecha',
   'pan-left': 'Recorrer a la izquierda',
+  'pan-up': 'Subir la cámara',
+  'pan-down': 'Bajar la cámara',
 };
+const AMOUNT_OPTIONS = [
+  { value: 0.04, label: 'Suave' },
+  { value: 0.08, label: 'Normal' },
+  { value: 0.15, label: 'Fuerte' },
+] as const;
 const POSITION_LABEL = { top: 'Arriba', center: 'Centro', bottom: 'Abajo' } as const;
 
 const num = (value: string) => {
@@ -284,26 +305,45 @@ function ClipPanel(props: InspectorProps & { clip: Clip; index: number }) {
 
         <Section title="Imagen">
           {clip.type === 'photo' && (
-            <Row label="Movimiento">
-              <Select
-                value={clip.motion ?? ''}
-                onChange={(e) =>
-                  apply((p) =>
-                    updateClip(p, clip.id, {
-                      motion: (e.target.value || undefined) as (typeof PHOTO_MOTIONS)[number] | undefined,
-                    }),
-                  )
-                }
-                aria-label="Movimiento de la foto"
-              >
-                <option value="">El de la plantilla</option>
+            <div className="space-y-2" data-testid="reel-motion">
+              <p className="text-sm text-muted">Movimiento de cámara</p>
+              <div className="grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Movimiento de la foto">
+                <MotionChoice
+                  label="El de la plantilla"
+                  motion={undefined}
+                  url={props.urlOf(clip.path)}
+                  selected={clip.motion === undefined}
+                  onPick={() => apply((p) => updateClip(p, clip.id, { motion: undefined }))}
+                />
                 {PHOTO_MOTIONS.map((m) => (
-                  <option key={m} value={m}>
-                    {MOTION_LABEL[m]}
-                  </option>
+                  <MotionChoice
+                    key={m}
+                    label={MOTION_LABEL[m]}
+                    motion={m}
+                    url={props.urlOf(clip.path)}
+                    selected={clip.motion === m}
+                    onPick={() => apply((p) => updateClip(p, clip.id, { motion: m }))}
+                  />
                 ))}
-              </Select>
-            </Row>
+              </div>
+              <Row label="Intensidad">
+                <Select
+                  value={clip.motionAmount === undefined ? '' : String(clip.motionAmount)}
+                  onChange={(e) => {
+                    const value = e.target.value ? Number(e.target.value) : undefined;
+                    apply((p) => updateClip(p, clip.id, { motionAmount: value }));
+                  }}
+                  aria-label="Intensidad del movimiento"
+                >
+                  <option value="">La de la plantilla</option>
+                  {AMOUNT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              </Row>
+            </div>
           )}
           <Row label="Desenfoque">
             <input
@@ -708,6 +748,56 @@ function TextPanel(props: InspectorProps & { index: number }) {
           </Row>
         </fieldset>
       </Section>
+      <Section title="Animación">
+        <fieldset disabled={readOnly} className="space-y-2" data-testid="reel-text-animation">
+          <Row label="Entrada">
+            <Select
+              value={(text.animation ?? DEFAULT_TEXT_ANIMATION).in}
+              onChange={(e) => {
+                const value = e.target.value as (typeof TEXT_IN_ANIMATIONS)[number];
+                apply((p) => setTextAnimation(p, text.id, { ...(text.animation ?? DEFAULT_TEXT_ANIMATION), in: value }));
+              }}
+              aria-label="Cómo entra el texto"
+            >
+              {TEXT_IN_ANIMATIONS.map((a) => (
+                <option key={a} value={a}>
+                  {TEXT_IN_LABEL[a]}
+                </option>
+              ))}
+            </Select>
+          </Row>
+          <Row label="Salida">
+            <Select
+              value={(text.animation ?? DEFAULT_TEXT_ANIMATION).out}
+              onChange={(e) => {
+                const value = e.target.value as (typeof TEXT_OUT_ANIMATIONS)[number];
+                apply((p) => setTextAnimation(p, text.id, { ...(text.animation ?? DEFAULT_TEXT_ANIMATION), out: value }));
+              }}
+              aria-label="Cómo sale el texto"
+            >
+              {TEXT_OUT_ANIMATIONS.map((a) => (
+                <option key={a} value={a}>
+                  {TEXT_OUT_LABEL[a]}
+                </option>
+              ))}
+            </Select>
+          </Row>
+          {text.animation?.in === 'typewriter' && (
+            <p className="text-xs text-muted">La máquina de escribir deja el texto alineado a la izquierda.</p>
+          )}
+          {props.onPlayFrom && (
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => props.onPlayFrom?.(Math.max(0, text.start - 0.3))}
+              data-testid="reel-text-animation-play"
+            >
+              Ver la animación
+            </Button>
+          )}
+        </fieldset>
+      </Section>
       <Section title="Estilo">
         <StyleFields
           style={text.style}
@@ -803,6 +893,15 @@ function MusicPanel(props: InspectorProps) {
           </Row>
         </fieldset>
       </Section>
+      {!readOnly && (
+        <RhythmSection
+          project={project}
+          template={props.template}
+          beats={props.beats}
+          apply={apply}
+          fileSecondsOf={props.fileSecondsOf}
+        />
+      )}
       {!readOnly && (
         <Button variant="ghost" size="sm" onClick={() => apply((p) => removeMusic(p))} data-testid="reel-music-remove">
           <Trash2 className="h-4 w-4" aria-hidden />

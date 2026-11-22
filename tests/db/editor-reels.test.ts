@@ -333,3 +333,98 @@ describe('encargar el montaje (plan v2)', () => {
     expect(theirs).toHaveLength(0);
   });
 });
+
+describe('animación de textos, movimiento de fotos y portada (20261215010000)', () => {
+  const animated = () =>
+    planV2({
+      clips: [
+        { id: 'c1', type: 'photo', path: fotoA, seconds: 2, motion: 'pan-up', motionAmount: 0.15 },
+        { id: 'c2', type: 'video', path: clipA, in: 0.5, out: 2.5, volume: 0 },
+      ],
+      texts: [
+        {
+          id: 't1',
+          text: 'Hola',
+          start: 0,
+          end: 2,
+          position: 'top',
+          style: STYLE,
+          animation: { in: 'typewriter', out: 'fall', seconds: 0.8 },
+        },
+      ],
+      cover: { type: 'frame', at: 1.5 },
+    });
+
+  beforeAll(async () => {
+    // Las pruebas anteriores dejan encargos en cola: el tope es de 5 a la vez por marca.
+    await db.query(`update public.jobs set status = 'cancelled', locked_by = null, locked_until = null where status in ('queued', 'running')`);
+  });
+
+  it('admite animación, intensidad y portada, y la base pone la ruta de la portada', async () => {
+    const job = await request(editor, marcaA, { template: { id: 'fundido-suave' }, plan: animated() });
+    expect(job.payload.plan).toMatchObject({
+      cover: { type: 'frame', at: 1.5 },
+      texts: [{ animation: { in: 'typewriter', out: 'fall', seconds: 0.8 } }],
+      clips: [{ motion: 'pan-up', motionAmount: 0.15 }, {}],
+    });
+    expect(job.payload.output).toMatchObject({
+      posterPath: job.payload.output.path.replace(/\.mp4$/, '-cover.jpg'),
+    });
+    // Sin portada, sin ruta de portada.
+    const bare = await request(editor, marcaA, { template: { id: 'fundido-suave' }, plan: planV2() });
+    expect(bare.payload.output).not.toHaveProperty('posterPath');
+  });
+
+  it('rechaza una portada o una animación mal formadas y fotos de otra marca', async () => {
+    const withCover = (cover: Row) => planV2({ cover });
+    await rejected(editor, marcaA, { template: { id: 'fundido-suave' }, plan: withCover({ type: 'frame', at: 500 }) }, /portada/i);
+    await rejected(editor, marcaA, { template: { id: 'fundido-suave' }, plan: withCover({ type: 'otra' }) }, /portada/i);
+    await rejected(
+      editor,
+      marcaA,
+      { template: { id: 'fundido-suave' }, plan: withCover({ type: 'photo', path: `${orgB}/${marcaB}/media/ajena.jpg` }) },
+      /Portada/,
+    );
+    const bad = planV2({
+      texts: [{ id: 't1', text: 'x', start: 0, end: 1, position: 'top', style: STYLE, animation: { in: 'fade', out: 'fade', extra: 1 } }],
+    });
+    await rejected(editor, marcaA, { template: { id: 'fundido-suave' }, plan: bad }, /animación/);
+  });
+
+  it('la portada del trabajo queda en la biblioteca, unida al vídeo y a la pieza', async () => {
+    const job = await request(editor, marcaA, {
+      template: { id: 'fundido-suave' },
+      plan: animated(),
+      content: { id: reelA, version: 2 },
+    });
+    const { sql, params } = rpcStatement('claim_jobs', { p_worker: 'editor-2', p_limit: 10 });
+    await asService(db, sql, params);
+    const done = await serviceRpc<JobRow>(db, 'complete_job', {
+      p_job_id: job.id,
+      p_worker: 'editor-2',
+      p_result: {
+        template: { id: 'fundido-suave', schemaVersion: 1 },
+        plan: { version: 2 },
+        output: { path: job.payload.output.path, width: 1080, height: 1920, fps: 30, durationSeconds: 3.6,
+                  videoCodec: 'h264', audioCodec: 'aac', bytes: 123456 },
+        poster: { path: (job.payload.output as Row).posterPath, source: 'frame', atSeconds: 1.5, width: 1080, height: 1920, bytes: 4000 },
+        timeline: [],
+        warnings: [],
+      },
+    });
+    // El vídeo sigue siendo el primer recurso.
+    const first = (await db.query<{ kind: string }>(`select kind from public.media_assets where id = $1`, [done.result!.assets![0]!.id]))[0]!;
+    expect(first.kind).toBe('video');
+    const poster = (done.result as Row).poster as Row;
+    expect(poster.asset_id).toBeTruthy();
+    const [cover] = await db.query<{ kind: string; folder: string; provenance: Row }>(
+      `select kind, folder, provenance from public.media_assets where id = $1`,
+      [poster.asset_id],
+    );
+    expect(cover).toMatchObject({
+      kind: 'image',
+      folder: 'Reels',
+      provenance: { role: 'cover', cover_source: 'frame', cover_at_seconds: 1.5, cover_of_path: job.payload.output.path, content_id: reelA, content_version: 2 },
+    });
+  });
+});

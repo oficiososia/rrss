@@ -4,14 +4,22 @@ import { existsSync } from 'node:fs';
 import { copyFile, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PermanentError } from '../errors.ts';
-import { takeJpegOrientation } from '../ffmpeg/exif.ts';
+import { orientationFilters, takeJpegOrientation } from '../ffmpeg/exif.ts';
 import { probeMedia } from '../ffmpeg/probe.ts';
 import { num, runFfmpeg } from '../ffmpeg/run.ts';
 import type { Handler, HandlerContext } from '../handler.ts';
 import { buildReel, type ResolvedClip, type ResolvedPlan } from '../reel/build.ts';
 import { planAsV2, reelPayloadSchema, type ReelTemplate } from '../reel/schema.ts';
 import { findTemplate, loadTemplates } from '../reel/templates.ts';
-import { assertOutputPaths, fetchInput, parsePayload, storeOutput, type MediaDeps } from './shared.ts';
+import {
+  assertOutputPaths,
+  CENTER,
+  fetchInput,
+  focalCropExpr,
+  parsePayload,
+  storeOutput,
+  type MediaDeps,
+} from './shared.ts';
 
 export const REEL_TEMPLATE_KIND = 'media.reel.template';
 
@@ -112,6 +120,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             blur: item.blur,
             seconds: item.seconds,
             motion: item.motion,
+            motionAmount: item.motionAmount,
             transition: item.transition,
           });
         } else {
@@ -196,17 +205,56 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
       const bytes = await storeOutput(context, outputFile, payload.output.path, 'video/mp4');
 
       let poster: Record<string, unknown> | undefined;
+      const posterWarnings: string[] = [];
       if (payload.output.posterPath) {
         const posterFile = path.join(context.workDir, 'poster.jpg');
-        // Pasada la primera transición, para que la portada no salga a medio fundido.
-        const at = Math.min(build.durationSeconds / 2, Math.max(0.5, build.transitionSeconds + 0.5));
-        await runFfmpeg(
-          deps.tools,
-          ['-ss', num(at), '-i', outputFile, '-frames:v', '1', '-c:v', 'mjpeg', '-q:v', '3', posterFile],
-          { signal: context.signal },
-        );
+        const cover = plan.cover;
+        let source: 'auto' | 'frame' | 'photo' = 'auto';
+        let at: number | undefined;
+        if (cover?.type === 'photo') {
+          // Una foto de la marca como portada: se gira según su EXIF y se recorta a 9:16 por el centro.
+          const file = await fetchInput(context, cover.path, 'cover');
+          const orientation = await takeJpegOrientation(file);
+          const w = build.width;
+          const h = build.height;
+          const crop = `crop=${w}:${h}:${focalCropExpr('w', w, CENTER.x)}:${focalCropExpr('h', h, CENTER.y)}`;
+          await runFfmpeg(
+            deps.tools,
+            [
+              ...['-noautorotate', '-i', file],
+              ...['-vf', [...orientationFilters(orientation), `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos`, crop].join(',')],
+              ...['-frames:v', '1', '-c:v', 'mjpeg', '-q:v', '2', posterFile],
+            ],
+            { signal: context.signal },
+          );
+          source = 'photo';
+        } else {
+          if (cover?.type === 'frame') {
+            source = 'frame';
+            const limit = Math.max(0, info.durationSeconds - 0.1);
+            at = Math.min(cover.at, limit);
+            if (cover.at > limit + 0.05) {
+              posterWarnings.push('La portada estaba después del final del vídeo: se ha tomado el último fotograma');
+            }
+          } else {
+            // Pasada la primera transición, para que la portada no salga a medio fundido.
+            at = Math.min(build.durationSeconds / 2, Math.max(0.5, build.transitionSeconds + 0.5));
+          }
+          await runFfmpeg(
+            deps.tools,
+            ['-ss', num(at), '-i', outputFile, '-frames:v', '1', '-c:v', 'mjpeg', '-q:v', '3', posterFile],
+            { signal: context.signal },
+          );
+        }
         const posterBytes = await storeOutput(context, posterFile, payload.output.posterPath, 'image/jpeg');
-        poster = { path: payload.output.posterPath, atSeconds: Number(at.toFixed(3)), bytes: posterBytes };
+        poster = {
+          path: payload.output.posterPath,
+          source,
+          ...(at !== undefined ? { atSeconds: Number(at.toFixed(3)) } : {}),
+          width: build.width,
+          height: build.height,
+          bytes: posterBytes,
+        };
       }
       const uploadMs = Date.now() - uploadStartedAt;
 
@@ -228,7 +276,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
         timeline: build.timeline,
         ...(build.subtitles.length > 0 ? { subtitles: build.subtitles.length } : {}),
         ...(font ? { font: { source: font.source } } : {}),
-        warnings: [...(font?.warning ? [font.warning] : []), ...fontWarnings, ...build.warnings],
+        warnings: [...(font?.warning ? [font.warning] : []), ...fontWarnings, ...build.warnings, ...posterWarnings],
         timings: { downloadMs, renderMs, uploadMs },
       };
     },
