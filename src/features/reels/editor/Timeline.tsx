@@ -86,6 +86,18 @@ type Drag =
 
 let dragSeed = 0;
 
+/**
+ * Para los botones de la línea de tiempo: reciben el foco sin que el navegador desplace la línea
+ * para enseñarlos enteros (desplazar la línea es mover el cabezal), y su pulsación no arrastra el fondo.
+ */
+const quietFocus = {
+  onMouseDown: (event: React.MouseEvent) => event.preventDefault(),
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
+    event.stopPropagation();
+    event.currentTarget.focus({ preventScroll: true });
+  },
+};
+
 /** Lo que hay que mantener pulsado un elemento con el dedo antes de poder arrastrarlo (así el dedo sigue desplazando la línea). */
 export const LONG_PRESS_MS = 350;
 /** Cuánto se puede mover el dedo durante la pulsación larga sin que cuente como desplazamiento. */
@@ -141,6 +153,8 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
   /** Dónde ha dejado la línea el propio cabezal: un desplazamiento distinto es del usuario. */
   const expected = useRef(0);
   const panned = useRef(false);
+  /** La pulsación empezó en el fondo de una pista (y no en un elemento que luego se movió de sitio). */
+  const onBackground = useRef(false);
   const latest = useRef(props);
   useLayoutEffect(() => {
     latest.current = props;
@@ -319,6 +333,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
   /** Arrastrar el fondo con el ratón desplaza la línea (con el dedo lo hace el navegador, con su inercia). */
   const pan = (event: ReactPointerEvent) => {
     panned.current = false;
+    onBackground.current = event.target === event.currentTarget;
     if (event.pointerType !== 'mouse' || event.button !== 0) return;
     setDrag({ kind: 'pan', x: event.clientX, scroll: scrollerRef.current?.scrollLeft ?? 0 });
   };
@@ -348,7 +363,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
       : null;
   /** Tocar el fondo de una pista suelta lo elegido. */
   const deselect = (event: React.MouseEvent) => {
-    if (event.target === event.currentTarget && !panned.current) props.onSelect(null);
+    if (onBackground.current && event.target === event.currentTarget && !panned.current) props.onSelect(null);
   };
 
   return (
@@ -412,7 +427,11 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                     type="button"
                     className="absolute inset-0 flex h-full w-full cursor-grab select-none items-end gap-1 p-1 text-left [-webkit-touch-callout:none] active:cursor-grabbing"
                     aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+                    onMouseDown={(e) => e.preventDefault()}
                     onPointerDown={(e) => {
+                      // El foco, sin que el navegador desplace la línea para enseñar el elemento entero
+                      // (movería el cabezal y el elemento se iría de debajo del dedo).
+                      e.currentTarget.focus({ preventScroll: true });
                       props.onSelect({ kind: 'clip', id: clip.id });
                       if (!readOnly) press(e, { kind: 'clip', index, x: e.clientX, dx: 0, left: trackLeft() });
                       else e.stopPropagation();
@@ -510,7 +529,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                     chosen && 'border-primary ring-2 ring-primary',
                   )}
                   style={{ left: (timeline.starts[index]! + overlap / 2) * pps }}
-                  onPointerDown={(e) => e.stopPropagation()}
+                  {...quietFocus}
                   onClick={() => props.onSelect({ kind: 'transition', id: clip.id })}
                   aria-label={`Transición entre ${index} y ${index + 1}: ${TRANSITION_NAME[type] ?? type}`}
                   aria-pressed={chosen}
@@ -538,7 +557,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                 type="button"
                 className="absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-dashed border-border bg-surface text-muted hover:border-primary hover:text-fg"
                 style={{ left: timeline.total * pps + 8 }}
-                onPointerDown={(e) => e.stopPropagation()}
+                {...quietFocus}
                 onClick={props.onAddMedia}
                 aria-label="Añadir fotos o clips al final"
                 data-testid="reel-add-end"
@@ -579,7 +598,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                   <button
                     type="button"
                     className="flex h-full w-full cursor-grab select-none items-center gap-1 px-2 text-left [-webkit-touch-callout:none]"
+                    onMouseDown={(e) => e.preventDefault()}
                     onPointerDown={(e) => {
+                      e.currentTarget.focus({ preventScroll: true });
                       props.onSelect({ kind: 'text', id: text.id });
                       if (!readOnly) {
                         press(e, { kind: 'text', id: text.id, x: e.clientX, origin: text.start, key: `text:${++dragSeed}` });
@@ -654,7 +675,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                   type="button"
                   className="absolute bottom-0.5 top-0.5 truncate rounded border border-border bg-subtle px-1 text-left text-[10px]"
                   style={{ left: cue.start * pps, width: Math.max(8, (cue.end - cue.start) * pps) }}
-                  onPointerDown={(e) => e.stopPropagation()}
+                  {...quietFocus}
                   onClick={() => props.onSelect({ kind: 'subtitles' })}
                   title={cue.text}
                   data-testid="reel-cue-block"
@@ -679,7 +700,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                   selection?.kind === 'music' && 'ring-2 ring-primary',
                 )}
                 style={{ left: 0, width: Math.max(16, timeline.total * pps) }}
-                onPointerDown={(e) => e.stopPropagation()}
+                {...quietFocus}
                 onClick={() => props.onSelect({ kind: 'music' })}
                 aria-label={`Música: ${props.labelOf(music.path)}`}
                 aria-pressed={selection?.kind === 'music'}
@@ -760,7 +781,7 @@ function LaneHint({ icon, onClick, children }: { icon: ReactNode; onClick: () =>
     <button
       type="button"
       className="absolute bottom-0.5 left-0 top-0.5 flex items-center gap-1 whitespace-nowrap rounded-md border border-dashed border-border px-2 text-[11px] text-muted hover:border-primary hover:text-fg"
-      onPointerDown={(e) => e.stopPropagation()}
+      {...quietFocus}
       onClick={onClick}
     >
       {icon}

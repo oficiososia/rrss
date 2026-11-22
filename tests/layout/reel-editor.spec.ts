@@ -226,6 +226,16 @@ test.describe('lo que solo se ve en un navegador', () => {
       .toBeGreaterThan(0.9);
     // Música: la onda aparece cuando el archivo se ha decodificado.
     await expect(page.getByTestId('reel-waveform')).toBeVisible({ timeout: 20_000 });
+    // Elegir algo de la línea no mueve el cabezal: ni la música (más ancha que la pantalla) ni un clip a medias.
+    await page.getByTestId('reel-timeline').evaluate((el) => {
+      el.scrollLeft = 180;
+    });
+    await expect.poll(() => time(page)).toBeCloseTo(3, 1);
+    await page.getByTestId('reel-music-block').click({ position: { x: 300, y: 10 } });
+    await expect(page.getByTestId('reel-toolbar')).toHaveAttribute('data-kind', 'music');
+    await page.getByTestId('reel-clip').nth(3).getByRole('button').first().click();
+    await expect(page.getByTestId('reel-toolbar')).toHaveAttribute('data-kind', 'clip');
+    expect(await time(page)).toBeCloseTo(3, 1);
     await page.screenshot({ path: 'test-results/reel-editor-miniaturas.png' });
   });
 

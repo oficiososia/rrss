@@ -6,9 +6,10 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 
 // Banco de maquetación del EDITOR DE REELS: la aplicación real con el Supabase
 // simulado y una pieza de formato reel ya montada. Los archivos son de verdad
-// (un clip y una pista diminutos de tests/layout/media y fotos dibujadas al
-// vuelo), así que en el navegador se ven las miniaturas, se reproduce la vista
-// previa y se dibuja la onda de la música.
+// (un clip diminuto en tests/layout/media —13 KB, el único binario: un MP4 no se
+// puede fabricar en el navegador—, y fotos y música hechas aquí al vuelo), así
+// que en el navegador se ven las miniaturas, se reproduce la vista previa y se
+// dibuja la onda de la música.
 // Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo)
 const params = new URLSearchParams(window.location.search);
 const count = Math.max(1, Math.min(30, Number(params.get('clips') ?? '12')));
@@ -29,6 +30,34 @@ function photoUrl(index: number): string {
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
+
+/** Una «canción»: 6 s de un tono con un golpe cada medio segundo, en WAV (8 kHz, mono, 16 bits). */
+function musicUrl(): string {
+  const rate = 8000;
+  const samples = rate * 6;
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const view = new DataView(buffer);
+  const text = (offset: number, value: string) => [...value].forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples * 2, true);
+  text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, 'data');
+  view.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i += 1) {
+    const t = i / rate;
+    const beat = t % 0.5 < 0.08 ? 1 : 0.2;
+    view.setInt16(44 + i * 2, Math.sin(2 * Math.PI * 220 * t) * beat * 0.6 * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+}
+const MUSIC_URL = musicUrl();
 
 const asset = (id: string, kind: string, fileName: string, mime: string, durationMs: number | null = null) => ({
   id,
@@ -100,7 +129,7 @@ const project = {
     ...(withMusic
       ? {
           music: {
-            path: path('musica.m4a'),
+            path: path('musica.wav'),
             startAt: 0,
             volume: 0.4,
             fadeInSeconds: 0.5,
@@ -122,7 +151,7 @@ fake.tables.media_assets = [
       ? asset(`clip-${i + 1}`, 'video', `clip-${i + 1}.mp4`, 'video/mp4', 4000)
       : asset(`foto-${i + 1}`, 'image', `foto-${i + 1}.jpg`, 'image/jpeg'),
   ),
-  asset('audio-1', 'audio', 'musica.m4a', 'audio/mp4'),
+  asset('audio-1', 'audio', 'musica.wav', 'audio/wav'),
 ];
 fake.tables.jobs = [];
 fake.tables.reel_drafts = [];
@@ -166,7 +195,7 @@ fake.tables.content_versions = empty
 const urlOf = (storagePath: string): string => {
   const name = storagePath.split('/').pop() ?? '';
   if (name.endsWith('.mp4')) return '/tests/layout/media/clip.mp4';
-  if (name.endsWith('.m4a')) return '/tests/layout/media/musica.m4a';
+  if (name.endsWith('.wav')) return MUSIC_URL;
   const index = Number(/foto-(\d+)/.exec(name)?.[1] ?? '1') - 1;
   return photoUrl(index);
 };

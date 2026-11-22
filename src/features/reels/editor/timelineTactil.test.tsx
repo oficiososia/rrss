@@ -195,8 +195,17 @@ describe('la línea de tiempo como en los editores de móvil', () => {
 
   it('tocar el fondo de una pista suelta lo elegido; entre dos clips hay un botón para su transición', () => {
     const props = setup({ selection: { kind: 'clip', id: 'c1' } });
-    fireEvent.click(screen.getByRole('group', { name: 'Vídeo y fotos' }));
+    const lane = screen.getByRole('group', { name: 'Vídeo y fotos' });
+    fireEvent.pointerDown(lane, { pointerType: 'touch', clientX: 300 });
+    fireEvent.pointerUp(window, { pointerType: 'touch', clientX: 300 });
+    fireEvent.click(lane);
     expect(props.onSelect).toHaveBeenLastCalledWith(null);
+    // Una pulsación que empezó en un elemento y acaba en el fondo (se movió debajo del dedo) no suelta nada.
+    (props.onSelect as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^2\. Clip b\.mp4/ }), { pointerType: 'touch', clientX: 200 });
+    fireEvent.pointerUp(window, { pointerType: 'touch', clientX: 200 });
+    fireEvent.click(lane);
+    expect(props.onSelect).not.toHaveBeenCalledWith(null);
     const transitions = screen.getAllByTestId('reel-transition');
     expect(transitions).toHaveLength(2);
     expect(transitions[0]).toHaveAccessibleName('Transición entre 1 y 2: fundido');
