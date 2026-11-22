@@ -34,6 +34,7 @@ import { createAiMediaPollHandler, hasServiceKey } from '../../supabase/function
 import { createAiMediaWebhookHandler } from '../../supabase/functions/ai-media-webhook/handler.ts';
 import {
   addAsset,
+  aiBrandAccess,
   as,
   asService,
   createBrand,
@@ -179,8 +180,7 @@ function mediaHandler(env?: Record<string, string | undefined>) {
       const user = sessions.get(token);
       return user ? { userId: user.id } : null;
     },
-    brandVisible: async (token, brandId) =>
-      (await as(db, sessions.get(token)!, `select id from public.brands where id = $1`, [brandId])).length > 0,
+    brandAccess: async (token, brandId) => aiBrandAccess(db, sessions.get(token)!, brandId),
     // Igual que la función real: con la identidad del usuario, bajo RLS.
     loadReferences: async (token, brandId, ids) => {
       const rows = await as<{ id: string; mime_type: string; kind: string }>(
@@ -477,6 +477,91 @@ describe('función ai-media', () => {
     const missing = await call(handler, noQuota.token, { action: 'image.generate', brandId: noQuota.brand, input });
     expect(errorOf(missing.body).code).toBe('quota_missing');
     expect(await asService(db, `select id from public.media_assets where brand_id = $1`, [brand])).toEqual([]);
+  });
+});
+
+// ───────────────────────────── Modo agencia ─────────────────────────────
+
+describe('modo agencia: la imagen con IA es del personal de la agencia', () => {
+  /** Organización de tipo agencia con una marca en modo agencia, su cupo y un editor de la marca. */
+  async function agencyBrand(kind: 'agency' | 'business' = 'agency') {
+    n += 1;
+    const owner = await createUser(db, `agencia${n}@modo${n}.test`);
+    const org = await createOrg(db, owner, `Agencia ${n}`, kind);
+    const brand = await createBrand(db, owner, org, `Marca ${n}`);
+    await setAiQuota(db, root, org, 10_000_000);
+    await as(db, owner, `update public.brands set ai_mode = 'agency' where id = $1`, [brand]);
+    const editor = await createUser(db, `editor${n}@modo${n}.test`);
+    await join(db, owner, editor, org, 'member', brand, 'editor');
+    const admin = await createUser(db, `admin${n}@modo${n}.test`);
+    await join(db, owner, admin, org, 'admin');
+    return { owner, org, brand, editor, admin };
+  }
+  const input = { prompt: 'Tapas', aspectRatio: '1:1' };
+  const used = async (brand: string) =>
+    (
+      await asService<{ n: string }>(db, `select count(*) as n from public.ai_generations where brand_id = $1`, [brand])
+    )[0]!.n;
+
+  it('un miembro de la marca (editor) no puede: 409 agency_mode, sin cupo gastado, y los listados salen vacíos', async () => {
+    const { brand, editor } = await agencyBrand();
+    const handler = mediaHandler();
+    const token = login(editor);
+    for (const action of ['image.generate', 'image.estimate', 'photo.estimate', 'photo.edit']) {
+      const response = await call(handler, token, {
+        action,
+        brandId: brand,
+        input: action.startsWith('photo')
+          ? { assetId: '00000000-0000-4000-8000-000000000000', operation: 'enhance' }
+          : input,
+      });
+      expect(response.status, action).toBe(409);
+      expect(errorOf(response.body).code, action).toBe('agency_mode');
+      expect(errorOf(response.body).message).toMatch(/personal de la agencia/);
+    }
+    const models = await call(handler, token, { action: 'image.models', brandId: brand });
+    expect(models.body).toMatchObject({ models: [], agencyMode: true });
+    const edits = await call(handler, token, { action: 'photo.options', brandId: brand });
+    expect(edits.body).toMatchObject({ edits: [], agencyMode: true });
+    expect(Number(await used(brand))).toBe(0);
+  });
+
+  it('el propietario y la administradora de la agencia sí pueden (la plataforma pasa la puerta; el permiso de editar lo sigue dando la base de datos)', async () => {
+    const { brand, owner, admin } = await agencyBrand();
+    const handler = mediaHandler();
+    for (const user of [owner, admin]) {
+      const response = await call(handler, login(user), { action: 'image.generate', brandId: brand, input });
+      expect(response.status, user.email).toBe(200);
+    }
+    const models = await call(handler, login(owner), { action: 'image.models', brandId: brand });
+    expect((models.body.models as unknown[]).length).toBeGreaterThan(0);
+    expect(models.body.agencyMode).toBeUndefined();
+  });
+
+  it('en una organización que no es agencia, el propietario tampoco: es la misma regla que el texto', async () => {
+    const { brand, owner } = await agencyBrand('business');
+    const response = await call(mediaHandler(), login(owner), { action: 'image.generate', brandId: brand, input });
+    expect(response.status).toBe(409);
+    expect(errorOf(response.body).code).toBe('agency_mode');
+  });
+
+  it('si la marca vuelve a modo api, el editor puede otra vez; quien no ve la marca recibe 404', async () => {
+    const { brand, owner, editor } = await agencyBrand();
+    await as(db, owner, `update public.brands set ai_mode = 'api' where id = $1`, [brand]);
+    const handler = mediaHandler();
+    expect((await call(handler, login(editor), { action: 'image.generate', brandId: brand, input })).status).toBe(200);
+    const stranger = await createUser(db, `ajena${n}@modo.test`);
+    const hidden = await call(handler, login(stranger), { action: 'image.models', brandId: brand });
+    expect(hidden.status).toBe(404);
+  });
+
+  it('ai_brand_access no la puede llamar anon y solo cuenta como personal a quien toca', async () => {
+    const { brand, owner, editor, admin } = await agencyBrand();
+    expect(await aiBrandAccess(db, owner, brand)).toEqual({ aiMode: 'agency', agencyStaff: true });
+    expect(await aiBrandAccess(db, admin, brand)).toEqual({ aiMode: 'agency', agencyStaff: true });
+    expect(await aiBrandAccess(db, editor, brand)).toEqual({ aiMode: 'agency', agencyStaff: false });
+    expect(await aiBrandAccess(db, root, brand)).toEqual({ aiMode: 'agency', agencyStaff: true });
+    await expect(as(db, null, `select public.ai_brand_access($1)`, [brand])).rejects.toThrow();
   });
 });
 

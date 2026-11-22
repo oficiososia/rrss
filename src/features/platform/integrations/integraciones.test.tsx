@@ -7,6 +7,15 @@ import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/f
 // Plataforma → Integraciones y lo que cambia en el resto de la interfaz:
 // el navegador manda los valores al guardar y nunca recibe un secreto de vuelta.
 
+const NO_TEXT_TASKS = {
+  'post.caption': false,
+  'profile.proposal': false,
+  'brand.check': false,
+  'campaign.plan': false,
+  'analytics.summary': false,
+  'editor.copilot': false,
+};
+
 const SECRET = 'token-de-prueba-del-tunel-9f8e';
 const WORKER_TOKEN = `rrss_wgt_${'q'.repeat(43)}`;
 
@@ -78,6 +87,29 @@ function serveIntegrations() {
 }
 
 describe('Plataforma → Integraciones', () => {
+  it('«Qué ve la gente» dice qué tarea de texto está lista, una por una', async () => {
+    vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
+    vi.stubEnv('VITE_AI_VOICE_COPILOT_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    serveIntegrations();
+    fake.fn('platform-integrations', (raw) => {
+      const action = (raw as { action: string }).action;
+      const availability = { ...ALL_AVAILABLE, aiTextTasks: { ...NO_TEXT_TASKS, 'editor.copilot': true } };
+      return {
+        status: 200,
+        body:
+          action === 'status' ? { settings: [], tests: [], audit: [], environment: [], availability } : availability,
+      };
+    });
+    renderApp('/plataforma/integraciones');
+    const flags = await screen.findByTestId('integration-flags');
+    const row = (name: string) => within(flags).getByText(name).closest('li')!;
+    expect(within(row('IA de texto · Copiloto por voz del editor')).getByText('Se enseña')).toBeInTheDocument();
+    expect(within(row('IA de texto · Plan de campaña')).getByText('Sin configurar')).toBeInTheDocument();
+    expect(within(row('IA de texto · Textos de las piezas')).getByText('Sin configurar')).toBeInTheDocument();
+    vi.unstubAllEnvs();
+  });
+
   it('el token del trabajador se genera, se enseña una vez y se puede revocar', async () => {
     seedWorkspace({ orgRole: 'owner', platformAdmin: true });
     const server = serveIntegrations();
@@ -180,7 +212,22 @@ describe('interruptores: compilación Y servidor', () => {
   it('con VITE_AI_TEXT_ENABLED pero sin IA configurada en el servidor, Campañas no sale', async () => {
     vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
     seedWorkspace({ orgRole: 'owner' });
-    fake.fn('platform-integrations', () => ({ status: 200, body: { ...ALL_AVAILABLE, aiText: false } }));
+    fake.fn('platform-integrations', () => ({
+      status: 200,
+      body: { ...ALL_AVAILABLE, aiText: false, aiTextTasks: NO_TEXT_TASKS },
+    }));
+    renderApp(`${BRAND_BASE}/campanas`);
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/inicio`));
+    expect(screen.queryByRole('link', { name: /Campañas/ })).not.toBeInTheDocument();
+  });
+
+  it('con solo el copiloto configurado, Campañas no sale (cada botón mira su tarea)', async () => {
+    vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
+    seedWorkspace({ orgRole: 'owner' });
+    fake.fn('platform-integrations', () => ({
+      status: 200,
+      body: { ...ALL_AVAILABLE, aiText: true, aiTextTasks: { ...NO_TEXT_TASKS, 'editor.copilot': true } },
+    }));
     renderApp(`${BRAND_BASE}/campanas`);
     await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/inicio`));
     expect(screen.queryByRole('link', { name: /Campañas/ })).not.toBeInTheDocument();

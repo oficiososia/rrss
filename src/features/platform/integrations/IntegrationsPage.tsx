@@ -42,10 +42,11 @@ import {
   useIntegrationStatus,
   useSaveIntegration,
   useTestIntegration,
+  type AiTextTask,
   type IntegrationStatus,
   type ProbeResult,
 } from './api';
-import { UI_INTEGRATIONS, type UiField, type UiIntegration } from './catalog';
+import { TEXT_TASKS, UI_INTEGRATIONS, type UiField, type UiIntegration } from './catalog';
 
 const ACTION_LABEL: Record<string, string> = { set: 'Guardó', delete: 'Borró', test: 'Probó la conexión de' };
 const TITLE: Record<string, string> = Object.fromEntries(UI_INTEGRATIONS.map((i) => [i.id, i.title]));
@@ -126,6 +127,8 @@ function IntegrationsBody() {
 
 /** Qué módulos enseña la interfaz: interruptor de compilación Y servicio configurado. */
 function BuildFlags({ status }: { status: IntegrationStatus }) {
+  // Un servidor anterior a la disponibilidad por tarea solo sabe decir «alguna»: vale para todas.
+  const taskLive = (task: AiTextTask) => status.availability.aiTextTasks?.[task] ?? status.availability.aiText;
   const rows = [
     {
       label: 'Publicación en Instagram',
@@ -139,7 +142,13 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       live: status.availability.socialOAuth,
       flag: 'VITE_SOCIAL_PUBLISHING_ENABLED',
     },
-    { label: 'IA de texto', build: aiTextEnabled(), live: status.availability.aiText, flag: 'VITE_AI_TEXT_ENABLED' },
+    // Una fila por tarea: configurar una no enciende las demás.
+    ...TEXT_TASKS.filter((t) => t.task !== 'editor.copilot').map((t) => ({
+      label: `IA de texto · ${t.label}`,
+      build: aiTextEnabled(),
+      live: taskLive(t.task),
+      flag: 'VITE_AI_TEXT_ENABLED',
+    })),
     {
       label: 'IA de imagen',
       build: aiImageEnabled(),
@@ -153,9 +162,9 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       flag: 'VITE_BILLING_ENABLED',
     },
     {
-      label: 'Copiloto por voz (con la IA de texto)',
+      label: 'IA de texto · Copiloto por voz del editor',
       build: aiVoiceCopilotEnabled(),
-      live: status.availability.aiText,
+      live: taskLive('editor.copilot'),
       flag: 'VITE_AI_VOICE_COPILOT_ENABLED',
     },
     {

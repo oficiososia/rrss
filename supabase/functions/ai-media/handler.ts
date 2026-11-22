@@ -16,6 +16,10 @@
 //
 // El permiso de edición en la marca lo impone la base de datos al reservar el
 // cupo (`ai_reserve_generation`, 42501 → 403): no hay forma de generar sin él.
+// Modo agencia (`brands.ai_mode = 'agency'`): como con el texto (`ai-generate`),
+// los miembros de la marca no usan la IA; aquí lo único distinto es que el
+// personal de la agencia o de la plataforma sí puede (409 `agency_mode` para el
+// resto, antes de tocar el cupo; los listados de modelos salen vacíos).
 // El vídeo generativo no se expone: nace apagado por criterio de datos
 // (docs/06-decisiones-fase-2.md).
 //
@@ -54,11 +58,25 @@ const MAX_BODY_BYTES = 1_500_000;
 const MAX_BACKGROUND_CHARS = 500;
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
+export interface BrandAiAccess {
+  aiMode: 'api' | 'agency';
+  /** Superadministrador de la plataforma, o propietario/administrador de la organización agencia de la marca. */
+  agencyStaff: boolean;
+}
+
+/** Lo que se dice a quien no puede usar la IA de imagen en una marca en modo agencia. */
+export const AGENCY_IMAGE_MESSAGE =
+  'Esta marca trabaja en modo agencia: la imagen con IA la usa solo el personal de la agencia. Pide la imagen desde «Encargos».';
+
 export interface AiMediaDeps {
   /** Valida el token de sesión y devuelve el usuario, o `null` si no vale. */
   authenticate(accessToken: string): Promise<{ userId: string } | null>;
-  /** ¿Ve el usuario esta marca? Con su identidad (RLS). */
-  brandVisible(accessToken: string, brandId: string): Promise<boolean>;
+  /**
+   * Cómo trabaja la marca y quién es quien pide, con SU identidad
+   * (`ai_brand_access`): `null` si no ve la marca; si la ve, el modo de IA
+   * (`api` o `agency`) y si es personal de la agencia o de la plataforma.
+   */
+  brandAccess(accessToken: string, brandId: string): Promise<BrandAiAccess | null>;
   /**
    * Imágenes de referencia de la biblioteca de la marca, CON LA IDENTIDAD DEL
    * USUARIO (RLS): solo las que ve, solo imágenes, solo de esa marca. Devuelve
@@ -161,7 +179,9 @@ function parsePhotoInput(data: Record<string, unknown>): PhotoInput {
     const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
     if (!prompt) throw new InputError('Describe el fondo que quieres.');
     if (prompt.length > MAX_BACKGROUND_CHARS) {
-      throw new InputError(`La descripción del fondo es demasiado larga: como mucho ${MAX_BACKGROUND_CHARS} caracteres.`);
+      throw new InputError(
+        `La descripción del fondo es demasiado larga: como mucho ${MAX_BACKGROUND_CHARS} caracteres.`,
+      );
     }
     const subjectMask = data.subjectMask === undefined ? undefined : decodePng(String(data.subjectMask));
     return {
@@ -273,18 +293,32 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
     >;
 
     try {
-      if (!(await deps.brandVisible(accessToken, brandId))) {
+      const access = await deps.brandAccess(accessToken, brandId);
+      if (!access) {
         return fail(404, 'brand_not_found', 'No existe esa marca o no tienes acceso a ella.');
       }
+      const agencyBlocked = access.aiMode === 'agency' && !access.agencyStaff;
       const runtime = await deps.runtime();
 
+      // Los listados no son un error: salen vacíos y dicen por qué, así la interfaz no ofrece lo que no se puede usar.
       if (action === 'image.models') {
-        return json(200, { action, models: runtime.imageChoices });
+        return json(200, {
+          action,
+          models: agencyBlocked ? [] : runtime.imageChoices,
+          ...(agencyBlocked ? { agencyMode: true } : {}),
+        });
       }
 
       if (action === 'photo.options') {
-        return json(200, { action, edits: deps.loadPhoto ? runtime.editChoices : [] });
+        return json(200, {
+          action,
+          edits: deps.loadPhoto && !agencyBlocked ? runtime.editChoices : [],
+          ...(agencyBlocked ? { agencyMode: true } : {}),
+        });
       }
+
+      // Se impone aquí (no solo ocultando botones) y antes de reservar cupo.
+      if (agencyBlocked) return fail(409, 'agency_mode', AGENCY_IMAGE_MESSAGE);
 
       if (action === 'photo.estimate' || action === 'photo.edit') {
         const photo = parsePhotoInput(data);

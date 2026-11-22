@@ -49,6 +49,7 @@ import {
 import { createAiMediaHandler } from '../../supabase/functions/ai-media/handler.ts';
 import {
   addAsset,
+  aiBrandAccess,
   as,
   asService,
   assetPath,
@@ -208,8 +209,7 @@ function mediaHandler(env: Record<string, string | undefined> = LOCAL_ENV) {
       const user = sessions.get(token);
       return user ? { userId: user.id } : null;
     },
-    brandVisible: async (token, brandId) =>
-      (await as(db, sessions.get(token)!, `select id from public.brands where id = $1`, [brandId])).length > 0,
+    brandAccess: async (token, brandId) => aiBrandAccess(db, sessions.get(token)!, brandId),
     loadReferences: async () => null,
     loadPhoto,
     runtime: async () =>

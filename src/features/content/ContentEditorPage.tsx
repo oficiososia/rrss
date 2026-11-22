@@ -59,6 +59,7 @@ import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
+import { useImageAgencyBlock } from '@/features/ai/imageApi';
 import { canEditPhoto, canEditWithAi, useAiEditOptions, useOriginalAsset } from '@/features/photo-edit/api';
 import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
 import type { PhotoToolsContext } from './editor/panels/PhotoPanel';
@@ -130,7 +131,7 @@ import {
   statusChangedMessage,
   type StatusAction,
 } from './status';
-import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useFeature, useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspaceMode } from '@/layout/workspace';
 import { cn } from '@/lib/utils';
 
@@ -285,15 +286,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
   const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
   // Con la marca en modo agencia no se redacta con el servicio de IA: se pide a la agencia.
-  const aiText = useFeature('aiText');
-  const aiEnabled = aiText && brand.ai_mode !== 'agency';
+  // Cada botón sale solo si SU tarea tiene proveedor, modelo y precio en el servidor.
+  const captionTask = useTextTask('post.caption');
+  const brandCheckTask = useTextTask('brand.check');
+  const copilotTask = useTextTask('editor.copilot');
+  const captionAi = captionTask && brand.ai_mode !== 'agency';
+  const brandCheckAi = brandCheckTask && brand.ai_mode !== 'agency';
   // La imagen con IA es otro servicio, independiente del texto: depende solo de su interruptor.
-  const aiImage = useFeature('aiImage');
+  const aiImageOn = useFeature('aiImage');
+  // En modo agencia la imagen con IA es del personal de la agencia, no de los miembros de la marca.
+  const imageAgencyBlocked = useImageAgencyBlock(brand.id, aiImageOn && brand.ai_mode === 'agency');
+  const aiImage = aiImageOn && !imageAgencyBlocked;
   // Copiloto por voz: IA de texto configurada en el servidor + su interruptor +
   // dictado en el navegador. No redacta (coloca lo dictado), por eso sí sale en
   // marcas en modo agencia (decisión provisional, docs/ESTADO.md).
   const [voiceSupported] = useState(() => aiVoiceCopilotEnabled() && speechRecognitionAvailable());
-  const voiceCopilot = voiceSupported && aiText;
+  const voiceCopilot = voiceSupported && copilotTask;
   const [copilotOpen, setCopilotOpen] = useState(false);
 
   // Página activa: la que se ve en el lienzo y la que cambian las órdenes de capas.
@@ -1173,6 +1181,11 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           )}
         </div>
       )}
+      {!readOnly && imageAgencyBlocked && (
+        <p className="shrink-0 text-xs text-muted" data-testid="image-ai-agency-note">
+          En modo agencia, la imagen con IA la usa solo el personal de la agencia: pide la imagen desde «Encargos».
+        </p>
+      )}
       {!readOnly && voiceCopilot && copilotOpen && (
         <Suspense fallback={<Spinner label="Preparando el copiloto…" />}>
           <VoiceCopilot
@@ -1383,7 +1396,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               </TabsContent>
               <TabsContent value="copy" className="space-y-4 pt-4">
                 <AskAgencyButton item={item} />
-                {aiEnabled && !readOnly && (
+                {captionAi && !readOnly && (
                   <GenerateCaptionDialog
                     brandId={brand.id}
                     network={item.network}
@@ -1425,7 +1438,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                       </Notice>
                     </div>
                   )}
-                  {aiEnabled && (
+                  {brandCheckAi && (
                     <div className="mt-6 space-y-2 border-t border-border pt-4">
                       <h2 className="text-base font-semibold">Tono con IA</h2>
                       <p className="text-xs text-muted">
@@ -1607,9 +1620,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   patch: { source: { kind: 'asset', assetId: row.id } },
                 });
                 setPhotoEditing(false);
-                toast.success('La capa usa ahora la foto editada. Se deshace con Ctrl+Z; la original sigue en la biblioteca.', {
-                  action: { label: 'Deshacer', onClick: () => dispatch({ type: 'undo' }) },
-                });
+                toast.success(
+                  'La capa usa ahora la foto editada. Se deshace con Ctrl+Z; la original sigue en la biblioteca.',
+                  {
+                    action: { label: 'Deshacer', onClick: () => dispatch({ type: 'undo' }) },
+                  },
+                );
               }}
             />
           )}

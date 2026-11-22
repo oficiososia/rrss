@@ -201,6 +201,24 @@ export async function serviceRpc<T = Row>(db: Db, fn: string, args: Record<strin
 }
 
 /** Fija el cupo mensual de IA de una organización (lo hace un superadministrador). */
+/** Lo que `ai-media` pregunta de la marca con la identidad de quien pide (`ai_brand_access`); null si no la ve. */
+export async function aiBrandAccess(
+  db: Db,
+  user: TestUser,
+  brandId: string,
+): Promise<{ aiMode: 'api' | 'agency'; agencyStaff: boolean } | null> {
+  const [row] = await as<{ access: { ai_mode: string; agency_staff: boolean } | null }>(
+    db,
+    user,
+    `select public.ai_brand_access($1) as access`,
+    [brandId],
+  );
+  const access = row?.access;
+  return access
+    ? { aiMode: access.ai_mode === 'agency' ? 'agency' : 'api', agencyStaff: access.agency_staff === true }
+    : null;
+}
+
 export async function setAiQuota(db: Db, platformAdmin: TestUser, orgId: string, limitMicros: number): Promise<void> {
   await as(db, platformAdmin, `select public.admin_set_ai_quota($1, $2)`, [orgId, limitMicros]);
 }

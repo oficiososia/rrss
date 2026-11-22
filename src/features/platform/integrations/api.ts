@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { IntegrationAuditRow, IntegrationSettingRow, IntegrationTestRow } from '@/lib/database.types';
 import { supabase } from '@/lib/supabase';
-import type { IntegrationId } from './catalog';
+import type { AiTextTask, IntegrationId } from './catalog';
+
+export { AI_TEXT_TASKS, type AiTextTask } from './catalog';
 
 // Plataforma → Integraciones. Todo pasa por la función `platform-integrations`
 // (supabase/functions/platform-integrations/handler.ts): el navegador manda los
@@ -12,7 +14,13 @@ export interface IntegrationAvailability {
   publishing: boolean;
   socialOAuth: boolean;
   socialToken: boolean;
+  /** Alguna tarea de texto está lista. Cada botón mira la suya en `aiTextTasks`. */
   aiText: boolean;
+  /**
+   * Una por tarea de texto: `true` solo si esa tarea tiene proveedor, modelo y
+   * precio. Un servidor anterior a esta versión no la manda (ver `useTextTask`).
+   */
+  aiTextTasks?: Record<AiTextTask, boolean>;
   aiImage: boolean;
   billing: boolean;
   /** Biblioteca con Google Drive (cliente OAuth y claves de cifrado). */

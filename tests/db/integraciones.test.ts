@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
-import { computeAvailability } from '../../supabase/functions/_shared/integrations/availability.ts';
+import { computeAvailability, textTaskReadiness } from '../../supabase/functions/_shared/integrations/availability.ts';
 import { INTEGRATION_SETTINGS, validateSetting } from '../../supabase/functions/_shared/integrations/catalog.ts';
 import { probeIntegration, type ProbeFetch } from '../../supabase/functions/_shared/integrations/probes.ts';
 import {
@@ -353,6 +353,67 @@ describe('configuración efectiva', () => {
     expect(memo(a)).toBe(memo(a));
   });
 
+  describe('IA de texto: disponibilidad por tarea', () => {
+    const PRICES = JSON.stringify({
+      'openai/gpt-prueba': { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 1 },
+    });
+    const ALL_OFF = {
+      'post.caption': false,
+      'profile.proposal': false,
+      'brand.check': false,
+      'campaign.plan': false,
+      'analytics.summary': false,
+      'editor.copilot': false,
+    };
+
+    it('con solo la ruta del copiloto, solo el copiloto está listo (aiText sí, el resto no)', () => {
+      const env = {
+        OPENAI_API_KEY: 'clave',
+        OPENAI_BASE_URL: 'https://eu.api.openai.com',
+        AI_TEXT_EDITOR_COPILOT_PROVIDER: 'openai',
+        AI_TEXT_EDITOR_COPILOT_MODEL: 'gpt-prueba',
+        AI_PRICES: PRICES,
+      };
+      expect(textTaskReadiness(env)).toEqual({ ...ALL_OFF, 'editor.copilot': true });
+      const available = computeAvailability(env, []);
+      expect(available.aiText).toBe(true);
+      expect(available.aiTextTasks).toEqual({ ...ALL_OFF, 'editor.copilot': true });
+    });
+
+    it('con proveedor y modelo por defecto, todas las tareas; una tarea con ajuste propio sin precio queda sin lista', () => {
+      const base = {
+        OPENAI_API_KEY: 'clave',
+        OPENAI_BASE_URL: 'https://eu.api.openai.com',
+        AI_TEXT_PROVIDER: 'openai',
+        AI_TEXT_MODEL: 'gpt-prueba',
+        AI_PRICES: PRICES,
+      };
+      expect(Object.values(textTaskReadiness(base)).every(Boolean)).toBe(true);
+      const exception = textTaskReadiness({
+        ...base,
+        AI_TEXT_CAMPAIGN_PLAN_PROVIDER: 'openai',
+        AI_TEXT_CAMPAIGN_PLAN_MODEL: 'gpt-sin-precio',
+      });
+      expect(exception['campaign.plan']).toBe(false);
+      expect(exception['post.caption']).toBe(true);
+    });
+
+    it('sin clave del proveedor, sin precio completo o fuera de la UE, ninguna tarea está lista', () => {
+      const route = { AI_TEXT_PROVIDER: 'openai', AI_TEXT_MODEL: 'gpt-prueba', AI_PRICES: PRICES };
+      expect(textTaskReadiness({ ...route, OPENAI_BASE_URL: 'https://eu.api.openai.com' })).toEqual(ALL_OFF);
+      expect(
+        textTaskReadiness({
+          ...route,
+          OPENAI_API_KEY: 'clave',
+          OPENAI_BASE_URL: 'https://eu.api.openai.com',
+          AI_PRICES: JSON.stringify({ 'openai/gpt-prueba': { input_tokens: 1, output_tokens: 2 } }),
+        }),
+      ).toEqual(ALL_OFF);
+      expect(textTaskReadiness({ ...route, OPENAI_API_KEY: 'clave' })).toEqual(ALL_OFF);
+      expect(textTaskReadiness({})).toEqual(ALL_OFF);
+    });
+  });
+
   it('disponibilidad: solo lo que está configurado', () => {
     const none = computeAvailability({}, []);
     expect(none).toEqual({
@@ -360,6 +421,14 @@ describe('configuración efectiva', () => {
       socialOAuth: false,
       socialToken: false,
       aiText: false,
+      aiTextTasks: {
+        'post.caption': false,
+        'profile.proposal': false,
+        'brand.check': false,
+        'campaign.plan': false,
+        'analytics.summary': false,
+        'editor.copilot': false,
+      },
       aiImage: false,
       billing: false,
       drive: false,
@@ -667,7 +736,11 @@ describe('función platform-integrations', () => {
     expect((await post('t-nadie', { action: 'availability' })).status).toBe(401);
     const r = await post('t-ana', { action: 'availability' });
     expect(r.status).toBe(200);
-    expect(Object.values(r.body).every((v) => typeof v === 'boolean')).toBe(true);
+    // Solo booleanos: sueltos o, en `aiTextTasks`, uno por tarea.
+    const booleans = (value: unknown): boolean =>
+      typeof value === 'boolean' ||
+      (typeof value === 'object' && value !== null && Object.values(value).every(booleans));
+    expect(Object.values(r.body).every(booleans)).toBe(true);
   });
 
   it('solo el superadministrador ve el estado, guarda, prueba y genera claves', async () => {

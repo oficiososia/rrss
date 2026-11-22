@@ -11,7 +11,7 @@
 import type { MediaReader, MediaStorage } from '../ai/media/contract.ts';
 import type { MediaModelRow } from '../ai/media/models.ts';
 import { createMediaRuntime } from '../ai/media/runtime.ts';
-import { loadAiTextConfig } from '../ai/text/config.ts';
+import { loadAiTextConfig, TEXT_PURPOSES, type TextPurpose } from '../ai/text/config.ts';
 import { transcriptionReady } from '../ai/transcription/config.ts';
 import { loadLocalTestTextConfig } from '../ai/text/local-test.ts';
 import { TEXT_UNITS } from '../ai/text/prompt.ts';
@@ -28,7 +28,14 @@ export interface IntegrationAvailability {
   socialOAuth: boolean;
   /** Conectar pegando un token de página (no necesita la aplicación del producto). */
   socialToken: boolean;
+  /** Alguna tarea de texto tiene proveedor, modelo y precio. Para saber qué botón sale, `aiTextTasks`. */
   aiText: boolean;
+  /**
+   * Una por tarea de texto: `true` solo si esa tarea tiene proveedor cargado,
+   * modelo y precio completo. Cada botón de la interfaz mira SU tarea, no la
+   * disponibilidad general: configurar una sola tarea no enciende las demás.
+   */
+  aiTextTasks: Record<TextPurpose, boolean>;
   aiImage: boolean;
   billing: boolean;
   /** Biblioteca con Google Drive: cliente OAuth, direcciones y claves de cifrado. */
@@ -39,11 +46,17 @@ export interface IntegrationAvailability {
   reelSubtitles: boolean;
 }
 
+const NO_TEXT_TASKS = Object.fromEntries(TEXT_PURPOSES.map((purpose) => [purpose, false])) as Record<
+  TextPurpose,
+  boolean
+>;
+
 export const NOTHING_AVAILABLE: IntegrationAvailability = {
   publishing: false,
   socialOAuth: false,
   socialToken: false,
   aiText: false,
+  aiTextTasks: { ...NO_TEXT_TASKS },
   aiImage: false,
   billing: false,
   drive: false,
@@ -55,16 +68,29 @@ const unused = () => {
   throw new Error('No se usa al calcular la disponibilidad');
 };
 
-function aiTextReady(env: Env): boolean {
-  if (loadLocalTestTextConfig(env)) return true;
+/**
+ * Qué tareas de texto se pueden usar: la tarea tiene una ruta (la suya o la
+ * general de «todo el texto»), su adaptador se ha cargado (credenciales y
+ * criterio de datos) y su modelo tiene el precio completo. Es la misma
+ * comprobación que hace el servicio al generar; si aquí sale `true` y la
+ * clave es mala, lo dirá «Probar conexión», no esta lista.
+ */
+export function textTaskReadiness(env: Env): Record<TextPurpose, boolean> {
+  if (loadLocalTestTextConfig(env))
+    return Object.fromEntries(TEXT_PURPOSES.map((p) => [p, true])) as Record<TextPurpose, boolean>;
   const config = loadAiTextConfig(env);
   const loaded = new Set(config.providers.map((p) => p.id));
-  return config.models.some((m) => {
-    if (!loaded.has(m.provider)) return false;
+  const ready = { ...NO_TEXT_TASKS };
+  for (const model of config.models) {
+    if (!loaded.has(model.provider)) continue;
     const needed: string[] = [TEXT_UNITS.input, TEXT_UNITS.output, TEXT_UNITS.cacheRead];
-    if (m.provider !== 'mistral' && m.provider !== 'openai') needed.push(TEXT_UNITS.cacheWrite);
-    return needed.every((unit) => m.microsPerUnit[unit] !== undefined);
-  });
+    if (model.provider !== 'mistral' && model.provider !== 'openai') needed.push(TEXT_UNITS.cacheWrite);
+    if (!needed.every((unit) => model.microsPerUnit[unit] !== undefined)) continue;
+    for (const purpose of model.purposes ?? []) {
+      if ((TEXT_PURPOSES as readonly string[]).includes(purpose)) ready[purpose as TextPurpose] = true;
+    }
+  }
+  return ready;
 }
 
 /** Lo mismo que necesita drive-media para conectar y servir imágenes. */
@@ -90,12 +116,14 @@ export function computeAvailability(env: Env, imageModelRows: MediaModelRow[]): 
 
   const drive = loadDriveConfig(env, async () => unused());
 
+  const aiTextTasks = textTaskReadiness(env);
   const webhook = (env.STRIPE_WEBHOOK_SECRET ?? '').split(',').some((s) => s.trim());
   return {
     publishing,
     socialOAuth: publishing && social.meta !== null && social.callbackUrl !== null && social.appUrl !== null,
     socialToken: publishing,
-    aiText: aiTextReady(env),
+    aiText: Object.values(aiTextTasks).some(Boolean),
+    aiTextTasks,
     aiImage: runtime.imageChoices.length > 0,
     billing: Boolean(env.STRIPE_SECRET_KEY?.trim()) && webhook && normalizeAppUrl(env.BILLING_APP_URL) !== null,
     drive: driveReady(drive),
