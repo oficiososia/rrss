@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (mejora automática, ronda 2 en `f20/mejora-automatica-2`: mide sobre el plato y no el fondo, más intensidad y control Suave/Normal/Fuerte; mejora automática de fotos rehecha en `f19/mejora-automatica`: niveles por percentiles, balance de blancos por grises, luz, sombras/luces, claridad, viveza y nitidez en deslizadores; comparativa en `rrss-recursos-comparativa/mejora-automatica.jpg`; 1047 pruebas unitarias pasan; tanda 2 del editor de piezas en `f16/editor-tanda2`; editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 22/11/2026 (animar una foto con IA en `f28/animar-foto-ia`, ver el último apartado; mejora automática, ronda 2 en `f20/mejora-automatica-2`: mide sobre el plato y no el fondo, más intensidad y control Suave/Normal/Fuerte; mejora automática de fotos rehecha en `f19/mejora-automatica`: niveles por percentiles, balance de blancos por grises, luz, sombras/luces, claridad, viveza y nitidez en deslizadores; comparativa en `rrss-recursos-comparativa/mejora-automatica.jpg`; 1047 pruebas unitarias pasan; tanda 2 del editor de piezas en `f16/editor-tanda2`; editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -488,7 +488,8 @@ bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo)                 | Adaptadores escritos, sin claves                                                                                                                                                                                    | `docs/ia-texto.md`                         |
-| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
+| Animar una foto con IA (fal.ai: MiniMax H3 y Kling v3; `docs/ia-medios.md` §15)            | Adaptador y flujo escritos; solo con HTTP simulado; sin clave; modelos inactivos y precios sin verificar (0,06 y 0,084 USD/s según la ficha; la página de precios daba otras cifras)                                         |
+| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo suelto apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
 | Meta (OAuth, publicación, métricas)                                                        | Adaptador escrito; sin aplicación de Meta                                                                                                                                                                           | `docs/publicacion.md`, `docs/analitica.md` |
 | Stripe                                                                                     | Funciones escritas; sin cuenta                                                                                                                                                                                      | `docs/facturacion.md`                      |
 | Google Drive (OAuth, listar, servir imágenes)                                              | Adaptador escrito; sin cliente OAuth de Google                                                                                                                                                                      | `docs/biblioteca-drive.md`                 |
@@ -561,7 +562,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 
 1. Moneda de cuenta, precios y límites de los planes (propuesta en `docs/facturacion.md`) y plan por defecto.
 2. Proveedor de IA (por defecto, Google Cloud en la UE) y cupo mensual.
-3. Activar el vídeo con IA (por defecto, apagado).
+3. Activar el vídeo con IA (por defecto, apagado). Decidido el 22/11/2026: ofrecer animar una foto real (rama `f28/animar-foto-ia`); falta que el dueño ponga la clave de fal.ai, admita el tratamiento fuera de la UE y contraste los precios (`docs/ia-medios.md` §15).
 4. Alojamiento del trabajador de medios: recomendado Fly.io en Fráncfort; código preparado (`docs/alojamiento.md`), falta la cuenta.
 5. Música para los reels y su licencia.
 6. Alojamiento del trabajador de medios.
@@ -624,3 +625,25 @@ El dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly. Implementado y probado e
 1. Probar en https://rrss-omega.vercel.app el primer encargo real de Casa Tomás (post del chuletón) y el resto de pantallas con datos reales.
 2. El dueño crea la aplicación de Meta, la cuenta de correo y, si quiere IA por API, Google Cloud.
 3. Con la aplicación de Meta: conectar la cuenta de Instagram de Casa Tomás en staging y publicar una pieza aprobada.
+
+## Animar una foto con IA (rama `f28/animar-foto-ia`, 22/11/2026)
+
+«Animar con IA…» en la ficha de una foto de la biblioteca: un clip de 5 s (máx. 10)
+con MiniMax H3 (principal) o Kling v3 Standard (respaldo) por fal.ai; el vídeo queda en
+«Vídeos con IA» con su procedencia y la marca de contenido generado con IA, y el
+selector de clips de los reels ya lo puede elegir. Detalle, ids, precios y pasos en
+`docs/ia-medios.md` §15.
+
+- **Hecho y probado (con fal.ai simulado):** migración `20261217010000` (con vuelta
+  atrás), acciones `video.*` de `ai-media`, cupo, permisos, aislamiento, modo agencia,
+  «Probar conexión» de fal.ai, diálogo con coste máximo y estado, script de prueba
+  a ciegas.
+- **Sin probar:** ninguna llamada real a fal.ai (no hay clave); duración real de un clip;
+  si el plato queda intacto (de ahí el aviso y la prueba a ciegas); el diálogo en un
+  navegador contra un servidor real.
+- **Sin confirmar:** los precios (la ficha de cada modelo y la página general de
+  fal.ai no coinciden); región y entrenamiento con lo enviado.
+- **Pendiente del dueño:** clave de fal.ai en Plataforma → Integraciones, admitir el
+  tratamiento fuera de la UE, contrastar y activar los dos modelos, `ai_video` en el
+  plan, `VITE_AI_ANIMATE_ENABLED=true`, aplicar la migración y redesplegar `ai-media`,
+  `ai-media-poll` y `ai-media-webhook`.
