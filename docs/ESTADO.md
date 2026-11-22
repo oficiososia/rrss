@@ -1,34 +1,71 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (modo retrato con vista previa y «Retocar la selección» con pincel en «Editar foto» > Fondo, rama `f22/modo-retrato`, ver `docs/edicion-fotos.md` §13, hoja de ejemplo en `rrss-recursos-comparativa/modo-retrato.jpg`, 1112 pruebas unitarias y de componentes pasan; mejora automática, ronda 2 en `f20/mejora-automatica-2`: mide sobre el plato y no el fondo, más intensidad y control Suave/Normal/Fuerte; mejora automática de fotos rehecha en `f19/mejora-automatica`: niveles por percentiles, balance de blancos por grises, luz, sombras/luces, claridad, viveza y nitidez en deslizadores; comparativa en `rrss-recursos-comparativa/mejora-automatica.jpg`; 1047 pruebas unitarias pasan; tanda 2 del editor de piezas en `f16/editor-tanda2`; editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
-(PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
+Última actualización: 22/11/2026 (rama `f27/calidad`: revisión de calidad, CI y de este documento).
+Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
+existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
+`docs/PENDIENTES.md`.
 
-**En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
-a 6, Integraciones, copiloto por voz y fotos de Drive (`f4/integracion`).
+## Resumen por área
 
-**Unido en `f6/integracion`, pendiente de subir y de desplegar** (todo probado en
-local; ver «Para llevar a staging»): almacenamiento en Cloudflare R2, arreglos del
-copiloto, OpenAI como proveedor de texto, pulido (privacidad, desenfoque en reels,
-huérfanos en R2, plan Prueba), alta de la biblioteca desde Drive, edición de fotos y
-«Publicar ahora».
+Regla: «implementado» = el código existe; «probado» dice con qué (simulado ≠ real);
+nada se da por funcionando contra un servicio real que no se haya llamado.
+
+| Área | Implementado | Probado | Pendiente | Bloqueado |
+| --- | --- | --- | --- | --- |
+| Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
+| Editor de piezas | Capas, documento v5, páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz | Unitarias, componentes, base de datos, `test:layout` en Chromium real y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261209…`, `20261211…`, `20261212…` sin aplicar en staging; vista de gestión de plantillas | Dictado real y proveedor de IA real |
+| Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; `api/cutout-mask` desplegada en Vercel; Esc con el foco fuera de la pantalla | Clave de OpenAI / ComfyUI real |
+| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
+| Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
+| Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
+| Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
+| Legal / RGPD | Páginas como plantillas, consentimiento, descarga, borrado, registro de tratamientos, etiqueta de IA | Base de datos y e2e 17 | Revisión de abogado, contratos de encargo, plazos | Abogado |
+
+**En staging** (https://rrss-omega.vercel.app), según el último dato verificado
+(20–21/11/2026; no se ha vuelto a mirar el proyecto en esta revisión): las Fases 1 a 6,
+Integraciones, copiloto por voz, fotos de Drive y el trabajador de medios en Fly con su
+intermediario.
+
+**En la rama de trabajo y sin llevar a staging** (probado en local y en CI; ver «Para llevar
+a staging»): R2, OpenAI como proveedor, edición de fotos y su recorte (BEN2, refinado,
+servidor), «Publicar ahora», importar publicaciones, carruseles de páginas, editor de reels,
+plantillas del editor, documento v5, miniaturas y mejora automática. Las migraciones desde
+`20261124010000` hasta `20261213120000` no constan como aplicadas en staging, salvo las del
+trabajador de Fly (`20261208…`, `20261210…`), que el trabajador desplegado necesita.
 
 Resumen: las Fases 1 a 6 están construidas y probadas de extremo a extremo en local con
 proveedores **simulados** (IA, Meta, Stripe). Lo que falta para usarlas de verdad son
 cuentas y decisiones del dueño, no desarrollo: aplicación de Meta, proveedor de IA,
-Stripe, correo y revisión legal. Staging (Supabase gratuito, UE) tiene 35 migraciones
-y las funciones desplegadas sin proveedores.
+Stripe, correo y revisión legal. Staging (Supabase gratuito, UE) tenía 35 migraciones
+y las funciones desplegadas sin proveedores el 20/11/2026.
 
 ## Pruebas
 
-| Tanda                 | Resultado                                                                                                                                                                                                                                                                                                       | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`            | 1112 pasan (22/11/2026, rama `f22/modo-retrato`; incluye modo retrato y pincel de la selección; antes 1041 en `f17/recorte-ben2` con motores de recorte BEN2 e IS-Net, plantillas del editor, atajos y menú lateral)                                                                                                                                                                        | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes)                                                                                                                                                                                                                                                                                                                           |
-| `npm run test:db`     | 910 pasan, 2 omitidas (21/11/2026, rama `f16/editor-tanda2`; incluye plantillas guardadas desde el editor)                                                                                                                                                                                                      | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026)                         |
-| `npm run test:layout` | 23 pasan (21/11/2026, rama `f16/editor-tanda2`)                                                                                                                                                                                                                                                                 | Navegador real (Chromium de Playwright) **sin Supabase**: la aplicación con el cliente simulado de `src/test`. Editor sin scroll de página en 1920×1080, 1366×768, 1024×768 y 375×812 (lienzos 4:5, 9:16 y 16:9), lienzo entero, hoja inferior en móvil, zoom, menú lateral, y exportación PNG/JPEG comparada píxel a píxel con el lienzo (texto, fotos, filtros, recorte, giro, fondos, sombras) |
-| `worker/`             | 90 pasan (21/11/2026, rama `f11/editor-reels`)                                                                                                                                                                                                                                                                  | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2                                                                                                                                                      |
-| `agency/`             | 54 pasan (21/11/2026; incluye entregas con páginas)                                                                                                                                                                                                                                                             | Herramienta de la agencia contra un Supabase simulado                                                                                                                                                                                                                                                                                                                                             |
-| `npm run test:e2e`    | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos                                                                        |
-| CI de GitHub          | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                                                    | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                    |
+Cifras de la última ejecución del CI de GitHub (22/11/2026, rama `f27/calidad`, commit `dddc246`),
+salvo donde se dice otra cosa. Ninguna prueba toca servicios reales: todas usan proveedores simulados.
+
+| Tanda | Resultado | Qué cubre |
+| --- | --- | --- |
+| `npm test` | 1089 pasan en el CI de esta rama; 1112 con el modo retrato (`f22/modo-retrato`, ya unido), medido en local por su rama | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
+| `npm run test:db` | 915 pasan, 2 omitidas | Esquema, aislamiento, permisos, planes, cupos, cola, publicación, campañas, analítica, RGPD, integraciones, biblioteca, R2, edición de fotos, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
+| `npm run test:layout` | 23 pasan (en CI desde el 22/11/2026, trabajo `maquetacion`) | Chromium real **sin Supabase**: editor sin scroll de página en cuatro tamaños, hoja inferior en móvil, zoom, menú lateral y exportación PNG/JPEG comparada píxel a píxel con el lienzo |
+| `worker/` | 108 pasan, más 13 del reel dentro del contenedor | Trabajador de medios con FFmpeg real |
+| `agency/` | 54 pasan | Herramienta de la agencia contra un Supabase simulado |
+| `npm run test:e2e` | **94 de 94**, 29 archivos (CI, 4,4 min) | Chromium contra un Supabase local con las funciones servidas, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos, publicar ahora, importar, carrusel, plantillas y editor de reels |
+| CI de GitHub | `comprobar`, `trabajador`, `agencia`, `maquetacion` y `e2e` en verde | `e2e` y `maquetacion` llevan `continue-on-error`: no bloquean el PR hasta verlos estables varias ejecuciones seguidas |
+
+Historia de la e2e en CI el 22/11/2026: en las ejecuciones del día anterior fallaban 5–8 de 94
+(y otras 8 no llegaban a correr porque cada archivo parte de lo que dejó el anterior). Causas,
+todas de las pruebas salvo una: selectores viejos tras los rediseños (menú «⋯» de la biblioteca,
+«Opciones avanzadas» de la conexión avanzada, texto «clave de acceso», «Volver» de «Editar foto»
+a pantalla completa), la subida con miniatura (la prueba esperaba solo el original) y **un fallo
+real del producto**: la cuadrícula de la biblioteca buscaba la miniatura firmada por la ruta del
+original y las fotos con miniatura se quedaban en esqueleto. Todo corregido en `f27/calidad`.
+Las e2e 11, 25, 26 y 29, que figuraban como «sin ejecutar», llevaban ejecutándose y pasando
+en CI desde antes; el CI no estaba a la vista porque el trabajo `e2e` no bloquea.
+Las pruebas siguen sin poder ejecutarse en el PC de desarrollo (no hay Docker): el CI es el único
+lugar donde corre la e2e completa.
 
 ## Hecho
 
@@ -80,14 +117,15 @@ publicador ya enviaba los hijos en ese orden. Verificador, marca de IA, campaña
 plantillas y `agency/` leen las páginas. Detalle y cómo convertir un carrusel
 hecho con varias versiones (la demo de EnerGym) en `docs/publicacion.md`
 («Carruseles»; script `scripts/unir-versiones-en-carrusel.sql`, probado en PGlite,
-**sin ejecutar** en staging).
+**sin ejecutar** en staging). La e2e 27 se ejecuta en CI desde el 22/11/2026.
 
 - Pruebas: unitarias (esquema, migración, páginas, verificador, exportación),
   componentes (`editorPaginas.test.tsx`, programar y «Publicar ahora» un
   carrusel), base de datos (regla con varias exportaciones en orden, publicador
   con la Graph API simulada, IA y plantillas con páginas) y `agency/`. La e2e
-  `27-carrusel-paginas.spec.ts` está **escrita y sin ejecutar** (el 21/11/2026
-  Docker no estaba arrancado y no había Supabase local).
+  `27-carrusel-paginas.spec.ts` se ejecuta en el CI de GitHub (no hay Docker en el
+  PC de desarrollo); el 22/11/2026 no llegó a pasar porque dependía de la cuenta de
+  Instagram que deja la 18 (ver «Pruebas»).
 - Para llevarla a staging: migración `20261203010000_carousel_pages.sql`; ninguna
   función que desplegar (el cambio de la Graph API simulada solo cuenta en local).
   Ojo: un carrusel ya programado con exportaciones sin número de página queda
@@ -112,7 +150,7 @@ salida suaves y confirmación de licencia (queda en la procedencia). Se guarda c
 - Plan del reel **v2** (`worker/src/reel/schema.ts`, `src/features/reels/editor/project.ts`); el v1 se migra al leerlo.
 - Migración `20261207010000_reel_editor` (sin tablas: carga v2, enlace con la pieza, tipografías y licencia comprobadas, procedencia), con vuelta atrás. Función nueva `ai-transcribe`.
 - Precio de los subtítulos: 0,0045 $/min (OpenAI, 21/11/2026) + 10 % de cota por la UE = 82,5 micros/s.
-- Pruebas: unitarias, componentes, trabajador con FFmpeg real, base de datos (con aislamiento). La e2e `29-editor-reels.spec.ts` está **escrita y sin ejecutar** (Docker parado). Sin probar contra OpenAI real ni la vista previa en un navegador real.
+- Pruebas: unitarias, componentes, trabajador con FFmpeg real, base de datos (con aislamiento). La e2e `29-editor-reels.spec.ts` **pasa en CI** (22/11/2026). Sin probar contra OpenAI real ni la vista previa en un navegador real.
 - Para llevarlo a staging: migración `20261207010000`, desplegar `ai-transcribe` y redesplegar `platform-integrations`; `VITE_REEL_SUBTITLES_ENABLED` cuando haya clave de OpenAI. Detalle en `docs/editor-reels.md`.
 
 #### Editor de reels más intuitivo (rama `f14/reels-intuitivo`, 21/11/2026)
@@ -264,8 +302,7 @@ escribir él; el original tiene que ser de la misma marca).
   guardado en Cache Storage; sin proveedor ni coste. Encima, fondo liso, de color
   de la marca o de la biblioteca, con sombra suave opcional; resultado `photo_edit`
   con sus pasos. Sin COOP/COEP (romperían las fotos de otros orígenes). Detalle en
-  `docs/edicion-fotos.md` §7. Probado: unitarias y componentes; e2e escrita y sin
-  ejecutar; **sin probar el modelo real en un navegador**.
+  `docs/edicion-fotos.md` §7. Probado: unitarias y componentes; e2e 25 **pasa en CI** (22/11/2026) con una máscara simulada; **sin probar el modelo real en un navegador**.
 - **Quitar el fondo con BEN2** (rama `f17/recorte-ben2`, 21/11/2026): decisión
   del dueño tras comparar 12 fotos reales. BEN2 base fp16 (219 MB, MIT) en el
   navegador **solo con WebGPU**; sin WebGPU, sin memoria o si falla, vuelve a
@@ -314,7 +351,7 @@ fuentes, precio y límites en `docs/ia-medios.md` §13 y `docs/edicion-fotos.md`
 - Precio: OpenAI cobra por tokens; el registro lleva una **cota por megapíxel** (70.000 micros de salida, 14.000 de entrada). Los modelos nacen inactivos y sin precio verificado: hay que activarlos en Plataforma.
 - Fuera de la UE: `AI_MEDIA_ALLOW_NON_EU=true` (o proyecto europeo con `OPENAI_BASE_URL=https://eu.api.openai.com`).
 - Interfaz para el integrador: `PhotoEditScreen` acepta `getSubjectMask` (PNG con las medidas de la foto, plato opaco). Nadie la pasa todavía: sin ella se avisa de que la IA puede retocar el plato. La máscara de OpenAI es orientativa: no garantiza el plato intacto.
-- Pruebas: `tests/db/ia-openai-imagen.test.ts`, casos nuevos en `edicion-fotos.test.ts` y `editarFoto.test.tsx`; e2e `26-cambiar-fondo-ia.spec.ts` escrita **sin ejecutar** (el Supabase local lo usaba otro proyecto).
+- Pruebas: `tests/db/ia-openai-imagen.test.ts`, casos nuevos en `edicion-fotos.test.ts` y `editarFoto.test.tsx`; e2e `26-cambiar-fondo-ia.spec.ts` **pasa en CI** (22/11/2026).
 - Para llevarla a staging: migración `20261202010000_openai_image.sql` (vuelta atrás en `supabase/rollbacks/`) y redesplegar `ai-media`, `ai-media-poll`, `ai-media-webhook` y `platform-integrations` (código compartido). Sin probar contra OpenAI real.
 
 ### Valoración de Cloudflare Workers AI (rama `f8/workers-ai`, 20/11/2026)
@@ -396,7 +433,7 @@ después en `energym-demo-datos/capturas/tanda2/f13-*`.
 - Pruebas: `components/…` en `contenidos.test.tsx` (cabecera del editor, teclado),
   `social/avisosResolubles.test.tsx`, `status.test.ts`, `holdAdvice.test.ts`, caso
   nuevo en `tests/db/integraciones.test.ts`; e2e 09, 11, 13, 20, 21 y 27 abren «⋯»
-  con `accionDelMenu` (`tests/e2e/apoyo.ts`), **sin ejecutar** la tanda e2e.
+  con `accionDelMenu` (`tests/e2e/apoyo.ts`), y la tanda e2e se ejecuta en CI (ver «Pruebas»).
 
 ### «Editar foto» a pantalla completa (rama `f15/editar-foto-pantalla`, 21/11/2026)
 
@@ -406,8 +443,8 @@ controles; desde el editor, «Aplicar a la capa» cambia la capa al momento (se
 deshace/rehace con el editor) y «Volver a la foto original» recupera la original
 en cualquier momento; desde la biblioteca, «Guardar copia» con «Deshacer». Arregla
 la vista previa del fondo, la mejora automática reversible y la vista previa
-grande. Pendiente: revisión a mano en navegador (escritorio y 375 px) y ejecutar
-los E2E 22, 25 y 26 (ajustados, no ejecutados). Detalle en `docs/edicion-fotos.md` §11.
+grande. Pendiente: revisión a mano en navegador (escritorio y 375 px). Las e2e 25 y 26 pasan en CI;
+la 22 falló el 22/11 al cerrar la pantalla con Esc (prueba corregida para usar «Volver»). Detalle en `docs/edicion-fotos.md` §11.
 
 ### Ediciones sencillas del editor (rama `f13/edicion-sencilla`, 21/11/2026)
 
@@ -576,15 +613,13 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 1. Moneda de cuenta, precios y límites de los planes (propuesta en `docs/facturacion.md`) y plan por defecto.
 2. Proveedor de IA (por defecto, Google Cloud en la UE) y cupo mensual.
 3. Activar el vídeo con IA (por defecto, apagado).
-4. Alojamiento del trabajador de medios: recomendado Fly.io en Fráncfort; código preparado (`docs/alojamiento.md`), falta la cuenta.
-5. Música para los reels y su licencia.
-6. Alojamiento del trabajador de medios.
-7. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
-8. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
-9. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
-10. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
-11. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
-12. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
+4. Alojamiento del trabajador de medios: ya está en Fly.io (Fráncfort) en staging; falta la tarjeta de pago y decidir el de producción (`docs/alojamiento.md`).
+5. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
+6. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
+7. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
+8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
+9. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
+10. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
 
 ## Pendientes conocidos
 
@@ -595,7 +630,7 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 - Editor: sin ajuste a guías al mover varias capas; zonas seguras solo para 9:16 y orientativas.
 - Fase 4: lotes, coordinador y automatizaciones.
 - Avisos de encargos por sondeo (60 s), sin tiempo real ni correo.
-- ~~El trabajador usa la clave de servicio~~: resuelto con el intermediario `worker-gateway` (abajo); falta aplicarlo en staging.
+- ~~El trabajador usa la clave de servicio~~: resuelto con el intermediario `worker-gateway` (abajo); aplicado en staging con el trabajador de Fly (21/11/2026).
 - Variables nuevas sin llevar a `.env.example` (documentadas en `docs/`), entre ellas `VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `AI_TEXT_EDITOR_COPILOT_*` y las de Drive.
 - Copiloto por voz: falta un aviso en el propio copiloto antes del primer dictado (el audio va a Google o Microsoft; la política de privacidad ya lo dice).
 - Integraciones: tokens de «inicio de sesión de Instagram» (IG…) no admitidos; el vídeo con IA sigue solo por variables.
@@ -612,14 +647,14 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 
 ## Trabajador sin la clave de servicio (rama `f12/worker-sin-clave`, 21/11/2026)
 
-El dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly. Implementado y probado en local; **sin aplicar ni desplegar en staging**. Detalle, opciones valoradas y pasos en `docs/alojamiento.md` §5.
+El dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly. Implementado y probado en local y en CI; **aplicado y en uso en staging** (el trabajador de Fly entra por él, 21/11/2026). Detalle, opciones valoradas y pasos en `docs/alojamiento.md` §5.
 
 - Elegida la opción del intermediario: Edge Function `worker-gateway` (`verify_jwt = false`) con las operaciones exactas del trabajador (reclamar, renovar, terminar, fallar, devolver, URL firmadas de lectura y subida de una ruta). La clave de servicio se queda en Supabase. Descartado el rol de Postgres con JWT propio: no se puede revocar al momento y con las claves nuevas no está claro que Supabase lo admita.
 - Migración `20261210010000_worker_gateway.sql` (con vuelta atrás): ajuste `WORKER_GATEWAY_TOKEN` (solo la huella SHA-256, en Vault; un disparador impide guardar otra cosa), funciones `worker_gateway_*` solo para la clave de servicio, que comprueban token, trabajo reservado por ese trabajador, tipos del trabajador y ruta de la organización y marca del trabajo, y tope de 1.200 llamadas por minuto (`private.worker_gateway_calls`).
 - Plataforma → Integraciones → Trabajador de medios: «Generar token» (sale una vez para pegarlo en Fly), «Generar uno nuevo (rotar)» y «Revocar». «Probar conexión» avisa si falta.
 - Trabajador: modo `gateway` por defecto (`worker/src/gateway.ts`); `service-key` solo pidiéndolo (local y CI); en Fly no arranca si encuentra la clave. `fly-preparar.mjs` y `worker-fly-preparar.yml` ya ponen el token y quitan la clave si quedaba.
 - En Fly solo van `SUPABASE_URL` y `WORKER_GATEWAY_TOKEN`.
-- E2E del reel y de un recorte por el intermediario del stack local escrita (`tests/e2e/11-reels.spec.ts`) y **sin ejecutar** (Docker parado).
+- E2E del reel y de un recorte por el intermediario del stack local (`tests/e2e/11-reels.spec.ts`), **pasa en CI** (22/11/2026).
 - Para llevarlo a staging: aplicar la migración y desplegar `worker-gateway` y `platform-integrations`; después, el dueño genera el token y lo pega en Fly.
 
 ## Pulido (rama `f6/pulido`, en `f6/integracion`, 20/11/2026)

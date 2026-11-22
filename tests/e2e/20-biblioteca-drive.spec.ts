@@ -43,7 +43,7 @@ test('añadir una foto de Drive a la biblioteca: se ve y no ocupa Storage', asyn
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/biblioteca`);
-  await page.getByTestId('library-drive').click();
+  await accionDelMenu(page, 'library-more', 'library-drive');
   const carpeta = page.getByTestId('drive-folder');
   await carpeta.getByTestId('drive-subfolder').filter({ hasText: 'Platos' }).click();
   // La HEIC del móvil sale, pero no se puede elegir.

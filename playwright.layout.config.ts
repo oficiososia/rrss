@@ -8,6 +8,7 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   timeout: 90_000,
   expect: { timeout: 30_000 },
+  retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   use: { baseURL: 'http://127.0.0.1:5391', locale: 'es-ES', ...devices['Desktop Chrome'] },
   webServer: {
