@@ -55,6 +55,8 @@ interface Container {
   caption: string;
   mediaUrl: string | null;
   altText: string | null;
+  coverUrl: string | null;
+  thumbOffset: string | null;
   children: string[];
   createdAt: number;
 }
@@ -66,6 +68,9 @@ export interface SimulatedMedia {
   caption: string;
   kind: Container['kind'];
   mediaUrls: string[];
+  /** Portada enviada con el reel (cover_url) y fotograma pedido (thumb_offset, ms). */
+  coverUrl: string | null;
+  thumbOffset: string | null;
   timestamp: string;
   permalink: string;
 }
@@ -273,6 +278,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
         kind = 'CAROUSEL';
       } else if (mediaType === 'REELS') {
         if (!body.get('video_url')) return graphError(400, 100, 'video_url is required');
+        const offset = body.get('thumb_offset');
+        if (offset !== null && !/^\d+$/.test(offset)) return graphError(400, 100, 'thumb_offset must be milliseconds');
         kind = 'REELS';
       } else {
         if (!body.get('image_url')) return graphError(400, 100, 'image_url is required');
@@ -288,6 +295,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
         caption: body.get('caption') ?? '',
         mediaUrl: body.get('image_url') ?? body.get('video_url'),
         altText: body.get('alt_text'),
+        coverUrl: body.get('cover_url'),
+        thumbOffset: body.get('thumb_offset'),
         children: (body.get('children') ?? '').split(',').filter(Boolean),
         createdAt: now(),
       };
@@ -322,6 +331,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
           container.kind === 'CAROUSEL'
             ? container.children.map((c) => containers.get(c)?.mediaUrl ?? '')
             : [container.mediaUrl ?? ''],
+        coverUrl: container.coverUrl,
+        thumbOffset: container.thumbOffset,
         timestamp: new Date(now()).toISOString(),
         permalink: `${SIMULATED_PERMALINK_HOST}/p/${id}/`,
       };

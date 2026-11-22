@@ -2,7 +2,8 @@ import { DownloadCloud, Pause, Play } from 'lucide-react';
 import { useState } from 'react';
 import { Button, Notice } from '@/components/ui';
 import type { SocialAccountRow } from '@/lib/database.types';
-import { formatDate } from '@/lib/utils';
+import { formatDateIn, formatTimeIn } from './zone';
+import { useBrandZone } from './useBrandZone';
 import {
   importSummary,
   plural,
@@ -20,6 +21,7 @@ import {
  * Solo quien gestiona la marca.
  */
 export function ImportPostsPanel({ brandId, account }: { brandId: string; account: SocialAccountRow }) {
+  const zone = useBrandZone();
   const last = useLastImport(brandId, account.id);
   const total = useImportedTotal(brandId);
   const driver = useImportDriver(brandId, account.id);
@@ -110,7 +112,7 @@ export function ImportPostsPanel({ brandId, account }: { brandId: string; accoun
           {current?.status === 'completed' && !driver.active && (
             <p className="text-xs text-success" data-testid="social-import-done">
               Importación terminada
-              {row?.finished_at ? ` el ${formatDate(row.finished_at)}` : ''}.
+              {row?.finished_at ? ` el ${formatDateIn(row.finished_at, zone)}` : ''}.
             </p>
           )}
           {current?.status === 'paused' && !driver.active && !driver.error && (
@@ -121,7 +123,7 @@ export function ImportPostsPanel({ brandId, account }: { brandId: string; accoun
       {waitingUntil && !driver.active && (
         <Notice tone="warning">
           Meta pide ir más despacio: se puede reanudar a partir de las{' '}
-          {new Date(waitingUntil).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.
+          {formatTimeIn(new Date(waitingUntil).toISOString(), zone)}.
         </Notice>
       )}
       {driver.message && !waitingUntil && <Notice tone="warning">{driver.message}</Notice>}

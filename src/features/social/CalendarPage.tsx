@@ -48,12 +48,15 @@ import {
   type DisplayState,
 } from './calendar';
 import { activeAccountOf, heldCountText, holdAdvice, type HoldAdvice } from './holdAdvice';
-import { connectedAccountsPath, exportPath } from './links';
+import { connectedAccountsPath, exportPath, planPath } from './links';
 import { PublicationDialog } from './PublicationDialog';
 import { EntryThumb } from './preview';
 import { useEntryThumbs } from './previewData';
 import { PublishNowDialog } from './PublishNowDialog';
+import { AccountAttentionNotice } from './AccountAttentionNotice';
 import { ScheduleDialog } from './ScheduleDialog';
+import { useBrandZone } from './useBrandZone';
+import { differsFromDevice, fromZoned, nowInZone, toZoned, zoneLabel } from './zone';
 import { useFeature } from '@/features/platform/integrations/useFeature';
 
 /** Motivo en una frase y botón que lo arregla, para una publicación detenida (o null si no lo está). */
@@ -68,14 +71,16 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 /** Calendario editorial de la marca: mes, semana, día y por red, con arrastrar y soltar. */
 export function CalendarPage() {
-  const { org } = useOrg();
+  const { org, isAdmin } = useOrg();
   const { brand, can } = useBrand();
   const canEdit = can('edit');
   const canApprove = can('approve');
   const publishing = useFeature('publishing');
 
   const [view, setView] = useState<CalendarView>('month');
-  const [anchor, setAnchor] = useState(() => new Date());
+  const zone = useBrandZone();
+  // El calendario trabaja con «fechas de pared» de la zona de la marca (ver zone.ts).
+  const [anchor, setAnchor] = useState(() => nowInZone(zone));
   const [network, setNetwork] = useState('');
   const [state, setState] = useState<DisplayState | ''>('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -85,7 +90,9 @@ export function CalendarPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const range = useMemo(() => viewRange(view, anchor), [view, anchor]);
-  const calendar = useCalendar(brand.id, range.from, range.to);
+  const from = useMemo(() => fromZoned(range.from, zone), [range.from, zone]);
+  const to = useMemo(() => fromZoned(range.to, zone), [range.to, zone]);
+  const calendar = useCalendar(brand.id, from, to);
   const reschedule = useReschedulePublication(brand.id);
   const approve = useApproveContents(brand.id);
   const accounts = useSocialAccounts(brand.id);
@@ -104,11 +111,11 @@ export function CalendarPage() {
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarEntry[]>();
     for (const e of entries) {
-      const key = dayKey(new Date(e.scheduled_at));
+      const key = dayKey(toZoned(e.scheduled_at, zone));
       map.set(key, [...(map.get(key) ?? []), e]);
     }
     return map;
-  }, [entries]);
+  }, [entries, zone]);
   const thumbs = useEntryThumbs(brand.id, entries);
   const open = (calendar.data ?? []).find((e) => e.id === openId) ?? null;
   const reviewable = entries.filter((e) => e.content?.status === 'in_review');
@@ -164,6 +171,12 @@ export function CalendarPage() {
             {advice.label}
           </LinkButton>
         );
+      case 'change_plan':
+        return isAdmin ? (
+          <LinkButton to={planPath(org.id)} data-testid={testId}>
+            {advice.label}
+          </LinkButton>
+        ) : null;
       case 'use_account':
         return canEdit ? (
           <Button size="sm" loading={rearm.isPending} onClick={() => void chooseAccount(list)} data-testid={testId}>
@@ -207,9 +220,10 @@ export function CalendarPage() {
     const id = event.dataTransfer.getData('text/plain');
     const entry = (calendar.data ?? []).find((e) => e.id === id);
     if (!entry || !canEdit || !isEditable(entry.status)) return;
-    if (isPast(target)) return void toast.error('No se puede mover al pasado.');
+    const real = fromZoned(target, zone);
+    if (isPast(real)) return void toast.error('No se puede mover al pasado.');
     reschedule.mutate(
-      { publicationId: entry.id, scheduledAt: target.toISOString() },
+      { publicationId: entry.id, scheduledAt: real.toISOString() },
       { onSuccess: () => toast.success('Movida'), onError: (e) => toast.error(translateError(e)) },
     );
   };
@@ -269,7 +283,7 @@ export function CalendarPage() {
           title={reason ? `Detenida: ${reason}` : undefined}
         >
           <EntryThumb thumb={thumbs.get(e.media_asset_ids[0] ?? '')} />
-          <span className="shrink-0 tabular-nums text-muted">{formatTime(e.scheduled_at)}</span>
+          <span className="shrink-0 tabular-nums text-muted">{formatTime(e.scheduled_at, zone)}</span>
           <span className="min-w-0 flex-1 truncate">{e.content?.title ?? 'Pieza'}</span>
           {!compact && <span className="shrink-0 text-muted">{networkLabel(e.network)}</span>}
           <Badge tone={DISPLAY_TONE[s]} className="shrink-0 px-1.5">
@@ -288,7 +302,7 @@ export function CalendarPage() {
 
   const dayCell = (day: Date, muted: boolean) => {
     const list = byDay.get(dayKey(day)) ?? [];
-    const today = sameDay(day, new Date());
+    const today = sameDay(day, nowInZone(zone));
     return (
       <div
         key={day.toISOString()}
@@ -297,7 +311,7 @@ export function CalendarPage() {
         onDrop={(ev) => {
           const id = ev.dataTransfer.getData('text/plain');
           const entry = (calendar.data ?? []).find((x) => x.id === id);
-          if (entry) drop(moveToDay(new Date(entry.scheduled_at), day), ev);
+          if (entry) drop(moveToDay(toZoned(entry.scheduled_at, zone), day), ev);
         }}
         data-testid="calendar-day"
         data-day={dayKey(day)}
@@ -348,6 +362,10 @@ export function CalendarPage() {
         moreTestId="calendar-more"
       />
 
+      <div className="mb-4 empty:hidden">
+        <AccountAttentionNotice />
+      </div>
+
       {heldGroups.length > 0 && (
         <div className="mb-4 space-y-2" data-testid="calendar-held">
           {heldGroups.map(({ advice, reason, entries: list }) => (
@@ -396,7 +414,7 @@ export function CalendarPage() {
         >
           <ChevronLeft className="h-4 w-4" aria-hidden />
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => setAnchor(new Date())}>
+        <Button variant="secondary" size="sm" onClick={() => setAnchor(nowInZone(zone))}>
           Hoy
         </Button>
         <Button
@@ -410,6 +428,10 @@ export function CalendarPage() {
         <h2 className="mr-auto text-sm font-semibold capitalize" data-testid="calendar-title">
           {rangeTitle(view, anchor)}
         </h2>
+        <span className="text-xs text-muted" data-testid="calendar-zone">
+          Horas en {zoneLabel(zone)}
+          {differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}
+        </span>
         <Select
           aria-label="Filtrar por red"
           value={network}
@@ -508,7 +530,7 @@ export function CalendarPage() {
       ) : view === 'day' ? (
         <ul className="divide-y divide-border rounded-xl border border-border bg-surface" data-testid="calendar-hours">
           {HOURS.map((h) => {
-            const list = (byDay.get(dayKey(anchor)) ?? []).filter((e) => new Date(e.scheduled_at).getHours() === h);
+            const list = (byDay.get(dayKey(anchor)) ?? []).filter((e) => toZoned(e.scheduled_at, zone).getHours() === h);
             return (
               <li
                 key={h}
@@ -517,7 +539,7 @@ export function CalendarPage() {
                 onDrop={(ev) => {
                   const id = ev.dataTransfer.getData('text/plain');
                   const entry = (calendar.data ?? []).find((x) => x.id === id);
-                  if (entry) drop(moveToHour(new Date(entry.scheduled_at), anchor, h), ev);
+                  if (entry) drop(moveToHour(toZoned(entry.scheduled_at, zone), anchor, h), ev);
                 }}
               >
                 <span className="w-12 shrink-0 pt-1 text-xs tabular-nums text-muted">

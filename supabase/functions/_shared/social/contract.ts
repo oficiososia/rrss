@@ -104,7 +104,7 @@ export interface InstagramApi {
   createReelContainer(
     igUserId: string,
     token: string,
-    p: { videoUrl: string; caption?: string; shareToFeed?: boolean },
+    p: { videoUrl: string; caption?: string; shareToFeed?: boolean; coverUrl?: string; thumbOffsetMs?: number },
   ): Promise<string>;
   containerStatus(containerId: string, token: string): Promise<ContainerInfo>;
   /** SIN reintentos: un segundo intento tras un tiempo agotado puede publicar dos veces. */

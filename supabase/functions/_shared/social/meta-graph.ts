@@ -9,7 +9,10 @@
 //     (EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED); POST
 //     /{ig-user-id}/media_publish con creation_id. Carrusel: hijos con
 //     is_carousel_item=true y contenedor media_type=CAROUSEL con children
-//     (hasta 20; la aplicación admite 10). Reel: media_type=REELS + video_url.
+//     (hasta 20; la aplicación admite 10). Reel: media_type=REELS + video_url
+//     y, opcionales, cover_url (JPEG público, ≤ 8 MB, sRGB, mejor 9:16) o
+//     thumb_offset (ms del fotograma); si van los dos, Instagram usa cover_url
+//     (consultado el 22/11/2026 en la referencia de ig-user/media).
 //     Host graph.facebook.com con el token de la página (Facebook Login).
 //   · Parámetros: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media
 //     caption ≤ 2200, alt_text ≤ 1000 (solo imágenes), JPEG ≤ 8 MB.
@@ -291,13 +294,17 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
       if (caption) form.caption = caption;
       return idOf(await call('POST', `/${encodeURIComponent(igUserId)}/media`, { token, form }), 'del carrusel');
     },
-    async createReelContainer(igUserId, token, { videoUrl, caption, shareToFeed }) {
+    async createReelContainer(igUserId, token, { videoUrl, caption, shareToFeed, coverUrl, thumbOffsetMs }) {
       const form: Record<string, string> = {
         media_type: 'REELS',
         video_url: videoUrl,
         share_to_feed: shareToFeed === false ? 'false' : 'true',
       };
       if (caption) form.caption = caption;
+      // Portada: según la documentación, si se mandan las dos Instagram usa cover_url e ignora
+      // thumb_offset; aquí se manda una sola (la imagen tiene prioridad sobre el fotograma).
+      if (coverUrl) form.cover_url = coverUrl;
+      else if (typeof thumbOffsetMs === 'number' && thumbOffsetMs >= 0) form.thumb_offset = String(Math.round(thumbOffsetMs));
       return idOf(await call('POST', `/${encodeURIComponent(igUserId)}/media`, { token, form }), 'del reel');
     },
     async containerStatus(containerId, token): Promise<ContainerInfo> {

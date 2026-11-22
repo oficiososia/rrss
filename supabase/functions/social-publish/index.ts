@@ -13,7 +13,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { RpcClient } from '../_shared/ai/contract.ts';
 import { createRpcSettingsLoader, memoByEnv } from '../_shared/integrations/settings.ts';
 import { loadSocialConfig } from '../_shared/social/config.ts';
-import { checkAccountTokens } from '../_shared/social/oauth.ts';
+import { checkAccountTokens, renewAccountTokens, type RenewableAccount } from '../_shared/social/oauth.ts';
 import { mediaStoresFor, signStoredPath } from '../_shared/storage/resolve.ts';
 import { createSupabaseObjectStorage } from '../_shared/storage/supabase.ts';
 import type { StorageBackend } from '../_shared/storage/contract.ts';
@@ -85,6 +85,12 @@ const handlerFor = memoByEnv((effective) => {
       return data ?? [];
     },
     checkTokens: (accounts) => checkAccountTokens(config, rpc, accounts, log),
+    async accountsToRenew() {
+      const { data, error } = await rpc('social_accounts_to_renew', { p_days: 14, p_limit: 10 });
+      if (error) throw new Error('No se pudieron leer las cuentas por renovar');
+      return (Array.isArray(data) ? data : []) as RenewableAccount[];
+    },
+    renewTokens: (accounts) => renewAccountTokens(config, rpc, accounts, log),
   });
 });
 

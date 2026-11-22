@@ -809,6 +809,12 @@ export type SocialAccountRow = {
   disconnected_at: string | null;
   /** Por OAuth o pegando un token (20261120010000). */
   connection_method: SocialConnectionMethod;
+  /** Última renovación automática del acceso conseguida (20261218020000). */
+  token_renewed_at: string | null;
+  /** Último intento de renovarlo (como mucho uno al día). */
+  renewal_attempted_at: string | null;
+  /** Por qué no se pudo renovar; null si todo va bien. */
+  renewal_error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -824,7 +830,8 @@ export type PublicationHoldReason =
   | 'account_needs_reauth'
   | 'no_media'
   | 'invalid_media'
-  | 'unsupported_format';
+  | 'unsupported_format'
+  | 'plan_no_publishing';
 
 export type ScheduledPublicationRow = {
   id: string;

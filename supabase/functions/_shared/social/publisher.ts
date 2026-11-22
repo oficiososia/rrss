@@ -311,7 +311,23 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
         }
         containerId = await deps.api.createCarouselContainer(ig, token, { children, caption });
       } else if (pub.format === 'reel') {
-        containerId = await deps.api.createReelContainer(ig, token, { videoUrl: urls[0]!, caption, shareToFeed: true });
+        // Portada del montaje (si la pieza la tiene): es un JPEG ya guardado en la biblioteca.
+        // Si no se puede leer, el reel sale igualmente con el fotograma que elija Instagram.
+        let coverUrl: string | undefined;
+        try {
+          const cover = await rpcOk<{ storage_path: string } | null>('social_publication_cover', {
+            p_publication_id: pub.id,
+          });
+          if (cover?.storage_path) coverUrl = await deps.signedUrl(cover.storage_path, SIGNED_URL_SECONDS);
+        } catch (e) {
+          log('cover_lookup_failed', { publicationId: pub.id, message: (e as Error).message });
+        }
+        containerId = await deps.api.createReelContainer(ig, token, {
+          videoUrl: urls[0]!,
+          caption,
+          shareToFeed: true,
+          coverUrl,
+        });
       } else {
         return await fail('unsupported_format', 'Este formato todavía no se publica automáticamente.', true);
       }

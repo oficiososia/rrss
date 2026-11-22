@@ -188,7 +188,7 @@ trabajador ni la base de datos**: todo es de la aplicación (y un arreglo en `me
 
 ### Valorado y no hecho (pendiente)
 
-- **(Hecho en §8)** **Cortes al compás de la música** y **portada del reel**: necesitan detectar el ritmo (decodificar el audio) y un campo nuevo en el plan v2 con cambio a la vez en el trabajador, la base de datos y la publicación; es una fase aparte.
+- **(Hecho en §8)** **Cortes al compás de la música** y **portada del reel** (la publicación la manda desde f30, ver §8): necesitan detectar el ritmo (decodificar el audio) y un campo nuevo en el plan v2 con cambio a la vez en el trabajador, la base de datos y la publicación; es una fase aparte.
 - **Textos con animaciones prediseñadas**: requieren que el trabajador anime `drawtext`; también cambia el plan.
 - **Arrastrar para reordenar con el dedo** sigue dependiendo de los botones «Antes/Después» (un gesto sobre el clip choca con desplazar la línea de tiempo); un agarre largo sería la mejora.
 - Probado solo con jsdom y con FFmpeg del trabajador sin cambios; **no se ha visto la pantalla nueva en un navegador** (la rama no trae `.env` y no se despliega): hay que mirarla en staging, sobre todo el móvil y las miniaturas de clips (`<video>` con `#t=0.1`, que depende del navegador y del CORS de R2).
@@ -258,9 +258,11 @@ guardadas sin ganar nada. Campos nuevos, sin ningún `null` (`request_media_job`
   Al terminar, el disparador nuevo `jobs_publish_reel_cover` lo da de alta en la biblioteca (carpeta «Reels», imagen,
   procedencia `role: 'cover'`, `cover_of_path` = ruta del vídeo, pieza y versión) y lo deja en `jobs.result.poster`
   (con `asset_id`). `jobs.result.assets` sigue empezando por el vídeo.
-- **La publicación todavía no usa la portada**: el publicador (`meta-graph.ts`) crea el contenedor `REELS` solo con
-  `video_url`, sin `cover_url` ni `thumb_offset`. Por eso se deja guardada y documentada; no se simula. Cuando se
-  añada, bastará con buscar el recurso con `provenance->>'role' = 'cover'` y `cover_of_path` igual al vídeo.
+- **La publicación ya usa la portada** (migración `20261218010000`, rama `f30/instagram-pendientes`): el publicador
+  busca el recurso con `provenance->>'role' = 'cover'` y `cover_of_path` igual al vídeo (`social_publication_cover`)
+  y manda su dirección firmada como `cover_url` del contenedor `REELS`; sin portada, no manda nada. Qué parámetros
+  admite Instagram y por qué siempre `cover_url`: `docs/publicacion.md`, «Portada del reel». Probado con la Graph API
+  simulada; sin probar contra Meta real.
 - Sin portada elegida, no se pide ninguna (como antes).
 
 ### 4. Arrastrar y recortar (solo aplicación: `Timeline.tsx`)

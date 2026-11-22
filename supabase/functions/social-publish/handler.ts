@@ -22,6 +22,7 @@
 // minuto sin gastar intento.
 import type { RpcClient } from '../_shared/ai/contract.ts';
 import { SOCIAL_PUBLISH_JOB_KIND, type ClaimedSocialJob } from '../_shared/social/contract.ts';
+import type { RenewableAccount } from '../_shared/social/oauth.ts';
 import { processPublishJob, type PublisherDeps, type PublishResult } from '../_shared/social/publisher.ts';
 import { hasServiceKey } from '../ai-media-poll/handler.ts';
 
@@ -33,6 +34,9 @@ export interface SocialPublishDeps {
   /** Cuentas vivas cuyo token no se ha comprobado en 24 h. */
   accountsToCheck(): Promise<Array<{ id: string; brand_id: string; network: string; external_id: string }>>;
   checkTokens(accounts: Array<{ id: string; brand_id: string; network: string; external_id: string }>): Promise<number>;
+  /** Cuentas cuyo acceso caduca pronto y no se ha intentado renovar hoy. Sin ella, no se renueva. */
+  accountsToRenew?(): Promise<RenewableAccount[]>;
+  renewTokens?(accounts: RenewableAccount[]): Promise<number>;
   workerName: string;
   /** RPC con la sesión de la persona (su JWT), para la ruta `/now`. Sin ella, la ruta no existe. */
   userRpc?(accessToken: string): RpcClient;
@@ -136,7 +140,13 @@ export function createSocialPublishHandler(deps: SocialPublishDeps): (request: R
     } catch {
       deps.log?.('token_check_failed', {});
     }
-    deps.log?.('processed', { count: results.length, checked });
-    return json(200, { processed: results.length, results, tokensChecked: checked });
+    let renewed = 0;
+    try {
+      if (deps.accountsToRenew && deps.renewTokens) renewed = await deps.renewTokens(await deps.accountsToRenew());
+    } catch {
+      deps.log?.('token_renewal_failed', {});
+    }
+    deps.log?.('processed', { count: results.length, checked, renewed });
+    return json(200, { processed: results.length, results, tokensChecked: checked, tokensRenewed: renewed });
   };
 }

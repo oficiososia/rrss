@@ -8,6 +8,11 @@ export function connectedAccountsPath(orgId: string, brandId: string): string {
   return `/o/${orgId}/m/${brandId}/marca?seccion=datos#${CONNECTED_ACCOUNTS_ANCHOR}`;
 }
 
+/** Ajustes → Plan de la organización. */
+export function planPath(orgId: string): string {
+  return `/o/${orgId}/ajustes/plan`;
+}
+
 /** Parámetro con el que el editor abre directamente el diálogo de exportar. */
 export const EXPORT_PARAM = 'exportar';
 

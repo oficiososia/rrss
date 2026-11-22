@@ -84,6 +84,9 @@ function account(patch: Partial<SocialAccountRow> = {}): SocialAccountRow {
     connected_at: '2026-11-18T09:00:00Z',
     disconnected_at: null,
     connection_method: 'oauth',
+    token_renewed_at: null,
+    renewal_attempted_at: null,
+    renewal_error: null,
     created_at: '2026-11-18T09:00:00Z',
     updated_at: '2026-11-18T09:00:00Z',
     ...patch,
@@ -248,6 +251,44 @@ describe('Cuentas conectadas: Meta primero, el token como opción avanzada', () 
       'href',
       '/plataforma/integraciones',
     );
+  });
+});
+
+describe('Calendario: bajar a un plan sin publicación', () => {
+  it('lo programado queda «Detenida» con su motivo y «Cambiar de plan» lleva a Ajustes → Plan', async () => {
+    seed([held('p-1', 'c-1', { hold_reason: 'plan_no_publishing', social_account_id: 'acc-1' })], [account()]);
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    const notice = await screen.findByTestId('calendar-held-plan_no_publishing');
+    expect(within(notice).getByTestId('calendar-held-plan_no_publishing-text')).toHaveTextContent(
+      '1 publicación detenida: tu plan no incluye la publicación en redes',
+    );
+    expect(within(notice).getByRole('link', { name: 'Cambiar de plan' })).toHaveAttribute(
+      'href',
+      `/o/${ORG_ID}/ajustes/plan`,
+    );
+    const chip = screen.getByTestId('calendar-entry');
+    expect(chip).toHaveAttribute('data-state', 'held');
+    expect(chip).toHaveTextContent('Detenida');
+
+    // La ficha dice lo mismo y ofrece el mismo botón.
+    await user.click(chip);
+    const dialog = await screen.findByTestId('publication-dialog');
+    expect(within(dialog).getByTestId('publication-hold-fix')).toHaveAttribute('href', `/o/${ORG_ID}/ajustes/plan`);
+  });
+
+  it('quien no administra la organización ve el motivo pero no el botón', async () => {
+    seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
+    fake.tables.content_items = [content('c-1')];
+    fake.tables.scheduled_publications = [
+      held('p-1', 'c-1', { hold_reason: 'plan_no_publishing', social_account_id: 'acc-1' }),
+    ];
+    fake.tables.publication_attempts = [];
+    fake.tables.content_comments = [];
+    fake.tables.social_accounts = [account()];
+    fake.tables.media_assets = [];
+    renderApp(`${BRAND_BASE}/calendario`);
+    const notice = await screen.findByTestId('calendar-held-plan_no_publishing');
+    expect(within(notice).queryByRole('link', { name: 'Cambiar de plan' })).toBeNull();
   });
 });
 

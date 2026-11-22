@@ -29,6 +29,14 @@ describe('holdAdvice: «Detenida» en una frase y con un botón', () => {
     expect(holdAdvice('no_media', account)).toMatchObject({ short: 'Falta la imagen exportada', label: 'Exportar' });
   });
 
+  it('sin publicación en el plan se explica y lleva a cambiar de plan', () => {
+    expect(holdAdvice('plan_no_publishing', account)).toEqual({
+      short: 'Tu plan no incluye la publicación en redes',
+      fix: 'change_plan',
+      label: 'Cambiar de plan',
+    });
+  });
+
   it('todos los motivos tienen frase corta (sin punto) y su explicación larga', () => {
     for (const reason of Object.keys(HOLD_REASON_TEXT) as PublicationHoldReason[]) {
       const advice = holdAdvice(reason, null);

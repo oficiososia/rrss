@@ -559,7 +559,7 @@ bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto
 | IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo)                 | Adaptadores escritos, sin claves                                                                                                                                                                                    | `docs/ia-texto.md`                         |
 | Animar una foto con IA (fal.ai: MiniMax H3 y Kling v3; `docs/ia-medios.md` §15)            | Adaptador y flujo escritos; solo con HTTP simulado; sin clave; modelos inactivos y precios sin verificar (0,06 y 0,084 USD/s según la ficha; la página de precios daba otras cifras)                                         |
 | IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo suelto apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
-| Meta (OAuth, publicación, métricas)                                                        | Adaptador escrito; sin aplicación de Meta                                                                                                                                                                           | `docs/publicacion.md`, `docs/analitica.md` |
+| Meta (OAuth, publicación, métricas, portada del reel, renovar el acceso)                   | Adaptador escrito; sin aplicación de Meta; la renovación del acceso y `cover_url` solo contra la Graph API simulada                                                                                                 | `docs/publicacion.md`, `docs/analitica.md` |
 | Stripe                                                                                     | Funciones escritas; sin cuenta                                                                                                                                                                                      | `docs/facturacion.md`                      |
 | Google Drive (OAuth, listar, servir imágenes)                                              | Adaptador escrito; sin cliente OAuth de Google                                                                                                                                                                      | `docs/biblioteca-drive.md`                 |
 | Dictado del navegador (Web Speech API de Chrome)                                           | Probado con una simulada                                                                                                                                                                                            | `docs/copiloto-voz.md`                     |
@@ -753,3 +753,35 @@ selector de clips de los reels ya lo puede elegir. Detalle, ids, precios y pasos
   tratamiento fuera de la UE, contrastar y activar los dos modelos, `ai_video` en el
   plan, `VITE_AI_ANIMATE_ENABLED=true`, aplicar la migración y redesplegar `ai-media`,
   `ai-media-poll` y `ai-media-webhook`.
+
+## Pendientes de Instagram (rama `f30/instagram-pendientes`, 22/11/2026)
+
+Cierra los pendientes de desarrollo de la publicación que no dependen del dueño.
+Todo probado contra la Graph API **simulada**; nada contra Meta real (sigue sin
+aplicación de Meta). Detalle en `docs/publicacion.md`.
+
+- **Portada del reel.** El publicador manda la portada del montaje como `cover_url`
+  del contenedor `REELS` (según la referencia de `/{ig-user-id}/media`: JPEG público,
+  8 MB, sRGB, mejor 9:16; si van `cover_url` y `thumb_offset`, gana `cover_url`).
+  Migración `20261218010000` (`social_publication_cover`, solo clave de servicio). Sin
+  portada o si falla la lectura, el reel sale igual.
+- **Renovar el acceso sin volver a conectar.** `social-publish` cambia el token largo
+  del usuario por uno nuevo antes de que caduque (≤ 14 días) y solo da la renovación
+  por buena si Meta amplía la caducidad; si no, anota el motivo y avisa a la marca y a
+  la agencia (calendario, inicio de la marca, Cuentas conectadas y listado de marcas).
+  Migración `20261218020000` (columnas `token_renewed_at`, `renewal_attempted_at`,
+  `renewal_error`; `social_accounts_to_renew`, `social_account_renew`,
+  `social_account_renewal_failed`; el reloj despierta a la función si hay algo que
+  renovar). **No se sabe si Meta amplía la caducidad al repetir el cambio**: la
+  documentación no lo promete.
+- **Hora de la marca.** Calendario, ficha, programar y fechas de Cuentas conectadas en
+  `brands.timezone` (`src/features/social/zone.ts`). Sin migración.
+- **Plan sin publicación.** Motivo nuevo «Detenida: tu plan no incluye la publicación»
+  con botón «Cambiar de plan»; cambiar de plan o de funciones de un plan reevalúa y
+  rearma al volver. Migración `20261218030000`.
+- **Pruebas:** `tests/db/publicacion.test.ts` (+14: portada, renovación, plan),
+  `zone.test.ts`, `zonaHoraria.test.tsx`, `renovacionAcceso.test.tsx`, casos nuevos en
+  `calendar.test.ts`, `holdAdvice.test.ts` y `avisosResolubles.test.tsx`; e2e 13
+  ampliada (plan sin publicación), **sin ejecutar** (solo CI).
+- **Para llevarlo a staging:** aplicar `20261218010000`, `20261218020000` y
+  `20261218030000` (con el «sí» del dueño); redesplegar `social-publish`; después, la web.

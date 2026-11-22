@@ -5,9 +5,9 @@ import { toast } from 'sonner';
 import { ActionNotice, Badge, Button, Dialog, Field, Input, LinkButton, Notice, Textarea } from '@/components/ui';
 import { contentPaths, targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
+import { useOrg } from '@/features/orgs/context';
 import type { PublicationAttemptOutcome } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
-import { formatDateTime } from '@/lib/utils';
 import {
   approvedVersionPlan,
   useApproveContents,
@@ -34,7 +34,9 @@ import {
 } from './calendar';
 import { useFeature } from '@/features/platform/integrations/useFeature';
 import { activeAccountOf, holdAdvice } from './holdAdvice';
-import { connectedAccountsPath, exportPath } from './links';
+import { connectedAccountsPath, exportPath, planPath } from './links';
+import { useBrandZone } from './useBrandZone';
+import { differsFromDevice, formatDateTimeIn, zoneLabel } from './zone';
 import { PublicationPreview } from './preview';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
@@ -78,6 +80,9 @@ export function PublicationDialog({
   canComment,
   onPublishNow,
 }: PublicationDialogProps) {
+  const { isAdmin } = useOrg();
+  const zone = useBrandZone();
+  const fmt = (iso: string) => formatDateTimeIn(iso, zone);
   const attempts = usePublicationAttempts(brandId, entry?.id ?? null);
   const comments = useContentComments(brandId, entry?.content_id ?? null);
   const reschedule = useReschedulePublication(brandId);
@@ -92,7 +97,7 @@ export function PublicationDialog({
   const changed = Boolean(entry && entry.status === 'planned' && entry.hold_reason === 'content_changed');
   const media = usePublishableMedia(brandId, changed);
   // El calendario monta el diálogo con una clave por publicación y fecha: el estado nace con ella.
-  const [when, setWhen] = useState(() => (entry ? toLocalInput(entry.scheduled_at) : ''));
+  const [when, setWhen] = useState(() => (entry ? toLocalInput(entry.scheduled_at, zone) : ''));
   const [body, setBody] = useState('');
   const publishing = useFeature('publishing');
 
@@ -187,6 +192,12 @@ export function PublicationDialog({
           </Button>
         ) : null;
       }
+      case 'change_plan':
+        return isAdmin ? (
+          <LinkButton to={planPath(orgId)} data-testid="publication-hold-fix">
+            {advice.label}
+          </LinkButton>
+        ) : null;
       case 'use_approved':
         return approvedButton || null;
       case 'export':
@@ -216,7 +227,7 @@ export function PublicationDialog({
       onOpenChange={onOpenChange}
       title={content?.title ?? 'Publicación'}
       description={
-        content ? `${targetLabel(entry.network, entry.format)} · ${formatDateTime(entry.scheduled_at)}` : undefined
+        content ? `${targetLabel(entry.network, entry.format)} · ${fmt(entry.scheduled_at)}` : undefined
       }
       size="lg"
     >
@@ -242,7 +253,7 @@ export function PublicationDialog({
 
         {entry.status === 'published' && entry.external_id && (
           <Notice>
-            Publicada el {formatDateTime(entry.published_at!)} · identificador en la red{' '}
+            Publicada el {fmt(entry.published_at!)} · identificador en la red{' '}
             <code data-testid="publication-external-id">{entry.external_id}</code>
             {entry.external_url && (
               <>
@@ -278,7 +289,11 @@ export function PublicationDialog({
 
         {editable && (
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Mover a" className="min-w-[14rem] flex-1">
+            <Field
+              label="Mover a"
+              hint={`En la ${zoneLabel(zone)}${differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}.`}
+              className="min-w-[14rem] flex-1"
+            >
               {(props) => (
                 <Input {...props} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
               )}
@@ -287,7 +302,7 @@ export function PublicationDialog({
               variant="secondary"
               loading={reschedule.isPending}
               onClick={() => {
-                const at = fromLocalInput(when);
+                const at = fromLocalInput(when, zone);
                 if (!at) return toast.error('Indica el día y la hora.');
                 reschedule.mutate(
                   { publicationId: entry.id, scheduledAt: at },
@@ -383,7 +398,7 @@ export function PublicationDialog({
             <ul className="space-y-1 text-xs" data-testid="publication-attempts">
               {attempts.data!.map((a) => (
                 <li key={a.id}>
-                  {formatDateTime(a.started_at)} · intento {a.attempt_no} · {OUTCOME_LABEL[a.outcome]}
+                  {fmt(a.started_at)} · intento {a.attempt_no} · {OUTCOME_LABEL[a.outcome]}
                   {a.error_message ? ` · ${a.error_message}` : ''}
                 </li>
               ))}
@@ -401,7 +416,7 @@ export function PublicationDialog({
                 <span className="font-medium">{c.author}</span>{' '}
                 <span className="text-muted">
                   {COMMENT_KIND[c.kind]}
-                  {c.version ? ` (versión ${c.version})` : ''} · {formatDateTime(c.created_at)}
+                  {c.version ? ` (versión ${c.version})` : ''} · {fmt(c.created_at)}
                 </span>
                 {c.body && <p className="whitespace-pre-wrap">{c.body}</p>}
               </li>
