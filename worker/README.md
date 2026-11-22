@@ -16,6 +16,7 @@ termina.
 | `media.reel.template` — reel vertical por plantilla                     | Implementado y probado con archivos reales, también dentro del contenedor                                                                                                              |
 | Plan v2 del editor de reels (recortes, transición por elemento, textos con estilo, subtítulos quemados, volumen por clip, música) | Implementado y probado con FFmpeg real (`tests/reel-editor-render.test.ts`, 21/11/2026); el plan v1 se migra a v2 al leerlo (`migratePlanV1`). Esquemas `schemas/reel-plan.v2` y `reel-payload.v2`. Ver `docs/editor-reels.md` |
 | Textos animados, cámara que sube/baja y portada del reel (ampliación compatible del plan v2) | Implementado y probado con FFmpeg real (`tests/reel-animation.test.ts`, 22/11/2026): `animation` por texto (`src/reel/animation.ts`), `motion` pan-up/pan-down + `motionAmount`, `cover` → JPEG en `output.posterPath`. Todo campo nuevo es ausente, nunca `null` (`request_media_job` quita los nulos). Sin probar con el FFmpeg de la imagen Alpine. Ver `docs/editor-reels.md` §8 |
+| `media.reel.analyze` — medir un vídeo de referencia sin IA («Hacer un reel como este») | Implementado y probado con FFmpeg real y un vídeo generado (`tests/reel-analyze.test.ts`, 22/11/2026): cortes, planos, compás, fotogramas y descarga de enlaces contra un servidor local. Sin probar en Fly ni con vídeos reales de móvil. Ver `docs/reel-como-este.md` |
 | `media.video.derivatives` — póster, versión comprimida, otra proporción | Implementado y probado con archivos reales                                                                                                                                             |
 | `media.report.pdf` — informe mensual de analítica en PDF (pdf-lib, MIT) | Implementado y probado (pdf-lib de verdad); el circuito completo, contra las migraciones reales (`tests/db/analitica-informe.test.ts`). Ver `docs/analitica.md` |
 | `media.document.export` — documento por capas a imagen                  | **Sin implementar.** Solo el punto de enganche (`src/handlers/document-export.ts`), sin registrar: el trabajador no reclama ese tipo y nada lo simula                                  |
@@ -283,6 +284,38 @@ es TrueType u OpenType; si no lo es, monta con la de reserva y lo dice en
 `warnings`. El resultado lleva `font.source`: `brand`, `template`, `default`
 (la de reserva) o `none`. Los .woff y .woff2 no se usan en vídeo: FFmpeg no
 los lee de forma fiable.
+
+### `media.reel.analyze`
+
+```json
+{
+  "reference": { "id": "<uuid del análisis>" },
+  "source": { "path": "<org>/<marca>/referencias/<uuid>.mp4" },
+  "speech": true,
+  "output": { "dir": "<org>/<marca>/referencias/<uuid del análisis>" }
+}
+```
+
+`source` es `{ "path" }` (el vídeo subido a la carpeta privada de referencias) o `{ "url" }` (un enlace).
+Todo lo pone la base de datos (`request_media_job`): el cliente solo elige el archivo o el enlace y si se
+transcribe la voz. Mide **sin IA**: duración y tamaño (ffprobe); cortes secos y transiciones suaves con
+`scdet` → planos con su duración, si son imagen fija y cómo se entra a cada uno (`src/analyze/scenes.ts`);
+un JPEG por plano (hasta 12, 512 px) en `output.dir/f-NN.jpg`; volumen, golpes y tempo (la misma cuenta
+que el editor de reels, `src/analyze/rhythm.ts`) y qué parte de los cortes cae en un golpe; con `speech`,
+trozos de sonido de hasta 20 s (120 s en total) en `output.dir/a-NN.m4a` (AAC, 16 kHz, mono).
+
+Topes (`REEL_ANALYZE_LIMITS`): 180 s de vídeo, 30 planos, 12 fotogramas, 50 MB para un enlace. Un vídeo
+más largo, sin imagen o ilegible falla sin reintento con el motivo.
+
+**Enlaces, sin trucos** (`src/analyze/download.ts`): una petición HTTP normal con las protecciones contra
+SSRF de `extract/net.ts`, agente `rrss-referencias` y respeto de `robots.txt`; vale un archivo de vídeo
+directo o el `og:video` que declare la página. Sin sesión, sin cookies, sin JavaScript y sin herramientas
+de descarga: si el sitio no lo deja (Instagram, TikTok y YouTube, casi siempre), falla sin reintento
+diciendo que se suba el archivo. El vídeo bajado se queda en la carpeta temporal del trabajo.
+
+Del vídeo de referencia no sale ningún recurso para la biblioteca: el resultado va a
+`reel_references.measurement` (disparador de la migración `20261223010000`) y los fotogramas y el sonido
+los borra la función `ai-reel-like` al terminar.
 
 ### `source.extract`
 
