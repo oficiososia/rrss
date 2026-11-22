@@ -962,7 +962,7 @@ function BackgroundTab({
     setCutError(null);
     setProgress(null);
     try {
-      const result = await removeBackground(pixels, setProgress, abort.signal);
+      const result = await removeBackground(pixels, setProgress, abort.signal, { brandId: asset.brand_id });
       setCutout({ pixels: result.pixels, model: result.model, quality: result.quality });
     } catch (error) {
       if (!isRemovalCancelled(error)) setCutError(describeRemovalError(error));
@@ -1081,7 +1081,7 @@ function BackgroundTab({
                 <>
                   <p className="text-xs text-muted">
                     Gratis y sin IA externa: la foto no sale de tu navegador. La primera vez descarga el modelo de
-                    recorte (de 85 a 220 MB según tu navegador; queda guardado); después tarda unos segundos.
+                    recorte (de 45 a 220 MB según tu navegador; queda guardado); después tarda unos segundos.
                   </p>
                   {cutError && <Notice tone="warning">{cutError}</Notice>}
                   {cutting && <CutoutProgressBar progress={progress} />}
@@ -1214,9 +1214,11 @@ function CutoutProgressBar({ progress }: { progress: CutoutProgress | null }) {
   const pct = downloading ? Math.min(100, Math.round((progress.received / Math.max(1, progress.total)) * 100)) : null;
   const label = downloading
     ? `Descargando el modelo de recorte (${megabytes(progress.total)} MB, solo la primera vez): ${megabytes(progress.received)} de ${megabytes(progress.total)} MB`
-    : progress?.phase === 'running'
-      ? 'Quitando el fondo…'
-      : 'Preparando el modelo…';
+    : progress?.phase === 'server'
+      ? 'Quitando el fondo en el servidor…'
+      : progress?.phase === 'running'
+        ? 'Quitando el fondo…'
+        : 'Preparando el modelo…';
   return (
     <div className="space-y-1" data-testid="photo-edit-cutout-progress">
       <div
@@ -1408,7 +1410,7 @@ function AiAction({
           } else if (pixels) {
             setPreparing(true);
             setMaskProgress(null);
-            const cut = await removeBackground(pixels, setMaskProgress);
+            const cut = await removeBackground(pixels, setMaskProgress, undefined, { brandId: asset.brand_id });
             const alpha = alphaOf(cut.pixels);
             const mask = subjectMaskPixels(
               alpha,
