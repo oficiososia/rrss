@@ -101,7 +101,7 @@ import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { activePageIndex, editorReducer, initEditor } from './editor/history';
 import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
-import { ArrangeControls, MultiSelectionPanel } from './editor/panels/ArrangeControls';
+import { MultiSelectionPanel } from './editor/panels/ArrangeControls';
 import { CopyPanel } from './editor/panels/CopyPanel';
 import { LayersPanel } from './editor/panels/LayersPanel';
 import { PageStrip } from './editor/panels/PageStrip';
@@ -1324,7 +1324,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             {/* Solo este bloque se desplaza: en pantallas estrechas es la hoja abierta (40 % del alto), en anchas, la columna entera. */}
             <div
               className={cn(
-                'min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3',
+                'relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3',
                 sheetOpen ? 'max-h-[40dvh] lg:max-h-none' : 'hidden lg:block',
               )}
               data-testid="editor-panel-scroll"
@@ -1368,9 +1368,6 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                           : undefined
                       }
                     />
-                    {selected && !readOnly && !selected.locked && (
-                      <ArrangeControls layers={[selected]} dispatch={dispatch} />
-                    )}
                   </>
                 )}
               </TabsContent>
@@ -1602,9 +1599,12 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   patch: { source: { kind: 'asset', assetId: row.id } },
                 });
                 setPhotoEditing(false);
-                toast.success('La capa usa ahora la foto editada. Se deshace con Ctrl+Z; la original sigue en la biblioteca.', {
-                  action: { label: 'Deshacer', onClick: () => dispatch({ type: 'undo' }) },
-                });
+                toast.success(
+                  'La capa usa ahora la foto editada. Se deshace con Ctrl+Z; la original sigue en la biblioteca.',
+                  {
+                    action: { label: 'Deshacer', onClick: () => dispatch({ type: 'undo' }) },
+                  },
+                );
               }}
             />
           )}

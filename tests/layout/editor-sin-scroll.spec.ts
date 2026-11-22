@@ -22,6 +22,15 @@ const noPageScroll = (page: Page) =>
     horizontal: document.scrollingElement!.scrollWidth - window.innerWidth,
   }));
 
+/** Elementos visibles del panel que se salen por la derecha (los textos solo para lector de pantalla no cuentan). */
+const spillingRight = (page: Page) =>
+  page.getByTestId('editor-panel-scroll').evaluate((panel) => {
+    const edge = panel.getBoundingClientRect().right + 1;
+    return [...panel.querySelectorAll('*')]
+      .filter((el) => !el.classList.contains('sr-only') && el.getBoundingClientRect().right > edge)
+      .map((el) => `${el.tagName}.${el.className}`.slice(0, 80));
+  });
+
 for (const size of SIZES) {
   for (const ratio of ['4:5', '9:16', '16:9']) {
     test(`${size.name}, lienzo ${ratio}: sin scroll de página y lienzo entero a la vista`, async ({ page }) => {
@@ -102,3 +111,34 @@ test('en un portátil estrecho el editor pliega el menú solo, sin perder la pre
   const stored = await page.evaluate(() => window.localStorage.getItem('rrss.sidebar.collapsed'));
   expect(stored).toBeNull();
 });
+
+for (const size of [
+  { name: 'móvil 375×812', width: 375, height: 812 },
+  { name: 'portátil 1366×768', width: 1366, height: 768 },
+]) {
+  test(`${size.name}: con una capa elegida, la barra de acciones cabe sin scroll lateral y las secciones se pliegan`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    await openEditor(page, '4:5');
+    await page.getByRole('tab', { name: /Capas/ }).click();
+    await page.getByTestId('layer-item').first().click();
+    await page.getByRole('tab', { name: 'Diseño' }).click();
+    const bar = page.getByTestId('layer-actions');
+    await expect(bar).toBeVisible();
+    const panel = page.getByTestId('editor-panel-scroll');
+    expect(await spillingRight(page)).toEqual([]);
+    const box = (await panel.boundingBox())!;
+    for (const button of await bar.getByRole('button').all()) {
+      const b = (await button.boundingBox())!;
+      expect(b.x).toBeGreaterThanOrEqual(box.x - 1);
+      expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+      expect(b.width).toBeGreaterThanOrEqual(36);
+    }
+    // Una sección plegada se abre con un toque y deja el panel sin scroll lateral.
+    await page.getByTestId('section-summary').first().click();
+    expect(await spillingRight(page)).toEqual([]);
+    expect((await noPageScroll(page)).vertical).toBeLessThanOrEqual(0);
+    expect((await noPageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+  });
+}

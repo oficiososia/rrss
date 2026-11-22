@@ -1,4 +1,4 @@
-import { Crop, FlipHorizontal2, FlipVertical2, RotateCw, Undo2 } from 'lucide-react';
+import { Crop, FlipHorizontal2, FlipVertical2, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Notice } from '@/components/ui';
@@ -10,6 +10,7 @@ import type { MediaAssetRow } from '@/lib/database.types';
 import {
   IMAGE_FILTERS,
   isNeutralAdjust,
+  MAX_IMAGE_BLUR,
   MAX_STRAIGHTEN,
   type ImageAdjust,
   type ImageBackdrop,
@@ -19,7 +20,8 @@ import {
 import type { LayerPatch } from '../history';
 import { FILTER_LABEL } from '../imageEffects/filters';
 import { flipPhoto, RESET_EDITS, straightenPatch, turnQuarter } from '../imageEffects/imageEdit';
-import { ColorInput, RangeInput, SelectInput, Section } from './controls';
+import { ColorInput, NumberInput, RangeInput, SelectInput, Section } from './controls';
+import { adjustSummary, backdropSummary, blurSummary, focusSummary, geometrySummary } from './panelSummary';
 import { CropDialog } from './CropDialog';
 import { ShadowFields } from './ShadowFields';
 
@@ -58,6 +60,8 @@ export function PhotoPanel({
   update,
   checkpoint,
   tools,
+  onEditPhoto,
+  onRestoreOriginal,
 }: {
   layer: ImageLayer;
   readOnly: boolean;
@@ -65,6 +69,10 @@ export function PhotoPanel({
   update: (patch: LayerPatch, field?: string) => void;
   checkpoint: () => void;
   tools: PhotoToolsContext;
+  /** Abre «Editar foto» (solo si la foto es de la biblioteca y se puede editar). */
+  onEditPhoto?: () => void;
+  /** Vuelve a la foto original, si la de ahora es una edición. */
+  onRestoreOriginal?: () => void;
 }) {
   const [cropping, setCropping] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -101,7 +109,10 @@ export function PhotoPanel({
         edit,
         save: (input) => save.mutateAsync(input),
         onProgress: (progress) => {
-          if (progress.phase === 'downloading') setBusy(`Descargando el modelo de recorte (${Math.round(progress.total / 1_000_000)} MB, solo la primera vez)…`);
+          if (progress.phase === 'downloading')
+            setBusy(
+              `Descargando el modelo de recorte (${Math.round(progress.total / 1_000_000)} MB, solo la primera vez)…`,
+            );
           else if (progress.phase === 'running') setBusy(working);
         },
       });
@@ -115,8 +126,80 @@ export function PhotoPanel({
   }
 
   return (
-    <div className="space-y-6" data-testid="photo-panel">
-      <Section title="Luz y color" defaultOpen>
+    <div className="space-y-3" data-testid="photo-panel">
+      {!readOnly && layer.source.kind === 'asset' && (onEditPhoto || onRestoreOriginal) && (
+        <div className="space-y-1.5">
+          {onEditPhoto && (
+            <Button variant="primary" size="sm" className="w-full" onClick={onEditPhoto} data-testid="layer-edit-photo">
+              <SlidersHorizontal className="h-4 w-4" aria-hidden />
+              Editar foto
+            </Button>
+          )}
+          {onRestoreOriginal && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full"
+              onClick={onRestoreOriginal}
+              data-testid="layer-restore-original"
+            >
+              <Undo2 className="h-4 w-4" aria-hidden />
+              Volver a la foto original
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-muted" id="photo-filters-title">
+          Filtros rápidos
+        </p>
+        {/* Una sola fila que se desliza: ocupa poco alto, también en la hoja del móvil. */}
+        <div
+          className="flex snap-x gap-1.5 overflow-x-auto pb-1.5"
+          role="group"
+          aria-labelledby="photo-filters-title"
+          data-testid="photo-filters"
+        >
+          <Button
+            size="sm"
+            className="shrink-0 snap-start"
+            variant={adjust.filter ? 'secondary' : 'primary'}
+            aria-pressed={!adjust.filter}
+            disabled={readOnly}
+            onClick={() => setAdjust({ filter: undefined })}
+          >
+            Ninguno
+          </Button>
+          {IMAGE_FILTERS.map((filter: ImageFilter) => (
+            <Button
+              key={filter}
+              size="sm"
+              className="shrink-0 snap-start"
+              variant={adjust.filter === filter ? 'primary' : 'secondary'}
+              aria-pressed={adjust.filter === filter}
+              disabled={readOnly}
+              data-testid={`photo-filter-${filter}`}
+              onClick={() => setAdjust({ filter })}
+            >
+              {FILTER_LABEL[filter]}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <SelectInput<'cover' | 'contain'>
+        label="Encaje en el recuadro"
+        value={layer.fit}
+        disabled={readOnly}
+        onChange={(fit) => update({ fit })}
+        options={[
+          { value: 'cover', label: 'Llenar (recorta los bordes)' },
+          { value: 'contain', label: 'Entera (se ve completa)' },
+        ]}
+      />
+
+      <Section id="photo.light" title="Luz y color" summary={adjustSummary(layer)}>
         {SLIDERS.map((slider) => (
           <RangeInput
             key={slider.key}
@@ -130,33 +213,6 @@ export function PhotoPanel({
             onCommit={checkpoint}
           />
         ))}
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted">Filtros rápidos</p>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filtros rápidos">
-            <Button
-              size="sm"
-              variant={adjust.filter ? 'secondary' : 'primary'}
-              aria-pressed={!adjust.filter}
-              disabled={readOnly}
-              onClick={() => setAdjust({ filter: undefined })}
-            >
-              Ninguno
-            </Button>
-            {IMAGE_FILTERS.map((filter: ImageFilter) => (
-              <Button
-                key={filter}
-                size="sm"
-                variant={adjust.filter === filter ? 'primary' : 'secondary'}
-                aria-pressed={adjust.filter === filter}
-                disabled={readOnly}
-                data-testid={`photo-filter-${filter}`}
-                onClick={() => setAdjust({ filter })}
-              >
-                {FILTER_LABEL[filter]}
-              </Button>
-            ))}
-          </div>
-        </div>
         {edited && !readOnly && (
           <Button
             variant="ghost"
@@ -170,7 +226,7 @@ export function PhotoPanel({
         )}
       </Section>
 
-      <Section title="Girar y recortar">
+      <Section id="photo.geometry" title="Girar y recortar" summary={geometrySummary(layer)}>
         <div className="flex flex-wrap gap-1.5">
           <Button
             variant="secondary"
@@ -238,7 +294,31 @@ export function PhotoPanel({
         )}
       </Section>
 
-      <Section title="Fondo">
+      <Section id="photo.focus" title="Parte de la foto que se ve" summary={focusSummary(layer)}>
+        <p className="text-xs text-muted">Con «Llenar», la foto se recorta alrededor de este punto.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberInput
+            label="Punto de interés, a lo ancho (%)"
+            value={layer.focus.x * 100}
+            min={0}
+            max={100}
+            disabled={readOnly}
+            onChange={(v) => update({ focus: { ...layer.focus, x: v / 100 } }, 'focus')}
+            onCommit={checkpoint}
+          />
+          <NumberInput
+            label="Punto de interés, a lo alto (%)"
+            value={layer.focus.y * 100}
+            min={0}
+            max={100}
+            disabled={readOnly}
+            onChange={(v) => update({ focus: { ...layer.focus, y: v / 100 } }, 'focus')}
+            onCommit={checkpoint}
+          />
+        </div>
+      </Section>
+
+      <Section id="photo.backdrop" title="Fondo y sombra" summary={backdropSummary(layer)}>
         {(canCut || tools.onAiBackground) && !readOnly && (
           <div className="space-y-2">
             {canCut && (
@@ -374,6 +454,18 @@ export function PhotoPanel({
           palette={palette}
           readOnly={readOnly}
           onChange={(shadow, field) => update({ shadow }, field)}
+          onCommit={checkpoint}
+        />
+      </Section>
+
+      <Section id="photo.blur" title="Desenfoque" summary={blurSummary(layer)}>
+        <NumberInput
+          label="Desenfoque de la foto (%)"
+          value={layer.blur ?? 0}
+          min={0}
+          max={MAX_IMAGE_BLUR}
+          disabled={readOnly}
+          onChange={(v) => update({ blur: v > 0 ? Math.min(MAX_IMAGE_BLUR, v) : undefined }, 'blur')}
           onCommit={checkpoint}
         />
       </Section>

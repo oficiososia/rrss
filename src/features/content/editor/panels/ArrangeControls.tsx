@@ -1,32 +1,11 @@
-import {
-  AlignCenterHorizontal,
-  AlignCenterVertical,
-  AlignEndHorizontal,
-  AlignEndVertical,
-  AlignHorizontalDistributeCenter,
-  AlignStartHorizontal,
-  AlignStartVertical,
-  AlignVerticalDistributeCenter,
-  Group,
-  Trash2,
-  Ungroup,
-  type LucideIcon,
-} from 'lucide-react';
+import { AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter, Group, Trash2, Ungroup } from 'lucide-react';
 import type { Dispatch } from 'react';
 import { Button } from '@/components/ui';
 import type { Layer } from '../../document';
-import { ALIGN_LABEL, MIN_TO_DISTRIBUTE, type AlignTarget } from '../arrange';
+import { ALIGN_LABEL, MIN_TO_DISTRIBUTE } from '../arrange';
 import type { EditorAction } from '../history';
 import { layerLabel } from '../layers';
-
-const ALIGN_ICONS: [AlignTarget, LucideIcon][] = [
-  ['left', AlignStartVertical],
-  ['centerX', AlignCenterVertical],
-  ['right', AlignEndVertical],
-  ['top', AlignStartHorizontal],
-  ['middle', AlignCenterHorizontal],
-  ['bottom', AlignEndHorizontal],
-];
+import { ALIGN_ICONS } from './alignIcons';
 
 interface ArrangeControlsProps {
   /** Capas elegidas, en el orden del documento. */

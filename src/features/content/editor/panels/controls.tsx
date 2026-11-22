@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from 'react';
 import { HEX_COLOR } from '../../document';
 import { cn } from '@/lib/utils';
+import { recalledSection, rememberSection } from './sectionMemory';
 
 // Controles compactos del panel de propiedades. Todos avisan del cambio al
 // teclear (para ver el resultado en el lienzo) y cortan el paso de deshacer al
@@ -254,30 +255,60 @@ export function CheckInput({
 
 /**
  * Sección plegable del panel (nativa, con teclado y lector de pantalla). Las
- * abiertas por defecto son las de uso más común; la persona abre el resto.
+ * abiertas por defecto son las de uso más común. Con `id`, el navegador recuerda
+ * si la persona la dejó abierta o cerrada; `summary` enseña en la cabecera el
+ * valor de ahora, para no tener que abrirla a mirar.
  */
 export function Section({
   title,
+  summary,
+  id,
   defaultOpen = false,
   testId,
   className,
   children,
 }: {
   title: string;
+  summary?: string;
+  id?: string;
   defaultOpen?: boolean;
   testId?: string;
   className?: string;
   children: ReactNode;
 }) {
+  const [open, setOpen] = useState(() => (id ? (recalledSection(id) ?? defaultOpen) : defaultOpen));
   return (
-    <details open={defaultOpen} className={cn('group border-t border-border pt-2', className)} data-testid={testId}>
-      <summary className="flex min-h-[2rem] cursor-pointer list-none items-center justify-between gap-2 rounded text-xs font-semibold uppercase tracking-wide text-muted marker:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary [&::-webkit-details-marker]:hidden">
-        {title}
-        <span aria-hidden className="text-base leading-none transition-transform group-open:rotate-90">
+    <details
+      open={open}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        if (next === open) return;
+        setOpen(next);
+        if (id) rememberSection(id, next);
+      }}
+      className={cn('group border-t border-border', className)}
+      data-testid={testId}
+      data-section={id}
+    >
+      <summary
+        className="flex min-h-[2.5rem] cursor-pointer list-none items-center gap-2 rounded text-sm font-medium text-fg marker:hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary max-lg:min-h-[2.75rem] [&::-webkit-details-marker]:hidden"
+        data-testid="section-summary"
+      >
+        <span className="shrink-0">{title}</span>
+        {summary && (
+          <span
+            className="min-w-0 flex-1 truncate text-right text-xs font-normal text-muted"
+            data-testid="section-value"
+          >
+            {summary}
+          </span>
+        )}
+        {!summary && <span className="flex-1" />}
+        <span aria-hidden className="text-base leading-none text-muted transition-transform group-open:rotate-90">
           ›
         </span>
       </summary>
-      <div className="space-y-3 pb-1 pt-2">{children}</div>
+      <div className="space-y-3 pb-3 pt-1">{children}</div>
     </details>
   );
 }
