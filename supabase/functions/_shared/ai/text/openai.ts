@@ -26,6 +26,7 @@
 import {
   AiProviderFailure,
   type AiFinishReason,
+  type Json,
   type AiProvider,
   type AiProviderRequest,
   type AiProviderResult,
@@ -81,6 +82,9 @@ export function openAiEuProblem(baseUrl: string): string | null {
     : `«${host}» no es el endpoint de residencia en la UE de OpenAI (eu.api.openai.com)`;
 }
 
+/** Valores de `reasoning_effort` que se dejan pasar al proveedor. */
+const REASONING_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
 export function buildChatBody(request: Omit<AiProviderRequest, 'signal'>): Record<string, unknown> {
   const { input } = request;
   const { cacheable, volatile } = orderedContext(input);
@@ -105,12 +109,35 @@ export function buildChatBody(request: Omit<AiProviderRequest, 'signal'>): Recor
       },
     };
   }
-  if (input.cacheKey && cacheable.length > 0) body.prompt_cache_key = input.cacheKey;
+  // Herramientas (function calling): modo estricto, varias llamadas en paralelo
+  // y «auto» (el modelo puede no llamar a ninguna y contestar con texto). Van
+  // delante de los mensajes en lo que el proveedor guarda en caché: mientras no
+  // cambien, se leen de caché con las instrucciones.
+  if (input.tools && input.tools.length > 0) {
+    body.tools = input.tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: toProviderSchema(tool.parameters),
+        strict: true,
+      },
+    }));
+    body.tool_choice = 'auto';
+    body.parallel_tool_calls = true;
+  }
+  if (input.cacheKey && (cacheable.length > 0 || body.tools)) body.prompt_cache_key = input.cacheKey;
+  // Esfuerzo de razonamiento: solo si quien llama lo pide en `params` (la sonda
+  // de «Probar conexión» y el copiloto del editor). No todos los modelos lo
+  // admiten (responden 400). Ojo: `gpt-6-luna` solo admite herramientas en Chat
+  // Completions con `reasoning_effort: "none"` (su página de modelo, 22/11/2026).
+  const effort = input.params?.reasoning_effort;
+  if (typeof effort === 'string' && REASONING_EFFORTS.has(effort)) body.reasoning_effort = effort;
   return body;
 }
 
 function finishReason(value: unknown): AiFinishReason {
-  if (value === 'stop') return 'stop';
+  if (value === 'stop' || value === 'tool_calls') return 'stop';
   if (value === 'length') return 'length';
   return 'other';
 }
@@ -126,11 +153,31 @@ export function parseChatResponse(body: unknown): AiProviderResult {
   const completion = tokenCount(field(usage, 'completion_tokens'));
   const reason = field(choice, 'finish_reason');
 
-  if (typeof refusal === 'string' && refusal && typeof content !== 'string') {
+  // Llamadas a herramientas: `message.tool_calls[]` con los argumentos como
+  // texto JSON. Con llamadas, `content` suele venir a null.
+  const rawCalls = field(message, 'tool_calls');
+  const toolCalls: { name: string; arguments: Json }[] = [];
+  if (Array.isArray(rawCalls)) {
+    for (const call of rawCalls) {
+      const fn = field(call, 'function');
+      const name = field(fn, 'name');
+      if (field(call, 'type') !== 'function' || typeof name !== 'string') continue;
+      let args: Json = null;
+      try {
+        const parsed: unknown = JSON.parse(String(field(fn, 'arguments') ?? ''));
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) args = parsed as Json;
+      } catch {
+        args = null;
+      }
+      toolCalls.push({ name, arguments: args });
+    }
+  }
+
+  if (typeof refusal === 'string' && refusal && typeof content !== 'string' && toolCalls.length === 0) {
     // No se copia el texto de la negativa: puede citar lo enviado.
     throw new AiProviderFailure('refused', `${NAME} se ha negado a responder`);
   }
-  if (typeof content !== 'string' || prompt === null || completion === null) {
+  if ((typeof content !== 'string' && toolCalls.length === 0) || prompt === null || completion === null) {
     throw new AiProviderFailure('bad_response', `${NAME} ha devuelto una respuesta sin contenido o sin consumo`);
   }
   if (reason === 'content_filter') {
@@ -139,7 +186,11 @@ export function parseChatResponse(body: unknown): AiProviderResult {
 
   const cached = Math.min(tokenCount(field(field(usage, 'prompt_tokens_details'), 'cached_tokens')) ?? 0, prompt);
   const result: AiProviderResult = {
-    output: { text: content, finish_reason: finishReason(reason) },
+    output: {
+      text: typeof content === 'string' ? content : '',
+      finish_reason: finishReason(reason),
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    },
     usage: {
       [TEXT_UNITS.input]: prompt - cached,
       [TEXT_UNITS.output]: completion,
@@ -163,6 +214,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions): AiProvider
 
   return {
     id: OPENAI_PROVIDER_ID,
+    supportsTools: true,
 
     estimateUsage(request): AiUsage {
       return estimateTextUsage(request.input, { cacheWrites: false });

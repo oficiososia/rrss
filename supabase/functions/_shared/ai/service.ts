@@ -257,5 +257,15 @@ export function createAiService(config: AiServiceConfig): AiService {
     };
   }
 
-  return { generate };
+  function capabilities(task: AiGenerateParams['task'], purpose: string) {
+    const spec = config.models.find(
+      (model) => model.task === task && (!model.purposes || model.purposes.includes(purpose)),
+    );
+    const provider = spec ? providers.get(spec.provider) : undefined;
+    return spec && provider
+      ? { provider: provider.id, model: spec.model, tools: provider.supportsTools === true }
+      : null;
+  }
+
+  return { generate, capabilities };
 }

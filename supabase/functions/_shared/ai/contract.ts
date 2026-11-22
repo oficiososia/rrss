@@ -55,6 +55,26 @@ export interface AiOutputSchema {
   schema: JsonSchema;
 }
 
+/**
+ * Herramienta que el modelo puede llamar (function calling del proveedor). Los
+ * parámetros son un esquema JSON de objeto en modo estricto: todas las
+ * propiedades en `required`, `additionalProperties: false` y lo opcional, como
+ * tipo que admite `null`.
+ */
+export interface AiToolSpec {
+  /** `[a-z0-9_]`, como mucho 64 caracteres. */
+  name: string;
+  description: string;
+  parameters: JsonSchema;
+}
+
+/** Llamada a una herramienta tal como la devuelve el adaptador (`output.tool_calls`). */
+export type AiToolCall = {
+  name: string;
+  /** Argumentos ya leídos como JSON; `null` si el proveedor mandó algo ilegible. */
+  arguments: Json;
+};
+
 /** Por qué dejó de escribir el modelo, con el mismo nombre en todos los proveedores. */
 export type AiFinishReason = 'stop' | 'length' | 'refusal' | 'other';
 
@@ -86,6 +106,15 @@ export interface AiInput {
    */
   outputSchema?: AiOutputSchema;
   /**
+   * Herramientas que el modelo puede llamar en esta petición (una sola vuelta:
+   * el producto ejecuta las llamadas, no se devuelven resultados al modelo).
+   * El adaptador usa el function calling nativo, en modo estricto y con
+   * llamadas en paralelo; las llamadas llegan en `output.tool_calls`
+   * (`AiToolCall[]`) y quien las pidió las valida con su esquema completo.
+   * Solo en adaptadores con `supportsTools`.
+   */
+  tools?: AiToolSpec[];
+  /**
    * Clave estable y sin datos sensibles (por ejemplo, marca y propósito) para
    * los proveedores cuya caché de prompts se orienta con una clave.
    */
@@ -98,6 +127,12 @@ export interface AiInput {
     chunks: Array<{ data: Uint8Array; mimeType: string; seconds: number }>;
     /** Idioma esperado (ISO 639-1), si se sabe. */
     language?: string;
+    /**
+     * Vocabulario de pista (nombres propios, platos, capas…): palabras que es
+     * probable oír. Ya saneadas por quien llama (`sanitizeTranscriptionHints`).
+     * Son una ayuda para el modelo, no texto obligado. Nunca van al registro.
+     */
+    hints?: string[];
   };
 }
 
@@ -125,6 +160,8 @@ export interface AiProviderResult {
 /** Adaptador de un proveedor. Es lo único que conoce su API. */
 export interface AiProvider {
   readonly id: string;
+  /** ¿Sabe servir `AiInput.tools` (function calling)? Si no, quien llama usa salida estructurada. */
+  readonly supportsTools?: boolean;
   /**
    * Cota superior del consumo de una petición, sin llamar al proveedor. Con
    * ella se reserva el cupo antes de gastar nada.
@@ -217,6 +254,15 @@ export interface AiGenerateResult {
   latencyMs: number;
 }
 
+/** Qué adaptador y modelo serviría una tarea, y qué sabe hacer. Sin secretos. */
+export interface AiCapabilities {
+  provider: string;
+  model: string;
+  tools: boolean;
+}
+
 export interface AiService {
   generate(params: AiGenerateParams): Promise<AiGenerateResult>;
+  /** Adaptador y modelo que atenderían esa tarea y propósito, o `null` si no hay ninguno cargado. */
+  capabilities?(task: AiTask, purpose: string): AiCapabilities | null;
 }

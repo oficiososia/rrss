@@ -15,7 +15,7 @@
 // marca y del encargo, para que la prueba pueda comprobar que lo generado
 // respeta el perfil de cada marca (no es un texto fijo). No es IA: va marcado
 // como simulado en `ai_generations` (proveedor `simulated`).
-import type { AiModelSpec, AiProviderRequest } from '../contract.ts';
+import type { AiModelSpec, AiProviderRequest, AiToolCall } from '../contract.ts';
 import { createSimulatedProvider, SIMULATED_PROVIDER_ID, type SimulatedProvider } from '../simulated-provider.ts';
 import { TEXT_PURPOSES, type AiTextConfig, type Env } from './config.ts';
 import { TEXT_UNITS } from './prompt.ts';
@@ -373,6 +373,58 @@ function editorCopilot(request: AiProviderRequest): string {
   });
 }
 
+/**
+ * El mismo copiloto simulado por la ruta de HERRAMIENTAS: las mismas reglas
+ * fijas, devueltas como llamadas (una por cambio). Lee el material compacto
+ * («orden», «fotos» como f1, f2…) y nombra las fotos por su alias. Ante «ignora
+ * lo anterior» imita igual a un modelo comprometido: un texto no dictado y una
+ * foto que no está entre las elegidas (f9).
+ */
+function editorCopilotTools(request: AiProviderRequest): { text: string; tool_calls: AiToolCall[] } {
+  const legacy = { ...request, input: { ...request.input, context: [...(request.input.context ?? [])] } };
+  // Reutiliza las reglas de arriba: «orden» es el dictado y las fotos van por alias.
+  const order = material(request, 'orden') ?? '';
+  const photos = (material(request, 'fotos') ?? '')
+    .split('\n')
+    .map((line) => line.trim().split(' ')[0])
+    .filter((alias): alias is string => Boolean(alias));
+  legacy.input.context.push({ label: 'dictado', content: order });
+  legacy.input.context.push({
+    label: 'fotos elegidas',
+    content: JSON.stringify(photos.map((alias) => ({ id: alias }))),
+  });
+  // El perfil compacto no trae los logotipos: basta con saber si hay.
+  const plan = JSON.parse(editorCopilot(legacy)) as { operations: Record<string, unknown>[] };
+  const calls: AiToolCall[] = plan.operations.map((op) => {
+    if (op.op === 'set_background_image') {
+      const photo = typeof op.assetId === 'string' && /^f\d+$/.test(op.assetId) ? op.assetId : op.assetId ? 'f9' : null;
+      return { name: 'set_background_image', arguments: { photo, blur: (op.blur as number | null) ?? null } };
+    }
+    if (op.op === 'blur_image') return { name: 'blur_image', arguments: { target: null, blur: op.blur as number } };
+    if (op.op === 'add_logo') {
+      return {
+        name: 'add_logo',
+        arguments: { position: (op.position as string | null) ?? null, align: (op.align as string | null) ?? null },
+      };
+    }
+    return {
+      name: 'add_text',
+      arguments: {
+        text: op.text as string,
+        style: (op.style as string | null) ?? null,
+        position: (op.position as string | null) ?? null,
+        align: null,
+        color: (op.color as string | null) ?? null,
+        font: null,
+      },
+    };
+  });
+  return {
+    text: calls.length ? '' : '[simulado] No he entendido ningún cambio en la orden.',
+    tool_calls: calls,
+  };
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
   editor_copilot: editorCopilot,
   analytics_summary: analyticsSummary,
@@ -386,6 +438,9 @@ export function createLocalTestProvider(): SimulatedProvider {
   return createSimulatedProvider({
     respond: (request) => {
       const name = request.input.outputSchema?.name;
+      if (!name && request.input.tools?.some((spec) => spec.name === 'set_background_image')) {
+        return editorCopilotTools(request);
+      }
       return name ? RESPONDERS[name]?.(request) : undefined;
     },
   });

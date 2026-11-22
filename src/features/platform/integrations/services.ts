@@ -47,7 +47,7 @@ export interface ServiceDef {
   optional?: boolean;
   /** Integración cuya prueba lanza «Probar conexión». */
   testIntegration: IntegrationId;
-  /** Qué hace la prueba, en una frase (y que no gasta). */
+  /** Qué hace la prueba, en una frase (y si gasta algo, cuánto). */
   testHint: string;
   /** Ajustes de la vista sencilla, en orden. */
   simple: string[];
@@ -64,6 +64,15 @@ export interface ServiceDef {
   unlocks: Unlock[];
 }
 
+/**
+ * La prueba de la IA de texto es la única que gasta algo: además de listar
+ * modelos, genera de verdad (1 token) con cada modelo configurado, porque una
+ * clave puede listar modelos y aun así ser rechazada al generar. Se dice junto
+ * al botón, tal cual.
+ */
+export const AI_TEXT_TEST_COST =
+  'Probar conexión hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero.';
+
 const taskLive = (ctx: ServiceCtx, task: AiTextTask) => ctx.availability.aiTextTasks?.[task] ?? ctx.availability.aiText;
 const taskKeys = TEXT_TASKS.flatMap((t) => [`${t.prefix}_PROVIDER`, `${t.prefix}_MODEL`]);
 
@@ -73,7 +82,7 @@ export const SERVICES: ServiceDef[] = [
     title: 'OpenAI',
     blurb: 'Textos, copiloto, imágenes y subtítulos, con una sola clave.',
     testIntegration: 'ai_text',
-    testHint: 'Pregunta a OpenAI qué modelos ve tu clave. No genera nada ni gasta.',
+    testHint: `Pregunta a OpenAI qué modelos ve tu clave y comprueba que puede generar. ${AI_TEXT_TEST_COST}`,
     simple: ['OPENAI_API_KEY'],
     required: ['OPENAI_API_KEY'],
     keys: [
@@ -89,6 +98,8 @@ export const SERVICES: ServiceDef[] = [
       'AI_PRICE_SNAPSHOT',
       'AI_ALLOW_NON_EU_PROCESSING',
       'AI_TIMEOUT_MS',
+      'AI_TEXT_EDITOR_COPILOT_MODE',
+      'AI_TEXT_EDITOR_COPILOT_EFFORT',
       'AI_GLOBAL_MONTHLY_CAP',
       'AI_MEDIA_IMAGE_MODEL',
       'AI_MEDIA_ALLOW_NON_EU',
@@ -136,7 +147,7 @@ export const SERVICES: ServiceDef[] = [
     blurb: 'Otra forma de redactar y montar piezas. No hace falta para empezar.',
     optional: true,
     testIntegration: 'ai_text',
-    testHint: 'Si alguna tarea usa Claude, comprueba su acceso. No genera nada ni gasta.',
+    testHint: `Si alguna tarea usa Claude, comprueba su acceso y que puede generar. ${AI_TEXT_TEST_COST}`,
     simple: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     required: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     keys: [

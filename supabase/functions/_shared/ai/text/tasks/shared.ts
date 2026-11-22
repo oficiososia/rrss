@@ -80,6 +80,8 @@ export interface StructuredTaskRequest {
   context: NonNullable<AiInput['context']>;
   schema: AiOutputSchema;
   maxOutputTokens: number;
+  /** Ajustes extra para el adaptador (por ejemplo, el esfuerzo de razonamiento). */
+  params?: Record<string, string | number | boolean>;
 }
 
 /** Llama al servicio (reservar → generar → registrar) y devuelve el JSON ya validado. */
@@ -98,7 +100,7 @@ export async function runStructuredTask(
       context: request.context,
       outputSchema: request.schema,
       cacheKey: `${request.purpose}:${request.actor.brandId}`,
-      params: { max_output_tokens: request.maxOutputTokens },
+      params: { max_output_tokens: request.maxOutputTokens, ...request.params },
     },
   });
   const data = result.output.json;

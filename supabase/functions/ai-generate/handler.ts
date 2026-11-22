@@ -24,6 +24,8 @@ import {
   runEditorCopilot,
   type CopilotAssetRef,
   type CopilotDocumentSummary,
+  type CopilotMode,
+  type EditorCopilotOptions,
 } from '../_shared/ai/text/tasks/editor-copilot.ts';
 import {
   planCampaign,
@@ -76,6 +78,8 @@ export interface AiGenerateDeps {
    * llegan (el documento solo se dibuja con lo que la RLS deja ver).
    */
   filterVisibleImages?(accessToken: string, brandId: string, ids: string[]): Promise<string[]>;
+  /** Ajustes del copiloto del editor (AI_TEXT_EDITOR_COPILOT_MODE y _EFFORT). */
+  copilot?: EditorCopilotOptions;
   /** Registro del servidor. Nunca recibe claves ni el contenido de la petición. */
   log?: (event: string, data: Record<string, unknown>) => void;
   /** Origen permitido para CORS (por defecto, cualquiera: la sesión va en cabecera, no en cookie). */
@@ -108,7 +112,7 @@ const STATUS: Record<AiErrorCode, number> = {
 /** Lo que la interfaz necesita de la generación; el coste se consulta en `ai_generations`. */
 function strip(result: TaskMeta): Record<string, unknown> {
   const rest: Record<string, unknown> = { ...result };
-  for (const key of ['provider', 'model', 'usage', 'costMicros', 'latencyMs']) delete rest[key];
+  for (const key of ['provider', 'model', 'usage', 'costMicros', 'latencyMs', 'mode']) delete rest[key];
   return rest;
 }
 
@@ -245,13 +249,21 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
           );
           assets = assets.filter((_, index) => visible.has(ids[index]!));
         }
+        // `input.mode` (tools | json) deja pedir una ruta para comparar; las dos
+        // devuelven lo mismo y pasan por el mismo saneado. Sin él, la del ajuste.
         result = strip(
-          await runEditorCopilot(deps.service, actor, {
-            brandProfile: lookup.profile,
-            transcript: data.transcript as string,
-            document: data.document as CopilotDocumentSummary,
-            assets,
-          }),
+          await runEditorCopilot(
+            deps.service,
+            actor,
+            {
+              brandProfile: lookup.profile,
+              transcript: data.transcript as string,
+              document: data.document as CopilotDocumentSummary,
+              assets,
+              mode: data.mode === 'tools' || data.mode === 'json' ? (data.mode as CopilotMode) : undefined,
+            },
+            deps.copilot,
+          ),
         );
       } else if (action === 'brand.check') {
         result = strip(

@@ -112,8 +112,10 @@ máximo). Los secretos se guardan cifrados en Supabase Vault (migración
 `20261120010000`) y no se vuelven a ver; cada ajuste se llama como su variable
 y manda sobre ella. `ai-generate` los lee en cada petición (caché de 30 s), sin
 redesplegar. «Probar conexión» lista los modelos (Anthropic, Mistral, OpenAI, Bedrock)
-o pide un token de acceso con la cuenta de servicio (Vertex): no genera texto ni
-gasta cupo. La interfaz enseña la IA de texto si `VITE_AI_TEXT_ENABLED=true` en
+o pide un token de acceso con la cuenta de servicio (Vertex) y, si eso va bien, hace
+**una generación mínima real (1 token de salida) por cada modelo configurado**, con el
+mismo adaptador que la tarea: coste despreciable, pero no cero, y sin gastar el cupo de
+ninguna organización (detalle en `docs/integraciones-sencillas.md` §3). La interfaz enseña la IA de texto si `VITE_AI_TEXT_ENABLED=true` en
 el despliegue **y** alguna tarea tiene proveedor cargado y precio completo.
 
 **O como variables.** Solo nombres en `.env.example`. Son secretos de la
@@ -156,7 +158,9 @@ Fuentes consultadas el **20/11/2026**:
   debe llevar datos personales (los de las tareas no los llevan). El adaptador
   solo se carga con `eu.api.openai.com`; con `api.openai.com` u otra dirección
   hace falta `AI_ALLOW_NON_EU_PROCESSING=true`. «Probar conexión» llama a
-  `GET /v1/models` en la dirección configurada.
+  `GET /v1/models` en la dirección configurada y después genera 1 token en
+  `POST /v1/chat/completions` de esa misma dirección (una clave puede listar
+  modelos y ser rechazada al generar).
 - **Recargo.** Los endpoints de residencia cuestan un **10 % más** en los modelos
   publicados desde el 05/03/2026: multiplicar los precios de la tabla por 1,10.
 - **Precios (USD por millón de tokens, nivel Standard, contexto ≤ 272 K)**, ya

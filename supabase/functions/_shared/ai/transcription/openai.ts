@@ -10,6 +10,11 @@
 //    — `usage` puede ser de duración (`seconds`) o de tokens.
 //  * Precio: https://developers.openai.com/api/docs/pricing — `gpt-transcribe`
 //    0,0045 $/min estimado; `whisper-1` 0,006 $/min.
+//  * Vocabulario de pista (consultado el 22/11/2026 en la misma guía):
+//    `gpt-transcribe` admite `keywords[]` («literal terms you expect to hear»;
+//    cada una en una línea y sin `<`, `>` ni saltos: si no, rechaza la petición
+//    entera); el resto de modelos solo `prompt` (en `whisper-1`, 224 tokens como
+//    mucho). La guía no da un máximo de palabras: los topes de aquí son propios.
 //
 // Como el modelo vigente no da tiempos, el navegador manda el sonido ya cortado
 // en trozos de voz (cada uno con su principio y su final en el clip) y aquí se
@@ -21,6 +26,43 @@ import { describeOpenAiError, normalizeOpenAiBaseUrl, OPENAI_PROVIDER_ID } from 
 /** Unidad de consumo con la que se cobra: segundos de sonido enviados. */
 export const TRANSCRIPTION_UNIT = 'audio_seconds';
 export const TRANSCRIPTION_DEFAULT_MODEL = 'gpt-transcribe';
+
+/** Topes propios del vocabulario de pista (la guía de OpenAI no da un máximo). */
+export const MAX_HINTS = 30;
+export const MAX_HINT_CHARS = 40;
+export const MAX_HINTS_TOTAL_CHARS = 600;
+
+/**
+ * Vocabulario de pista listo para mandar: solo textos, en una línea, sin `<`,
+ * `>` ni caracteres de control (OpenAI rechaza la petición entera si los hay),
+ * sin repetidos, y dentro de los topes. Lo que no vale se descarta sin avisar:
+ * son pistas, no datos.
+ */
+export function sanitizeTranscriptionHints(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const clean = item
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_HINT_CHARS)
+      .trim();
+    if (clean.length < 2) continue;
+    const key = clean.toLocaleLowerCase('es');
+    if (seen.has(key)) continue;
+    if (total + clean.length > MAX_HINTS_TOTAL_CHARS) break;
+    seen.add(key);
+    out.push(clean);
+    total += clean.length;
+    if (out.length >= MAX_HINTS) break;
+  }
+  return out;
+}
 
 /** Trozo de sonido de un clip: WAV (o lo que admita OpenAI) y cuánto dura. */
 export interface AudioChunk {
@@ -96,6 +138,13 @@ export function createOpenAiTranscriptionProvider(options: OpenAiTranscriptionOp
         // `languages` solo es de `gpt-transcribe`; el resto de modelos toma `language`.
         if (audio.language && request.model !== 'gpt-transcribe') form.append('language', audio.language);
         if (audio.language && request.model === 'gpt-transcribe') form.append('languages[]', audio.language);
+        // Vocabulario de pista: `keywords[]` solo es de `gpt-transcribe`; el resto lo toma como `prompt`.
+        const hints = sanitizeTranscriptionHints(audio.hints);
+        if (hints.length > 0 && request.model === 'gpt-transcribe') {
+          for (const hint of hints) form.append('keywords[]', hint);
+        } else if (hints.length > 0) {
+          form.append('prompt', hints.join(', '));
+        }
 
         let response: Response;
         try {

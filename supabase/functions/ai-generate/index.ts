@@ -173,6 +173,12 @@ const handlerFor = memoByEnv((effective) =>
       };
     },
 
+    // Copiloto del editor: ruta (herramientas o JSON) y esfuerzo de razonamiento.
+    copilot: {
+      mode: effective.AI_TEXT_EDITOR_COPILOT_MODE === 'json' ? 'json' : effective.AI_TEXT_EDITOR_COPILOT_MODE === 'tools' ? 'tools' : undefined,
+      effort: effective.AI_TEXT_EDITOR_COPILOT_EFFORT?.trim() || undefined,
+    },
+
     log,
     allowedOrigin: env.AI_ALLOWED_ORIGIN,
   }),
