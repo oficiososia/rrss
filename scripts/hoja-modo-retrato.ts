@@ -10,12 +10,15 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { portraitBlur } from '../src/features/photo-edit/portrait/blur';
 
-const [photosDir, masksDir, output, ...names] = process.argv.slice(2);
-if (!photosDir || !masksDir || !output || names.length === 0) {
+const [photosArg, masksArg, outArg, ...names] = process.argv.slice(2);
+if (!photosArg || !masksArg || !outArg || names.length === 0) {
   console.error('Uso: hoja-modo-retrato.ts <fotos> <máscaras> <salida.jpg> foto…');
   process.exit(1);
 }
 
+const photosDir: string = photosArg;
+const masksDir: string = masksArg;
+const output: string = outArg;
 const SIDE = 900;
 const files = readdirSync(photosDir);
 
@@ -33,7 +36,10 @@ async function load(name: string) {
     .greyscale()
     .raw()
     .toBuffer();
-  return { image: { data: new Uint8ClampedArray(data), width: info.width, height: info.height }, alpha: new Uint8Array(mask) };
+  return {
+    image: { data: new Uint8ClampedArray(data), width: info.width, height: info.height },
+    alpha: new Uint8Array(mask),
+  };
 }
 
 const toJpeg = (p: { data: Uint8ClampedArray; width: number; height: number }) =>

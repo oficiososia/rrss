@@ -15,7 +15,7 @@
 // botón principal es «Aplicar a la capa» (la capa pasa a usar la copia y se
 // deshace con Ctrl+Z); desde la biblioteca, «Guardar copia», con «Deshacer».
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Eraser, Eye, ImagePlus, Maximize2, Sparkles, Undo2, Wand2 } from 'lucide-react';
+import { ArrowLeft, Eraser, Eye, ImagePlus, Maximize2, Paintbrush, Sparkles, Undo2, Wand2 } from 'lucide-react';
 import {
   createContext,
   useCallback,
@@ -89,6 +89,16 @@ import {
   type CutoutProgress,
 } from './cutout/remover';
 import { editedFileName, photoEditProvenance, type PhotoEditStep } from './provenance';
+import { portraitBlur, PORTRAIT_DEFAULTS, type PortraitOptions } from './portrait/blur';
+import {
+  applyStrokes,
+  BRUSH_MAX_RADIUS,
+  paintSegment,
+  veilOver,
+  withAlpha,
+  type BrushMode,
+  type BrushStroke,
+} from './portrait/brush';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
 
@@ -119,7 +129,19 @@ export interface PhotoEditScreenProps {
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
   /** Pestaña con la que se abre (por defecto, «Mejorar»). */
   initialTab?: Tab;
+  /** En la pestaña «Fondo», con el «Modo retrato» ya elegido (cuando la foto tenga recorte). */
+  initialPortrait?: boolean;
 }
+
+/** El recorte hecho aquí (o el de quien llama) y los retoques a mano de su selección. */
+interface CutoutState {
+  pixels: Pixels;
+  model: string;
+  quality?: 'high' | 'basic';
+  /** Trazos del pincel sobre la selección del plato (vacío o ausente: sin retoques). */
+  strokes?: BrushStroke[];
+}
+const NO_STROKES: BrushStroke[] = [];
 
 /** Lado mayor de la vista previa: se ve grande y los ajustes siguen siendo instantáneos. */
 const PREVIEW_SIDE = 1000;
@@ -264,6 +286,7 @@ export function PhotoEditScreen({
   resultLabel,
   getSubjectMask,
   initialTab,
+  initialPortrait,
 }: PhotoEditScreenProps) {
   // Se puede pasar a editar un resultado (p. ej., la foto sin fondo para ponerle otro).
   const [asset, setAsset] = useState(initial);
@@ -285,7 +308,7 @@ export function PhotoEditScreen({
   const [comparing, setComparing] = useState(false);
   const [askDiscard, setAskDiscard] = useState(false);
   // El recorte del fondo vive aquí para no perderlo al cambiar de pestaña.
-  const [cutout, setCutout] = useState<{ pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null>(null);
+  const [cutout, setCutout] = useState<CutoutState | null>(null);
   const save = useSaveEdit(asset.brand_id);
   const queryClient = useQueryClient();
   const aiOptions = useAiEditOptions(asset.brand_id, canEditWithAi(asset));
@@ -595,6 +618,7 @@ export function PhotoEditScreen({
                       onSave={commitEdit}
                       cutout={cutout}
                       setCutout={setCutout}
+                      portraitFirst={Boolean(initialPortrait)}
                       ai={aiChoice('remove_background')}
                       onAiResult={(row) => {
                         addResult(row);
@@ -939,7 +963,10 @@ function CropsTab({
 
 /** Qué se pone detrás del plato. */
 type BackgroundChoice =
-  { type: 'none' } | { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; cover: Pixels };
+  | { type: 'none' }
+  | { type: 'color'; hex: string }
+  | { type: 'asset'; asset: MediaAssetRow; cover: Pixels }
+  | { type: 'portrait' };
 
 function BackgroundTab({
   asset,
@@ -948,6 +975,7 @@ function BackgroundTab({
   onSave,
   cutout,
   setCutout,
+  portraitFirst,
   ai,
   onAiResult,
 }: {
@@ -955,8 +983,10 @@ function BackgroundTab({
   pixels: Pixels;
   transparent: boolean;
   onSave: SaveEditResult;
-  cutout: { pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null;
-  setCutout: (cutout: { pixels: Pixels; model: string; quality?: 'high' | 'basic' } | null) => void;
+  cutout: CutoutState | null;
+  setCutout: (cutout: CutoutState | null) => void;
+  /** Se abrió desde «Modo retrato»: es lo primero que se ofrece al tener el recorte. */
+  portraitFirst: boolean;
   ai: AiEditChoice | undefined;
   onAiResult: (row: MediaAssetRow) => void;
 }) {
@@ -976,25 +1006,79 @@ function BackgroundTab({
   const [cutError, setCutError] = useState<string | null>(null);
   const [shadow, setShadow] = useState(false);
   const [color, setColor] = useState('#FFFFFF');
-  const [choice, setChoice] = useState<BackgroundChoice>({ type: 'color', hex: '#FFFFFF' });
+  const [choice, setChoice] = useState<BackgroundChoice>(
+    portraitFirst && !transparent ? { type: 'portrait' } : { type: 'color', hex: '#FFFFFF' },
+  );
+  const [portrait, setPortrait] = useState<PortraitOptions>(PORTRAIT_DEFAULTS);
+  const deferredPortrait = useDeferredValue(portrait);
+  const [retouching, setRetouching] = useState(false);
+  const [brushMode, setBrushMode] = useState<BrushMode>('add');
+  const [brushSize, setBrushSize] = useState(4);
+  const [veil, setVeil] = useState(true);
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // La foto con la que se trabaja: la que ya no tiene fondo, o el recorte hecho aquí.
-  const subject = transparent ? pixels : (cutout?.pixels ?? null);
+  const hasSubject = transparent || Boolean(cutout);
+  // La selección del plato se puede retocar y usar en modo retrato solo con un recorte hecho aquí
+  // (necesita los colores de la foto original y un recorte con sus mismas medidas).
+  const selectable =
+    !transparent &&
+    cutout !== null &&
+    cutout.pixels.width === pixels.width &&
+    cutout.pixels.height === pixels.height;
+  const strokes = cutout?.strokes ?? NO_STROKES;
+  const effectiveChoice = useMemo<BackgroundChoice>(
+    () => (choice.type === 'portrait' && !selectable ? { type: 'color', hex: '#FFFFFF' } : choice),
+    [choice, selectable],
+  );
+  const retouched = selectable && strokes.length > 0;
   const prefix: PhotoEditStep[] =
-    !transparent && cutout ? [{ kind: 'remove_background', engine: 'browser', model: cutout.model }] : [];
-  const small = useMemo(() => (subject ? downscale(subject, PREVIEW_SIDE) : null), [subject]);
-  // La vista previa enseña lo ELEGIDO (color, imagen o transparente), no un fondo fijo.
+    !transparent && cutout
+      ? [
+          { kind: 'remove_background', engine: 'browser', model: cutout.model },
+          ...(retouched ? [{ kind: 'retouch_selection', strokes: strokes.length } as const] : []),
+        ]
+      : [];
+  const previewOriginal = useMemo(() => downscale(pixels, PREVIEW_SIDE), [pixels]);
+  const cutoutPixels = cutout?.pixels ?? null;
+  const previewBase = useMemo(
+    () => (selectable && cutoutPixels ? downscale(cutoutPixels, PREVIEW_SIDE) : null),
+    [selectable, cutoutPixels],
+  );
+  const previewBaseAlpha = useMemo(() => (previewBase ? alphaOf(previewBase) : null), [previewBase]);
+  /** Selección del plato (0-255) con los retoques, en el tamaño de la vista previa. */
+  const previewAlpha = useMemo(
+    () =>
+      previewBase && previewBaseAlpha
+        ? applyStrokes(previewBaseAlpha, previewBase.width, previewBase.height, strokes)
+        : null,
+    [previewBase, previewBaseAlpha, strokes],
+  );
+  /** El plato a tamaño completo: el recorte tal cual, o con los retoques (colores de la foto original). */
+  const fullSubject = (): Pixels => {
+    if (transparent) return pixels;
+    if (!retouched) return cutout!.pixels;
+    return withAlpha(pixels, applyStrokes(alphaOf(cutout!.pixels), pixels.width, pixels.height, strokes));
+  };
+  const small = useMemo(() => {
+    if (!hasSubject) return null;
+    if (transparent) return downscale(pixels, PREVIEW_SIDE);
+    return retouched && previewAlpha ? withAlpha(previewOriginal, previewAlpha) : downscale(cutoutPixels!, PREVIEW_SIDE);
+  }, [hasSubject, transparent, pixels, retouched, previewAlpha, previewOriginal, cutoutPixels]);
+  // La vista previa enseña lo ELEGIDO (color, imagen, retrato o transparente), no un fondo fijo.
   const shown = useMemo(() => {
     if (!small) return null;
-    if (choice.type === 'none') return small;
+    if (effectiveChoice.type === 'none') return small;
+    if (effectiveChoice.type === 'portrait') {
+      return previewAlpha ? portraitBlur(previewOriginal, previewAlpha, deferredPortrait) : small;
+    }
     const backdrop =
-      choice.type === 'color'
-        ? ({ kind: 'color', hex: choice.hex } as const)
-        : ({ kind: 'image', pixels: downscale(choice.cover, PREVIEW_SIDE) } as const);
+      effectiveChoice.type === 'color'
+        ? ({ kind: 'color', hex: effectiveChoice.hex } as const)
+        : ({ kind: 'image', pixels: downscale(effectiveChoice.cover, PREVIEW_SIDE) } as const);
     return composeCutout(small, backdrop, { shadow });
-  }, [small, choice, shadow]);
+  }, [small, effectiveChoice, shadow, previewAlpha, previewOriginal, deferredPortrait]);
 
   const cutAbort = useRef<AbortController | null>(null);
   async function cut() {
@@ -1023,10 +1107,10 @@ function BackgroundTab({
   }
 
   async function chooseImage(row: MediaAssetRow, url: string) {
-    if (!subject) return;
+    if (!hasSubject) return;
     setBusy(true);
     try {
-      setChoice({ type: 'asset', asset: row, cover: await loadCoverPixels(url, subject.width, subject.height) });
+      setChoice({ type: 'asset', asset: row, cover: await loadCoverPixels(url, pixels.width, pixels.height) });
     } catch (error) {
       toast.error(error instanceof PhotoLoadError ? error.message : translateError(error));
     } finally {
@@ -1035,10 +1119,23 @@ function BackgroundTab({
   }
 
   async function submit() {
-    if (!subject) return;
+    if (!hasSubject) return;
     setBusy(true);
     try {
-      if (choice.type === 'none') {
+      if (effectiveChoice.type === 'portrait') {
+        // El desenfoque se calcula con la foto entera y la selección a tamaño completo.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        const alpha = applyStrokes(alphaOf(cutout!.pixels), pixels.width, pixels.height, strokes);
+        const options = { amount: portrait.amount, progressive: portrait.progressive, dim: portrait.dim };
+        await onSave(
+          portraitBlur(pixels, alpha, options),
+          [...prefix, { kind: 'portrait_blur', ...options }],
+          'Foto en modo retrato guardada en la biblioteca. La original no ha cambiado.',
+        );
+        return;
+      }
+      const subject = fullSubject();
+      if (effectiveChoice.type === 'none') {
         await onSave(
           subject,
           prefix,
@@ -1047,9 +1144,9 @@ function BackgroundTab({
         return;
       }
       const backdrop =
-        choice.type === 'color'
-          ? ({ kind: 'color', hex: choice.hex } as const)
-          : ({ kind: 'image', pixels: choice.cover } as const);
+        effectiveChoice.type === 'color'
+          ? ({ kind: 'color', hex: effectiveChoice.hex } as const)
+          : ({ kind: 'image', pixels: effectiveChoice.cover } as const);
       await onSave(
         composeCutout(subject, backdrop, { shadow }),
         [
@@ -1057,9 +1154,9 @@ function BackgroundTab({
           {
             kind: 'background',
             background:
-              choice.type === 'color'
-                ? { type: 'color', hex: choice.hex }
-                : { type: 'asset', assetId: choice.asset.id },
+              effectiveChoice.type === 'color'
+                ? { type: 'color', hex: effectiveChoice.hex }
+                : { type: 'asset', assetId: effectiveChoice.asset.id },
             ...(shadow ? { shadow: true } : {}),
           },
         ],
@@ -1077,12 +1174,14 @@ function BackgroundTab({
     setChoice({ type: 'color', hex: '#FFFFFF' });
     setColor('#FFFFFF');
     setShadow(false);
+    setPortrait(PORTRAIT_DEFAULTS);
+    setRetouching(false);
   }, [setCutout]);
 
   useCommit({
     run: submit,
     // Ya sin fondo y sin elegir otro: no hay nada que guardar.
-    disabled: !subject || (choice.type === 'none' && !cutout),
+    disabled: !hasSubject || (effectiveChoice.type === 'none' && !cutout),
     dirty: Boolean(cutout) && !transparent,
     busy,
     reset,
@@ -1090,10 +1189,13 @@ function BackgroundTab({
 
   return (
     <div className="space-y-4">
-      {!subject && (
+      {!hasSubject && (
         <div className="space-y-3" data-testid="photo-edit-cutout">
           <Stage pixels={null} />
-          <p className="text-sm">Para cambiar el fondo, primero hay que quitarlo.</p>
+          <p className="text-sm">
+            Para cambiar el fondo o desenfocarlo (modo retrato), primero hay que separar el plato del fondo. Después
+            podrás retocar la selección a mano.
+          </p>
           {ai && (
             <fieldset className="space-y-1 text-sm">
               <legend className="sr-only">Cómo quitar el fondo</legend>
@@ -1158,11 +1260,28 @@ function BackgroundTab({
           )}
         </div>
       )}
-      {subject && (
+      {hasSubject && (
         <div className="space-y-3" data-testid="photo-edit-backgrounds">
-          <Stage pixels={shown} testId="photo-edit-cutout-preview" checker={choice.type === 'none'} />
+          {retouching && selectable && previewBaseAlpha && previewAlpha ? (
+            <RetouchStage
+              original={previewOriginal}
+              baseAlpha={previewBaseAlpha}
+              strokes={strokes}
+              mode={brushMode}
+              radius={Math.min(BRUSH_MAX_RADIUS, brushSize / 100)}
+              veil={veil}
+              onStroke={(stroke) => setCutout({ ...cutout!, strokes: [...strokes, stroke] })}
+            />
+          ) : (
+            <Stage
+              pixels={shown}
+              testId="photo-edit-cutout-preview"
+              checker={effectiveChoice.type === 'none'}
+            />
+          )}
           <p className="text-sm">
-            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA):
+            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o
+            usa el modo retrato:
           </p>
           {cutout?.quality === 'basic' && !transparent && (
             <p className="text-xs text-muted" data-testid="photo-edit-cutout-basic">
@@ -1170,6 +1289,154 @@ function BackgroundTab({
               que se ha usado el modelo ligero. Los bordes de pelo, cristal o salsa pueden salir menos limpios; en
               Chrome o Edge recientes, con tarjeta gráfica, sale mejor.
             </p>
+          )}
+          {selectable && (
+            <div className="space-y-3 rounded-md border border-border p-3" data-testid="photo-edit-portrait">
+              <Button
+                size="sm"
+                variant={effectiveChoice.type === 'portrait' ? 'primary' : 'secondary'}
+                aria-pressed={effectiveChoice.type === 'portrait'}
+                onClick={() => setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })}
+                disabled={busy}
+                data-testid="photo-edit-portrait-toggle"
+              >
+                Modo retrato: desenfocar solo el fondo
+              </Button>
+              {effectiveChoice.type === 'portrait' && (
+                <div className="space-y-3">
+                  <label className="block text-sm">
+                    <span className="flex justify-between">
+                      Intensidad del desenfoque
+                      <span className="tabular-nums text-muted">{portrait.amount}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={100}
+                      value={portrait.amount}
+                      onChange={(e) => setPortrait((current) => ({ ...current, amount: Number(e.target.value) }))}
+                      className="mt-1 w-full"
+                      data-testid="photo-edit-portrait-amount"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={portrait.progressive}
+                      onChange={(e) => setPortrait((current) => ({ ...current, progressive: e.target.checked }))}
+                      data-testid="photo-edit-portrait-progressive"
+                    />
+                    Más borroso cuanto más lejos del plato
+                  </label>
+                  <label className="block text-sm">
+                    <span className="flex justify-between">
+                      Resaltar el plato (oscurece el fondo)
+                      <span className="tabular-nums text-muted">{portrait.dim}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={portrait.dim}
+                      onChange={(e) => setPortrait((current) => ({ ...current, dim: Number(e.target.value) }))}
+                      className="mt-1 w-full"
+                      data-testid="photo-edit-portrait-dim"
+                    />
+                  </label>
+                  <p className="text-xs text-muted">
+                    El plato queda tal cual y solo se desenfoca lo de alrededor. Si el borde no sale bien, retoca la
+                    selección.
+                  </p>
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant={retouching ? 'primary' : 'secondary'}
+                aria-pressed={retouching}
+                onClick={() => setRetouching((on) => !on)}
+                disabled={busy}
+                data-testid="photo-edit-retouch-toggle"
+              >
+                <Paintbrush className="h-4 w-4" aria-hidden />
+                Retocar la selección
+              </Button>
+              {retouching && (
+                <div className="space-y-3" data-testid="photo-edit-retouch">
+                  <p className="text-xs text-muted">
+                    Pasa el dedo o el ratón por la foto para pintar. Lo que se ve en rosa es el plato; lo demás es
+                    fondo. Sirve igual para quitar el fondo, ponerle un color o el modo retrato.
+                  </p>
+                  <div role="radiogroup" aria-label="Qué hace el pincel" className="flex flex-wrap gap-1">
+                    {(
+                      [
+                        ['add', 'Añadir al plato'],
+                        ['remove', 'Quitar del plato'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        role="radio"
+                        aria-checked={brushMode === value}
+                        variant={brushMode === value ? 'primary' : 'secondary'}
+                        onClick={() => setBrushMode(value)}
+                        data-testid={`photo-edit-brush-${value}`}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                  <label className="block text-sm">
+                    <span className="flex justify-between">
+                      Tamaño del pincel
+                      <span className="tabular-nums text-muted">{brushSize}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={15}
+                      value={brushSize}
+                      onChange={(e) => setBrushSize(Number(e.target.value))}
+                      className="mt-1 w-full"
+                      data-testid="photo-edit-brush-size"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={veil}
+                      onChange={(e) => setVeil(e.target.checked)}
+                      data-testid="photo-edit-retouch-veil"
+                    />
+                    Ver la selección como un velo de color
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={strokes.length === 0}
+                      onClick={() => setCutout({ ...cutout!, strokes: strokes.slice(0, -1) })}
+                      data-testid="photo-edit-retouch-undo"
+                    >
+                      <Undo2 className="h-4 w-4" aria-hidden />
+                      Deshacer el último trazo
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={strokes.length === 0}
+                      onClick={() => setCutout({ ...cutout!, strokes: [] })}
+                      data-testid="photo-edit-retouch-clear"
+                    >
+                      Borrar los retoques
+                    </Button>
+                    <Button size="sm" onClick={() => setRetouching(false)} data-testid="photo-edit-retouch-done">
+                      Listo
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {brandColors.length > 0 && (
             <div className="flex flex-wrap gap-2" role="group" aria-label="Colores de la marca">
@@ -1219,7 +1486,7 @@ function BackgroundTab({
               type="checkbox"
               checked={shadow}
               onChange={(e) => setShadow(e.target.checked)}
-              disabled={choice.type === 'none'}
+              disabled={effectiveChoice.type === 'none' || effectiveChoice.type === 'portrait'}
               data-testid="photo-edit-shadow"
             />
             Sombra suave (para que no parezca flotar)
@@ -1249,6 +1516,126 @@ function BackgroundTab({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * La foto grande para retocar la selección: se pinta con un velo de color sobre el plato y
+ * el pincel (dedo, lápiz o ratón) añade o quita. Pinta sobre la marcha en una máscara de
+ * trabajo y, al soltar, entrega el trazo (coordenadas 0-1) para guardarlo.
+ */
+function RetouchStage({
+  original,
+  baseAlpha,
+  strokes,
+  mode,
+  radius,
+  veil,
+  onStroke,
+}: {
+  original: Pixels;
+  baseAlpha: Uint8Array;
+  strokes: BrushStroke[];
+  mode: BrushMode;
+  /** Fracción del lado menor. */
+  radius: number;
+  veil: boolean;
+  onStroke: (stroke: BrushStroke) => void;
+}) {
+  const { stage } = useScreen();
+  const { width, height } = original;
+  const wrap = useRef<HTMLDivElement>(null);
+  const work = useRef<Uint8Array>(new Uint8Array(0));
+  const current = useRef<BrushStroke | null>(null);
+  const raf = useRef(0);
+  const [frame, setFrame] = useState<Pixels>(original);
+  const [ring, setRing] = useState<{ x: number; y: number; size: number } | null>(null);
+
+  const render = useCallback(() => {
+    cancelAnimationFrame(raf.current);
+    raf.current = 0;
+    setFrame(veil ? veilOver(original, work.current) : withAlpha(original, work.current));
+  }, [original, veil]);
+
+  // La máscara de trabajo es la base con los trazos ya guardados (también tras deshacer).
+  useEffect(() => {
+    work.current = applyStrokes(baseAlpha, width, height, strokes);
+    render();
+  }, [baseAlpha, strokes, width, height, render]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+
+  /** Posición del puntero en la foto (píxeles) y en pantalla (para el aro del pincel). */
+  const locate = (event: { clientX: number; clientY: number }) => {
+    const box = wrap.current?.getBoundingClientRect();
+    if (!box || box.width <= 0 || box.height <= 0) return null;
+    const scale = Math.min(box.width / width, box.height / height);
+    const x = (event.clientX - box.left - (box.width - width * scale) / 2) / scale;
+    const y = (event.clientY - box.top - (box.height - height * scale) / 2) / scale;
+    return { x, y, scale, screenX: event.clientX - box.left, screenY: event.clientY - box.top };
+  };
+  const radiusPx = radius * Math.min(width, height);
+
+  const schedule = () => {
+    if (!raf.current) raf.current = requestAnimationFrame(render);
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const at = locate(event);
+    if (!at) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    current.current = { mode, radius, points: [[at.x / width, at.y / height]] };
+    paintSegment(work.current, width, height, [at.x, at.y], [at.x, at.y], radiusPx, mode);
+    schedule();
+  };
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const at = locate(event);
+    if (!at) return;
+    setRing({ x: at.screenX, y: at.screenY, size: radiusPx * at.scale * 2 });
+    const stroke = current.current;
+    if (!stroke) return;
+    const last = stroke.points[stroke.points.length - 1]!;
+    const from: [number, number] = [last[0] * width, last[1] * height];
+    // Puntos a un píxel o más unos de otros: un trazo largo no se llena de puntos de sobra.
+    if (Math.hypot(at.x - from[0], at.y - from[1]) < 1) return;
+    stroke.points.push([at.x / width, at.y / height]);
+    paintSegment(work.current, width, height, from, [at.x, at.y], radiusPx, stroke.mode);
+    schedule();
+  };
+  const finish = () => {
+    const stroke = current.current;
+    current.current = null;
+    if (stroke) onStroke(stroke);
+  };
+
+  if (!stage) return null;
+  return createPortal(
+    <div
+      ref={wrap}
+      role="img"
+      aria-label="Foto para retocar la selección. Pasa el dedo o el ratón por encima para pintar."
+      className="relative h-full w-full cursor-crosshair touch-none select-none"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onPointerLeave={() => setRing(null)}
+      data-testid="photo-edit-retouch-canvas"
+    >
+      <PixelsCanvas
+        pixels={frame}
+        className="pointer-events-none h-full w-full object-contain"
+        testId="photo-edit-cutout-preview"
+        checker={!veil}
+      />
+      {ring && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.7)]"
+          style={{ left: ring.x - ring.size / 2, top: ring.y - ring.size / 2, width: ring.size, height: ring.size }}
+        />
+      )}
+    </div>,
+    stage,
   );
 }
 

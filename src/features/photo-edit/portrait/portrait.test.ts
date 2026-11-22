@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { blurPixels } from '../quickEdit';
+import { boxBlur } from '../cutout/composition';
 import type { Pixels } from '../pixels';
 import { applyStrokes, paintSegment, veilOver, withAlpha, type BrushStroke } from './brush';
 import { portraitBlur } from './blur';
+
+/** El método ingenuo que había antes: difuminar toda la foto (los colores del plato se mezclan con el fondo). */
+function blurPixels(image: Pixels, radius: number): Pixels {
+  const out = new Uint8ClampedArray(image.data);
+  for (let c = 0; c < 3; c += 1) {
+    const plane = new Float32Array(image.width * image.height);
+    for (let p = 0; p < plane.length; p += 1) plane[p] = image.data[p * 4 + c]!;
+    const blurred = boxBlur(plane, image.width, image.height, radius);
+    for (let p = 0; p < blurred.length; p += 1) out[p * 4 + c] = blurred[p]!;
+  }
+  return { data: out, width: image.width, height: image.height };
+}
 
 type RGB = readonly [number, number, number];
 
@@ -154,12 +166,17 @@ describe('modo retrato: el desenfoque', () => {
     const y = Math.round(center);
     const edge = Math.round(center + radius);
     let maxStep = 0;
-    for (let x = edge - 4; x < edge + 4; x += 1) maxStep = Math.max(maxStep, Math.abs(at(out, x + 1, y)[0]! - at(out, x, y)[0]!));
+    for (let x = edge - 4; x < edge + 4; x += 1)
+      maxStep = Math.max(maxStep, Math.abs(at(out, x + 1, y)[0]! - at(out, x, y)[0]!));
     expect(maxStep).toBeLessThan(220 - 20);
   });
 
   it('vista previa y archivo guardado salen igual: la misma foto a dos tamaños da el mismo resultado', () => {
-    const bg = (u: number, v: number): RGB => [Math.round(60 + 140 * u), Math.round(200 - 120 * v), Math.floor(u * 6) % 2 ? 90 : 160];
+    const bg = (u: number, v: number): RGB => [
+      Math.round(60 + 140 * u),
+      Math.round(200 - 120 * v),
+      Math.floor(u * 6) % 2 ? 90 : 160,
+    ];
     const small = scene(300, bg);
     const large = scene(900, bg);
     const a = portraitBlur(small.image, small.alpha, { amount: 60, progressive: true, dim: 20 });
@@ -172,7 +189,8 @@ describe('modo retrato: el desenfoque', () => {
         if (small.alpha[y * 300 + x] !== 0) continue;
         for (let c = 0; c < 3; c += 1) {
           let sum = 0;
-          for (let dy = 0; dy < 3; dy += 1) for (let dx = 0; dx < 3; dx += 1) sum += b.data[((y * 3 + dy) * 900 + x * 3 + dx) * 4 + c]!;
+          for (let dy = 0; dy < 3; dy += 1)
+            for (let dx = 0; dx < 3; dx += 1) sum += b.data[((y * 3 + dy) * 900 + x * 3 + dx) * 4 + c]!;
           total += Math.abs(sum / 9 - a.data[(y * 300 + x) * 4 + c]!);
           count += 1;
         }
@@ -206,7 +224,14 @@ describe('retocar la selección: el pincel', () => {
 
   it('no modifica la máscara base y el orden de los trazos importa', () => {
     const base = empty();
-    const a: BrushStroke = { mode: 'add', radius: 0.2, points: [[0.3, 0.5], [0.7, 0.5]] };
+    const a: BrushStroke = {
+      mode: 'add',
+      radius: 0.2,
+      points: [
+        [0.3, 0.5],
+        [0.7, 0.5],
+      ],
+    };
     const r: BrushStroke = { mode: 'remove', radius: 0.05, points: [[0.5, 0.5]] };
     const out = applyStrokes(base, W, H, [a, r]);
     expect(base.every((v) => v === 0)).toBe(true);
@@ -222,16 +247,34 @@ describe('retocar la selección: el pincel', () => {
   });
 
   it('los trazos valen a cualquier resolución (mismo resultado reducido o grande)', () => {
-    const strokes: BrushStroke[] = [{ mode: 'add', radius: 0.12, points: [[0.2, 0.3], [0.6, 0.7]] }];
+    const strokes: BrushStroke[] = [
+      {
+        mode: 'add',
+        radius: 0.12,
+        points: [
+          [0.2, 0.3],
+          [0.6, 0.7],
+        ],
+      },
+    ];
     const small = applyStrokes(new Uint8Array(40 * 30), 40, 30, strokes);
     const big = applyStrokes(new Uint8Array(160 * 120), 160, 120, strokes);
     let diff = 0;
-    for (let y = 0; y < 30; y += 1) for (let x = 0; x < 40; x += 1) diff += Math.abs(small[y * 40 + x]! - big[(y * 4 + 2) * 160 + x * 4 + 2]!);
+    for (let y = 0; y < 30; y += 1)
+      for (let x = 0; x < 40; x += 1) diff += Math.abs(small[y * 40 + x]! - big[(y * 4 + 2) * 160 + x * 4 + 2]!);
     expect(diff / (40 * 30)).toBeLessThan(12);
   });
 
   it('pintar tramo a tramo da lo mismo que repetir el trazo entero', () => {
-    const stroke: BrushStroke = { mode: 'add', radius: 0.1, points: [[0.1, 0.2], [0.5, 0.5], [0.9, 0.3]] };
+    const stroke: BrushStroke = {
+      mode: 'add',
+      radius: 0.1,
+      points: [
+        [0.1, 0.2],
+        [0.5, 0.5],
+        [0.9, 0.3],
+      ],
+    };
     const live = empty();
     for (let i = 1; i < stroke.points.length; i += 1) {
       const p = stroke.points[i - 1]!;

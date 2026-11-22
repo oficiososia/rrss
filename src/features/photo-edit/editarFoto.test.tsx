@@ -735,6 +735,37 @@ describe('Editar foto desde el editor', () => {
     expect(fake.rows('media_assets').find((r) => r.id === ORIGINAL)).toEqual(original);
   });
 
+  it('la acción rápida «Modo retrato» del panel abre «Editar foto» en ese modo y se aplica a la capa (se deshace con Ctrl+Z)', async () => {
+    const cutout = pixels(120, 90, 0);
+    for (let y = 30; y < 60; y += 1) for (let x = 40; x < 80; x += 1) cutout.data[(y * 120 + x) * 4 + 3] = 255;
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValue({
+      pixels: cutout,
+      model: 'ben2',
+      provider: 'webgpu',
+      engine: 'ben2',
+      quality: 'high',
+      fromCache: true,
+    });
+    const { user } = await openEditor();
+    // El botón ya no hace un archivo a ciegas: abre la pantalla con el modo elegido.
+    expect(screen.queryByTestId('photo-blur-background')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('photo-portrait'));
+    const dialog = within(await screen.findByTestId('photo-edit'));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    await dialog.findByTestId('photo-edit-backgrounds');
+    expect(dialog.getByTestId('photo-edit-portrait-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(dialog.getByTestId('photo-edit-save')).toHaveTextContent('Aplicar a la capa');
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(screen.queryByTestId('photo-edit')).not.toBeInTheDocument());
+    expect(layerSource()).toBe(EDITED);
+    expect((uploaded[0]!.provenance as { steps: Array<{ kind: string }> }).steps.map((s) => s.kind)).toEqual([
+      'remove_background',
+      'portrait_blur',
+    ]);
+    await user.click(screen.getByTestId('undo'));
+    expect(layerSource()).toBe(ORIGINAL);
+  });
+
   it('Ctrl+Z en la pantalla de edición no toca el diseño de debajo; Esc vuelve sin guardar nada', async () => {
     const { user } = await openEditor();
     await user.click(await screen.findByTestId('layer-edit-photo'));
@@ -825,5 +856,190 @@ describe('Pantalla «Editar foto»: detalles', () => {
     await waitFor(() => expect(dialog.queryByTestId('photo-edit-result')).not.toBeInTheDocument());
     expect(fake.rows('media_assets').some((r) => r.id === 'editada-1')).toBe(false);
     expect(fake.rows('media_assets').find((r) => r.id === 'foto-1')).toEqual(original);
+  });
+});
+
+describe('Modo retrato y retoque de la selección', () => {
+  /** Recorte con el plato en el centro (opaco) y el resto transparente, con las medidas de la foto. */
+  function plateCutout(): Pixels {
+    const base = pixels(120, 90, 0);
+    for (let y = 30; y < 60; y += 1) for (let x = 40; x < 80; x += 1) base.data[(y * 120 + x) * 4 + 3] = 255;
+    return base;
+  }
+  const mockCut = () =>
+    vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValue({
+      pixels: plateCutout(),
+      model: 'ben2',
+      provider: 'webgpu',
+      engine: 'ben2',
+      quality: 'high',
+      fromCache: true,
+    });
+  const alphaAt = (image: Pixels, x: number, y: number) => image.data[(y * image.width + x) * 4 + 3]!;
+  const rgbAt = (image: Pixels, x: number, y: number) =>
+    Array.from(image.data.slice((y * image.width + x) * 4, (y * image.width + x) * 4 + 3));
+
+  async function cutAndOpenBackgrounds() {
+    mockCut();
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    await dialog.findByTestId('photo-edit-backgrounds');
+    return { user, dialog };
+  }
+
+  function stubStageGeometry() {
+    // jsdom no maqueta: la foto ocupa 120 x 90 píxeles de pantalla desde (0, 0).
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      right: 120,
+      bottom: 90,
+      width: 120,
+      height: 90,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+  }
+
+  function paintAt(canvas: HTMLElement, from: [number, number], to?: [number, number]) {
+    fireEvent.pointerDown(canvas, { clientX: from[0], clientY: from[1], pointerId: 1 });
+    if (to) fireEvent.pointerMove(canvas, { clientX: to[0], clientY: to[1], pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: (to ?? from)[0], clientY: (to ?? from)[1], pointerId: 1 });
+  }
+
+  it('«Modo retrato» se ve al momento, tiene sus controles y guarda una copia con la operación y la intensidad', async () => {
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    const toggle = dialog.getByTestId('photo-edit-portrait-toggle');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(dialog.queryByTestId('photo-edit-portrait-amount')).not.toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    const amount = dialog.getByTestId('photo-edit-portrait-amount');
+    expect(amount).toHaveValue('60');
+    fireEvent.change(amount, { target: { value: '85' } });
+    fireEvent.change(dialog.getByTestId('photo-edit-portrait-dim'), { target: { value: '30' } });
+    await user.click(dialog.getByTestId('photo-edit-portrait-progressive'));
+    // Con retrato no hay sombra suave que elegir.
+    expect(dialog.getByTestId('photo-edit-shadow')).toBeDisabled();
+    expect(uploaded).toHaveLength(0);
+
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    expect(uploaded[0]!.file.name).toBe('Modo retrato · plato.jpg');
+    expect(uploaded[0]!.file.type).toBe('image/jpeg');
+    expect(uploaded[0]!.provenance).toMatchObject({
+      type: 'photo_edit',
+      source_asset_id: 'foto-1',
+      width: 120,
+      height: 90,
+      steps: [
+        { kind: 'remove_background', engine: 'browser', model: 'ben2' },
+        { kind: 'portrait_blur', amount: 85, progressive: false, dim: 30 },
+      ],
+    });
+    // El resultado es la foto entera y opaca; el plato, tal cual.
+    const saved = mocks.encodePixels.mock.calls.at(-1)![0] as Pixels;
+    expect([saved.width, saved.height]).toEqual([120, 90]);
+    expect(alphaAt(saved, 5, 5)).toBe(255);
+    expect(rgbAt(saved, 60, 45)).toEqual(rgbAt(pixels(120, 90), 60, 45));
+  });
+
+  it('el retoque añade al plato con el pincel y se guarda en el recorte (PNG transparente) con su procedencia', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    expect(dialog.getByTestId('photo-edit-brush-add')).toHaveAttribute('aria-checked', 'true');
+    expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled();
+    const canvas = await screen.findByTestId('photo-edit-retouch-canvas');
+    paintAt(canvas, [8, 8], [14, 8]);
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled());
+    await user.click(dialog.getByTestId('photo-edit-retouch-done'));
+    expect(screen.queryByTestId('photo-edit-retouch-canvas')).not.toBeInTheDocument();
+    await user.click(dialog.getByTestId('photo-edit-cutout-save'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    const saved = mocks.encodePixels.mock.calls.at(-1)![0] as Pixels;
+    expect(alphaAt(saved, 10, 8)).toBe(255); // pintado: ahora es plato
+    expect(alphaAt(saved, 100, 80)).toBe(0); // lejos: sigue siendo fondo
+    expect(alphaAt(saved, 60, 45)).toBe(255); // el plato de siempre
+    // Los colores del retoque son los de la foto original, no los del recorte.
+    expect(rgbAt(saved, 10, 8)).toEqual(rgbAt(pixels(120, 90), 10, 8));
+    expect(uploaded[0]!.file.type).toBe('image/png');
+    expect((uploaded[0]!.provenance as { steps: unknown[] }).steps).toEqual([
+      { kind: 'remove_background', engine: 'browser', model: 'ben2' },
+      { kind: 'retouch_selection', strokes: 1 },
+    ]);
+  });
+
+  it('el pincel «Quitar del plato», deshacer el último trazo y borrar los retoques', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    await user.click(dialog.getByTestId('photo-edit-brush-remove'));
+    expect(dialog.getByTestId('photo-edit-brush-remove')).toHaveAttribute('aria-checked', 'true');
+    const canvas = await screen.findByTestId('photo-edit-retouch-canvas');
+    paintAt(canvas, [60, 45]); // sobre el plato
+    paintAt(canvas, [50, 40]);
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled());
+    await user.click(dialog.getByTestId('photo-edit-retouch-undo')); // quita el 2º trazo
+    await user.click(dialog.getByTestId('photo-edit-retouch-clear')); // y borra el resto
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled());
+    await user.click(dialog.getByTestId('photo-edit-retouch-done'));
+    await user.click(dialog.getByTestId('photo-edit-cutout-save'));
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    const saved = mocks.encodePixels.mock.calls.at(-1)![0] as Pixels;
+    expect(alphaAt(saved, 60, 45)).toBe(255); // todo deshecho: el plato intacto
+    expect((uploaded[0]!.provenance as { steps: unknown[] }).steps).toEqual([
+      { kind: 'remove_background', engine: 'browser', model: 'ben2' },
+    ]);
+  });
+
+  it('un trazo de «Quitar» abre un hueco y el retoque también vale para un fondo de color', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    await user.click(dialog.getByTestId('photo-edit-brush-remove'));
+    fireEvent.change(dialog.getByTestId('photo-edit-brush-size'), { target: { value: '8' } });
+    paintAt(await screen.findByTestId('photo-edit-retouch-canvas'), [60, 45]);
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled());
+    await user.click(dialog.getByTestId('photo-edit-retouch-done'));
+    // Fondo de color: lo quitado del plato se ve ahora del color del fondo (blanco).
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    const saved = mocks.encodePixels.mock.calls.at(-1)![0] as Pixels;
+    expect(rgbAt(saved, 60, 45)).toEqual([255, 255, 255]);
+    expect(uploaded[0]!.provenance).toMatchObject({
+      steps: [
+        { kind: 'remove_background' },
+        { kind: 'retouch_selection', strokes: 1 },
+        { kind: 'background', color: '#FFFFFF' },
+      ],
+    });
+  });
+
+  it('el velo de color se puede quitar para ver el recorte sobre el ajedrez', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    const veil = dialog.getByTestId('photo-edit-retouch-veil');
+    expect(veil).toBeChecked();
+    await user.click(veil);
+    expect(veil).not.toBeChecked();
+    expect(await screen.findByTestId('photo-edit-retouch-canvas')).toHaveAccessibleName(/retocar la selección/i);
+  });
+
+  it('una foto que ya viene sin fondo no ofrece retrato ni retoque (no hay fondo que desenfocar)', async () => {
+    const { user } = await openPhoto({ orgRole: 'owner' }, [
+      asset('foto-1', 'sin-fondo.png', { mime_type: 'image/png' }),
+    ]);
+    const dialog = await openEditDialog(user);
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await dialog.findByTestId('photo-edit-backgrounds');
+    expect(dialog.queryByTestId('photo-edit-portrait-toggle')).not.toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-retouch-toggle')).not.toBeInTheDocument();
   });
 });

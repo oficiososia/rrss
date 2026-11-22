@@ -41,6 +41,8 @@ export interface PhotoToolsContext {
   url: string | undefined;
   /** La capa pasa a usar un recurso nuevo (se deshace con Ctrl+Z). `fit` es cómo encaja. */
   onUseResult: (row: MediaAssetRow, fit: 'cover' | 'contain') => void;
+  /** Abre «Editar foto» en el «Modo retrato» (desenfocar el fondo con vista previa y retoque de la selección). */
+  onPortrait?: () => void;
   /** Abre «Cambiar el fondo con IA» (solo si el servidor tiene IA para ello; si no, no hay botón). */
   onAiBackground?: () => void;
 }
@@ -48,7 +50,7 @@ export interface PhotoToolsContext {
 /**
  * Ediciones sencillas de una foto del diseño: luz y color, girar y recortar,
  * fondo y sombra. Todo se guarda en la capa (la foto original no se toca) y se
- * deshace con Ctrl+Z; solo «Quitar fondo» y «Desenfocar el fondo» crean una foto
+ * deshace con Ctrl+Z; solo «Quitar fondo» y el «Modo retrato» (que se hace en «Editar foto») crean una foto
  * nueva en la biblioteca.
  */
 export function PhotoPanel({
@@ -68,7 +70,6 @@ export function PhotoPanel({
 }) {
   const [cropping, setCropping] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [blurAmount, setBlurAmount] = useState(50);
   const save = useSaveEdit(tools.row?.brand_id ?? '');
   const adjust = layer.adjust ?? NEUTRAL;
   const edited = !isNeutralAdjust(layer.adjust);
@@ -253,25 +254,18 @@ export function PhotoPanel({
                 >
                   Quitar el fondo
                 </Button>
-                <RangeInput
-                  label="Intensidad del desenfoque"
-                  value={blurAmount}
-                  min={5}
-                  max={100}
-                  onChange={setBlurAmount}
-                />
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full"
-                  disabled={busy !== null}
-                  onClick={() =>
-                    quick({ kind: 'blur_background', amount: blurAmount, shadow: true }, 'Desenfocando el fondo…')
-                  }
-                  data-testid="photo-blur-background"
-                >
-                  Desenfocar el fondo y dejar el plato nítido
-                </Button>
+                {tools.onPortrait && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    disabled={busy !== null}
+                    onClick={tools.onPortrait}
+                    data-testid="photo-portrait"
+                  >
+                    Modo retrato: desenfocar el fondo…
+                  </Button>
+                )}
               </>
             )}
             {tools.onAiBackground && (
