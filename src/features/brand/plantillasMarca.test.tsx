@@ -43,7 +43,7 @@ describe('Plantillas de la marca', () => {
     const items = await screen.findAllByTestId('brand-template');
     expect(items).toHaveLength(3);
     expect(within(items[0]!).getByText('Importada')).toBeInTheDocument();
-    expect(within(items[1]!).getByText('Manual')).toBeInTheDocument();
+    expect(within(items[1]!).getByText('De la agencia')).toBeInTheDocument();
     expect(within(items[2]!).getByText('Del editor')).toBeInTheDocument();
   });
 

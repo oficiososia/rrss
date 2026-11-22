@@ -220,7 +220,7 @@ export function validateTemplate(
   if (typeof input.key !== 'string' || !KEY.test(input.key)) {
     issues.push({
       path: `${at}.key`,
-      message: 'clave en minúsculas, cifras y guiones (hasta 63), p. ej. «plato-del-dia»',
+      message: 'clave en minúsculas, cifras y guiones (hasta 63), p. ej. «oferta-del-dia»',
     });
   }
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120) {

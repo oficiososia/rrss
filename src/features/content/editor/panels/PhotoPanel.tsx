@@ -443,7 +443,7 @@ export function PhotoPanel({
           </p>
         )}
         <ShadowFields
-          label="Sombra bajo la foto (o el plato)"
+          label="Sombra bajo la foto"
           shadow={layer.shadow}
           palette={palette}
           readOnly={readOnly}

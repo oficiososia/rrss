@@ -805,3 +805,10 @@ atrás), **sin aplicar en staging**.
   imitados; la e2e 19 está actualizada pero no se ha ejecutado (sin Docker).
 - **Pendiente:** aviso hacia fuera (correo o Telegram), comprobación periódica de la máquina de Fly,
   cargar y verificar precios reales de IA, decidir si se activan los topes (apagados por defecto; los avisos y la pantalla son solo informativos).
+
+### Plantillas: miniaturas reales y tarjetas legibles (rama `f34/plantillas-ui`)
+
+- **Miniatura real** (`content/templates/preview.ts`, `useTemplatePreviews.ts`): se dibuja la primera página con el motor del exportador (`renderDocument`), con las 8 fotos más recientes de la biblioteca en los huecos de foto (marcador neutro si no hay) y el texto de muestra de la plantilla. Una a una, cacheada (LRU de 80, por plantilla y fotos) y con esqueleto; si falla, el esquema de siempre. Sirve a «Nueva idea», «Desde una plantilla» y Marca → Plantillas.
+- **Tarjetas**: nombre, una frase (primera del resumen, sin la etiqueta «PROPUESTA de la agencia…»), formato, páginas y «Con hueco para N fotos»; el texto largo, el tipo de foto y la repetición, en «Ver más». Etiqueta «Manual» pasa a «De la agencia». Filtro por formato. «Nueva idea» ofrece «En blanco» / «Desde una plantilla» siempre.
+- **Datos de staging**: `supabase/scripts/renombrar-plantillas-neutras.sql` (a mano; sin migración).
+- **Sin probar**: dibujo real en navegador (en jsdom Konva no dibuja: allí sale el esquema), 375 px a mano.
