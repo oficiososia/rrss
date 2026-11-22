@@ -139,15 +139,37 @@ export function CreateContentDialog({ organizationId, brandId, open, onOpenChang
             )}
           </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={fromTemplate}
-            onChange={(e) => toggleTemplate(e.target.checked)}
-            data-testid="create-content-from-template"
-          />
-          Empezar desde una plantilla
-        </label>
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">Cómo quieres empezar</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(
+              [
+                [false, 'En blanco', 'Eliges la red y el formato y diseñas desde cero.', 'create-content-blank'],
+                [true, 'Desde una plantilla', 'Un diseño de la marca ya montado.', 'create-content-from-template'],
+              ] as const
+            ).map(([on, label, help, testId]) => (
+              <label
+                key={testId}
+                className={`flex min-h-12 cursor-pointer items-start gap-2 rounded-xl border-2 p-3 text-sm ${
+                  fromTemplate === on ? 'border-primary bg-primary-soft' : 'border-border'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="create-content-start"
+                  className="mt-1"
+                  checked={fromTemplate === on}
+                  onChange={() => toggleTemplate(on)}
+                  data-testid={testId}
+                />
+                <span>
+                  <span className="block font-medium">{label}</span>
+                  <span className="block text-xs text-muted">{help}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         {fromTemplate && (
           <div className="space-y-2" data-testid="create-content-templates">
             <TemplatePicker
@@ -158,8 +180,8 @@ export function CreateContentDialog({ organizationId, brandId, open, onOpenChang
             />
             {template && (
               <p className="text-xs text-muted">
-                La red y el formato son los de la plantilla. Las fotos se quedan para que las sustituyas; el texto, el
-                pie y los hashtags son una guía.
+                La red y el formato son los de la plantilla. Las fotos son huecos para que pongas las tuyas; el texto,
+                el pie y los hashtags son una guía.
               </p>
             )}
           </div>

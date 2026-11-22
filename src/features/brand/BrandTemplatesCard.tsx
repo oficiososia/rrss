@@ -20,9 +20,9 @@ import {
   useRenameTemplate,
   type BrandTemplate,
 } from '@/features/content/templates/api';
-import { assetIdsOf } from '@/features/content/editor/canvas/nodes';
-import { PageThumb } from '@/features/content/editor/panels/PageThumb';
-import { useImageLookup } from '@/features/content/templates/useImageLookup';
+import { TemplateThumb } from '@/features/content/templates/TemplateThumb';
+import { templateBlurb } from '@/features/content/templates/summary';
+import { useTemplatePreviews } from '@/features/content/templates/useTemplatePreviews';
 import { targetLabel } from '@/features/content/labels';
 import { translateError } from '@/lib/errors';
 
@@ -32,7 +32,7 @@ const TEMPLATE_ORIGIN: Record<BrandTemplate['source'], { label: string; help: st
     label: 'Importada',
     help: 'Sale de las publicaciones que la marca ya tenía en Instagram.',
   },
-  manual: { label: 'Manual', help: 'La entregó la agencia.' },
+  manual: { label: 'De la agencia', help: 'La preparó la agencia.' },
   editor: { label: 'Del editor', help: 'Se guardó (o se duplicó) desde el editor de piezas.' },
 };
 
@@ -47,11 +47,8 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
   const remove = useDeleteTemplate(brandId);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [deleting, setDeleting] = useState<BrandTemplate | null>(null);
-  const assetIds = useMemo(
-    () => (templates.data ?? []).flatMap((t) => (t.document ? assetIdsOf(t.document) : [])),
-    [templates.data],
-  );
-  const images = useImageLookup(brandId, assetIds);
+  const list = useMemo(() => templates.data ?? [], [templates.data]);
+  const { previewOf, fallbackOf } = useTemplatePreviews(brandId, list);
 
   function submitRename(event: FormEvent) {
     event.preventDefault();
@@ -97,14 +94,12 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
               const editing = renaming?.id === template.id;
               return (
                 <li key={template.id} className="flex flex-wrap items-start gap-3 py-3" data-testid="brand-template">
-                  <span className="w-16 shrink-0" aria-hidden>
-                    {document ? (
-                      <PageThumb canvas={document.canvas} layers={document.pages[0]!.layers} images={images} />
-                    ) : (
-                      <span className="flex aspect-square items-center justify-center rounded-md bg-subtle">
-                        <LayoutTemplate className="h-5 w-5 text-muted" />
-                      </span>
-                    )}
+                  <span className="w-20 shrink-0 self-start" aria-hidden>
+                    <TemplateThumb
+                      canvas={document?.canvas ?? null}
+                      preview={previewOf(template)}
+                      fallback={document ? fallbackOf(template) : null}
+                    />
                   </span>
                   <div className="min-w-0 flex-1 space-y-1">
                     {editing ? (
@@ -151,6 +146,7 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
                         {!document && <Badge tone="warning">No se puede leer</Badge>}
                       </p>
                     )}
+                    {templateBlurb(template) && <p className="text-sm">{templateBlurb(template)}</p>}
                     <p className="text-xs text-muted">
                       {targetLabel(template.network, template.format)}
                       {document && document.pages.length > 1 ? ` · ${document.pages.length} páginas` : ''} ·{' '}
