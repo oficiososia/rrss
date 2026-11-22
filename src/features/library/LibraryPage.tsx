@@ -260,7 +260,7 @@ export function LibraryPage() {
                   data-testid="library-asset"
                 >
                   <span className="block aspect-square overflow-hidden bg-subtle">
-                    <Thumbnail asset={asset} url={urls.data?.get(asset.storage_path)} />
+                    <Thumbnail asset={asset} url={urls.data?.get(previewPath(asset))} />
                   </span>
                   <span className="block px-3 py-2">
                     <span className="block truncate text-sm font-medium">{asset.file_name}</span>
