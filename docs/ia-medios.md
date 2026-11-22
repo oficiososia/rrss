@@ -14,6 +14,9 @@ tabla `ai_media_models` (migración `20261117110000_ai_media_models.sql`).
 | Funciones `ai-media`, `ai-media-poll` y `ai-media-webhook` (§8) | Sí | Su lógica, en Node con la base de datos real y la imagen simulada | Sin desplegar. La prueba de extremo a extremo `10-…` está escrita y sin ejecutar |
 | Seguimiento con pg_cron (§9)              | Sí (migración)          | El disparador, en PGlite (sin pg_cron: no hace nada)        | En staging está programado y los secretos de Vault del cron (`rrss_project_url`, `rrss_service_role_key`) ya existen; en producción, a crear (§9) |
 | Pantalla «Con IA» en el editor (§10)      | Sí                      | Pruebas de componentes                                      | Solo imagen: el vídeo generativo no se expone (nace apagado)                                            |
+| Seguimiento con pg_cron (§9)              | Sí (migración)          | El disparador, en PGlite (sin pg_cron: no hace nada)        | No se ha programado en ningún Supabase; faltan los secretos de Vault en cada entorno                    |
+| Pantalla «Con IA» en el editor (§10)      | Sí                      | Pruebas de componentes                                      | Solo imagen: el vídeo generativo suelto no se expone (nace apagado)                                     |
+| Animar una foto con IA (§15)              | Sí (fal.ai, apagado hasta activarlo) | Con fal.ai simulado y las migraciones reales          | Modelos inactivos y precios sin verificar; nunca contra fal.ai real; sin clave                          |
 
 No se ha elegido proveedor: están preparados todos detrás del mismo contrato
 para decidir después.
@@ -176,7 +179,7 @@ se decide tarea a tarea: `docs/ia-texto.md`).
 | Black Forest Labs | `BFL_API_KEY`, `BFL_API_BASE_URL` (opcional, `https://api.eu.bfl.ai`)                                                                           |
 | Ideogram          | `IDEOGRAM_API_KEY`                                                                                                                              |
 | Higgsfield        | `HIGGSFIELD_API_KEY_ID`, `HIGGSFIELD_API_KEY_SECRET`, `HIGGSFIELD_WEBHOOK_SECRET` (opcional)                                                    |
-| fal.ai            | `FAL_KEY`                                                                                                                                       |
+| fal.ai            | `FAL_KEY` (también en Plataforma → Integraciones; sirve para animar fotos, §15)                                                                  |
 
 **Criterio de datos.** Por defecto solo se eligen solos los modelos que
 procesan en la UE. Los demás siguen disponibles, pero hay que fijarlos a
@@ -248,7 +251,7 @@ migración `20261118120000`):
   usuario ve (se leen con su identidad y viajan como URL firmada de 15 min).
 - Errores: mismos códigos, estados y mensajes que `ai-generate`
   (`quota_exhausted`/`quota_missing` 402, `forbidden` 403, `not_configured` 503…).
-- El vídeo generativo **no** se expone: nace apagado por criterio de datos.
+- El vídeo generativo suelto **no** se expone: nace apagado por criterio de datos. Lo único que se ofrece en vídeo es animar una foto real (§15: `video.options`, `video.estimate`, `video.animate`).
 - El registro de modelos se relee como mucho una vez por minuto: activar un
   modelo no exige redesplegar.
 
@@ -565,3 +568,149 @@ con Workers Paid: **0,011 USD por 1.000 neuronas**.
   de `openai-image.ts` (multipart con `fetch`, base64 en la respuesta). En
   Integraciones valdría reutilizar `R2_ACCOUNT_ID` si es la misma cuenta y un
   secreto nuevo `CLOUDFLARE_AI_API_TOKEN` (Workers AI Read + Edit).
+
+## 15. Animar una foto con IA (fal.ai)
+
+Decisión del dueño (22/11/2026): ofrecer también vídeo con IA a partir de una
+foto real, para usar el clip en los reels. Es una operación nueva del registro
+(`operation = 'animate_photo'`, migración `20261217010000`), separada de
+«generar vídeo»: un modelo de animar nunca se elige para generar y al revés.
+
+| Pieza | Implementado | Probado | Pendiente o bloqueado |
+|---|---|---|---|
+| Operación `animate_photo` y dos modelos de fal.ai sembrados | Sí | RLS, restricciones y vuelta atrás, contra las migraciones reales | **Inactivos y con el precio sin verificar**: los activa un superadministrador |
+| Acciones `video.options`, `video.estimate`, `video.animate` de `ai-media` | Sí | Con la base de datos real y fal.ai simulado (cola, estado, resultado, descarga) | Sin desplegar; **nunca contra fal.ai real** (no hay clave) |
+| Guarda de procedencia `ai_animation` y marca de contenido generado con IA | Sí | Sí | — |
+| `FAL_KEY` en Plataforma → Integraciones y «Probar conexión» | Sí | Con servicios simulados | Sin clave real |
+| «Animar con IA…» en la ficha de una foto | Sí (tras `VITE_AI_ANIMATE_ENABLED=true`) | Pruebas de componentes | Sin ver en un navegador contra un servidor real |
+| Script de prueba a ciegas (`scripts/animacion-a-ciegas.ts`) | Sí | Con fal.ai simulado | **No se ha ejecutado con `--apply`** |
+
+### Modelos e identificadores (fal.ai, consultados el 22/11/2026)
+
+Fuente: las fichas oficiales `https://fal.ai/models/<id>/llms.txt` y
+`https://fal.ai/docs/platform-apis/v1/models/pricing`. Las páginas llevan
+(o pueden llevar) textos dirigidos a asistentes: no se siguió ninguno.
+
+| | Principal | Respaldo |
+|---|---|---|
+| Id del endpoint | `minimax/h3/image-to-video` | `fal-ai/kling-video/v3/standard/image-to-video` |
+| Campo de la foto | `image_url` | `start_image_url` |
+| Texto | `prompt` (**obligatorio**) | `prompt` (opcional) |
+| Duración | entero `duration`, 5 a 15 s (aquí 5 a 10) | texto `duration`, `"3"` a `"15"` (aquí 3 a 10) |
+| Resolución | `resolution`: `480P`, `768P`, `2K` (**por defecto**), `4K`; se fija `768P` | — |
+| Proporción | **no hay parámetro**: sigue la foto | **no hay parámetro**: sigue la foto |
+| Audio | — | `generate_audio` (por defecto `true`); se manda `false` |
+| Salida | `video.url` | `video.url` (+ `content_type`) |
+| Precio de la ficha | 0,06 USD/s a 768P (480P 0,05; 2K 0,13; 4K 0,16) | 0,084 USD/s sin audio (0,126 con audio; 0,154 con voz) |
+| Clip de 5 s | 0,30 USD | 0,42 USD |
+
+**Sin confirmar:**
+
+- **Los precios no están verificados.** La página general de precios de fal.ai
+  (leída el mismo día) dio cifras distintas: 0,05 USD/s para un modelo H3 que
+  parece otro (`minimax/h3-max/image-to-video`) y 0,14 USD/s para Kling v3
+  Standard. Pueden ser otra variante (con audio) o precios con descuento; hasta
+  que alguien lo contraste en su cuenta de fal.ai, `price_verified = false` y los
+  modelos no se pueden activar. «Probar conexión» enseña el precio que da la
+  API de fal.ai a la clave configurada (`GET /v1/models/pricing`): sirve para
+  contrastar.
+- Región de tratamiento y si fal.ai o los autores del modelo entrenan con lo
+  enviado: la ficha y la FAQ no lo dicen (`data_region = unknown`,
+  `trains_on_inputs = unknown`).
+- Cuánto tarda de verdad un clip, qué rechaza el filtro de seguridad y si
+  `enable_safety_checker` se acepta con ese nombre en los dos modelos (la ficha
+  de Kling lo lista; la de H3, también). **Nada de esto se ha visto en una
+  llamada real.**
+
+### Qué hace el servidor
+
+- `video.options` `{}` → `{ animate: { available, reason, remainingMicros,
+  maxSeconds, defaultSeconds, models[] } }`. **`available` solo es verdadero si**
+  hay un modelo activo con su adaptador cargado (clave `FAL_KEY`) y permitido por
+  el criterio de datos, y la persona tiene permiso de edición, el plan incluye
+  `ai_video` y queda cupo (`public.ai_media_allowance`, solo con la clave de
+  servicio). Si no, `reason` dice por qué (`not_configured`, `plan`,
+  `no_quota`, `quota_exhausted`, `no_permission`) y la interfaz no ofrece nada.
+- `video.estimate` `{ assetId, seconds?, model? }` → coste máximo (segundos ×
+  precio del registro), proporción y si la foto ya tiene una de las tres formas.
+  **No reserva nada ni llama a fal.ai.**
+- `video.animate` `{ assetId, motion, seconds?, model? }`: reserva el cupo de
+  esa cota (`ai_reserve_generation`, tarea `video`), firma la foto (15 min), la
+  manda a la cola de fal.ai y devuelve 202. Siempre asíncrono: lo cierra
+  `ai-media-poll` (o el webhook de fal.ai, si hay `AI_MEDIA_WEBHOOK_BASE_URL`).
+  Si falla, la reserva se devuelve entera; al terminar se liquida por los
+  segundos (el precio es por segundo, así que coincide con lo reservado).
+- **Duración:** 5 s por defecto, **máximo 10 s** (constante `ANIMATE_MAX_SECONDS`
+  y `max_seconds` de cada modelo; el principal exige al menos 5 s).
+- **Proporción:** los dos modelos no tienen parámetro de proporción, así que el
+  vídeo sale con la forma de la foto. El servidor calcula la más cercana entre
+  9:16, 4:5 y 1:1 (para la procedencia) y dice si la foto ya la tiene (`exactAspect`);
+  si no, la interfaz avisa de que conviene recortar antes la foto (Editar foto).
+- **El plato no se toca:** al texto de la persona se le añade siempre una frase
+  fija (no cambiar comida, vajilla ni texto; solo movimiento suave). Aun así la
+  IA puede alterar el plato, y la interfaz lo dice antes de confirmar.
+- **Procedencia** (`media_assets.provenance`, solo la escribe el servidor y la foto
+  de origen tiene que ser de la misma marca): `{ type: 'ai_animation',
+  ai_generated: true, animated_from, generation_id, provider, model, prompt,
+  seconds, aspect_ratio, data_region, trains_on_inputs, untested_adapter }`. El
+  vídeo (MP4) queda en la carpeta **«Vídeos con IA»** con las etiquetas `ia` y
+  `animada`, `duration_ms` y el nombre «Animada · <foto>.mp4». La base de datos
+  lo cuenta como contenido generado con IA (`media_assets_ai_generated`), igual
+  que a un reel hecho con él, y la ficha enseña «Generado con IA». El editor de
+  reels ya lista los vídeos de la biblioteca (no se ha tocado `src/features/reels`).
+  Hueco conocido, anterior a esto: las fotos editadas con IA (`ai_edit`) no
+  cuentan en esa marca.
+- **En cola / generando:** `ai-media-poll` guarda en el trabajo (`last_error`) lo
+  que dice fal.ai (`IN_QUEUE` o `IN_PROGRESS`) y la interfaz lo enseña.
+
+### Datos, UE y modo agencia
+
+- **fal.ai no garantiza la UE** y, con estos modelos, la foto pasa a un tercero
+  (MiniMax o Kuaishou). Los dos modelos están como región `unknown` (= fuera de
+  la UE): **solo se ofrecen si se admite el tratamiento fuera de la UE** con el
+  interruptor que ya existe (`AI_MEDIA_ALLOW_NON_EU` = «Admitir modelos que no
+  procesan en la UE» en Plataforma → Integraciones → IA de imagen). No se puede
+  saltar fijando un modelo a mano. Se avisa en tres sitios: la descripción del
+  apartado «fal.ai» de Integraciones, el diálogo de animar («no garantizan tratar
+  los datos en la UE; no uses fotos con personas reconocibles») y el campo
+  `data_region` de la procedencia.
+- **Modo agencia (`brands.ai_mode = 'agency'`):** la misma regla que la imagen y la
+  edición de fotos (`public.ai_brand_access`): quien no es personal de la agencia
+  o de la plataforma recibe 409 `agency_mode` en `video.estimate` y `video.animate`
+  antes de tocar el cupo, y `video.options` sale con `available: false`,
+  `reason: 'agency_mode'` y `agencyMode: true` (la interfaz no ofrece «Animar con
+  IA…»). El personal sí puede, con su cupo y su permiso de siempre (casos en
+  `tests/db/ia-animar-foto.test.ts`).
+- Solo se animan fotos guardadas en nuestro almacenamiento (no Google Drive), con
+  medidas y en JPEG, PNG o WebP, que la persona ve con su identidad (RLS).
+
+### Para activarlo (lo que hace quien administra la plataforma)
+
+1. Aplicar la migración `20261217010000_animar_foto_ia.sql` (vuelta atrás en
+   `supabase/rollbacks/`) y redesplegar `ai-media`, `ai-media-poll` y
+   `ai-media-webhook` (comparten `_shared/ai/media`).
+2. En Plataforma → Integraciones → «IA de imagen»: pegar la clave de fal.ai
+   (`FAL_KEY`, se guarda cifrada), poner «Admitir modelos que no procesan en la
+   UE» en «Sí» y pulsar «Probar conexión» (consulta precios, no genera).
+3. Contrastar los dos precios con el panel de fal.ai y, como superadministrador:
+   `update public.ai_media_models set price_verified = true, active = true
+   where operation = 'animate_photo' and model = '<id>'` (ajustando
+   `price_micros` si no coincide). El de prioridad más alta es el principal; el
+   otro es el respaldo (y una opción más en el selector).
+4. Construir la aplicación con `VITE_AI_ANIMATE_ENABLED=true`.
+5. Dar `ai_video` al plan de quien lo vaya a usar (por defecto solo lo tienen
+   Enterprise y Heredado) y comprobar su cupo mensual de IA.
+6. Antes de abrirlo a clientes: la prueba a ciegas de abajo y una animación real
+   con una foto propia.
+
+### Prueba a ciegas fuera del producto
+
+`scripts/animacion-a-ciegas.ts` anima el mismo movimiento de 5 fotos de la
+biblioteca con los dos modelos y deja `hoja.html` para votar A o B sin saber qué
+modelo es cuál (la clave va aparte, en `clave-NO-ABRIR.json`; se desvela con
+`--resumen <carpeta> votos.json`). **En seco por defecto**: lee la base de datos
+y enseña el coste máximo (5 fotos × 5 s con los dos modelos: unos 3,60 USD con
+los precios sembrados) sin llamar a fal.ai ni crear archivos. Con `--apply`
+gasta: pide confirmación, respeta `--max-coste` (5 USD) y necesita `FAL_KEY`.
+Ver la cabecera del archivo para las opciones. Úsese contra staging y con fotos
+sin personas. **No se ha ejecutado con `--apply`.**

@@ -1,14 +1,16 @@
-import { ExternalLink, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Clapperboard, ExternalLink, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Badge, Button, ConfirmDialog, Dialog, Field, Input, Select, Textarea } from '@/components/ui';
-import { mediaWorkerEnabled } from '@/config/app';
+import { aiAnimateEnabled, mediaWorkerEnabled } from '@/config/app';
 import { StringListInput } from '@/features/brand/editor/inputs';
-import { canEditPhoto } from '@/features/photo-edit/api';
+import { canEditPhoto, canEditWithAi } from '@/features/photo-edit/api';
 import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
 import type { AssetKind, MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatBytes, formatDateTime } from '@/lib/utils';
+import { AnimateDialog } from './AnimateDialog';
+import { useAnimateOptions } from './animateApi';
 import { useAssetMutations } from './api';
 import { CropPanel } from './CropPanel';
 import { canCrop } from './crops';
@@ -37,6 +39,12 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
   const [rights, setRights] = useState<AssetRights>(() => parseRights(asset.rights));
   const [confirming, setConfirming] = useState(false);
   const [editingPhoto, setEditingPhoto] = useState(false);
+  const [animating, setAnimating] = useState(false);
+  // «Animar con IA…» solo sale si el servidor tiene proveedor, modelo activo, plan y cupo para esta persona.
+  const animatable = canEdit && Boolean(url) && aiAnimateEnabled() && canEditWithAi(asset);
+  const animateOptions = useAnimateOptions(asset.brand_id, animatable);
+  const canAnimate = animatable && animateOptions.data?.available === true;
+  const aiVideo = (asset.provenance as { type?: unknown } | null)?.type === 'ai_animation';
 
   const setRight = (key: keyof AssetRights, value: string) => setRights((current) => ({ ...current, [key]: value }));
   const details = [
@@ -130,6 +138,19 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
             <Button variant="secondary" onClick={() => setEditingPhoto(true)} data-testid="asset-edit-photo">
               <SlidersHorizontal className="h-4 w-4" aria-hidden />
               Editar foto
+            </Button>
+          )}
+
+          {aiVideo && (
+            <p className="flex items-center gap-2 text-sm" data-testid="asset-ai-video">
+              <Badge tone="warning">Generado con IA</Badge>
+              <span className="text-muted">Vídeo animado con IA a partir de una foto. No lo presentes como una grabación real.</span>
+            </p>
+          )}
+          {canAnimate && (
+            <Button variant="secondary" onClick={() => setAnimating(true)} data-testid="asset-animate">
+              <Clapperboard className="h-4 w-4" aria-hidden />
+              Animar con IA…
             </Button>
           )}
 
@@ -241,6 +262,22 @@ export function AssetDialog({ asset, url, canEdit, onClose, onOpenAsset }: Asset
           </fieldset>
         </div>
       </Dialog>
+
+      {canAnimate && (
+        <AnimateDialog
+          asset={asset}
+          open={animating}
+          onOpenChange={setAnimating}
+          onOpenAsset={
+            onOpenAsset
+              ? (id) => {
+                  setAnimating(false);
+                  onOpenAsset(id);
+                }
+              : undefined
+          }
+        />
+      )}
 
       {editingPhoto && url && (
         <PhotoEditScreen

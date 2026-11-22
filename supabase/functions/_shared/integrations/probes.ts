@@ -395,6 +395,21 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
 
 // ─────────────────────────────── IA de imagen ───────────────────────────────
 
+/** Endpoints de fal.ai para animar fotos (los sembrados en `ai_media_models`). */
+const FAL_ANIMATE_ENDPOINTS = ['minimax/h3/image-to-video', 'fal-ai/kling-video/v3/standard/image-to-video'];
+
+/** «modelo: 0,06 USD por video» a partir de la respuesta de /v1/models/pricing. Nunca cita la clave. */
+function falPrices(body: unknown): string {
+  const prices = typeof body === 'object' && body !== null ? (body as { prices?: unknown }).prices : null;
+  if (!Array.isArray(prices) || prices.length === 0) return 'la respuesta no trae precios';
+  return prices
+    .map((p) => {
+      const row = (p ?? {}) as { endpoint_id?: unknown; unit_price?: unknown; unit?: unknown; currency?: unknown };
+      return `${String(row.endpoint_id).slice(0, 60)} ${Number(row.unit_price)} ${String(row.currency).slice(0, 3)} por ${String(row.unit).slice(0, 20)}`;
+    })
+    .join('; ');
+}
+
 async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   const checks: ProbeCheck[] = [];
   const vertexJson = value(env, MEDIA_ENV.vertexServiceAccount);
@@ -436,6 +451,26 @@ async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       message:
         'Ideogram no documenta ninguna llamada gratuita para comprobar la clave: se comprobará con la primera imagen.',
     });
+  }
+  const falKey = value(env, MEDIA_ENV.falKey);
+  if (falKey) {
+    // GET /v1/models/pricing (documentado en fal.ai/docs/platform-apis): exige la clave y devuelve el
+    // precio por unidad. No genera nada. La documentación no dice que se cobre la consulta.
+    const ids = FAL_ANIMATE_ENDPOINTS.join(',');
+    const r = await call(deps, `https://api.fal.ai/v1/models/pricing?endpoint_id=${encodeURIComponent(ids)}`, {
+      headers: { Authorization: `Key ${falKey}`, Accept: 'application/json' },
+    });
+    if ('error' in r) {
+      checks.push({ name: 'fal.ai', ok: false, message: unreachable('fal.ai', r) });
+    } else if (r.status === 200) {
+      checks.push({
+        name: 'fal.ai',
+        ok: true,
+        message: `fal.ai acepta la clave. Precio que da hoy: ${falPrices(r.body)}. Contrástalo con el del registro de modelos antes de activarlos.`,
+      });
+    } else {
+      checks.push({ name: 'fal.ai', ok: false, message: rejected('fal.ai', r.status) });
+    }
   }
   return summarize(checks, 'No hay ningún proveedor de imagen configurado (ComfyUI se prueba en su propio apartado).');
 }

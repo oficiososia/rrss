@@ -8,7 +8,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { MediaInput } from '../_shared/ai/media/contract.ts';
 import { signStoredPath } from '../_shared/storage/resolve.ts';
 import { createAiMediaHandler } from './handler.ts';
-import { admin, checkConfiguration, clientOptions, env, loadRuntime, mediaStores, supabaseUrl } from './setup.ts';
+import { admin, checkConfiguration, clientOptions, env, loadRuntime, mediaStores, rpc, supabaseUrl } from './setup.ts';
 
 checkConfiguration('ai-media');
 
@@ -103,6 +103,18 @@ const handler = createAiMediaHandler({
     return {
       input: { mimeType: data.mime_type, width: data.width, height: data.height, ...(url ? { url } : {}) },
       fileName: data.file_name,
+    };
+  },
+
+  // Permiso, plan y cupo, sin reservar nada (la reserva real la hace `video.animate`).
+  async allowance(userId, brandId, task) {
+    const { data, error } = await rpc('ai_media_allowance', { p_user_id: userId, p_brand_id: brandId, p_task: task });
+    if (error || !data || typeof data !== 'object') return { allowed: false, reason: 'unavailable', remainingMicros: 0 };
+    const row = data as { allowed?: unknown; reason?: unknown; remaining_micros?: unknown };
+    return {
+      allowed: row.allowed === true,
+      reason: typeof row.reason === 'string' ? row.reason : null,
+      remainingMicros: Number(row.remaining_micros ?? 0) || 0,
     };
   },
 
