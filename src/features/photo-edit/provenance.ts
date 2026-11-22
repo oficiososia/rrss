@@ -23,7 +23,7 @@ export type PhotoEditStep =
       shadow?: boolean;
     }
   | {
-      /** «Modo retrato»: fondo desenfocado tipo lente con el plato nítido (docs/edicion-fotos.md, §12). */
+      /** «Modo retrato»: fondo desenfocado tipo lente con el plato nítido (docs/edicion-fotos.md, §13). */
       kind: 'portrait_blur';
       /** Intensidad de 1 a 100. */
       amount: number;
