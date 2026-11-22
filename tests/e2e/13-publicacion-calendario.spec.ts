@@ -190,3 +190,67 @@ test('una pieza programada sin aprobar no se publica aunque llegue su hora', asy
   sinErrores(s);
   await s.context.close();
 });
+
+test('bajar a un plan sin publicación detiene lo programado, con su motivo y el botón; al volver se rearma', async ({
+  browser,
+}) => {
+  const s = await abrir(browser, 'ana');
+  const { page } = s;
+  const titulo = 'Pan de centeno';
+  const id = await piezaConTexto(page, titulo, 'Centeno con semillas, hoy en el obrador.');
+  await exportarJpeg(page);
+  await page.getByTestId('status-approved').click();
+  await aviso(page, 'Aprobada');
+  await programar(page, titulo);
+  await aviso(page, 'Programada');
+  const chip = page.getByTestId('calendar-entry').filter({ hasText: titulo });
+  await expect(chip).toHaveAttribute('data-state', 'scheduled');
+
+  // La organización baja a un plan sin publicación (lo hace la base de datos, como Stripe o la plataforma).
+  const [antes] = await sql<{ plan_id: string | null }>(
+    `select plan_id from public.subscriptions where organization_id = $1`,
+    [dato('orgA')],
+  );
+  await sql(
+    `update public.subscriptions set plan_id = (select id from public.plans where code = 'basic')
+     where organization_id = $1`,
+    [dato('orgA')],
+  );
+  try {
+    const [fila] = await sql<{ status: string; hold_reason: string }>(
+      `select status::text, hold_reason from public.scheduled_publications where content_id = $1`,
+      [id],
+    );
+    expect(fila).toEqual({ status: 'planned', hold_reason: 'plan_no_publishing' });
+
+    await page.reload();
+    await expect(chip).toHaveAttribute('data-state', 'held');
+    await expect(chip).toContainText('Detenida');
+    const aviso_ = page.getByTestId('calendar-held-plan_no_publishing');
+    await expect(aviso_).toContainText('tu plan no incluye la publicación en redes');
+    await expect(aviso_.getByRole('link', { name: 'Cambiar de plan' })).toHaveAttribute(
+      'href',
+      new RegExp(`/o/${dato('orgA')}/ajustes/plan$`),
+    );
+
+    // Aunque llegue su hora, el reloj no la publica.
+    await sql(`update public.scheduled_publications set scheduled_at = now() - interval '1 second' where content_id = $1`, [
+      id,
+    ]);
+    await pasaElReloj();
+    const [despues] = await sql<{ status: string }>(
+      `select status::text from public.scheduled_publications where content_id = $1`,
+      [id],
+    );
+    expect(despues!.status).toBe('planned');
+  } finally {
+    await sql(`update public.subscriptions set plan_id = $2 where organization_id = $1`, [dato('orgA'), antes!.plan_id]);
+  }
+  const [rearmada] = await sql<{ status: string }>(
+    `select status::text from public.scheduled_publications where content_id = $1`,
+    [id],
+  );
+  expect(rearmada!.status).toBe('scheduled');
+  sinErrores(s);
+  await s.context.close();
+});

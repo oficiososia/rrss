@@ -8,6 +8,7 @@ import {
   shiftAnchor,
   startOfWeek,
   toLocalInput,
+  accountAttention,
   tokenExpiresSoon,
   viewRange,
 } from './calendar';
@@ -72,5 +73,35 @@ describe('estado que se enseña', () => {
     expect(tokenExpiresSoon(null, now)).toBe(false);
     expect(tokenExpiresSoon('2026-11-22T10:00:00Z', now)).toBe(true);
     expect(tokenExpiresSoon('2027-01-22T10:00:00Z', now)).toBe(false);
+  });
+});
+
+describe('accountAttention: cuándo avisar de que el acceso caduca', () => {
+  const now = Date.parse('2026-11-22T10:00:00Z');
+  const day = 86_400_000;
+  const base = { status: 'active' as const, connection_method: 'oauth' as const, renewal_error: null };
+  const at = (days: number) => new Date(now + days * day).toISOString();
+
+  it('con la renovación automática en marcha no avisa hasta que quedan 7 días', () => {
+    expect(accountAttention({ ...base, token_expires_at: null }, now)).toBeNull();
+    expect(accountAttention({ ...base, token_expires_at: at(30) }, now)).toBeNull();
+    expect(accountAttention({ ...base, token_expires_at: at(10) }, now)).toBeNull();
+    expect(accountAttention({ ...base, token_expires_at: at(7) }, now)?.tone).toBe('warning');
+    expect(accountAttention({ ...base, token_expires_at: at(1) }, now)?.text).toMatch(/queda 1 día/);
+  });
+
+  it('si el último intento de renovar falló, avisa desde los 14 días', () => {
+    expect(accountAttention({ ...base, token_expires_at: at(20), renewal_error: 'no' }, now)).toBeNull();
+    expect(accountAttention({ ...base, token_expires_at: at(14), renewal_error: 'no' }, now)?.text).toMatch(
+      /no se ha podido renovar solo/,
+    );
+  });
+
+  it('la conexión avanzada avisa a 14 días; caducada o retirada, es una alerta', () => {
+    expect(accountAttention({ ...base, connection_method: 'token', token_expires_at: at(14) }, now)).not.toBeNull();
+    expect(accountAttention({ ...base, connection_method: 'token', token_expires_at: at(15) }, now)).toBeNull();
+    expect(accountAttention({ ...base, token_expires_at: at(-1) }, now)?.tone).toBe('danger');
+    expect(accountAttention({ ...base, status: 'needs_reauth', token_expires_at: at(40) }, now)?.tone).toBe('danger');
+    expect(accountAttention({ ...base, status: 'disconnected', token_expires_at: at(1) }, now)).toBeNull();
   });
 });

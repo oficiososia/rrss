@@ -16,6 +16,8 @@ export type HoldFix =
   | 'export'
   /** Abrir la pieza en el editor (aprobarla, recuperarla…). */
   | 'open_editor'
+  /** Ir a Ajustes → Plan de la organización. */
+  | 'change_plan'
   /** No hay nada que pulsar: solo se explica. */
   | 'none';
 
@@ -68,6 +70,8 @@ export function holdAdvice(reason: PublicationHoldReason, account: Account | nul
       return { short: 'Falta aprobar la pieza', fix: 'open_editor', label: 'Abrir la pieza' };
     case 'content_archived':
       return { short: 'La pieza está archivada', fix: 'open_editor', label: 'Abrir la pieza' };
+    case 'plan_no_publishing':
+      return { short: 'Tu plan no incluye la publicación en redes', fix: 'change_plan', label: 'Cambiar de plan' };
     case 'unsupported_format':
       return { short: 'Este formato todavía no se publica solo', fix: 'none', label: '' };
   }

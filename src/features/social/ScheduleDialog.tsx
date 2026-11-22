@@ -23,6 +23,8 @@ import {
   PUBLISHABLE_TARGETS,
   toLocalInput,
 } from './calendar';
+import { useBrandZone } from './useBrandZone';
+import { differsFromDevice, zoneLabel } from './zone';
 import { PublishNowDialog } from './PublishNowDialog';
 
 interface ScheduleDialogProps {
@@ -45,9 +47,13 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
   const accounts = useSocialAccounts(brandId);
   const media = usePublishableMedia(brandId, open);
   const save = useSavePublication(brandId);
+  const zone = useBrandZone();
 
   const [contentId, setContentId] = useState(initialContentId ?? '');
-  const [when, setWhen] = useState(() => toLocalInput(defaultScheduleDate(initialDate)));
+  const [when, setWhen] = useState(() =>
+    // `initialDate` viene del calendario como fecha de pared de la marca; sin ella, dentro de una hora.
+    initialDate ? toLocalInput(defaultScheduleDate(initialDate)) : toLocalInput(defaultScheduleDate(null), zone),
+  );
   // null = la primera cuenta conectada de la red de la pieza.
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
   // null = lo automático: en un carrusel, la exportación de cada página de la versión, en su orden.
@@ -114,7 +120,7 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
   const submit = () => {
     if (mode === 'now') return publishNow();
     setError(null);
-    const scheduledAt = fromLocalInput(when);
+    const scheduledAt = fromLocalInput(when, zone);
     if (!content) return setError('Elige qué contenido se publica.');
     if (!scheduledAt) return setError('Indica el día y la hora.');
     if (isPast(scheduledAt)) return setError('La fecha ya ha pasado.');
@@ -215,7 +221,7 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
           </fieldset>
 
           {mode === 'later' ? (
-            <Field label="Día y hora" hint="En la hora de este dispositivo.">
+            <Field label="Día y hora" hint={`En la ${zoneLabel(zone)}, la de la marca${differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}.`}>
               {(props) => (
                 <Input
                   {...props}

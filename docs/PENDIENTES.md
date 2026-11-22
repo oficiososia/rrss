@@ -4,7 +4,7 @@ Lista única de lo que falta para pasar de «probado en local y en staging con
 proveedores simulados» a «clientes de pago usándolo». Para saber qué hay hecho y
 cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 
-Última revisión: 22/11/2026 (rama `f27/calidad`).
+Última revisión: 22/11/2026 (rama `f30/instagram-pendientes`).
 
 - **Quién:** `Dueño` = necesita una cuenta, una decisión, dinero o una firma suya;
   `Desarrollo` = trabajo de código o de despliegue que se puede hacer sin él (o
@@ -24,10 +24,8 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P0 | Fijar `SOCIAL_APP_URL` en las funciones de staging (el botón «Conectar con Meta» no sale sin él) y meter App ID, App Secret y la clave de cifrado en Integraciones | Ambos | Configuración, no código (`docs/ESTADO.md`, «Acciones claras») |
 | P0 | Publicar una pieza real (imagen, carrusel y reel) en una cuenta de pruebas y comprobar el enlace, el calendario y la métrica | Desarrollo | Hoy solo probado contra la Graph API simulada (e2e 13, 23 y 27) |
 | P1 | Importar publicaciones y capturar métricas contra Meta real (límites de la API, paginación, tokens que caducan a los 60 días) | Desarrollo | Escrito y probado con simulador; sin Meta real |
-| P1 | Renovar el token sin volver a conectar; avisar antes de que caduque | Desarrollo | Hoy renovar = volver a conectar |
+| P1 | Probar contra Meta real la renovación automática del acceso (¿amplía `fb_exchange_token` la caducidad de un token largo vigente?) y el `cover_url` de la portada de un reel | Ambos | **Bloqueado** por la aplicación de Meta. Escrito y probado con la Graph API simulada; si Meta no amplía la caducidad, la renovación no se da por buena y el aviso pide volver a conectar con 14 días de margen (`docs/publicacion.md`) |
 | P2 | Historias de Instagram, Facebook y otras redes | Desarrollo | No implementado; decidir si entra en el primer lanzamiento |
-| P2 | Hora del calendario según la zona de la marca (hoy, la del dispositivo) | Desarrollo | |
-| P2 | Bajar a un plan sin publicación no detiene lo ya programado | Desarrollo | Conocido |
 
 ## 2. Editor de piezas
 
@@ -50,7 +48,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P0 | Redesplegar `media-storage` (arreglo de `sign` con muchas rutas), desplegar `ai-transcribe` y `worker-gateway`, aplicar `20261207010000` y `20261208010000` si faltan en staging | Desarrollo | Con el «sí» del dueño |
 | P1 | Subtítulos automáticos contra OpenAI real (clave de Integraciones con residencia UE) y precio real por minuto | Ambos | Hoy transcripción simulada |
 | P1 | Música: decidir si se ofrece una biblioteca con licencia (hoy la marca confirma que tiene la licencia) | Dueño | |
-| P2 | Cortes al compás de la música, portada del reel, animaciones de texto (cambian el plan: fase aparte), tipografías .woff | Desarrollo | |
+| P2 | Tipografías .woff para los textos del reel | Desarrollo | Cortes al compás, animaciones de texto y portada ya están (`docs/editor-reels.md` §8); la portada también se manda a Instagram al publicar |
 | P2 | Pantalla de «Recortes» de vídeo en la aplicación | Desarrollo | La base de datos ya acepta el encargo |
 
 ## 4. IA (texto, imagen y edición de fotos)

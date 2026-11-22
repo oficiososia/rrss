@@ -6,6 +6,7 @@ import { useAssetCount } from '@/features/library/api';
 import { useAuditLogs } from '@/features/orgs/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { BRAND_ROLE_LABEL } from '@/features/permissions/roles';
+import { AccountAttentionNotice } from '@/features/social/AccountAttentionNotice';
 import { useActiveProfile, useSources } from './api';
 import { profileCompleteness } from './completeness';
 import { parseProfile } from './profile';
@@ -64,6 +65,10 @@ export function BrandHomePage() {
           )
         }
       />
+
+      <div className="mb-6 empty:hidden">
+        <AccountAttentionNotice />
+      </div>
 
       {brand.status === 'archived' && (
         <div className="mb-6">

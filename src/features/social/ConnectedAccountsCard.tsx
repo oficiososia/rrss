@@ -25,12 +25,13 @@ import { useBrand } from '@/features/orgs/context';
 import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
-import { formatDate } from '@/lib/utils';
 import { startSocialConnect, useConnectWithToken, useDisconnectAccount, useSocialAccounts } from './api';
-import { quotaWarning, tokenExpiresSoon } from './calendar';
+import { accountAttention, quotaWarning } from './calendar';
 import { CONNECT_RESULT } from './connectResult';
 import { ImportPostsPanel } from './ImportPostsPanel';
 import { CONNECTED_ACCOUNTS_ANCHOR } from './links';
+import { useBrandZone } from './useBrandZone';
+import { formatDateIn } from './zone';
 
 /**
  * Ajustes de la marca · Cuentas conectadas. Solo aparece si el entorno tiene la
@@ -206,7 +207,10 @@ function AccountRow({
   canManage: boolean;
   onDisconnect: () => void;
 }) {
+  const zone = useBrandZone();
+  const formatDate = (iso: string) => formatDateIn(iso, zone);
   const quota = quotaWarning(account.quota_usage, account.quota_total);
+  const attention = accountAttention(account, undefined, formatDate);
   return (
     <div className="rounded-lg border border-border p-3" data-testid="social-account">
       <div className="flex flex-wrap items-center gap-3">
@@ -219,6 +223,12 @@ function AccountRow({
               (account.token_expires_at
                 ? ` · conexión avanzada, caduca el ${formatDate(account.token_expires_at)}`
                 : ' · conexión avanzada, sin fecha de caducidad')}
+            {account.connection_method !== 'token' && account.token_expires_at && account.status === 'active' && (
+              <span data-testid="social-account-expiry">
+                {` · acceso hasta el ${formatDate(account.token_expires_at)}`}
+                {account.token_renewed_at ? ` (renovado solo el ${formatDate(account.token_renewed_at)})` : ''}
+              </span>
+            )}
           </span>
         </span>
         {account.connection_method === 'token' && (
@@ -238,20 +248,13 @@ function AccountRow({
           </Button>
         )}
       </div>
-      {(account.status === 'needs_reauth' || tokenExpiresSoon(account.token_expires_at) || quota) && (
+      {(attention || quota) && (
         <ul className="mt-2 space-y-1 text-xs text-warning">
-          {account.status === 'needs_reauth' && (
+          {attention && (
             <Warning>
-              El acceso ha caducado o se ha retirado{account.last_error ? `: ${account.last_error}` : ''}. Lo programado
-              está detenido.
-            </Warning>
-          )}
-          {account.status === 'active' && tokenExpiresSoon(account.token_expires_at) && (
-            <Warning>
-              El acceso caduca el {formatDate(account.token_expires_at!)}:{' '}
-              {account.connection_method === 'token'
-                ? 'renueva la conexión avanzada antes de esa fecha.'
-                : 'vuelve a conectar la cuenta antes para renovarlo.'}
+              <span data-testid="social-account-attention">{attention.text}</span>
+              {account.status === 'needs_reauth' && account.last_error ? ` (${account.last_error})` : ''}
+              {account.status === 'active' && account.renewal_error ? ` Motivo: ${account.renewal_error}` : ''}
             </Warning>
           )}
           {quota && (

@@ -49,6 +49,30 @@ export function useSocialAccounts(brandId: string, enabled = true) {
   });
 }
 
+/**
+ * Cuentas de Instagram de TODAS las marcas de la organización que piden atención (acceso caducado, que
+ * caduca pronto o que no se pudo renovar). Para el listado de marcas, que es lo primero que ve la agencia.
+ */
+export type AccountHealthRow = Pick<
+  SocialAccountRow,
+  'brand_id' | 'status' | 'token_expires_at' | 'connection_method' | 'renewal_error'
+>;
+
+export function useOrgAccountHealth(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['org', orgId, 'social', 'account-health'] as const,
+    enabled,
+    queryFn: async (): Promise<AccountHealthRow[]> =>
+      unwrap(
+        await supabase
+          .from('social_accounts')
+          .select('brand_id, status, token_expires_at, connection_method, renewal_error')
+          .eq('organization_id', orgId)
+          .neq('status', 'disconnected'),
+      ) as AccountHealthRow[],
+  });
+}
+
 /** Empieza la conexión: devuelve la dirección del diálogo de Meta. */
 export async function startSocialConnect(brandId: string, network: 'instagram'): Promise<string> {
   const { data, error } = await supabase.functions.invoke('social-connect/start', { body: { brandId, network } });

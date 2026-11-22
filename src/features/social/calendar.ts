@@ -1,6 +1,12 @@
-import type { ContentStatus, PublicationHoldReason, ScheduledPublicationRow } from '@/lib/database.types';
+import type {
+  ContentStatus,
+  PublicationHoldReason,
+  ScheduledPublicationRow,
+  SocialAccountRow,
+} from '@/lib/database.types';
+import { formatTimeIn, fromZoned, toZoned } from './zone';
 
-// Fechas del calendario (en la hora del navegador) y el estado que se enseña de
+// Fechas del calendario (en la hora de la marca: ver zone.ts; sin zona, la del navegador) y el estado que se enseña de
 // cada publicación. Sin dependencias: se prueba aparte.
 
 export type CalendarView = 'month' | 'week' | 'day' | 'network';
@@ -75,22 +81,26 @@ export function moveToHour(original: Date, day: Date, hour: number): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, original.getMinutes());
 }
 
-/** Valor para <input type="datetime-local"> en hora local. */
-export function toLocalInput(iso: string | Date): string {
-  const d = typeof iso === 'string' ? new Date(iso) : iso;
+/** Valor para <input type="datetime-local"> en la hora de la zona (sin zona, la del dispositivo). */
+export function toLocalInput(iso: string | Date, zone?: string): string {
+  const instant = typeof iso === 'string' ? new Date(iso) : iso;
+  const d = zone ? toZoned(instant, zone) : instant;
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** De <input type="datetime-local"> (hora local) a ISO; null si no es una fecha. */
-export function fromLocalInput(value: string): string | null {
+/** De <input type="datetime-local"> (hora de la zona) a ISO; null si no es una fecha. */
+export function fromLocalInput(value: string, zone?: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  if (Number.isNaN(d.getTime())) return null;
+  return (zone ? fromZoned(d, zone) : d).toISOString();
 }
 
-export function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+export function formatTime(iso: string, zone?: string): string {
+  return zone
+    ? formatTimeIn(iso, zone)
+    : new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
 
 export function rangeTitle(view: CalendarView, anchor: Date): string {
@@ -183,6 +193,8 @@ export const HOLD_REASON_TEXT: Record<PublicationHoldReason, string> = {
   invalid_media:
     'Los recursos no valen: hacen falta exportaciones JPEG de la versión aprobada (1 en una publicación, de 2 a 10 en un carrusel) o un vídeo en un reel.',
   unsupported_format: 'Este formato todavía no se publica automáticamente.',
+  plan_no_publishing:
+    'El plan de la organización ya no incluye la publicación en redes: lo programado está detenido. Al volver a un plan con publicación se programa solo otra vez.',
 };
 
 /** ¿Se puede mover, cambiar o cancelar? */
@@ -201,6 +213,65 @@ export function quotaWarning(usage: number | null, total: number | null): 'near'
 export function tokenExpiresSoon(expiresAt: string | null, now = Date.now()): boolean {
   if (!expiresAt) return false;
   return Date.parse(expiresAt) - now < 7 * 86_400_000;
+}
+
+/** Días que faltan para que el acceso de una cuenta caduque (redondeado hacia arriba; puede ser ≤ 0). */
+export function daysUntil(iso: string, now = Date.now()): number {
+  return Math.ceil((Date.parse(iso) - now) / 86_400_000);
+}
+
+/** Con cuántos días de antelación se avisa si el acceso no se renueva solo. */
+export const RENEWAL_WARNING_DAYS = 14;
+
+export interface AccountAttention {
+  tone: 'warning' | 'danger';
+  /** Una frase para la marca y la agencia, sin jerga. */
+  text: string;
+}
+
+/**
+ * ¿Hay que hacer algo con el acceso de esta cuenta? Null si no.
+ *  · «Hay que volver a conectarla»: el acceso ya no vale y lo programado está detenido.
+ *  · Conectada por OAuth: el servidor renueva el acceso solo antes de que caduque. Solo se
+ *    avisa si lo intentó y no pudo (con 14 días o menos de margen) o si quedan 7 días o menos.
+ *  · Conectada con un token pegado: no se renueva sola; se avisa con 14 días.
+ */
+export function accountAttention(
+  account: Pick<SocialAccountRow, 'status' | 'token_expires_at' | 'connection_method' | 'renewal_error'>,
+  now = Date.now(),
+  formatDay: (iso: string) => string = (iso) => new Date(iso).toLocaleDateString('es-ES'),
+): AccountAttention | null {
+  if (account.status === 'needs_reauth') {
+    return {
+      tone: 'danger',
+      text: 'El acceso a Instagram ha caducado o se ha retirado: lo programado está detenido hasta volver a conectar la cuenta.',
+    };
+  }
+  if (account.status !== 'active' || !account.token_expires_at) return null;
+  const days = daysUntil(account.token_expires_at, now);
+  const when = formatDay(account.token_expires_at);
+  if (days <= 0) {
+    return { tone: 'danger', text: `El acceso a Instagram caducó el ${when}: vuelve a conectar la cuenta.` };
+  }
+  const left = days === 1 ? 'queda 1 día' : `quedan ${days} días`;
+  if (account.connection_method === 'token') {
+    return days <= RENEWAL_WARNING_DAYS
+      ? { tone: 'warning', text: `El acceso a Instagram caduca el ${when} (${left}): renueva la conexión avanzada antes.` }
+      : null;
+  }
+  if (account.renewal_error && days <= RENEWAL_WARNING_DAYS) {
+    return {
+      tone: 'warning',
+      text: `El acceso a Instagram caduca el ${when} (${left}) y no se ha podido renovar solo: vuelve a conectar la cuenta antes.`,
+    };
+  }
+  if (days <= 7) {
+    return {
+      tone: 'warning',
+      text: `El acceso a Instagram caduca el ${when} (${left}) y aún no se ha renovado: vuelve a conectar la cuenta antes.`,
+    };
+  }
+  return null;
 }
 
 /** ¿Ya ha pasado? (fuera del render: para los manejadores de eventos). */

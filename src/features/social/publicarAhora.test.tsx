@@ -84,6 +84,9 @@ const account: SocialAccountRow = {
   connected_at: '2026-11-18T09:00:00Z',
   disconnected_at: null,
   connection_method: 'oauth',
+  token_renewed_at: null,
+  renewal_attempted_at: null,
+  renewal_error: null,
   created_at: '2026-11-18T09:00:00Z',
   updated_at: '2026-11-18T09:00:00Z',
 };

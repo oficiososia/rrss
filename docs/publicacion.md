@@ -14,6 +14,7 @@ Instagram. Estado a 19/11/2026:
 | Facebook (páginas) | Modelo preparado (`social_accounts.network = 'facebook'`); no se conecta ni se publica |
 | Stories de Instagram | No se publican (el formato queda «Detenida: formato no admitido») |
 | «Publicar ahora» (migración `20261130010000`, ruta `social-publish/now`) | Probado en base de datos (PGlite) y en componentes; escenario e2e `tests/e2e/23-publicar-ahora.spec.ts` **escrito, sin ejecutar** |
+| Portada del reel (`cover_url`), renovación automática del acceso, hora de la marca y plan sin publicación (migraciones `20261218010000` a `20261218030000`, rama `f30/instagram-pendientes`, 22/11/2026) | Probado en base de datos (PGlite), unitarias y componentes contra la **Graph API simulada**; e2e 13 ampliada, **sin ejecutar**; nada probado contra Meta real (ver «Portada del reel», «Renovación del acceso», «Hora de la marca» y «Si el plan deja de incluir la publicación») |
 | Carruseles de varias páginas en UNA versión (documento v4, migración `20261203010000`) | Probado en base de datos (PGlite, con el publicador y la Graph API simulada), unitarias y componentes; e2e `tests/e2e/27-carrusel-paginas.spec.ts` (ver «Carruseles») |
 
 ## 1. Qué hace
@@ -102,11 +103,116 @@ comprobarlo en la cuenta; «Reintentar» vuelve a mirar el contenedor, no public
 
 `social-publish` mira una vez al día cada cuenta con `debug_token`: si Meta dice
 que ya no vale, la marca como «hay que volver a conectarla»; si tiene fecha de
-caducidad, la anota y la interfaz avisa 7 días antes. **Renovar es volver a
-conectar**: la documentación de Meta no ofrece refrescar en silencio un token de
-usuario, y el token de página (el que publica) no caduca si sale de un token
-largo. Las cuentas conectadas con un token pegado (abajo) se comprueban con
-`debug_token` sobre el propio token, sin la aplicación del producto.
+caducidad, la anota. Las cuentas conectadas con un token pegado (abajo) se
+comprueban con `debug_token` sobre el propio token, sin la aplicación del
+producto. La renovación y los avisos, en la sección siguiente.
+
+### Renovación del acceso (sin volver a conectar)
+
+Migración `20261218020000_social_token_renewal.sql` (vuelta atrás incluida). Al
+conectar por OAuth se guardan dos tokens cifrados: el de la página (el que
+publica) y el **token largo del usuario de Meta** (unos 60 días), que sirve para
+renovar. Antes de que caduque:
+
+1. El reloj (`private.social_publish_dispatch`) despierta a `social-publish`
+   también cuando hay una cuenta por renovar. La pasada elige
+   (`social_accounts_to_renew`) las cuentas **OAuth activas cuyo acceso caduca en
+   14 días o menos** y de las que no se ha intentado nada en las últimas 24 h.
+2. `renewAccountTokens` (`_shared/social/oauth.ts`) cambia el token largo por uno
+   nuevo (`fb_exchange_token`), vuelve a pedir los tokens de página con él
+   (`/me/accounts`), comprueba con `debug_token` que el nuevo vale y que su
+   caducidad es **posterior** en al menos un día a la anotada, lo cifra con el
+   vínculo de la cuenta y lo guarda (`social_account_renew`: `token_renewed_at`,
+   caducidad nueva, `renewal_error = null`).
+3. Si algo falla o Meta no amplía la caducidad, **no se da por renovada**: se anota
+   el motivo en una frase (`renewal_error`, `renewal_attempted_at`; sin tokens en
+   el registro) y se vuelve a intentar a las 24 h. La cuenta sigue activa hasta
+   que de verdad caduque. Volver a conectar limpia el aviso.
+4. Las cuentas conectadas con un token pegado **no se renuevan solas** (no tenemos
+   su aplicación de Meta): solo se avisa.
+
+**Avisos con antelación** (`accountAttention`, `social/calendar.ts`): los ven la
+marca y la agencia en el calendario y en el inicio de la marca
+(`AccountAttentionNotice`, con «Volver a conectar» para quien gestiona y una
+explicación para quien no), en Cuentas conectadas (hasta cuándo vale y cuándo se
+renovó solo) y, para la agencia, como etiqueta en el listado de marcas
+(«Instagram caduca pronto» o «Instagram: reconectar»).
+
+| Situación | Aviso |
+|---|---|
+| OAuth, renovación automática pendiente, más de 7 días | ninguno |
+| OAuth, el último intento falló y quedan 14 días o menos | «…caduca el … y no se ha podido renovar solo» |
+| OAuth sin renovar y quedan 7 días o menos | «…aún no se ha renovado» |
+| Token pegado, quedan 14 días o menos | «renueva la conexión avanzada» |
+| Caducado o acceso retirado | alerta; lo programado está detenido |
+
+**Sin probar contra Meta real.** La documentación de Meta
+(`facebook-login/guides/access-tokens/get-long-lived`, consultada el 22/11/2026)
+describe el cambio de un token corto por uno largo, pero **no garantiza** que
+repetirlo sobre un token largo vigente amplíe su caducidad; solo dice que un
+token caducado no se puede cambiar y que el de página derivado de uno largo no
+tiene fecha de caducidad. Por eso la renovación se verifica (la fecha tiene que
+ampliarse) y, si Meta no lo hace, el aviso da 14 días de margen para volver a
+conectar a mano. En la prueba con Meta real hay que mirar qué caducidad devuelve
+`debug_token` para el token de página antes y después de renovar.
+
+### Portada del reel
+
+Migración `20261218010000_reel_cover_publish.sql`. El montaje del reel guarda su
+portada como una imagen JPEG de la biblioteca (`provenance.role = 'cover'`,
+`cover_of_path` = ruta del vídeo; `docs/editor-reels.md` §8). Al crear el
+contenedor `REELS`, el publicador pide `social_publication_cover` (solo clave de
+servicio; busca una portada JPEG **de la misma marca** cuyo `cover_of_path` sea el
+vídeo de la publicación) y, si la hay, manda su dirección firmada como
+`cover_url`. Sin portada, o si no se puede leer, el reel sale igualmente y es
+Instagram quien elige el fotograma.
+
+Qué admite un contenedor REELS (referencia de `/{ig-user-id}/media`,
+developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media,
+consultada el 22/11/2026): `video_url`, `caption`, `share_to_feed`,
+`collaborators`, `cover_url`, `audio_name`, `user_tags`, `location_id`,
+`thumb_offset` y `trial_params`. Sobre la portada, según esa página:
+
+- `cover_url`: JPEG en un servidor público, 8 MB como mucho, sRGB; se recomienda
+  9:16 y, si no lo es, se usa el rectángulo 9:16 central.
+- `thumb_offset`: milisegundos del fotograma del propio vídeo (por omisión, 0).
+- Si van los dos, Instagram usa `cover_url` e ignora `thumb_offset`.
+
+Decisión: el publicador manda **siempre `cover_url`** y nunca `thumb_offset`,
+porque el trabajador ya deja un JPEG de la portada incluso cuando se eligió «un
+fotograma del reel» (con los textos montados): lo que se ve en la vista previa del
+editor es lo que se manda. El adaptador sí admite `thumbOffsetMs` por si hiciera
+falta. **Sin probar contra Meta real**: la Graph API simulada registra el
+`cover_url` recibido, pero no valida la imagen.
+
+### Hora de la marca
+
+El calendario, la ficha, «Programar una publicación» y las fechas de Cuentas
+conectadas usan la zona horaria de la marca (`brands.timezone`, la que se elige
+al darla de alta; Madrid si falta o no se conoce), no la del dispositivo. Lo
+dicen: «Horas en hora de Madrid» (y «no la de tu dispositivo» si difiere).
+Implementación en `src/features/social/zone.ts`: una «fecha de pared» (un `Date`
+cuyos campos locales son los de la zona) permite reutilizar la aritmética del
+calendario; solo se convierte al pedir datos y al guardar. Sin migración. Límite:
+una hora de pared que cae en el salto de horario del **dispositivo** (no el de la
+marca) puede verse desplazada una hora; la hora guardada es siempre un instante
+real correcto. No hay selector de zona en el calendario: se cambia en Marca →
+Datos de la marca.
+
+### Si el plan deja de incluir la publicación
+
+Migración `20261218030000_plan_stops_publishing.sql`. Antes, bajar a un plan sin
+`publishing` no detenía lo ya armado. Ahora la regla de «lista para publicar»
+(`private.publication_hold_reason`) devuelve `plan_no_publishing`: lo programado
+queda **«Detenida»** («Tu plan no incluye la publicación en redes») y no se
+publica aunque llegue su hora ni con «Publicar ahora» (también lo comprueban
+`social_publication_begin` y la guarda de `scheduled_publications`). Cambiar de
+plan (`subscriptions`) o las funciones de un plan (`plans.features`,
+`plans.is_default`) reevalúa las publicaciones de las organizaciones afectadas; al
+volver a un plan con publicación se **rearman solas**. Lo que ya se está
+publicando termina y lo publicado no cambia. El botón del aviso es «Cambiar de
+plan» (Ajustes → Plan; solo lo ve quien administra la organización; los demás ven
+el motivo).
 
 ### Conectar con un token (sin OAuth)
 
@@ -330,7 +436,9 @@ un Supabase local (misma guarda que la IA simulada).
 
 ## 6. Activarlo en staging
 
-1. Aplicar las migraciones `20261119010000` a `20261119040000` (primero en
+1. Aplicar las migraciones `20261119010000` a `20261119040000` y, para la
+   portada del reel, la renovación del acceso y el plan sin publicación,
+   `20261218010000`, `20261218020000` y `20261218030000` (primero en
    staging; la vuelta atrás de cada una está en `supabase/rollbacks/`). Para los
    carruseles de varias páginas, además `20261203010000_carousel_pages.sql`
    (sin función que desplegar: el publicador no cambia).
@@ -370,4 +478,5 @@ un Supabase local (misma guarda que la IA simulada).
   configuración de Facebook); solo borra el token.
 - Sin avisos (correo, notificación) de publicación fallida: se ve en el
   calendario.
-- El calendario usa la hora del dispositivo, no la zona horaria de la marca.
+- No hay selector de zona en el calendario: sale la de la marca (Marca → Datos de la marca).
+- La portada del reel y la renovación del acceso no se han probado contra Meta real (arriba).
