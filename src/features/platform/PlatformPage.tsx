@@ -1,4 +1,4 @@
-import { ArrowLeft, Plug, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Gauge, Plug, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
@@ -7,12 +7,15 @@ import { UserMenu } from '@/layout/AppShell';
 import { formatBytes, formatDate } from '@/lib/utils';
 import { AiQuotaPanel } from './AiQuotaPanel';
 import { BillingPanel } from './BillingPanel';
+import { usePlatformAlerts } from './gasto/api';
 import { PlansEditor } from './PlansEditor';
 
 export function PlatformPage() {
   const user = useUser();
   const admin = useIsPlatformAdmin(user.id);
   const orgs = useAdminOrganizations(admin.data === true);
+  const alerts = usePlatformAlerts(admin.data === true);
+  const openAlerts = alerts.data?.length ?? 0;
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-10">
@@ -40,14 +43,30 @@ export function PlatformPage() {
               title="Plataforma"
               description="Todas las organizaciones dadas de alta y lo que ocupan."
               action={
-                <Link
-                  to="/plataforma/integraciones"
-                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
-                  data-testid="platform-integrations-link"
-                >
-                  <Plug className="h-4 w-4" aria-hidden />
-                  Integraciones
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    to="/plataforma/gasto"
+                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+                    data-testid="platform-usage-link"
+                  >
+                    <Gauge className="h-4 w-4" aria-hidden />
+                    Gasto y uso
+                    {openAlerts > 0 && (
+                      <Badge tone="danger" className="ml-1">
+                        <span data-testid="platform-alert-count">{openAlerts}</span>
+                        <span className="sr-only"> avisos abiertos</span>
+                      </Badge>
+                    )}
+                  </Link>
+                  <Link
+                    to="/plataforma/integraciones"
+                    className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+                    data-testid="platform-integrations-link"
+                  >
+                    <Plug className="h-4 w-4" aria-hidden />
+                    Integraciones
+                  </Link>
+                </div>
               }
             />
             <Card className="overflow-hidden">

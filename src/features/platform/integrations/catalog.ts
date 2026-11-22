@@ -268,6 +268,19 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
           { key: 'AI_TIMEOUT_MS', label: 'Tiempo máximo por llamada (ms)', secret: false, placeholder: '60000' },
         ],
       },
+      {
+        title: 'Tope global de gasto mensual',
+        description:
+          'Si el gasto de IA de todas las organizaciones llega a este importe en el mes, la IA de pago se pausa para todas hasta el mes siguiente. Lo que no cuesta (editar, publicar, plantillas) sigue funcionando. Vacío = sin tope; 0 = IA de pago apagada.',
+        fields: [
+          {
+            key: 'AI_GLOBAL_MONTHLY_CAP',
+            label: 'Tope al mes (en la moneda de cuenta, con punto decimal)',
+            secret: false,
+            placeholder: '50',
+          },
+        ],
+      },
     ],
   },
   {
@@ -495,6 +508,14 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
         description:
           'El trabajador no lleva la clave de servicio: habla con la función worker-gateway con un token propio que solo sirve para eso. Genera el token y pégalo en Fly (la app → «Secrets») como WORKER_GATEWAY_TOKEN, junto a SUPABASE_URL.',
         fields: [{ key: 'WORKER_GATEWAY_TOKEN', label: 'Token del trabajador', secret: true }],
+      },
+      {
+        title: 'Tope mensual de trabajos por marca',
+        description:
+          'Cuántos reels y recortes de fondo puede encargar cada marca al mes. Al llegar, la marca ve un aviso claro y no puede encargar más hasta el mes siguiente. Sin valor: 400. 0 = sin tope.',
+        fields: [
+          { key: 'MEDIA_JOBS_MONTHLY_PER_BRAND', label: 'Trabajos al mes por marca', secret: false, placeholder: '400' },
+        ],
       },
     ],
   },

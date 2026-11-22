@@ -207,6 +207,12 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     secret: false,
     validate: pattern(/^\d{4,6}$/, 'Milisegundos, entre 1000 y 390000.'),
   },
+  {
+    key: 'AI_GLOBAL_MONTHLY_CAP',
+    integration: 'ai_text',
+    secret: false,
+    validate: pattern(/^\d{1,9}(\.\d{1,6})?$/, 'Un importe con punto decimal, por ejemplo 50 o 50.5. Vacío = sin tope.'),
+  },
   // IA de imagen
   { key: 'AI_MEDIA_IMAGE_MODEL', integration: 'ai_image', secret: false, validate: providerModel },
   { key: 'AI_MEDIA_ALLOW_NON_EU', integration: 'ai_image', secret: false, validate: flag },
@@ -316,6 +322,13 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     integration: 'media_worker',
     secret: true,
     validate: pattern(WORKER_GATEWAY_HASH_PATTERN, 'Solo se genera con «Generar token».'),
+  },
+  // Tope mensual de trabajos de medios por marca (20261219010000). 0 = sin tope.
+  {
+    key: 'MEDIA_JOBS_MONTHLY_PER_BRAND',
+    integration: 'media_worker',
+    secret: false,
+    validate: pattern(/^\d{1,6}$/, 'Un número entero de trabajos al mes (0 = sin tope).'),
   },
 ];
 

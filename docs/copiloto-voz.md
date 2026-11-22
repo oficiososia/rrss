@@ -421,6 +421,14 @@ Notas:
 El coste no decide nada (la diferencia entre el más barato y el más caro de los
 recomendados es de unos 20 USD al mes): decide la calidad medida y la UE.
 
+## 9 bis. Aviso previo al dictado (`f32/operacion-gasto`)
+
+Antes del primer dictado, el copiloto muestra un aviso: el audio lo procesa el servicio de voz del
+navegador (Google o Microsoft, según el navegador), no la aplicación, que solo recibe el texto. Con
+«No volver a mostrar» (`localStorage`, `rrss.voiceNoticeHidden`) no vuelve a salir. Hasta pulsar
+«Entendido, empezar a dictar» no se escucha nada. Probado en componentes y en la e2e 19 (sin
+ejecutar en local).
+
 ## 10. Pendiente
 
 - Probar con un proveedor real (calidad de la interpretación en español, coste

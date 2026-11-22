@@ -220,6 +220,8 @@ const TENANT_TABLES = [
   'social_import_runs',
   'social_imported_media',
   'brand_design_templates',
+  // Operación y control de gasto (avisos solo para superadministradores).
+  'platform_alerts',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -2933,5 +2935,48 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
     expect(await db.query(`select 1 from public.social_import_runs where social_account_id = $1`, [cuentaB1])).toEqual(
       [],
     );
+  });
+
+  it('operación y gasto: los avisos y el panel de gasto son solo del superadministrador, y no se escriben a mano', async () => {
+    // Un aviso de la organización A (lo crea la tarea del servidor, aquí a mano como superusuario).
+    await db.query(
+      `insert into public.platform_alerts (kind, dedupe_key, organization_id, title)
+       select 'ai_quota_80', 'aislamiento:' || o.id::text, o.id, 'Cupo al 80 %' from public.organizations o where o.id = $1`,
+      [orgA],
+    );
+    for (const user of [ana, adminA, editorA, clienteA, berta, gema, ajeno]) {
+      expect(await as(db, user, `select * from public.platform_alerts`), user.email).toEqual([]);
+      await denied(db, user, `select public.platform_alerts_refresh()`, [], /superadministradores/);
+      await denied(db, user, `select public.platform_alert_resolve(null)`, [], /superadministradores/);
+      await denied(
+        db,
+        user,
+        `select * from public.platform_usage_overview(date_trunc('month', now())::date)`,
+        [],
+        /superadministradores/,
+      );
+      await denied(db, user, `select * from public.platform_storage_by_brand()`, [], /superadministradores/);
+      await denied(db, user, `select public.platform_ai_global_status()`, [], /superadministradores/);
+      await denied(
+        db,
+        user,
+        `insert into public.platform_alerts (kind, dedupe_key, title) values ('ai_quota_80', 'x', 'x')`,
+      );
+      await denied(db, user, `update public.platform_alerts set resolved_at = now()`);
+      await denied(db, user, `delete from public.platform_alerts`);
+      await denied(db, user, `select public.storage_cleanup_orphans()`, [], /permission denied/);
+    }
+    await denied(db, null, `select public.platform_alerts_refresh()`, [], /permission denied/);
+    // El superadministrador sí lo ve y lo marca como visto.
+    expect(
+      await as(db, superadmin, `select 1 from public.platform_alerts where organization_id = $1`, [orgA]),
+    ).toHaveLength(1);
+    const [done] = await as<{ n: number }>(db, superadmin, `select public.platform_alert_resolve(null) as n`);
+    expect(done!.n).toBeGreaterThanOrEqual(1);
+    // Las funciones internas de gasto no se llaman desde la API.
+    for (const user of [ana, superadmin]) {
+      await denied(db, user, `select private.platform_alerts_scan()`, [], /permission denied/);
+      await denied(db, user, `select private.ai_global_cap_micros()`, [], /permission denied/);
+    }
   });
 });

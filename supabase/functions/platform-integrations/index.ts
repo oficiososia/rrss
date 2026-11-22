@@ -9,7 +9,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { RpcClient } from '../_shared/ai/contract.ts';
 import type { MediaModelRow } from '../_shared/ai/media/models.ts';
-import { probeIntegration } from '../_shared/integrations/probes.ts';
+import { flyWorkerUptime, probeIntegration } from '../_shared/integrations/probes.ts';
 import { createRpcSettingsLoader } from '../_shared/integrations/settings.ts';
 import { loadSocialLocalTest } from '../_shared/social/local-test.ts';
 import { createPlatformIntegrationsHandler } from './handler.ts';
@@ -53,6 +53,7 @@ Deno.serve(
       const local = loadSocialLocalTest(effective);
       return probeIntegration(id, effective, { fetch: realFetch, graphFetch: local ? local.fetch : realFetch });
     },
+    workerMachine: (effective) => flyWorkerUptime(effective, { fetch: (input, init) => fetch(input, init) }),
     allowedOrigin: env.PLATFORM_ALLOWED_ORIGIN?.trim() || env.AI_ALLOWED_ORIGIN?.trim() || undefined,
     log,
   }),

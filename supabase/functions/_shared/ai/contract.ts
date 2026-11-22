@@ -153,6 +153,7 @@ export class AiProviderFailure extends Error {
 export type AiErrorCode =
   | 'quota_exhausted' // no queda cupo este mes
   | 'quota_missing' // la organización no tiene cupo asignado
+  | 'ai_paused' // la plataforma ha llegado a su tope global de gasto: IA de pago en pausa
   | 'forbidden' // el usuario no puede generar en esa marca
   | 'not_configured' // no hay modelo, adaptador o precio para la tarea
   | 'provider_failed' // el proveedor respondió con un error

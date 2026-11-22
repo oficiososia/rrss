@@ -17,6 +17,7 @@ import {
   type SimulatedProviderOptions,
 } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
 import {
+  as,
   createBrand,
   createDb,
   createOrg,
@@ -202,6 +203,21 @@ describe('cupo', () => {
     await t.service.generate(t.request()); // gasta 174; quedan 1526 y hacen falta 1554
     expect((await aiError(t.service.generate(t.request()))).code).toBe('quota_exhausted');
     expect(t.provider.calls).toHaveLength(1);
+  });
+
+  it('con el tope global de la plataforma alcanzado no se llama al proveedor: IA en pausa, sin coste', async () => {
+    const t = await setup(100_000);
+    await as(db, root, `select public.admin_set_integration_setting('AI_GLOBAL_MONTHLY_CAP', '0.001')`);
+    try {
+      const error = await aiError(t.service.generate(t.request()));
+      expect(error.code).toBe('ai_paused');
+      expect(error.message).toMatch(/en pausa/);
+      expect(error.retryable).toBe(false);
+      expect(t.provider.calls).toEqual([]);
+      expect(await generations(t.org)).toEqual([]);
+    } finally {
+      await db.query(`delete from private.integration_settings where setting_key = 'AI_GLOBAL_MONTHLY_CAP'`);
+    }
   });
 
   it('sin cupo asignado no se genera', async () => {

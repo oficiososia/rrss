@@ -132,6 +132,7 @@ export function createAiService(config: AiServiceConfig): AiService {
       const { code, message, details } = reservation.error;
       if (code === 'AI001') throw new AiError('quota_exhausted', message, { details: parseDetails(details) });
       if (code === 'AI002') throw new AiError('quota_missing', message);
+      if (code === 'AI003') throw new AiError('ai_paused', message, { details: parseDetails(details) });
       // Planes (Fase 6): la tarea no está en el plan, o no queda espacio para el resultado.
       if (code === 'PL002') throw new AiError('quota_missing', message);
       if (code === 'PL001') throw new AiError('quota_exhausted', message);

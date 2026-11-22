@@ -103,13 +103,15 @@ function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: 
       <Notice tone="warning">
         {data?.reason === 'agency_mode' || data?.agencyMode
           ? 'Esta marca trabaja en modo agencia: el vídeo con IA lo usa solo el personal de la agencia. Pídelo desde «Encargos».'
-          : data?.reason === 'quota_exhausted' || data?.reason === 'no_quota'
-          ? 'No queda cupo de IA este mes para animar fotos.'
-          : data?.reason === 'plan'
-            ? 'Tu plan no incluye el vídeo con IA.'
-            : data?.reason === 'no_permission'
-              ? 'No tienes permiso para generar con IA en esta marca.'
-              : 'Animar fotos con IA no está disponible ahora mismo.'}
+          : data?.reason === 'ai_paused'
+            ? 'La IA de pago está en pausa este mes por el tope global de la plataforma.'
+            : data?.reason === 'quota_exhausted' || data?.reason === 'no_quota'
+              ? 'No queda cupo de IA este mes para animar fotos.'
+              : data?.reason === 'plan'
+                ? 'Tu plan no incluye el vídeo con IA.'
+                : data?.reason === 'no_permission'
+                  ? 'No tienes permiso para generar con IA en esta marca.'
+                  : 'Animar fotos con IA no está disponible ahora mismo.'}
       </Notice>
     );
   }
@@ -201,8 +203,8 @@ function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: 
 
         {selected && !selected.euProcessing && (
           <p className="text-xs text-muted" data-testid="animate-region">
-            La foto se envía a fal.ai y a la empresa que hace el modelo, que no garantizan tratar los datos en la UE.
-            No uses fotos con personas reconocibles.
+            La foto se envía a fal.ai y a la empresa que hace el modelo, que no garantizan tratar los datos en la UE. No
+            uses fotos con personas reconocibles.
           </p>
         )}
         {selected?.untestedAdapter && (

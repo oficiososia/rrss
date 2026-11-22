@@ -11,6 +11,8 @@
 //   save                superadministrador: guarda o borra ajustes de UNA integración
 //                       (`values: { NOMBRE: "valor" | null }`).
 //   test                superadministrador: «Probar conexión» (probes.ts).
+//   worker_check        superadministrador: estado de la máquina de Fly; si lleva
+//                       encendida más de WORKER_MAX_UPTIME_HOURS levanta un aviso de plataforma.
 //   generate_token_key  superadministrador: añade una clave nueva de cifrado de los
 //                       tokens de las redes y la deja como la que cifra lo nuevo.
 //   generate_worker_token  superadministrador: token nuevo del trabajador de medios
@@ -32,7 +34,7 @@ import {
   WORKER_GATEWAY_TOKEN_PATTERN,
   type IntegrationId,
 } from '../_shared/integrations/catalog.ts';
-import type { ProbeResult } from '../_shared/integrations/probes.ts';
+import { WORKER_MAX_UPTIME_HOURS, type ProbeResult } from '../_shared/integrations/probes.ts';
 import type { Env, SettingsLoader } from '../_shared/integrations/settings.ts';
 
 export interface PlatformIntegrationsDeps {
@@ -48,6 +50,8 @@ export interface PlatformIntegrationsDeps {
   /** Modelos de imagen activos (`ai_media_models`), con la clave de servicio. */
   imageModelRows(): Promise<MediaModelRow[]>;
   probe(id: IntegrationId, env: Env): Promise<ProbeResult>;
+  /** Estado de la máquina de Fly (solo lectura); sin esto, `worker_check` dice que no se sabe. */
+  workerMachine?(env: Env): Promise<{ state: string; startedAt: string | null } | { problem: string }>;
   /** 32 bytes aleatorios en base64 (clave nueva de cifrado de los tokens). */
   randomKey?: () => string;
   /** Token nuevo del trabajador («rrss_wgt_» + 32 bytes en base64url). */
@@ -220,6 +224,34 @@ export function createPlatformIntegrationsHandler(
       if (recorded.error) deps.log?.('record_test_failed', { code: recorded.error.code ?? null });
       deps.log?.('tested', { integration: body.integration, ok: result.ok });
       return json(200, result);
+    }
+
+    if (body.action === 'worker_check') {
+      if (!deps.workerMachine) return json(200, { known: false, problem: 'No disponible en este entorno.' });
+      deps.settings.invalidate();
+      let machine: Awaited<ReturnType<NonNullable<typeof deps.workerMachine>>>;
+      try {
+        machine = await deps.workerMachine(await deps.settings.get());
+      } catch {
+        deps.log?.('worker_check_failed', {});
+        return json(200, { known: false, problem: 'No se pudo consultar a Fly.' });
+      }
+      if ('problem' in machine) return json(200, { known: false, problem: machine.problem });
+      const now = (deps.now ?? (() => new Date()))();
+      const hours = machine.startedAt ? (now.getTime() - new Date(machine.startedAt).getTime()) / 3_600_000 : null;
+      const tooLong = machine.state === 'started' && hours !== null && hours > WORKER_MAX_UPTIME_HOURS;
+      if (tooLong) {
+        const day = now.toISOString().slice(0, 10);
+        const raised = await deps.rpc('platform_alert_external', {
+          p_kind: 'worker_machine_long',
+          p_key: `worker_machine_long:${day}`,
+          p_title: 'La máquina del trabajador de medios lleva demasiado tiempo encendida',
+          p_detail: `Lleva encendida unas ${Math.floor(hours!)} horas (lo normal es apagarse sola al vaciar la cola). Revisa si hay un trabajo atascado o si la máquina no se apaga; cada hora encendida cuesta dinero.`,
+          p_data: { hours: Math.floor(hours!), started_at: machine.startedAt },
+        });
+        if (raised.error) deps.log?.('worker_alert_failed', { code: raised.error.code ?? null });
+      }
+      return json(200, { known: true, state: machine.state, startedAt: machine.startedAt, hours, tooLong });
     }
 
     if (body.action === 'generate_token_key') {

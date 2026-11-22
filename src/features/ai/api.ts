@@ -100,6 +100,7 @@ export type AiErrorCode =
   | 'unauthenticated'
   | 'quota_exhausted'
   | 'quota_missing'
+  | 'ai_paused'
   | 'forbidden'
   | 'brand_not_found'
   | 'brand_profile_missing'
@@ -119,6 +120,7 @@ const KNOWN_CODES = new Set<string>([
   'unauthenticated',
   'quota_exhausted',
   'quota_missing',
+  'ai_paused',
   'forbidden',
   'brand_not_found',
   'brand_profile_missing',
@@ -137,6 +139,8 @@ const MESSAGES: Record<AiErrorCode, string> = {
     'El cupo de IA de este mes está agotado. Se renueva el día 1 del mes que viene; si hace falta antes, pídeselo a quien administra tu organización, que puede pedir a la plataforma que lo amplíe.',
   quota_missing:
     'Esta organización no tiene cupo de IA asignado (su plan no lo incluye o todavía no se ha activado). Pídelo a quien administra tu organización; si la administras tú, pídeselo a la plataforma para que lo asigne.',
+  ai_paused:
+    'La IA de pago está en pausa este mes porque la plataforma ha llegado a su tope de gasto. Puedes seguir escribiendo y editando a mano; lo que no usa IA funciona igual.',
   not_configured:
     'La IA no está disponible en este momento: falta configurarla en la plataforma. Avisa a quien la administra.',
   refused:
@@ -185,7 +189,10 @@ export class AiRequestError extends Error {
 
 /** ¿Es un error de cupo (agotado o sin asignar)? Las pantallas lo explican aparte. */
 export function isQuotaError(error: unknown): error is AiRequestError {
-  return error instanceof AiRequestError && (error.code === 'quota_exhausted' || error.code === 'quota_missing');
+  return (
+    error instanceof AiRequestError &&
+    (error.code === 'quota_exhausted' || error.code === 'quota_missing' || error.code === 'ai_paused')
+  );
 }
 
 /**

@@ -95,6 +95,7 @@ const MAX_BODY_BYTES = 1_500_000;
 const STATUS: Record<AiErrorCode, number> = {
   quota_exhausted: 402,
   quota_missing: 402,
+  ai_paused: 503,
   forbidden: 403,
   not_configured: 503,
   provider_failed: 502,

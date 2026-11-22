@@ -138,13 +138,13 @@ las preguntas al abogado (`docs/06-decisiones-fase-2.md`, apartado 5).
 
 - Contrato de encargo del tratamiento con los clientes y registro como encargado.
 - Política de privacidad (versión 2026-11-20): ya incluye el dictado del navegador,
-  Google Drive y Cloudflare R2. Falta avisar en el propio copiloto antes del primer dictado.
+  Google Drive y Cloudflare R2. El copiloto avisa antes del primer dictado (`f32`, con «No volver a mostrar»).
 - Rellenar los huecos de las páginas legales y que un abogado las revise.
 - Plazos de conservación marcados «a decidir»; purga de invitaciones caducadas
-  y de anotaciones de `storage_cleanup_queue` de organizaciones borradas (solo
-  el servidor puede barrerlas).
-- Pedir que se vuelvan a aceptar los documentos cuando cambie su versión (hoy
-  la cuenta lo ofrece, pero no bloquea el uso).
+  (la purga de anotaciones de `storage_cleanup_queue` de organizaciones borradas ya está
+  hecha: `media-storage/purge-cleanup`, cada hora).
+- Al cambiar la versión de un documento, la interfaz bloquea hasta aceptarlo y registra la
+  aceptación (`LegalGate`, `f32`); la base de datos no lo impide a quien use la API directamente.
 - Borrado de copias de seguridad del proveedor: depende de su plazo.
 - Exportar organizaciones muy grandes: hoy es una sola llamada; con muchos
   contenidos convendría un trabajo en segundo plano.
