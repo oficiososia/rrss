@@ -9,6 +9,7 @@ import { accountAttention } from '@/features/social/calendar';
 import type { BrandRow, BrandStatus } from '@/lib/database.types';
 import { formatDate } from '@/lib/utils';
 import { useOrg } from './context';
+import { workModeOf } from './workMode';
 
 const STATUS: Record<BrandStatus, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
   active: { label: 'Activa', tone: 'success' },
@@ -86,7 +87,11 @@ export function OrgHomePage() {
     <>
       <PageHeader
         title="Marcas"
-        description={org.kind === 'agency' ? `Las marcas que gestiona ${org.name}.` : `Las marcas de ${org.name}.`}
+        description={
+          workModeOf(org) === 'agency' && org.kind === 'agency'
+            ? `Las marcas que gestiona ${org.name}.`
+            : `Las marcas de ${org.name}.`
+        }
         action={
           isAdmin && (
             <Link to={`/o/${org.id}/marcas/nueva`}>

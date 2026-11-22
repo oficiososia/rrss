@@ -2,7 +2,7 @@ import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '@/App';
 import { LEGAL_VERSIONS } from '@/features/legal/legal';
-import type { BrandRole, BrandRow, OrgKind, OrgRole } from '@/lib/database.types';
+import type { BrandRole, BrandRow, OrgKind, OrgRole, OrgWorkMode } from '@/lib/database.types';
 import { fake, makeUser } from './fakeSupabase';
 
 export const ME = makeUser({ id: 'user-me', email: 'yo@example.com', fullName: 'Yo Mismo' });
@@ -34,19 +34,32 @@ export interface Workspace {
   /** Rol en la marca (solo cuenta para los miembros: owner y admin gestionan todas). */
   brandRole?: BrandRole;
   kind?: OrgKind;
+  /**
+   * Cómo trabaja la organización. Por defecto `agency`: es lo que asumían las pruebas anteriores a la
+   * autogestión (cada una que prueba la autogestión pide `self`).
+   */
+  workMode?: OrgWorkMode;
   /** Marcas visibles para el usuario (la RLS ya las ha filtrado). */
   brands?: BrandRow[];
   platformAdmin?: boolean;
 }
 
 /** Deja en la base simulada una organización con una marca y al usuario con el rol indicado. */
-export function seedWorkspace({ orgRole, brandRole, kind = 'business', brands, platformAdmin = false }: Workspace) {
+export function seedWorkspace({
+  orgRole,
+  brandRole,
+  kind = 'business',
+  workMode = 'agency',
+  brands,
+  platformAdmin = false,
+}: Workspace) {
   fake.signIn(ME);
   fake.tables.organizations = [
     {
       id: ORG_ID,
       name: 'Grupo Demo',
       kind,
+      work_mode: workMode,
       settings: {},
       created_by: null,
       created_at: '2026-10-01T09:00:00Z',

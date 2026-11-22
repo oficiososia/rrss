@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Card, CardBody, CardHeader, ErrorState, Field, Notice, Select, Spinner } from '@/components/ui';
 import { useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { cn } from '@/lib/utils';
 import { lastPeriods, periodStartOf, useAiMonthLedger, useAiMonthlyCost, useAiQuota, type MonthLedger } from './api';
 import { formatMicros, moneyEstimateNote } from './money';
+import { OrgSpendCard } from './OrgSpendCard';
 
 const HISTORY_MONTHS = 6;
 const count = new Intl.NumberFormat('es-ES');
@@ -18,6 +20,7 @@ function monthLabel(periodStart: string): string {
 /** Ajustes de la organización → Consumo de IA. Solo administradores (lo impone también la RLS). */
 export function AiUsageSettingsPage({ now = new Date() }: { now?: Date }) {
   const { org, isAdmin } = useOrg();
+  const { selfManaged } = useWorkMode();
   const periods = useMemo(() => lastPeriods(now, HISTORY_MONTHS), [now]);
   const current = periodStartOf(now);
   const [selected, setSelected] = useState(current);
@@ -27,6 +30,7 @@ export function AiUsageSettingsPage({ now = new Date() }: { now?: Date }) {
   return (
     <div className="space-y-6" data-testid="ai-usage-page">
       <QuotaCard orgId={org.id} periodStart={current} />
+      {selfManaged && org.role === 'owner' && <OrgSpendCard orgId={org.id} periodStart={current} />}
       <BrandBreakdown orgId={org.id} periods={periods} selected={selected} onSelect={setSelected} />
       <MonthlyHistory orgId={org.id} periods={periods} />
       <p className="text-xs text-muted" data-testid="ai-money-note">
