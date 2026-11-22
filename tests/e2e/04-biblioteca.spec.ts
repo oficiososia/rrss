@@ -103,7 +103,16 @@ test('la subida muestra el porcentaje real y llega íntegra a Storage', async ({
   expect(vistos, 'el porcentaje nunca retrocede').toEqual([...vistos].sort((a, b) => a - b));
 
   // Todo el archivo ha pasado por el enlace lento: el progreso medido es el de la subida de verdad.
-  expect(proxy.bytesSubidos()).toBe(FOTO_GRANDE.length);
+  // Tras el original sube la miniatura ligera (thumb_path): por el proxy pasan los dos objetos.
+  const [miniatura] = await sql<{ size: string | null }>(
+    `select o.metadata->>'size' as size from public.media_assets a
+       left join storage.objects o on o.bucket_id = 'brand-media' and o.name = a.thumb_path
+      where a.brand_id = $1 and a.file_name = 'foto-grande.png'`,
+    [dato('marcaA')],
+  );
+  const bytesMiniatura = Number(miniatura?.size ?? 0);
+  expect(bytesMiniatura, 'la foto grande sube también su miniatura').toBeGreaterThan(0);
+  expect(proxy.bytesSubidos()).toBe(FOTO_GRANDE.length + bytesMiniatura);
 
   // La petición es la de la API REST de Storage: cuerpo binario, con su tipo y sin sobrescribir.
   const cabeceras = await (await peticion).allHeaders();

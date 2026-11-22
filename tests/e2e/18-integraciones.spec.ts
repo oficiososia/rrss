@@ -117,6 +117,8 @@ test('quien gestiona la marca conecta Instagram pegando un token (Graph API simu
     await page.getByTestId('confirm-action').click();
     await aviso(page, 'Cuenta desconectada');
   }
+  // «Conexión avanzada» vive dentro de «Opciones avanzadas» (un <details> cerrado).
+  await tarjeta.getByTestId('social-connect-advanced').locator('summary').click();
   await tarjeta.getByTestId('social-connect-token').click();
   await expect(page.getByText(/El token sustituye al inicio de sesión con Meta/)).toBeVisible();
   await page.getByTestId('social-token-ig-id').fill('17841400000000001');

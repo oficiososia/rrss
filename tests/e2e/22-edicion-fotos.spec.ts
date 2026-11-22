@@ -116,7 +116,11 @@ test('quitar el fondo con IA crea un recurso nuevo y la foto original no cambia'
 
   // Y en la biblioteca se ven las dos.
   // Cierra «Editar foto» y la ficha.
-  await page.keyboard.press('Escape');
+  // «Volver» de la pantalla (Esc solo funciona con el foco dentro de ella, y aquí el
+  // botón pulsado ya no existe); si hubiera cambios sin guardar, se descartan.
+  await editor.getByTestId('photo-edit-back').click();
+  const descartar = page.getByTestId('photo-edit-discard-confirm');
+  if (await descartar.isVisible()) await descartar.click();
   await expect(editor).toHaveCount(0);
   await page.getByRole('dialog').getByRole('button', { name: 'Cerrar' }).first().click();
   await expect(page.getByRole('dialog')).toHaveCount(0);

@@ -165,7 +165,7 @@ describe('cliente del servidor', () => {
 
   it('manda la foto con la sesión y la marca, y aplica la máscara a la foto entera', async () => {
     vi.stubEnv('VITE_CUTOUT_SERVER_URL', '/api/cutout-mask');
-    const fetchMock = vi.fn(async () => new Response(new Blob(['png']), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([137, 80, 78, 71]), { status: 200 }));
     const out = await removeBackgroundOnServer(image(8, 6), {
       brandId: BRAND,
       deps: {
