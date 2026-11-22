@@ -4,7 +4,7 @@ Lista única de lo que falta para pasar de «probado en local y en staging con
 proveedores simulados» a «clientes de pago usándolo». Para saber qué hay hecho y
 cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 
-Última revisión: 22/11/2026 (ramas `f30/instagram-pendientes` y `f31/flecos-editor`).
+Última revisión: 22/11/2026 (ramas `f30/instagram-pendientes`, `f31/flecos-editor` y `f36/reel-como-este`).
 
 - **Quién:** `Dueño` = necesita una cuenta, una decisión, dinero o una firma suya;
   `Desarrollo` = trabajo de código o de despliegue que se puede hacer sin él (o
@@ -48,6 +48,9 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P1 | Música: decidir si se ofrece una biblioteca con licencia (hoy la marca confirma que tiene la licencia) | Dueño | |
 | P2 | Tipografías .woff para los textos del reel | Desarrollo | Cortes al compás, animaciones de texto y portada ya están (`docs/editor-reels.md` §8); la portada también se manda a Instagram al publicar |
 | P2 | Pantalla de «Recortes» de vídeo en la aplicación | Desarrollo | La base de datos ya acepta el encargo |
+| P1 | «Hacer un reel como este»: llevarlo a staging (migraciones `20261223010000` y `20261224010000`, función `ai-reel-like`, redesplegar el trabajador de Fly, `VITE_REEL_LIKE_ENABLED=true`) y probarlo con un proveedor real | Ambos | **Bloqueado** por la clave de OpenAI (401 con el endpoint de la UE). Prueba real de un comando: `node scripts/reel-como-este-prueba.ts --apply` (`docs/reel-como-este.md` §9 y §12) |
+| P1 | «Hacer un reel como este»: confirmar que en marcas en modo agencia lo usa solo el personal de la agencia (regla de la IA de imagen) | Dueño | Decisión provisional (`docs/reel-como-este.md` §7) |
+| P2 | «Hacer un reel como este»: probar la detección de cortes con vídeos reales de móvil y una tarea programada que vacíe la cola de limpieza de los análisis caducados | Desarrollo | Hoy la cola la vacía la aplicación al abrir la biblioteca |
 
 ## 4. IA (texto, imagen y edición de fotos)
 
@@ -101,6 +104,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P0 | Contrato de encargo del tratamiento con cada cliente y registro como encargado | Dueño | `docs/rgpd.md` §7 |
 | P0 | DPA con Supabase, Vercel, Fly, Cloudflare, Google/OpenAI y Meta según lo que se active, y confirmar regiones UE | Dueño | |
 | P1 | Decidir los plazos de conservación (marcados «a decidir») | Dueño | |
+| P1 | Revisar el tratamiento de «Hacer un reel como este»: fotogramas y sonido de un vídeo de un tercero se envían al proveedor de IA para estudiarlo (no se guardan ni se publican) | Dueño | `docs/reel-como-este.md` §5 |
 | ~~P1~~ | ~~Pedir que se vuelvan a aceptar los documentos cuando cambie su versión~~ | Hecho en la interfaz | `f32/operacion-gasto`: bloquea hasta aceptar y registra la aceptación; la base de datos no impide usar la API sin aceptar (`docs/operacion-gasto.md` §8) |
 | P2 | Exportar organizaciones muy grandes como trabajo en segundo plano; exportación RGPD de lo importado de Instagram | Desarrollo | |
 

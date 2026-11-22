@@ -149,6 +149,33 @@ describe('plantilla de reel: el formato', () => {
   });
 });
 
+describe('plantilla de reel: tipo de plano (ampliación compatible de la versión 1)', () => {
+  it('un plano puede decir qué tipo de plano es; sin él, la plantilla vale igual', () => {
+    const typed = parse({
+      slots: [
+        { id: 'a', label: 'Producto', seconds: 2, shot: 'detail' },
+        { id: 'b', label: 'Local', seconds: 2, shot: 'wide' },
+        { id: 'c', label: 'Equipo', seconds: 2, shot: 'person' },
+        { id: 'd', label: 'Rótulo', seconds: 2, shot: 'text' },
+      ],
+      texts: [],
+      cover: { slot: 'a' },
+    });
+    expect(typed.slots.map((slot) => slot.shot)).toEqual(['detail', 'wide', 'person', 'text']);
+    // Las plantillas de antes (sin tipo de plano) siguen siendo válidas y no lo ganan por defecto.
+    expect(parse().slots.every((slot) => slot.shot === undefined)).toBe(true);
+    const invented = validateReelTemplate(
+      sample({ slots: [{ id: 'a', label: 'Plano', seconds: 2, shot: 'dron' as never }], texts: [], cover: { slot: 'a' } }),
+      STYLE_IDS,
+    );
+    expect(invented.ok).toBe(false);
+    // Solo informa: el reel se monta igual con o sin él.
+    const asset: SourceAsset = { id: 'f', kind: 'image', storage_path: 'o/m/media/f.jpg', file_name: 'f.jpg', mime_type: 'image/jpeg', duration_ms: null };
+    const built = buildReelFromTemplate(typed, [asset, asset, asset, asset], style('corte-ritmico'));
+    expect(JSON.stringify(built)).not.toContain('shot');
+  });
+});
+
 describe('plantilla de reel: qué planos se usan según el material', () => {
   const template = parse();
   const ids = (count: number) => slotsFor(template, count).map((s) => s.id);

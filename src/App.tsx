@@ -55,6 +55,7 @@ const CampaignDetailPage = lazyRoute(() =>
 const AnalyticsPage = lazyRoute(() => import('@/features/analytics/AnalyticsPage').then((m) => m.AnalyticsPage));
 const LibraryPage = lazyRoute(() => import('@/features/library/LibraryPage').then((m) => m.LibraryPage));
 const ReelsPage = lazyRoute(() => import('@/features/reels/ReelsPage').then((m) => m.ReelsPage));
+const ReelLikePage = lazyRoute(() => import('@/features/reels/like/ReelLikePage').then((m) => m.ReelLikePage));
 const PlatformPage = lazyRoute(() => import('@/features/platform/PlatformPage').then((m) => m.PlatformPage));
 const IntegrationsPage = lazyRoute(() =>
   import('@/features/platform/integrations/IntegrationsPage').then((m) => m.IntegrationsPage),
@@ -213,6 +214,9 @@ export function App() {
                           <Route path="biblioteca" element={<LibraryPage />} />
                           {/* Sin trabajador de medios desplegado, la pantalla vuelve a la biblioteca. */}
                           <Route path="biblioteca/reels" element={<ReelsPage />} />
+                          {/* «Hacer un reel como este»: sin su interruptor, vuelve a Reels. */}
+                          <Route path="biblioteca/reels/como-este" element={<ReelLikePage />} />
+                          <Route path="biblioteca/reels/como-este/:referenceId" element={<ReelLikePage />} />
                           <Route path="marca" element={<BrandProfilePage />} />
                           <Route path="equipo" element={<BrandTeamPage />} />
                         </Route>

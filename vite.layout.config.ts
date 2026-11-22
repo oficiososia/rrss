@@ -30,6 +30,12 @@ export default defineConfig({
       { find: '@', replacement: here('./src') },
     ],
   },
+  // «Hacer un reel como este» (reel-como-este.html) solo se ofrece con estos dos interruptores:
+  // en el banco van encendidos. El banco del editor de piezas no depende de ellos.
+  define: {
+    'import.meta.env.VITE_MEDIA_WORKER_ENABLED': JSON.stringify('true'),
+    'import.meta.env.VITE_REEL_LIKE_ENABLED': JSON.stringify('true'),
+  },
   server: { port: 5391, strictPort: true },
   optimizeDeps: { exclude: ['onnxruntime-web'] },
 });

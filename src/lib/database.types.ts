@@ -557,7 +557,12 @@ export type AiMediaGenerationOutput = {
 // de alta en `media_assets` con su procedencia (columna común `provenance`,
 // `type` = 'media_job'), y `jobs.result.assets` lo apunta.
 
-export type MediaJobKind = 'media.reel.template' | 'media.image.process' | 'media.cutout';
+export type MediaJobKind =
+  | 'media.reel.template'
+  | 'media.image.process'
+  | 'media.cutout'
+  // «Hacer un reel como este» (migración 20261223010000): mide un vídeo de referencia, sin IA.
+  | 'media.reel.analyze';
 
 type MediaJobFunctions = {
   request_media_job: {
@@ -1592,6 +1597,50 @@ type Table<Row, Insert = never, Update = never> = {
   Relationships: [];
 };
 
+// ───────────── «Hacer un reel como este» (migración 20261223010000) ─────────────
+// El cliente solo LEE estas tablas (RLS: quien ve la marca); todo se escribe por
+// funciones. `measurement` es lo que mide el trabajador sin IA y `result`, la
+// estructura, el guion y los textos (supabase/functions/_shared/reels/like.ts).
+// La plantilla reutilizable se guarda en `brand_reel_templates` (formato compartido).
+
+export type ReelReferenceStatus = 'analyzing' | 'measured' | 'ready' | 'failed' | 'expired';
+
+export type ReelReferenceRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  job_id: string | null;
+  source_kind: 'upload' | 'link';
+  /** Solo el dominio del enlace. */
+  source_host: string | null;
+  /** Ruta del vídeo subido mientras exista (se borra tras el análisis, salvo `keep_source`). */
+  source_path: string | null;
+  keep_source: boolean;
+  speech: boolean;
+  idea: string;
+  status: ReelReferenceStatus;
+  error: string | null;
+  measurement: Json | null;
+  result: Json | null;
+  cost_micros: number;
+  generation_ids: string[];
+  content_id: string | null;
+  files_released_at: string | null;
+  ai_started_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ReelLikeTables = {
+  reel_references: Table<ReelReferenceRow>;
+};
+
+type ReelLikeFunctions = {
+  discard_reel_reference: { Args: { p_reference_id: string }; Returns: string[] };
+  set_reel_reference_content: { Args: { p_reference_id: string; p_content_id: string }; Returns: ReelReferenceRow };
+};
+
 // ───────────── Operación y control de gasto (migración 20261219010000) ─────────────
 
 export type PlatformUsageRow = {
@@ -1787,7 +1836,8 @@ export type Database = {
       RgpdTables &
       AnalyticsTables &
       DriveTables &
-      OperationTables;
+      OperationTables &
+      ReelLikeTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1826,7 +1876,8 @@ export type Database = {
       IntegrationFunctions &
       DriveFunctions &
       ImportFunctions &
-      OperationFunctions;
+      OperationFunctions &
+      ReelLikeFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

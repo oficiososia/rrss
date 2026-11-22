@@ -338,6 +338,7 @@ referencia, o un futuro «Guardar como plantilla») escribe **este** documento y
   "slots": [                                             // 1 a 30 planos, en orden; ≤ 90 s entre todos
     { "id": "resultado", "label": "Plato terminado", "hint": "El mejor plano: es el gancho.",
       "kind": "any",                                     // any | photo | video: pista, no obliga
+      "shot": "detail",                                  // opcional: detail | wide | person | text (tipo de plano)
       "seconds": 1.8,                                    // 0,5 a 60 (una foto no pasa de 10)
       "motion": "zoom-in", "motionAmount": 0.15,         // si se llena con una foto
       "transition": { "type": "cut", "seconds": 0 },     // con la que entra; la del estilo si falta
@@ -425,3 +426,12 @@ publicación cada uno, en `agency/catalogo/`. Cómo se cargan: `agency/README.md
 1. Migración `20261224010000_reel_templates.sql`.
 2. La aplicación (Vercel). El trabajador no cambia.
 3. Cargar el catálogo en cada marca (`agency/`, en seco primero).
+
+### «Hacer un reel como este» escribe este formato (rama `f36/reel-como-este`, 22/11/2026)
+
+«Guardar como plantilla» en el resultado de un análisis convierte su estructura a este documento
+(`src/features/reels/like/template.ts`) y lo entrega con `deliver_reel_templates(marca, [...], 'reference')`:
+la plantilla aparece en «Empieza con una plantilla» junto a las del catálogo. Para llevar el tipo de
+plano que ve el modelo se añadió `slots[].shot` (`detail`, `wide`, `person`, `text`), **opcional**: las
+plantillas de antes siguen siendo válidas y `buildReelFromTemplate` no lo usa (solo informa). El gancho
+ya tenía sitio (`texts[].role = "hook"`). Correspondencia completa en `docs/reel-como-este.md` §8.

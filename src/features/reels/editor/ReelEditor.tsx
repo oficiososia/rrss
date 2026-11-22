@@ -24,7 +24,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -122,6 +122,9 @@ import { reelBeats } from './rhythm';
 import { Timeline, ZOOM_LEVELS } from './Timeline';
 import { useBeats } from './useBeats';
 import { useQueryClient } from '@tanstack/react-query';
+import { fillGuideShot } from '../like/draft';
+import { GuidePanel } from '../like/GuidePanel';
+import { useReelLikeDraft } from '../like/useDraft';
 
 const DEFAULT_TEMPLATE_ID = 'fundido-suave';
 const fmt = (n: number) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n);
@@ -160,6 +163,12 @@ export function ReelEditor({ item, version, onReopen }: ReelEditorProps) {
   const { org } = useOrg();
   const { brand } = useBrand();
   const paths = contentPaths(org.id, brand.id);
+  // «Hacer un reel como este»: una pieza todavía sin versiones puede abrirse con el borrador
+  // de un análisis (`?referencia=<id>`).
+  const [params] = useSearchParams();
+  const referenceId = params.get('referencia');
+  const fresh = start.kind === 'empty' && start.previous === 'none';
+  const like = useReelLikeDraft(brand.id, fresh && referenceId ? referenceId : null);
 
   if (start.kind === 'unreadable' && !forceNew) {
     return (
@@ -177,13 +186,29 @@ export function ReelEditor({ item, version, onReopen }: ReelEditorProps) {
       </div>
     );
   }
-  const initial = start.kind === 'project' ? start.project : emptyProject(defaultTemplate());
+  if (like.loading) {
+    return (
+      <div className="space-y-4" data-testid="reel-like-loading">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+  const initial =
+    start.kind === 'project' ? start.project : (like.draft?.project ?? emptyProject(defaultTemplate()));
   return (
     <Editor
       item={item}
       initial={initial}
       previousDesign={start.kind === 'empty' && start.previous === 'design'}
       onReopen={onReopen}
+      likeDraft={
+        like.draft
+          ? { notes: like.draft.notes, filled: like.draft.filled, gaps: like.draft.gaps }
+          : like.missing
+            ? 'missing'
+            : undefined
+      }
     />
   );
 }
@@ -193,11 +218,14 @@ function Editor({
   initial,
   previousDesign,
   onReopen,
+  likeDraft,
 }: {
   item: ContentItemRow;
   initial: ReelProject;
   previousDesign: boolean;
   onReopen: () => void;
+  /** El proyecto de partida es un borrador de «Hacer un reel como este» (aún sin guardar), o no se pudo leer. */
+  likeDraft?: { notes: string[]; filled: number; gaps: number } | 'missing';
 }) {
   const { org } = useOrg();
   const { brand, can } = useBrand();
@@ -208,7 +236,10 @@ function Editor({
   const readOnly = !canEdit || Boolean(item.archived_at);
   const [state, dispatch] = useReducer(editorReducer, initial, initEditor);
   const { project, selection } = state;
-  const [baseline, setBaseline] = useState(() => JSON.stringify(initial));
+  // Un borrador recién montado todavía no está guardado: cuenta como cambios sin guardar.
+  const [baseline, setBaseline] = useState(() =>
+    JSON.stringify(likeDraft && likeDraft !== 'missing' ? emptyProject(defaultTemplate()) : initial),
+  );
   const [expectedVersion, setExpectedVersion] = useState(item.current_version);
   const dirty = JSON.stringify(project) !== baseline;
   const [playhead, setPlayhead] = useState(0);
@@ -462,6 +493,14 @@ function Editor({
       color: palette[0]?.hex,
     });
   };
+  /** Aspecto de la marca para los textos del guion (tipografía del reel y color principal). */
+  const guideLook = () => {
+    const defaultFont = fonts.find((f) => reelFont.data && f.family === reelFont.data.family);
+    return {
+      colors: palette.map((c) => c.hex),
+      ...(defaultFont ? { font: { path: defaultFont.path, family: defaultFont.family } } : {}),
+    };
+  };
   /** Las piezas elegidas entran en el orden de la elección; en un reel vacío, con el estilo y el texto de partida. */
   const addMedia = (assets: ReelSourceAsset[]) => {
     if (assets.length === 0) return;
@@ -700,6 +739,22 @@ function Editor({
           .
         </Notice>
       )}
+      {likeDraft === 'missing' && (
+        <Notice tone="warning">
+          No se ha podido leer el análisis del que salía este reel: empiezas con un reel vacío.
+        </Notice>
+      )}
+      {likeDraft && likeDraft !== 'missing' && !expectedVersion && (
+        <div data-testid="reel-like-draft-notice">
+          <Notice>
+            Borrador hecho a partir de un vídeo de referencia:{' '}
+            {likeDraft.filled === 1 ? '1 plano' : `${likeDraft.filled} planos`} con material de tu biblioteca y{' '}
+            {likeDraft.gaps === 1 ? '1 por grabar' : `${likeDraft.gaps} por grabar`}. Revísalo y guarda la versión
+            {likeDraft.filled === 0 ? ' cuando añadas el primer plano' : ''}.
+            {likeDraft.notes.map((note) => ` ${note}`).join('')}
+          </Notice>
+        </div>
+      )}
       {!worker && (
         <Notice>
           Puedes montar, previsualizar, guardar y aprobar el reel. El vídeo final lo monta el trabajador de medios, que
@@ -814,8 +869,21 @@ function Editor({
 
         {/* ── Añadir ── */}
         <div className="order-2 space-y-3">
+          {project.guide && (
+            <GuidePanel
+              project={project}
+              sources={sources.data ?? []}
+              loading={sources.isPending}
+              error={sources.error}
+              readOnly={readOnly}
+              labelOf={labelOf}
+              onFill={(shotId, asset) => apply((p) => fillGuideShot(p, shotId, asset, template, guideLook()))}
+              onSelectClip={(id) => select({ kind: 'clip', id })}
+            />
+          )}
           {empty ? (
-            !readOnly && (
+            !readOnly &&
+            !project.guide && (
               <Starter
                 templates={REEL_TEMPLATES}
                 templateId={template.id}
