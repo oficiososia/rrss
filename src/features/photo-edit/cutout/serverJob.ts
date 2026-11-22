@@ -22,7 +22,12 @@ export const CUTOUT_JOB_KIND = 'media.cutout';
 export const CUTOUT_JOB_MODEL = 'ben2-base-fp16';
 /** Cada cuánto se mira el trabajo. */
 export const JOB_POLL_MS = 2_000;
-/** Con la máquina apagada tarda en arrancar (~10 s) y el modelo ~16 s: si en 3 minutos no hay resultado, se da por perdido. */
+/**
+ * Plazo del trabajo. Medido en staging el 22/11/2026: 54 s en total cuando va bien (arranque de la
+ * máquina ~11 s + recorte); más de 176 s cuando Fly frena el procesador de la máquina. No se sube:
+ * un recorte frenado puede irse a 6 minutos y el navegador da uno de calidad básica en segundos
+ * (docs/alojamiento.md, §3.1, con los números para bajarlo a 90 s si se prefiere esperar menos).
+ */
 export const JOB_TIMEOUT_MS = 180_000;
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -222,7 +227,9 @@ export async function removeBackgroundByJob(image: Pixels, options: JobOptions):
     }
     if (last?.status === 'cancelled') throw new CutoutServerError('El recorte se ha cancelado.', 'server');
     if (Date.now() >= deadline) {
-      await cancelOnServer();
+      // Se pide cancelar SIN esperar la respuesta: quien llama pasa al recorte del navegador en el acto
+      // (esperar aquí dejaba la barra en «Recortando en el servidor…» lo que tardase la llamada).
+      void cancelOnServer();
       throw new CutoutServerError('El servidor no ha respondido a tiempo.', 'timeout');
     }
     if (last) options.onProgress?.(last.status === 'running' ? 'running' : 'queued');
