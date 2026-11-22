@@ -112,7 +112,11 @@ test('la subida muestra el porcentaje real y llega íntegra a Storage', async ({
   );
   const bytesMiniatura = Number(miniatura?.size ?? 0);
   expect(bytesMiniatura, 'la foto grande sube también su miniatura').toBeGreaterThan(0);
-  expect(proxy.bytesSubidos()).toBe(FOTO_GRANDE.length + bytesMiniatura);
+  // El original va en bruto (XHR); la miniatura la sube supabase-js como multipart, con unos
+  // cientos de bytes de cabeceras del formulario: de ahí el margen.
+  const subidos = proxy.bytesSubidos();
+  expect(subidos).toBeGreaterThanOrEqual(FOTO_GRANDE.length + bytesMiniatura);
+  expect(subidos).toBeLessThan(FOTO_GRANDE.length + bytesMiniatura + 2048);
 
   // La petición es la de la API REST de Storage: cuerpo binario, con su tipo y sin sobrescribir.
   const cabeceras = await (await peticion).allHeaders();

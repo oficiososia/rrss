@@ -120,11 +120,11 @@ test('quien gestiona la marca conecta Instagram pegando un token (Graph API simu
   // «Conexión avanzada» vive dentro de «Opciones avanzadas» (un <details> cerrado).
   await tarjeta.getByTestId('social-connect-advanced').locator('summary').click();
   await tarjeta.getByTestId('social-connect-token').click();
-  await expect(page.getByText(/El token sustituye al inicio de sesión con Meta/)).toBeVisible();
+  await expect(page.getByText(/La clave de acceso sustituye al inicio de sesión con Meta/)).toBeVisible();
   await page.getByTestId('social-token-ig-id').fill('17841400000000001');
   await page.getByTestId('social-token-value').fill(token);
   await page.getByTestId('social-token-submit').click();
-  await aviso(page, 'Cuenta @cuenta_simulada conectada con el token');
+  await aviso(page, 'Cuenta @cuenta_simulada conectada');
   await expect(tarjeta.getByTestId('social-account-token')).toContainText('Conexión avanzada');
   expect(await page.content()).not.toContain(token);
 
