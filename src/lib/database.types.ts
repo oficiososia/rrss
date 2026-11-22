@@ -972,6 +972,8 @@ type ImportTables = {
 
 type ImportFunctions = {
   delete_design_template: { Args: { p_template_id: string }; Returns: undefined };
+  rename_design_template: { Args: { p_template_id: string; p_name: string }; Returns: BrandDesignTemplateRow };
+  duplicate_design_template: { Args: { p_template_id: string }; Returns: BrandDesignTemplateRow };
   deliver_design_templates: { Args: { p_brand_id: string; p_templates: Json }; Returns: BrandDesignTemplateRow[] };
 };
 

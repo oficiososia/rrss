@@ -4,7 +4,7 @@ Lista única de lo que falta para pasar de «probado en local y en staging con
 proveedores simulados» a «clientes de pago usándolo». Para saber qué hay hecho y
 cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 
-Última revisión: 22/11/2026 (rama `f27/calidad`).
+Última revisión: 22/11/2026 (rama `f31/flecos-editor`).
 
 - **Quién:** `Dueño` = necesita una cuenta, una decisión, dinero o una firma suya;
   `Desarrollo` = trabajo de código o de despliegue que se puede hacer sin él (o
@@ -34,11 +34,9 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P | Qué falta | Quién | Notas |
 | --- | --- | --- | --- |
 | P0 | Revisión a mano en un navegador real y en un móvil real (escritorio y 375 px): dibujo con Konva, recorte arrastrando el marco, pellizco táctil, «Editar foto» a pantalla completa, hoja inferior | Ambos | Todo está probado con navegador real **sin** Supabase (`test:layout`) y en componentes; falta el uso de verdad con datos reales |
-| P0 | Aplicar en staging las migraciones sin aplicar: `20261209010000` (miniaturas), `20261211010000` (documento v5), `20261212010000` (plantillas del editor), `20261213120000` (uso del recorte en servidor) y las demás de `docs/ESTADO.md` («Para llevar a staging») | Ambos | Sin ellas el editor guarda con error o sin miniaturas |
-| P1 | Esc en «Editar foto» solo cierra con el foco dentro de la pantalla; si el botón pulsado desaparece (por ejemplo tras quitar el fondo con IA) el foco queda en la página y Esc no hace nada | Desarrollo | Descubierto al arreglar la e2e 22; lo normal sería escuchar en el documento, como ya hace el editor |
-| P1 | Vista de gestión de plantillas de la marca (hoy solo se borran desde «Desde una plantilla») | Desarrollo | |
-| P1 | Diagnóstico del 500 de `media-storage/sign` en staging (¿falta `thumb_path`?) y que la función registre el mensaje del error, no solo su nombre | Desarrollo | `docs/ESTADO.md`, tanda 2 del editor |
-| P2 | Ajuste a guías al mover varias capas; zonas seguras para otros formatos que 9:16 | Desarrollo | |
+| P0 | Aplicar en staging `20261220010000` (renombrar y duplicar plantillas); sin ella, esos dos botones de Marca → Identidad visual dan error | Ambos | Las migraciones `20261207…` a `20261217…` **ya están aplicadas en staging**, salvo `20261213120000` (uso de la función de Vercel `api/cutout-mask`, que está apagada: no hace falta) |
+| P1 | Que `media-storage` registre el mensaje del error y no solo su nombre | Desarrollo | `media-storage/sign` ya firma por tandas (el 500 con muchas rutas está arreglado) y la migración de `thumb_path` está aplicada en staging |
+| P2 | Zonas seguras de 1:1 y 4:5 con cifra publicada por la red (hoy son un cálculo propio de la rejilla del perfil, orientativo) | Desarrollo | Las guías al mover varias capas ya están (`f31`) |
 | P2 | Exportar en el servidor (hoy solo en el navegador) y `media.document.export` | Desarrollo | |
 
 ## 3. Reels y trabajador de medios
@@ -47,7 +45,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | --- | --- | --- | --- |
 | P0 | Tarjeta de pago en Fly (sin ella la prueba corta a los 5 min) y borrar la máquina sobrante `1859526f369798` | Dueño | **Bloqueado** por la tarjeta (`docs/alojamiento.md` §4.2) |
 | P0 | Probar un reel completo desde el **editor de reels nuevo** y la **pantalla de salida de tres pasos** en staging, en escritorio y 375 px (nadie los ha visto en un navegador real) | Ambos | El reel por plantilla sí salió en staging el 21/11 |
-| P0 | Redesplegar `media-storage` (arreglo de `sign` con muchas rutas), desplegar `ai-transcribe` y `worker-gateway`, aplicar `20261207010000` y `20261208010000` si faltan en staging | Desarrollo | Con el «sí» del dueño |
+| P0 | Desplegar `ai-transcribe` y `worker-gateway` si aún no están en staging | Desarrollo | Con el «sí» del dueño. `media-storage` ya firma por tandas y `20261207010000` y `20261208010000` están aplicadas en staging |
 | P1 | Subtítulos automáticos contra OpenAI real (clave de Integraciones con residencia UE) y precio real por minuto | Ambos | Hoy transcripción simulada |
 | P1 | Música: decidir si se ofrece una biblioteca con licencia (hoy la marca confirma que tiene la licencia) | Dueño | |
 | P2 | Cortes al compás de la música, portada del reel, animaciones de texto (cambian el plan: fase aparte), tipografías .woff | Desarrollo | |
@@ -59,8 +57,8 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | --- | --- | --- | --- |
 | P0 | Elegir proveedor y cupo mensual: Google Cloud/Vertex en la UE, OpenAI con `eu.api.openai.com` u otro (hay comparativa en `docs/ia-texto.md` y `docs/ia-medios.md`) | Dueño | **Bloqueado** hasta que haya cuenta y precios confirmados |
 | P0 | Poner la clave `OPENAI_API_KEY` (o la del proveedor elegido) en Integraciones y probar de verdad: redactar, copiloto por voz, cambiar el fondo, mejorar, subtítulos | Ambos | Todo lo de IA está probado solo con proveedores simulados; precios y modelos nacen inactivos y sin precio verificado |
-| P0 | Quitar el fondo: aplicar `20261213120000` y desplegar `api/cutout-mask` en Vercel (arranque en frío, CPU, que el paquete lleve los binarios); mirar `GET /api/cutout-mask` | Ambos | Es el respaldo cuando no hay WebGPU |
-| P1 | Probar BEN2 con WebGPU real y el recorte sobre fotos reales de 12 MP; el corte en diagonal del chuletón del dueño sigue sin explicar (hace falta la foto) | Ambos | |
+| P1 | Quitar el fondo en el servidor: medir tiempo y memoria reales en Fly con fotos de clientes (la cadena es navegador con BEN2 → trabajo `media.cutout` en Fly → IS-Net) | Desarrollo | Va por Fly y está probado en staging. `api/cutout-mask` (Vercel) queda **apagada** y sin desplegar; solo se reactiva con `VITE_CUTOUT_SERVER_URL=/api/cutout-mask` |
+| P1 | Probar BEN2 con WebGPU real y el recorte sobre fotos reales de 12 MP | Ambos | El corte «en diagonal» del chuletón quedó explicado: esa foto es un post ya diseñado y la franja de texto tapa la bandeja; no era un fallo del recorte |
 | P1 | Decidir si se quita el fondo también en el trabajador sin GPU (pesos de 100–200 MB) o con ComfyUI | Dueño | `docs/edicion-fotos.md` §4 y §5 |
 | P1 | Pasar el cupo y el coste reales a los planes (el cupo por plan se calcula con precios inventados del simulador) | Ambos | |
 | P1 | Valorar el modo retrato y la mejora automática con fotos de platos reales de los clientes (los números actuales salen de 12 fotos) | Ambos | |
@@ -83,7 +81,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P | Qué falta | Quién | Notas |
 | --- | --- | --- | --- |
 | P0 | Supabase de **producción** en plan Pro (copias de seguridad, sin pausas) y aplicar todas las migraciones allí; las de staging siguen por delante | Dueño | Hoy solo hay staging (plan gratuito) |
-| P0 | Vercel: el plan Hobby es solo para uso no comercial y da 4 h de CPU al mes; para clientes de pago hace falta Pro o mover la función de recorte | Dueño | `docs/ESTADO.md`, recorte refinado |
+| P0 | Vercel: el plan Hobby es solo para uso no comercial y da 4 h de CPU al mes; para clientes de pago hace falta Pro (el recorte ya no depende de Vercel: va por Fly) | Dueño | `docs/ESTADO.md`, recorte refinado |
 | P0 | Dominio propio y retorno de inicio de sesión a ese dominio | Dueño | Hoy `rrss-omega.vercel.app` |
 | P0 | Correo propio (SMTP: Resend u otro) para registro, recuperación e invitaciones; hoy llega solo al equipo de Supabase, 2 por hora | Ambos | **Bloqueado** hasta tener el servicio |
 | P0 | Secretos de Vault `rrss_project_url` y `rrss_service_role_key` en staging y producción, para que los trabajos programados (publicador, analítica, huérfanos, despertador del trabajador) hagan algo | Ambos | Sin ellos solo dejan un aviso |

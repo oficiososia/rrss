@@ -30,8 +30,10 @@ export function safeZoneFor(
   spec: NetworkFormatSpec | undefined,
   canvas: { aspectRatio: string; width: number; height: number },
 ): SafeZone | null {
-  const zone = spec?.safeZone;
-  if (!zone || zone.value.ratio !== canvas.aspectRatio) return null;
+  const zone = [spec?.safeZone, ...(spec?.extraSafeZones ?? [])].find(
+    (candidate) => candidate && candidate.value.ratio === canvas.aspectRatio,
+  );
+  if (!zone) return null;
   const { width, height } = canvas;
   const { top, bottom, left, right } = zone.value.insets;
   const safe: Rect = {

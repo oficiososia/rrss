@@ -7,7 +7,7 @@ import { Rect } from 'konva/lib/shapes/Rect';
 import { Text } from 'konva/lib/shapes/Text';
 import { Transformer } from 'konva/lib/shapes/Transformer';
 import type { Rect as Bounds } from '../../safeZones';
-import { layersInRect, normalizeRect, snapBox, snapTargets } from '../arrange';
+import { layersInRect, normalizeRect, snapBox, snapGroup, snapTargets } from '../arrange';
 import { layerToNodeBox, nodeToLayerBox, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
 import { ImageStore } from './imageStore';
@@ -80,6 +80,8 @@ export class Scene {
   private overlay: Konva.Layer;
   private transformer: Transformer;
   private guides: Line[] = [];
+  private dragStart: { origin: { x: number; y: number }; ids: Set<string>; boxes: ReturnType<typeof boxOf>[] } | null =
+    null;
   private zone: Konva.Shape[] = [];
   private marquee: Rect;
   private marqueeStart: { x: number; y: number; additive: boolean } | null = null;
@@ -295,8 +297,10 @@ export class Scene {
         this.callbacks.onEditText(spec.id);
       }
     });
+    node.on('dragstart', () => this.startGroupDrag(node));
     node.on('dragmove', () => this.snap(node));
     node.on('dragend', () => {
+      this.dragStart = null;
       this.clearGuides();
       const attached = this.transformer.nodes() as AnyNode[];
       // Con varias, Konva arrastra todas y avisa por cada una: un solo cambio con todas.
@@ -396,19 +400,38 @@ export class Scene {
     this.callbacks.onSelectMany(layersInRect(layers, rect), start.additive);
   }
 
+  /** Con varias capas elegidas, dónde estaban todas al empezar a arrastrar (para calcular su caja conjunta). */
+  private startGroupDrag(node: AnyNode): void {
+    const attached = this.transformer.nodes() as AnyNode[];
+    this.dragStart =
+      attached.length > 1 && attached.includes(node)
+        ? {
+            origin: { x: node.x(), y: node.y() },
+            ids: new Set(attached.map((n) => n.id())),
+            boxes: attached.map(boxOf),
+          }
+        : null;
+  }
+
   /**
-   * Guías de ajuste mientras se arrastra una sola capa: se pega a los bordes y
-   * al centro del lienzo y de las demás capas visibles. Con varias elegidas no
-   * se ajusta (se mueven juntas tal cual).
+   * Guías de ajuste mientras se arrastra: se pega a los bordes y al centro del lienzo y de las demás
+   * capas visibles. Con varias elegidas se ajusta la CAJA CONJUNTA (sus bordes y su centro) y todas se
+   * mueven a la vez; las capas elegidas no cuentan como destino.
    */
   private snap(node: AnyNode): void {
-    if (!this.input || (this.transformer.nodes().length > 1 && this.transformer.nodes().includes(node))) return;
-    const box = boxOf(node);
-    const others = [...this.specs.values()].filter((spec) => spec.id !== node.id() && spec.visible).map(specBox);
+    if (!this.input) return;
+    const group = this.dragStart;
+    const attached = this.transformer.nodes();
+    if (!group && attached.length > 1 && attached.includes(node)) return;
     const threshold = 8 / Math.max(this.input.scale, 0.05);
-    const snapped = snapBox(box, snapTargets(this.input.canvas, others), threshold);
-    const center = layerToNodeBox({ ...box, x: box.x + snapped.dx, y: box.y + snapped.dy });
-    node.position({ x: center.x, y: center.y });
+    const skip = group?.ids ?? new Set([node.id()]);
+    const others = [...this.specs.values()].filter((spec) => !skip.has(spec.id) && spec.visible).map(specBox);
+    const targets = snapTargets(this.input.canvas, others);
+    const snapped = group
+      ? snapGroup(group.boxes, { x: node.x() - group.origin.x, y: node.y() - group.origin.y }, targets, threshold)
+      : snapBox(boxOf(node), targets, threshold);
+    // Mover el nodo arrastrado mueve a las demás con él (Konva reparte el desplazamiento).
+    node.position({ x: node.x() + snapped.dx, y: node.y() + snapped.dy });
     this.drawGuides(snapped.guides);
   }
 

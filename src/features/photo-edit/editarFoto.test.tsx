@@ -244,7 +244,14 @@ describe('Editar foto desde la biblioteca', () => {
       onProgress?.({ phase: 'downloading', received: 42_000_000, total: 84_000_000 });
       await gate;
       onProgress?.({ phase: 'running' });
-      return { pixels: pixels(120, 90, 0), model: 'isnet-general-use', provider: 'wasm', engine: 'isnet', quality: 'basic', fromCache: false };
+      return {
+        pixels: pixels(120, 90, 0),
+        model: 'isnet-general-use',
+        provider: 'wasm',
+        engine: 'isnet',
+        quality: 'basic',
+        fromCache: false,
+      };
     });
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
@@ -490,7 +497,9 @@ describe('Editar foto desde la biblioteca', () => {
       return {
         pixels: { data: out, width: image.width, height: image.height },
         model: 'isnet-test',
-        provider: 'wasm', engine: 'isnet', quality: 'basic',
+        provider: 'wasm',
+        engine: 'isnet',
+        quality: 'basic',
         fromCache: true,
       };
     });
@@ -543,7 +552,9 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm', engine: 'isnet', quality: 'basic',
+      provider: 'wasm',
+      engine: 'isnet',
+      quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
@@ -568,7 +579,9 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm', engine: 'isnet', quality: 'basic',
+      provider: 'wasm',
+      engine: 'isnet',
+      quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
@@ -619,25 +632,31 @@ function documentWithPhoto(): ContentDocument {
   const doc = createEmptyDocument({ aspectRatio: '4:5' });
   return {
     ...doc,
-    pages: [{ id: 'p1', name: '', layers: [
+    pages: [
       {
-        id: 'foto',
-        type: 'image',
-        name: 'Foto',
-        x: 0,
-        y: 0,
-        width: 1080,
-        height: 1350,
-        rotation: 0,
-        opacity: 1,
-        visible: true,
-        locked: false,
-        anchor: { x: 'stretch', y: 'stretch' },
-        source: { kind: 'asset', assetId: '11111111-1111-4111-8111-111111111111' },
-        fit: 'cover',
-        focus: { x: 0.5, y: 0.5 },
+        id: 'p1',
+        name: '',
+        layers: [
+          {
+            id: 'foto',
+            type: 'image',
+            name: 'Foto',
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 1350,
+            rotation: 0,
+            opacity: 1,
+            visible: true,
+            locked: false,
+            anchor: { x: 'stretch', y: 'stretch' },
+            source: { kind: 'asset', assetId: '11111111-1111-4111-8111-111111111111' },
+            fit: 'cover',
+            focus: { x: 0.5, y: 0.5 },
+          },
+        ],
       },
-    ] }],
+    ],
   };
 }
 
@@ -1019,6 +1038,67 @@ describe('Modo retrato y retoque de la selección', () => {
         { kind: 'background', color: '#FFFFFF' },
       ],
     });
+  });
+
+  it('Esc cierra la pantalla aunque el botón pulsado haya desaparecido y el foco esté fuera (tras quitar el fondo)', async () => {
+    const { dialog } = await cutAndOpenBackgrounds();
+    // «Quitar el fondo» ya no está: el foco se quedó en la página, no dentro de la pantalla.
+    expect(dialog.queryByTestId('photo-edit-cutout-run')).not.toBeInTheDocument();
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(screen.getByTestId('photo-edit').contains(document.activeElement)).toBe(false);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    // Con un recorte sin guardar pregunta antes de descartar, como Volver.
+    expect(await dialog.findByTestId('photo-edit-discard')).toBeInTheDocument();
+  });
+
+  it('si el foco se pierde al desaparecer un botón, la pantalla lo recupera', async () => {
+    const { dialog } = await cutAndOpenBackgrounds();
+    const root = screen.getByTestId('photo-edit');
+    const probe = document.createElement('button');
+    root.appendChild(probe);
+    probe.focus();
+    probe.remove(); // jsdom no avisa con focusout al quitar un elemento: se avisa a mano
+    root.dispatchEvent(new FocusEvent('focusout', { relatedTarget: null }));
+    await waitFor(() => expect(document.activeElement).toBe(root));
+    expect(dialog.getByTestId('photo-edit-backgrounds')).toBeInTheDocument();
+  });
+
+  it('se puede pintar solo con el teclado: flechas, Espacio, [ ], X y Ctrl+Z', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    expect(dialog.getByTestId('photo-edit-retouch-keys')).toBeInTheDocument();
+    const canvas = await screen.findByTestId('photo-edit-retouch-canvas');
+    expect(canvas).toHaveAttribute('tabindex', '0');
+    canvas.focus();
+    // Atajos de tamaño y de modo con el foco en la foto.
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('4');
+    await user.keyboard(']]');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('6');
+    await user.keyboard('[[');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('5');
+    await user.keyboard('x');
+    expect(dialog.getByTestId('photo-edit-brush-remove')).toHaveAttribute('aria-checked', 'true');
+    await user.keyboard('x');
+    expect(dialog.getByTestId('photo-edit-brush-add')).toHaveAttribute('aria-checked', 'true');
+    // Mover sin pintar no deja trazos; bajar el lápiz, mover y levantarlo deja uno.
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled();
+    await user.keyboard(' {ArrowDown}{ArrowDown}{Shift>}{ArrowLeft}{/Shift} ');
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled());
+    // Esc con el lápiz bajado solo lo levanta (deja un toque) y no cierra la pantalla.
+    await user.keyboard(' {Escape}');
+    expect(screen.getByTestId('photo-edit')).toBeInTheDocument();
+    expect(screen.queryByTestId('photo-edit-discard')).not.toBeInTheDocument();
+    // Ctrl+Z deshace un trazo cada vez (con el foco en la foto): eran dos.
+    await user.keyboard('{Control>}z{/Control}');
+    expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled();
+    await user.keyboard('{Control>}z{/Control}');
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled());
+    // También con el foco en el panel.
+    dialog.getByTestId('photo-edit-brush-size').focus();
+    await user.keyboard(']');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('6');
   });
 
   it('el velo de color se puede quitar para ver el recorte sobre el ajedrez', async () => {

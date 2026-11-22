@@ -8,6 +8,7 @@
 import type { Json } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import { deleteAssets } from '@/features/library/api';
 import { signedUrlFor } from '../api';
 import type { Pixels } from '../pixels';
 import { NoSubjectError } from './mask';
@@ -44,6 +45,11 @@ export interface JobDeps {
   /** PNG del resultado → su canal alfa. */
   loadAlpha(outputPath: string): Promise<AlphaImage>;
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
+  /**
+   * Borra el PNG intermedio que el trabajo dejó en «Ediciones» (solo se usa su alfa). Es
+   * opcional: sin ella no se borra nada. Nunca debe tocar algo que alguien guardó a propósito.
+   */
+  discard?(jobId: string, outputPath: string): Promise<void>;
 }
 
 export interface JobOptions {
@@ -105,6 +111,31 @@ async function loadAlphaFromStorage(outputPath: string): Promise<AlphaImage> {
   }
 }
 
+/**
+ * Borra el PNG intermedio de un trabajo de recorte, y solo si sigue siendo ESE archivo tal como lo
+ * dejó el trabajo: procedencia `media_job` de este trabajo, carpeta «Ediciones» y el nombre
+ * «Sin fondo · …» que le pone la base de datos. Si alguien lo renombró o lo movió, se queda.
+ */
+export async function discardIntermediate(jobId: string, outputPath: string): Promise<void> {
+  const rows = unwrap(
+    await supabase
+      .from('media_assets')
+      .select('id, file_name, folder, provenance')
+      .eq('storage_path', outputPath)
+      .limit(1),
+  );
+  const row = rows[0];
+  if (!row) return;
+  const prov = row.provenance as { type?: unknown; kind?: unknown; job_id?: unknown } | null;
+  const untouched =
+    prov?.type === 'media_job' &&
+    prov.kind === CUTOUT_JOB_KIND &&
+    prov.job_id === jobId &&
+    row.folder === 'Ediciones' &&
+    row.file_name.startsWith('Sin fondo · ');
+  if (untouched) await deleteAssets([row.id]);
+}
+
 export const defaultJobDeps: JobDeps = {
   async request(brandId, sourcePath, key) {
     const job = unwrap(
@@ -126,6 +157,7 @@ export const defaultJobDeps: JobDeps = {
   },
   loadAlpha: loadAlphaFromStorage,
   sleep: defaultSleep,
+  discard: discardIntermediate,
 };
 
 /** ¿Es el aviso del trabajador de que no hay sujeto? (su mensaje llega en `last_error`). */
@@ -155,7 +187,17 @@ export async function removeBackgroundByJob(image: Pixels, options: JobOptions):
   }
 
   // Cancelar desde la interfaz: se avisa al servidor (si no llega, caduca solo) y se corta aquí.
-  const cancelOnServer = () => deps.cancel(job.id).catch(() => undefined);
+  // Si el trabajo ya había terminado (la cancelación llega tarde), su PNG intermedio sobra: se borra.
+  const cancelOnServer = () =>
+    deps.cancel(job.id).catch(async () => {
+      try {
+        const now = await deps.status(job.id);
+        const path = (now.result as { output?: { path?: unknown } } | null)?.output?.path;
+        if (now.status === 'succeeded' && typeof path === 'string') await deps.discard?.(job.id, path);
+      } catch {
+        // Sin red no se puede comprobar: se queda como estaba.
+      }
+    });
   const pollMs = options.pollMs ?? JOB_POLL_MS;
   const deadline = Date.now() + (options.timeoutMs ?? JOB_TIMEOUT_MS);
   let last: JobStatus | undefined;
@@ -195,7 +237,13 @@ export async function removeBackgroundByJob(image: Pixels, options: JobOptions):
   const output = (last.result as { output?: { path?: unknown } } | null)?.output?.path;
   if (typeof output !== 'string')
     throw new CutoutServerError('El servidor no ha devuelto la foto sin fondo.', 'server');
-  const mask = await deps.loadAlpha(output);
+  let mask: AlphaImage;
+  try {
+    mask = await deps.loadAlpha(output);
+  } finally {
+    // El PNG del servidor solo vale por su alfa: leído (o si no se pudo leer), no se deja en la biblioteca.
+    await deps.discard?.(job.id, output).catch(() => undefined);
+  }
   if (!sameAspect(mask, image)) {
     throw new CutoutServerError('La foto sin fondo no tiene la misma forma que la original.', 'server');
   }

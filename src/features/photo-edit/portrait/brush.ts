@@ -51,16 +51,23 @@ export function paintSegment(
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const len2 = dx * dx + dy * dy;
+  const r2 = r * r;
+  const inner = r * BRUSH_HARDNESS;
+  const inner2 = inner * inner;
   for (let y = y0; y <= y1; y += 1) {
+    const py = y + 0.5 - a[1];
+    const row = y * width;
     for (let x = x0; x <= x1; x += 1) {
       const px = x + 0.5 - a[0];
-      const py = y + 0.5 - a[1];
       const t = len2 === 0 ? 0 : Math.min(1, Math.max(0, (px * dx + py * dy) / len2));
       const cx = px - t * dx;
       const cy = py - t * dy;
-      const c = coverage(Math.hypot(cx, cy), r);
-      if (c <= 0) continue;
-      const i = y * width + x;
+      // Distancia al cuadrado: la raíz solo en la corona de borde suave (la mayoría de los píxeles
+      // o están dentro del todo o fuera del todo). A 12 MP esto pesa: ver scripts/medir-guardado-retrato.ts.
+      const d2 = cx * cx + cy * cy;
+      if (d2 >= r2) continue;
+      const c = d2 <= inner2 ? 1 : coverage(Math.sqrt(d2), r);
+      const i = row + x;
       if (mode === 'add') {
         const v = Math.round(255 * c);
         if (v > alpha[i]!) alpha[i] = v;

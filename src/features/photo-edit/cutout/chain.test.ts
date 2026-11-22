@@ -38,7 +38,9 @@ function deps(over: Partial<RemovalDeps> = {}): RemovalDeps & { calls: string[] 
     ben2Capable: async () => true,
     browser: vi.fn(async (_image, engine) => {
       calls.push(`browser-${engine}`);
-      return engine === 'ben2' ? browserResult() : { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
+      return engine === 'ben2'
+        ? browserResult()
+        : { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
     }),
     jobEnabled: () => true,
     job: vi.fn(async () => {
@@ -280,6 +282,65 @@ describe('trabajo media.cutout del servidor (serverJob)', () => {
       request: vi.fn(async () => Promise.reject(new Error('No tienes permiso para crear medios en esta marca'))),
     });
     await expect(run(sinPermiso)).rejects.toMatchObject({ failure: 'permission' });
+  });
+
+  it('borra el PNG intermedio una vez leído su alfa, también si no se puede leer', async () => {
+    const ok = jobDeps({ discard: vi.fn(async () => undefined) });
+    await run(ok);
+    expect(ok.discard).toHaveBeenCalledWith('job-1', 'org/brand/ediciones/x.png');
+
+    const roto = jobDeps({
+      loadAlpha: vi.fn(async () => Promise.reject(new Error('sin red'))),
+      discard: vi.fn(async () => undefined),
+    });
+    await expect(run(roto)).rejects.toThrow('sin red');
+    expect(roto.discard).toHaveBeenCalledTimes(1);
+
+    // Si borrar falla, el recorte sigue siendo válido.
+    const noBorra = jobDeps({ discard: vi.fn(async () => Promise.reject(new Error('RLS'))) });
+    await expect(run(noBorra)).resolves.toMatchObject({ width: 8, height: 6 });
+  });
+
+  it('si se cancela cuando el trabajo ya había terminado, borra el PNG que dejó', async () => {
+    const control = new AbortController();
+    const d = jobDeps({
+      status: vi.fn(async () => ({
+        status: 'succeeded' as const,
+        last_error: null,
+        result: { output: { path: 'org/brand/ediciones/x.png' } },
+      })),
+      cancel: vi.fn(async () => Promise.reject(new Error('Este trabajo ya ha terminado'))),
+      discard: vi.fn(async () => undefined),
+    });
+    control.abort();
+    // Cancelado antes de empezar: no se encarga nada.
+    await expect(run(d, { signal: control.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(d.request).not.toHaveBeenCalled();
+
+    const c2 = new AbortController();
+    const tarde = jobDeps({
+      status: vi.fn(async () => ({
+        status: 'running' as const,
+        last_error: null,
+        result: { output: { path: 'org/brand/ediciones/x.png' } },
+      })),
+      cancel: vi.fn(async () => Promise.reject(new Error('Este trabajo ya ha terminado'))),
+      discard: vi.fn(async () => undefined),
+      sleep: vi.fn(async () => {
+        c2.abort();
+        throw Object.assign(new Error('Recorte cancelado.'), { name: 'AbortError' });
+      }),
+    });
+    // Al cancelar, la comprobación final ve «succeeded» y limpia.
+    (tarde.status as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ status: 'running', last_error: null, result: null })
+      .mockResolvedValue({
+        status: 'succeeded',
+        last_error: null,
+        result: { output: { path: 'org/brand/ediciones/x.png' } },
+      });
+    await expect(run(tarde, { signal: c2.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(tarde.discard).toHaveBeenCalledWith('job-1', 'org/brand/ediciones/x.png');
   });
 
   it('si no termina en el plazo, lo cancela y da error de tiempo', async () => {

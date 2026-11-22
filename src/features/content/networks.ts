@@ -113,6 +113,8 @@ export interface NetworkFormatSpec {
    * son orientativas.
    */
   safeZone?: Sourced<SafeZoneSpec>;
+  /** Más zonas para otras proporciones del mismo formato (p. ej. 1:1 y 4:5 en una publicación). */
+  extraSafeZones?: Sourced<SafeZoneSpec>[];
 }
 
 /** Márgenes que tapa la interfaz, como fracción del lado del lienzo (0–1). */
@@ -184,6 +186,17 @@ const verticalSafeZone = unverified(
   'Sin cifra propia de esta red: se usa la caja conservadora del vídeo vertical que propone el informe (atribuida a Meta); orientativa.',
 );
 
+// Publicaciones de Instagram en 1:1 y 4:5: la rejilla del perfil las enseña recortadas a 3:4 (más
+// estrechas que el cuadrado y que el 4:5), así que se pierde una franja a cada lado. Cálculo propio a
+// partir de esa proporción, NO una cifra que publique la red; por eso es orientativa.
+const GRID_SOURCE = 'Cálculo propio: la rejilla del perfil recorta las publicaciones a 3:4 (sin cifra publicada)';
+const profileGridZone = (ratio: '1:1' | '4:5', side: number) =>
+  unverified<SafeZoneSpec>(
+    { ratio, insets: { top: 0, bottom: 0, left: side, right: side } },
+    GRID_SOURCE,
+    'En la rejilla del perfil se ve más estrecha: lo importante, dentro. Cifra orientativa.',
+  );
+
 const PINTEREST_NOTE = 'Cifra de la página oficial de anuncios; aplicarla a pines orgánicos está sin verificar.';
 
 // El pie de Instagram es el mismo en publicación y reel.
@@ -215,6 +228,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
       truncation: [unverified({ characters: 125 }, IG_TRUNCATION)],
     },
     notes: [official('Máximo 3 colaboradores.', IG_MEDIA)],
+    extraSafeZones: [profileGridZone('1:1', 0.125), profileGridZone('4:5', 0.03125)],
   },
   {
     network: 'instagram',

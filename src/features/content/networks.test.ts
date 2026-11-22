@@ -38,7 +38,12 @@ describe('catálogo de redes y formatos', () => {
       for (const [path, sourced] of sourcedValues(data, `${network}/${format}`)) {
         total += 1;
         expect(['official', 'unverified'], path).toContain(sourced.provenance);
-        expect(sourced.source, path).toMatch(/^https:\/\/\S+$/);
+        // Una página de la que sale, o (solo si no es oficial) la nota de que es un cálculo propio sin fuente publicada.
+        if (sourced.provenance === 'unverified' && sourced.source.startsWith('Cálculo propio')) {
+          expect(sourced.note, path).toMatch(/orientativa/);
+        } else {
+          expect(sourced.source, path).toMatch(/^https:\/\/\S+$/);
+        }
         expect(sourced.value, path).not.toBeUndefined();
       }
     }

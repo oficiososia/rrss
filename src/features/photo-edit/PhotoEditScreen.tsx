@@ -99,6 +99,7 @@ import {
   type BrushMode,
   type BrushStroke,
 } from './portrait/brush';
+import { renderRetouch } from './portrait/retouch';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
 
@@ -401,6 +402,39 @@ export function PhotoEditScreen({
     if (commit?.dirty) setAskDiscard(true);
     else onClose();
   };
+
+  // Si el botón que tenía el foco desaparece (p. ej. «Quitar el fondo» al terminar), el navegador deja el
+  // foco en la página y Esc no llegaría a esta pantalla. Dos redes: se devuelve el foco a la pantalla y,
+  // si aun así Esc llega al documento con el foco perdido, también cierra.
+  const requestCloseRef = useRef(requestClose);
+  useEffect(() => {
+    requestCloseRef.current = requestClose;
+  });
+  useEffect(() => {
+    const lost = () => {
+      const active = document.activeElement;
+      return !active || active === document.body || active === document.documentElement;
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !lost()) return;
+      event.preventDefault();
+      requestCloseRef.current();
+    };
+    const root = rootRef.current;
+    const onFocusOut = (event: FocusEvent) => {
+      // Sin destino = el foco se ha ido a la página (el elemento se quitó o se desactivó).
+      if (event.relatedTarget) return;
+      setTimeout(() => {
+        if (root?.isConnected && lost()) root.focus({ preventScroll: true });
+      }, 0);
+    };
+    document.addEventListener('keydown', onDocumentKeyDown);
+    root?.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('keydown', onDocumentKeyDown);
+      root?.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     // Lo que se teclea aquí no es del editor de debajo (Ctrl+Z, Supr, flechas…).
@@ -1023,10 +1057,7 @@ function BackgroundTab({
   // La selección del plato se puede retocar y usar en modo retrato solo con un recorte hecho aquí
   // (necesita los colores de la foto original y un recorte con sus mismas medidas).
   const selectable =
-    !transparent &&
-    cutout !== null &&
-    cutout.pixels.width === pixels.width &&
-    cutout.pixels.height === pixels.height;
+    !transparent && cutout !== null && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height;
   const strokes = cutout?.strokes ?? NO_STROKES;
   const effectiveChoice = useMemo<BackgroundChoice>(
     () => (choice.type === 'portrait' && !selectable ? { type: 'color', hex: '#FFFFFF' } : choice),
@@ -1064,7 +1095,9 @@ function BackgroundTab({
   const small = useMemo(() => {
     if (!hasSubject) return null;
     if (transparent) return downscale(pixels, PREVIEW_SIDE);
-    return retouched && previewAlpha ? withAlpha(previewOriginal, previewAlpha) : downscale(cutoutPixels!, PREVIEW_SIDE);
+    return retouched && previewAlpha
+      ? withAlpha(previewOriginal, previewAlpha)
+      : downscale(cutoutPixels!, PREVIEW_SIDE);
   }, [hasSubject, transparent, pixels, retouched, previewAlpha, previewOriginal, cutoutPixels]);
   // La vista previa enseña lo ELEGIDO (color, imagen, retrato o transparente), no un fondo fijo.
   const shown = useMemo(() => {
@@ -1080,7 +1113,29 @@ function BackgroundTab({
     return composeCutout(small, backdrop, { shadow });
   }, [small, effectiveChoice, shadow, previewAlpha, previewOriginal, deferredPortrait]);
 
+  /** Atajos del pincel (con el foco en la foto o en el panel): [ y ] tamaño, X cambia añadir/quitar, Ctrl+Z deshace un trazo. */
+  const retouchShortcut = (event: ReactKeyboardEvent): boolean => {
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      if (strokes.length > 0) setCutout({ ...cutout!, strokes: strokes.slice(0, -1) });
+      return true;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (event.key === '[' || event.key === ']') {
+      event.preventDefault();
+      setBrushSize((size) => Math.min(15, Math.max(1, size + (event.key === ']' ? 1 : -1))));
+      return true;
+    }
+    if (event.key.toLowerCase() === 'x') {
+      event.preventDefault();
+      setBrushMode((mode) => (mode === 'add' ? 'remove' : 'add'));
+      return true;
+    }
+    return false;
+  };
+
   const cutAbort = useRef<AbortController | null>(null);
+  const queryClient = useQueryClient();
   async function cut() {
     const abort = new AbortController();
     cutAbort.current = abort;
@@ -1099,6 +1154,8 @@ function BackgroundTab({
       cutAbort.current = null;
       setCutting(false);
       setProgress(null);
+      // El recorte en el servidor pasa por la biblioteca (deja y borra un archivo intermedio): se redibuja sola.
+      void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
     }
   }
   // Salir del diálogo con el recorte en marcha lo cancela (y corta la descarga).
@@ -1126,18 +1183,31 @@ function BackgroundTab({
     setBusy(true);
     try {
       if (effectiveChoice.type === 'portrait') {
-        // El desenfoque se calcula con la foto entera y la selección a tamaño completo.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        const alpha = applyStrokes(alphaOf(cutout!.pixels), pixels.width, pixels.height, strokes);
+        // El desenfoque se calcula con la foto entera y la selección a tamaño completo, en un worker
+        // (una foto de 12 MP son varios segundos de cálculo: en el hilo principal congelaría la pantalla).
         const options = { amount: portrait.amount, progressive: portrait.progressive, dim: portrait.dim };
+        const blurred = await renderRetouch({
+          kind: 'portrait',
+          image: pixels,
+          baseAlpha: alphaOf(cutout!.pixels),
+          strokes: [...strokes],
+          options,
+        });
         await onSave(
-          portraitBlur(pixels, alpha, options),
+          blurred,
           [...prefix, { kind: 'portrait_blur', ...options }],
           'Foto en modo retrato guardada en la biblioteca. La original no ha cambiado.',
         );
         return;
       }
-      const subject = fullSubject();
+      const subject = retouched
+        ? await renderRetouch({
+            kind: 'subject',
+            image: pixels,
+            baseAlpha: alphaOf(cutout!.pixels),
+            strokes: [...strokes],
+          })
+        : fullSubject();
       if (effectiveChoice.type === 'none') {
         await onSave(
           subject,
@@ -1274,17 +1344,14 @@ function BackgroundTab({
               radius={Math.min(BRUSH_MAX_RADIUS, brushSize / 100)}
               veil={veil}
               onStroke={(stroke) => setCutout({ ...cutout!, strokes: [...strokes, stroke] })}
+              onShortcut={retouchShortcut}
             />
           ) : (
-            <Stage
-              pixels={shown}
-              testId="photo-edit-cutout-preview"
-              checker={effectiveChoice.type === 'none'}
-            />
+            <Stage pixels={shown} testId="photo-edit-cutout-preview" checker={effectiveChoice.type === 'none'} />
           )}
           <p className="text-sm">
-            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o
-            usa el modo retrato:
+            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o usa
+            el modo retrato:
           </p>
           {cutout?.quality === 'basic' && !transparent && (
             <p className="text-xs text-muted" data-testid="photo-edit-cutout-basic">
@@ -1299,7 +1366,9 @@ function BackgroundTab({
                 size="sm"
                 variant={effectiveChoice.type === 'portrait' ? 'primary' : 'secondary'}
                 aria-pressed={effectiveChoice.type === 'portrait'}
-                onClick={() => setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })}
+                onClick={() =>
+                  setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })
+                }
                 disabled={busy}
                 data-testid="photo-edit-portrait-toggle"
               >
@@ -1364,11 +1433,28 @@ function BackgroundTab({
                 Retocar la selección
               </Button>
               {retouching && (
-                <div className="space-y-3" data-testid="photo-edit-retouch">
+                <div
+                  className="space-y-3"
+                  data-testid="photo-edit-retouch"
+                  onKeyDown={(event) => {
+                    // Los atajos no se roban a quien escribe en un campo de texto.
+                    if (event.target instanceof HTMLInputElement && event.target.type === 'text') return;
+                    retouchShortcut(event);
+                  }}
+                >
                   <p className="text-xs text-muted">
                     Pasa el dedo o el ratón por la foto para pintar. Lo que se ve en rosa es el plato; lo demás es
                     fondo. Sirve igual para quitar el fondo, ponerle un color o el modo retrato.
                   </p>
+                  <details className="text-xs text-muted" data-testid="photo-edit-retouch-keys">
+                    <summary className="cursor-pointer">Pintar con el teclado</summary>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      <li>Entra en la foto con la tecla Tab: las flechas mueven el pincel (con Mayús, a saltos).</li>
+                      <li>Espacio o Intro baja el lápiz y empieza a pintar; otra vez, lo levanta.</li>
+                      <li>[ y ] cambian el tamaño del pincel; X cambia entre añadir y quitar.</li>
+                      <li>Ctrl+Z deshace el último trazo. Esc levanta el lápiz.</li>
+                    </ul>
+                  </details>
                   <div role="radiogroup" aria-label="Qué hace el pincel" className="flex flex-wrap gap-1">
                     {(
                       [
@@ -1535,6 +1621,7 @@ function RetouchStage({
   radius,
   veil,
   onStroke,
+  onShortcut,
 }: {
   original: Pixels;
   baseAlpha: Uint8Array;
@@ -1544,6 +1631,8 @@ function RetouchStage({
   radius: number;
   veil: boolean;
   onStroke: (stroke: BrushStroke) => void;
+  /** Atajos de tamaño, modo y deshacer (los mismos con el foco en el panel o en la foto). */
+  onShortcut: (event: ReactKeyboardEvent) => boolean;
 }) {
   const { stage } = useScreen();
   const { width, height } = original;
@@ -1607,16 +1696,83 @@ function RetouchStage({
   const finish = () => {
     const stroke = current.current;
     current.current = null;
+    setPenDown(false);
     if (stroke) onStroke(stroke);
+  };
+
+  // Pintar con el teclado: las flechas mueven el pincel y Espacio (o Intro) baja o levanta el lápiz.
+  const cursor = useRef<{ x: number; y: number } | null>(null);
+  const [penDown, setPenDown] = useState(false);
+  const showRingAt = (x: number, y: number) => {
+    const box = wrap.current?.getBoundingClientRect();
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    const scale = Math.min(box.width / width, box.height / height);
+    setRing({
+      x: (box.width - width * scale) / 2 + x * scale,
+      y: (box.height - height * scale) / 2 + y * scale,
+      size: radiusPx * scale * 2,
+    });
+  };
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      onShortcut(event);
+      return;
+    }
+    const at = (cursor.current ??= { x: width / 2, y: height / 2 });
+    const arrow = (
+      { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<
+        string,
+        [number, number] | undefined
+      >
+    )[event.key];
+    if (arrow) {
+      event.preventDefault();
+      const step = Math.max(1, Math.min(width, height) * 0.01) * (event.shiftKey ? 5 : 1);
+      const from = { ...at };
+      at.x = Math.min(width - 1, Math.max(0, at.x + arrow[0] * step));
+      at.y = Math.min(height - 1, Math.max(0, at.y + arrow[1] * step));
+      const stroke = current.current;
+      if (stroke) {
+        stroke.points.push([at.x / width, at.y / height]);
+        paintSegment(work.current, width, height, [from.x, from.y], [at.x, at.y], radiusPx, stroke.mode);
+        schedule();
+      }
+      showRingAt(at.x, at.y);
+    } else if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault();
+      if (current.current) finish();
+      else {
+        current.current = { mode, radius, points: [[at.x / width, at.y / height]] };
+        paintSegment(work.current, width, height, [at.x, at.y], [at.x, at.y], radiusPx, mode);
+        setPenDown(true);
+        schedule();
+      }
+    } else if (event.key === 'Escape' && current.current) {
+      // Esc con el lápiz bajado solo lo levanta (no cierra la pantalla).
+      event.preventDefault();
+      finish();
+    } else if (onShortcut(event)) {
+      showRingAt(at.x, at.y);
+    }
   };
 
   if (!stage) return null;
   return createPortal(
     <div
       ref={wrap}
-      role="img"
-      aria-label="Foto para retocar la selección. Pasa el dedo o el ratón por encima para pintar."
-      className="relative h-full w-full cursor-crosshair touch-none select-none"
+      role="application"
+      tabIndex={0}
+      aria-label="Foto para retocar la selección. Pasa el dedo o el ratón por encima para pintar. Con el teclado, las flechas mueven el pincel y Espacio empieza o termina de pintar."
+      className="relative h-full w-full cursor-crosshair touch-none select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        const at = (cursor.current ??= { x: width / 2, y: height / 2 });
+        showRingAt(at.x, at.y);
+      }}
+      onBlur={() => {
+        if (current.current) finish();
+        setRing(null);
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
@@ -1637,6 +1793,9 @@ function RetouchStage({
           style={{ left: ring.x - ring.size / 2, top: ring.y - ring.size / 2, width: ring.size, height: ring.size }}
         />
       )}
+      <span className="sr-only" role="status">
+        {penDown ? 'Pintando: mueve el pincel con las flechas; Espacio para terminar el trazo.' : ''}
+      </span>
     </div>,
     stage,
   );
@@ -1750,6 +1909,7 @@ function AiAction({
   const [maskProgress, setMaskProgress] = useState<CutoutProgress | null>(null);
   const [preparing, setPreparing] = useState(false);
   const plate = useRef<PlateProtection | null>(null);
+  const queryClient = useQueryClient();
   const saveEdit = useSaveEdit(asset.brand_id);
   // Para estimar basta un texto cualquiera: el coste no depende de lo que se pida.
   const input = useMemo<AiEditInput>(
@@ -1875,6 +2035,7 @@ function AiAction({
         } finally {
           setPreparing(false);
           setMaskProgress(null);
+          void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
         }
       }
     }

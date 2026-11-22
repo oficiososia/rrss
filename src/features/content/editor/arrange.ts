@@ -233,3 +233,29 @@ export function snapBox(box: Box, targets: SnapTargets, threshold: number): BoxS
     guides: { vertical: x ? [x.guide] : [], horizontal: y ? [y.guide] : [] },
   };
 }
+
+/**
+ * Guías al mover VARIAS capas a la vez: la caja conjunta de las capas (dónde estaban al empezar,
+ * desplazadas lo que se lleva arrastrado) se pega a los bordes y al centro del lienzo y de las
+ * capas que no se mueven. Devuelve cuánto corregir el desplazamiento y las guías usadas.
+ */
+export function snapGroup(
+  startBoxes: readonly Box[],
+  shift: { x: number; y: number },
+  targets: SnapTargets,
+  threshold: number,
+): BoxSnap {
+  const union = unionBounds(startBoxes.map((b) => ({ ...b, x: b.x + shift.x, y: b.y + shift.y })));
+  if (!union) return { dx: 0, dy: 0, guides: { vertical: [], horizontal: [] } };
+  return snapBox(
+    {
+      x: union.left,
+      y: union.top,
+      width: union.right - union.left,
+      height: union.bottom - union.top,
+      rotation: 0,
+    },
+    targets,
+    threshold,
+  );
+}
