@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, archivoPng, asignarPlan, dato, png, sinErrores, sql } from './apoyo';
+import { abrir, accionDelMenu, archivoPng, asignarPlan, dato, png, sinErrores, sql } from './apoyo';
 
 // Copiloto del editor, por voz y por teclado (docs/copiloto-voz.md), contra el
 // Supabase local, con `ai-generate` servida en local y el proveedor SIMULADO de
@@ -101,7 +101,7 @@ async function escribir(page: Page, orden: string) {
 }
 
 async function guardar(page: Page, nota: string) {
-  await page.getByTestId('editor-save').click();
+  await accionDelMenu(page, 'editor-more', 'editor-save-note');
   await page.getByTestId('save-note').fill(nota);
   await page.getByTestId('save-confirm').click();
   await expect(page.getByTestId('editor-dirty')).toHaveCount(0);

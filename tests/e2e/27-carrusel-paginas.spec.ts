@@ -47,7 +47,6 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   await page.getByRole('tab', { name: 'Publicación' }).click();
   await page.getByTestId('copy-caption').fill('Tres panes para el otoño: desliza y elige.');
   await page.getByTestId('editor-save').click();
-  await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 1 guardada');
 
   // UNA versión con las 3 páginas, cada una con su capa.
@@ -61,7 +60,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   expect(version).toEqual({ paginas: 3, capas: 'shape,shape,text' });
 
   // Exportar el carrusel: tres JPEG, uno por página, guardados en la biblioteca.
-  await accionDelMenu(page, 'editor-more', 'editor-export');
+  await accionDelMenu(page, 'editor-share', 'editor-export');
   await expect(page.getByTestId('export-pages-notice')).toContainText('3 páginas');
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-confirm').click();
@@ -83,7 +82,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   await page.getByTestId('status-approved').click();
   await aviso(page, 'Aprobada');
 
-  await page.getByTestId('editor-publish-now').click();
+  await accionDelMenu(page, 'editor-share', 'editor-publish-now');
   await expect(page.getByTestId('publish-now-pages')).toContainText('3 imágenes, en el orden de las páginas');
   await page.getByTestId('publish-now-confirm').click();
   await expect(page.getByTestId('publish-now-done')).toHaveText('Publicada', { timeout: 90_000 });

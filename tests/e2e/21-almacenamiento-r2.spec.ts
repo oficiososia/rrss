@@ -123,11 +123,10 @@ test('usar la foto de R2 en el editor y exportar la pieza: la exportación tambi
   await servida;
   await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
   await page.getByTestId('editor-save').click();
-  await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 1 guardada');
 
   // Exportar lee el lienzo: con una imagen de R2 sin CORS, el lienzo quedaría «manchado» y fallaría.
-  await accionDelMenu(page, 'editor-more', 'editor-export');
+  await accionDelMenu(page, 'editor-share', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();
