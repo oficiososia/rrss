@@ -64,14 +64,14 @@ describe('ajustes de luz, color y nitidez', () => {
   });
 
   it('«mejorar automáticamente» estira una foto apagada, corrige la dominante y aclara si está oscura', () => {
-    // Foto oscura, sin negros ni blancos y con dominante azul.
+    // Foto oscura, sin negros ni blancos y con dominante azul (hay zonas casi grises que la delatan).
     const dull = image(40, 40, (x, y) => [40 + ((x + y) % 40), 45 + ((x + y) % 40), 90 + ((x + y) % 40)]);
     const stats = analyzeImage(dull);
     expect(stats.white - stats.black).toBeLessThan(100);
     const auto = autoAdjustments(stats);
     expect(auto.levels).not.toBeNull();
-    expect(auto.balance[2]).toBeLessThan(1);
-    expect(auto.balance[0]).toBeGreaterThan(1);
+    // Dominante azul: la temperatura sube (más cálida) en vez de dejarla fría.
+    expect(auto.warmth).toBeGreaterThan(0);
     const out = analyzeImage(applyAdjustments(dull, auto));
     expect(out.white - out.black).toBeGreaterThan(stats.white - stats.black);
     // La dominante azul pesa menos (proporción azul / rojo).
@@ -79,11 +79,111 @@ describe('ajustes de luz, color y nitidez', () => {
     expect(out.meanLuma).toBeGreaterThan(stats.meanLuma);
   });
 
-  it('una foto ya correcta apenas se toca', () => {
+  it('una foto oscura sube de luz y levanta sombras sin llegar a quemar', () => {
+    const dark = image(48, 48, (x, y) => {
+      const v = 8 + ((x * 3 + y * 2) % 60);
+      return [v, v * 0.9, v * 0.8];
+    });
+    const auto = autoAdjustments(analyzeImage(dark));
+    expect(auto.exposure).toBeGreaterThan(5);
+    const out = analyzeImage(applyAdjustments(dark, auto));
+    expect(out.meanLuma).toBeGreaterThan(analyzeImage(dark).meanLuma * 1.3);
+    expect(out.p99).toBeLessThan(255);
+  });
+
+  it('una foto plana gana contraste y se avivan los colores apagados', () => {
+    const flat = image(48, 48, (x, y) => {
+      const v = 110 + ((x + y) % 30);
+      return [v + 6, v, v - 6];
+    });
+    const stats = analyzeImage(flat);
+    const auto = autoAdjustments(stats);
+    expect(auto.levels).not.toBeNull();
+    expect(auto.contrast).toBeGreaterThan(0);
+    expect(auto.vibrance).toBeGreaterThan(auto.saturation);
+    expect(analyzeImage(applyAdjustments(flat, auto)).spread).toBeGreaterThan(stats.spread * 1.5);
+  });
+
+  it('el balance de blancos no tiñe la carne: el plato se limpia y el rojo sigue siendo rojo', () => {
+    // Mitad plato blanco con dominante cálida, mitad carne roja.
+    const scene = image(60, 40, (x, y) => (x < 30 ? [236, 222, 196] : [150 + (y % 10), 45, 50]));
+    const stats = analyzeImage(scene);
+    const auto = autoAdjustments(stats);
+    expect(auto.warmth).toBeLessThan(0);
+    // Se corrige solo una parte: nunca más de ±45 puntos.
+    expect(auto.warmth).toBeGreaterThanOrEqual(-45);
+    const out = applyAdjustments(scene, auto);
+    const plate = pixel(out, 5, 5);
+    expect(plate[2]! / plate[0]!).toBeGreaterThan(196 / 236);
+    const meat = pixel(out, 45, 5);
+    expect(meat[0]).toBeGreaterThan(meat[1]! * 2);
+    expect(meat[0]).toBeGreaterThan(meat[2]! * 2);
+  });
+
+  it('la viveza sube lo apagado más que lo saturado y se contiene en el rojo', () => {
+    const base = { ...NEUTRAL_ADJUSTMENTS, vibrance: 80 };
+    const sat = (p: number[]) => (Math.max(...p.slice(0, 3)) - Math.min(...p.slice(0, 3))) / Math.max(...p.slice(0, 3));
+    const dull = image(1, 1, () => [120, 125, 130]);
+    const vivid = image(1, 1, () => [200, 40, 40]);
+    const dullGain = sat(pixel(applyAdjustments(dull, base), 0, 0)) - sat(pixel(dull, 0, 0));
+    const vividGain = sat(pixel(applyAdjustments(vivid, base), 0, 0)) - sat(pixel(vivid, 0, 0));
+    expect(dullGain).toBeGreaterThan(0.04);
+    expect(vividGain).toBeLessThan(dullGain);
+  });
+
+  it('sombras, luces y claridad hacen lo que dicen', () => {
+    const src = image(
+      1,
+      3,
+      (_x, y) =>
+        [
+          [25, 25, 25],
+          [128, 128, 128],
+          [235, 235, 235],
+        ][y]!,
+    );
+    const lifted = applyAdjustments(src, { ...NEUTRAL_ADJUSTMENTS, shadows: 80 });
+    expect(pixel(lifted, 0, 0)[0]).toBeGreaterThan(25);
+    expect(Math.abs(pixel(lifted, 0, 2)[0]! - 235)).toBeLessThan(4);
+    const recovered = applyAdjustments(src, { ...NEUTRAL_ADJUSTMENTS, highlights: -80 });
+    expect(pixel(recovered, 0, 2)[0]).toBeLessThan(235);
+    expect(Math.abs(pixel(recovered, 0, 0)[0]! - 25)).toBeLessThan(4);
+    // Claridad: separa más lo claro de lo oscuro en una zona.
+    const edge = image(40, 40, (x) => (x < 20 ? [100, 100, 100] : [140, 140, 140]));
+    const clear = applyAdjustments(edge, { ...NEUTRAL_ADJUSTMENTS, clarity: 100 });
+    expect(pixel(clear, 18, 20)[0]).toBeLessThan(100);
+    expect(pixel(clear, 21, 20)[0]).toBeGreaterThan(140);
+  });
+
+  it('una foto ya correcta apenas se toca y no sale peor', () => {
     const good = image(32, 32, (x, y) => [(x * 255) / 31, (y * 255) / 31, ((x + y) * 255) / 62]);
-    const auto = autoAdjustments(analyzeImage(good));
+    const stats = analyzeImage(good);
+    const auto = autoAdjustments(stats);
     expect(auto.levels).toBeNull();
     expect(auto.exposure).toBe(0);
+    expect(auto.shadows).toBeLessThanOrEqual(12);
+    expect(auto.highlights).toBeGreaterThanOrEqual(-12);
+    expect(auto.contrast).toBe(0);
+    expect(Math.abs(auto.warmth)).toBeLessThanOrEqual(5);
+    const out = applyAdjustments(good, auto);
+    let diff = 0;
+    for (let i = 0; i < good.data.length; i += 1) diff += Math.abs(good.data[i]! - out.data[i]!);
+    expect(diff / good.data.length).toBeLessThan(8);
+    // No se pierde rango ni se quema: sigue llegando a casi negro y casi blanco sin recortar más.
+    const after = analyzeImage(out);
+    expect(after.black).toBeLessThanOrEqual(stats.black + 6);
+    expect(after.white).toBeGreaterThanOrEqual(stats.white - 12);
+  });
+
+  it('una foto bien expuesta y con color natural no cambia de luz ni de contraste', () => {
+    const natural = image(48, 48, (x, y) => {
+      const v = 30 + ((x * 5 + y * 3) % 190);
+      return [v * 1.04, v, v * 0.96];
+    });
+    const auto = autoAdjustments(analyzeImage(natural));
+    expect(auto.exposure).toBe(0);
+    expect(auto.contrast).toBe(0);
+    expect(analyzeImage(applyAdjustments(natural, auto)).spread).toBeGreaterThan(analyzeImage(natural).spread * 0.95);
   });
 });
 

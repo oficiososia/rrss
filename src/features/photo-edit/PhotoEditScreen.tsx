@@ -122,7 +122,8 @@ export interface PhotoEditScreenProps {
 /** Lado mayor de la vista previa: se ve grande y los ajustes siguen siendo instantáneos. */
 const PREVIEW_SIDE = 1000;
 const SLIDERS: Array<{
-  key: 'exposure' | 'contrast' | 'saturation' | 'warmth' | 'sharpness';
+  key:
+    'exposure' | 'contrast' | 'saturation' | 'warmth' | 'sharpness' | 'shadows' | 'highlights' | 'clarity' | 'vibrance';
   label: string;
   min: number;
 }> = [
@@ -131,6 +132,10 @@ const SLIDERS: Array<{
   { key: 'saturation', label: 'Color (saturación)', min: -100 },
   { key: 'warmth', label: 'Temperatura (fría ↔ cálida)', min: -100 },
   { key: 'sharpness', label: 'Nitidez', min: 0 },
+  { key: 'shadows', label: 'Sombras (aclarar lo oscuro)', min: -100 },
+  { key: 'highlights', label: 'Luces (recuperar lo claro)', min: -100 },
+  { key: 'clarity', label: 'Claridad (relieve)', min: -100 },
+  { key: 'vibrance', label: 'Viveza (sin pasarse en la carne)', min: -100 },
 ];
 
 /** Cuadrícula de ajedrez para que se note lo transparente. */
@@ -525,10 +530,7 @@ export function PhotoEditScreen({
                 Ver la original (mantén pulsado)
               </Button>
               {comparing && (
-                <span
-                  className="absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white"
-                  role="status"
-                >
+                <span className="absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white" role="status">
                   Original
                 </span>
               )}
@@ -551,7 +553,11 @@ export function PhotoEditScreen({
             </div>
           ) : !loaded || !stats || !preview || !map || !context ? null : (
             <ScreenContext.Provider value={context}>
-              <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} className="flex min-h-0 flex-1 flex-col">
+              <Tabs
+                value={tab}
+                onValueChange={(value) => setTab(value as Tab)}
+                className="flex min-h-0 flex-1 flex-col"
+              >
                 <div className="shrink-0 px-2">
                   <TabsList label="Ediciones">
                     <TabsTrigger value="enhance">Mejorar</TabsTrigger>
@@ -722,6 +728,12 @@ function EnhanceTab({
         {auto ? <Undo2 className="h-4 w-4" aria-hidden /> : <Wand2 className="h-4 w-4" aria-hidden />}
         {auto ? 'Quitar la mejora automática' : 'Mejorar automáticamente'}
       </Button>
+      {auto && (
+        <p className="text-xs text-muted">
+          Los deslizadores muestran lo que se ha ajustado; puedes retocarlos. Además se han ajustado los negros y
+          blancos y el tinte, que no tienen deslizador.
+        </p>
+      )}
       {SLIDERS.map((slider) => (
         <label key={slider.key} className="block text-sm">
           <span className="flex justify-between">
@@ -895,9 +907,7 @@ function CropsTab({
 
 /** Qué se pone detrás del plato. */
 type BackgroundChoice =
-  | { type: 'none' }
-  | { type: 'color'; hex: string }
-  | { type: 'asset'; asset: MediaAssetRow; cover: Pixels };
+  { type: 'none' } | { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; cover: Pixels };
 
 function BackgroundTab({
   asset,
@@ -1015,7 +1025,9 @@ function BackgroundTab({
           {
             kind: 'background',
             background:
-              choice.type === 'color' ? { type: 'color', hex: choice.hex } : { type: 'asset', assetId: choice.asset.id },
+              choice.type === 'color'
+                ? { type: 'color', hex: choice.hex }
+                : { type: 'asset', assetId: choice.asset.id },
             ...(shadow ? { shadow: true } : {}),
           },
         ],
@@ -1135,7 +1147,9 @@ function BackgroundTab({
                   type="button"
                   className={cn(
                     'flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-subtle',
-                    choice.type === 'color' && choice.hex === c.hex ? 'border-primary bg-primary-soft' : 'border-border',
+                    choice.type === 'color' && choice.hex === c.hex
+                      ? 'border-primary bg-primary-soft'
+                      : 'border-border',
                   )}
                   aria-pressed={choice.type === 'color' && choice.hex === c.hex}
                   onClick={() => chooseColor(c.hex)}
