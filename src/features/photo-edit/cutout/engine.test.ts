@@ -59,7 +59,7 @@ describe('postprocesado de BEN2', () => {
     expect(Array.from(ben2Mask([0, 0.5, 1, 1.2, -0.3, NaN]))).toEqual([0, 127.5, 255, 255, 0, 0]);
     const src = photo(8, 8);
     const alphas = new Float32Array(MODEL_SIDE * MODEL_SIDE).fill(0.6); // medio tono: se conserva (IS-Net lo endurecería)
-    const out = applyMask(src, ben2Mask(alphas), MODEL_SIDE, 'none');
+    const out = applyMask(src, ben2Mask(alphas), MODEL_SIDE, 'clean');
     expect(out.data[3]).toBe(Math.round(255 * 0.6));
     expect(out.data[0]).toBe(200); // el color no se toca
   });
@@ -68,11 +68,11 @@ describe('postprocesado de BEN2', () => {
     const src = photo(30, 20);
     const half = new Float32Array(MODEL_SIDE * MODEL_SIDE);
     for (let y = 0; y < MODEL_SIDE; y += 1) half.fill(1, y * MODEL_SIDE, y * MODEL_SIDE + MODEL_SIDE / 2);
-    const out = applyMask(src, ben2Mask(half), MODEL_SIDE, 'none');
+    const out = applyMask(src, ben2Mask(half), MODEL_SIDE, 'clean');
     expect([out.width, out.height]).toEqual([30, 20]);
     expect(out.data[(5 * 30 + 3) * 4 + 3]).toBe(255);
     expect(out.data[(5 * 30 + 27) * 4 + 3]).toBe(0);
-    expect(() => applyMask(src, ben2Mask(new Float32Array(MODEL_SIDE * MODEL_SIDE)), MODEL_SIDE, 'none')).toThrow(
+    expect(() => applyMask(src, ben2Mask(new Float32Array(MODEL_SIDE * MODEL_SIDE)), MODEL_SIDE, 'clean')).toThrow(
       NoSubjectError,
     );
   });

@@ -25,7 +25,9 @@ import { chooseEngine, probeNavigator, type EngineProbe } from './select';
 export type CutoutProgress =
   | { phase: 'downloading'; received: number; total: number; engine?: CutoutEngineId }
   | { phase: 'loading' }
-  | { phase: 'running' };
+  | { phase: 'running' }
+  /** Se está quitando el fondo en el servidor (respaldo del navegador). */
+  | { phase: 'server' };
 
 export interface CutoutResult {
   pixels: Pixels;
@@ -264,7 +266,7 @@ async function runEngine(
   const run = await deps.runModel(spec, input, onProgress, options.signal);
   const pixels =
     id === 'ben2'
-      ? applyMask(image, ben2Mask(run.prediction), spec.side, 'none')
+      ? applyMask(image, ben2Mask(run.prediction), spec.side, 'clean')
       : applyMask(image, normalizeMask(run.prediction), spec.side);
   return {
     pixels,
