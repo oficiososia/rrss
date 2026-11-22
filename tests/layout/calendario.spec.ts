@@ -13,7 +13,8 @@ async function open(page: Page, view?: 'week' | 'month' | 'agenda') {
   if (view) await page.addInitScript((v) => window.localStorage.setItem('rrss.calendar.view', JSON.stringify(v)), view);
   await page.goto('/calendario.html');
   await expect(page.getByTestId('calendar-page')).toBeVisible();
-  await expect(page.getByTestId('calendar-entry').first().or(page.getByTestId('calendar-month'))).toBeVisible();
+  // Cualquiera de los dos vale (en la vista de mes, el día de hoy puede enseñar además sus piezas: los dos a la vez).
+  await expect(page.getByTestId('calendar-entry').or(page.getByTestId('calendar-month')).first()).toBeVisible();
 }
 
 const pageScroll = (page: Page) =>

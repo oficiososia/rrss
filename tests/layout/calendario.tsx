@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '@/App';
 import '@/index.css';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
+import { DEFAULT_ZONE, wallParts } from '@/features/social/zone';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
@@ -11,9 +12,12 @@ import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
 seedWorkspace({ orgRole: 'owner' });
 
+// El lunes de ESTA semana según el reloj de la marca (Madrid), no el de UTC: un lunes entre las
+// 00:00 y la 01:00 de Madrid todavía es domingo en UTC, el banco sembraba la semana anterior y el
+// calendario (que sí mira la zona de la marca) salía vacío.
 const monday = (() => {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
+  const wall = wallParts(Date.now(), DEFAULT_ZONE);
+  const d = new Date(Date.UTC(wall.year, wall.month - 1, wall.day));
   d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
   return d;
 })();
