@@ -39,6 +39,10 @@ export const configSchema = z.object({
   WORKER_SHUTDOWN_GRACE_MS: int(0, 0, 600_000),
   WORKER_TMP_DIR: z.string().min(1).default(path.join(os.tmpdir(), 'rrss-worker')),
   WORKER_FONTS_DIR: z.string().min(1).optional(),
+  /** Modelo BEN2 (ONNX fp16) de «Quitar el fondo». Si el archivo no existe, no se atiende `media.cutout`. */
+  WORKER_CUTOUT_MODEL: z.string().min(1).default('/app/models/ben2-base-fp16.onnx'),
+  /** Hilos de onnxruntime (shared-cpu-2x: 2). */
+  WORKER_CUTOUT_THREADS: int(2, 1, 16),
   /** Tope de cada archivo subido: el del cubo (50 MB en el plan gratuito de Supabase). */
   WORKER_MAX_UPLOAD_BYTES: int(50 * 1024 * 1024, 1024 * 1024, 5 * 1024 * 1024 * 1024),
   /**
