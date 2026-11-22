@@ -11,6 +11,7 @@
 // plantilla a menor resolución (borradores) sin tocarla.
 import { z } from 'zod';
 import { focalPointSchema, storagePathSchema } from '../handlers/shared.ts';
+import { TEXT_IN_ANIMATIONS, TEXT_OUT_ANIMATIONS } from './animation.ts';
 
 export const REEL_TEMPLATE_SCHEMA_VERSION = 1;
 
@@ -231,6 +232,29 @@ export const cueSchema = z
   .refine((c) => c.end > c.start, 'El subtítulo debe terminar después de empezar');
 export type ReelCue = z.output<typeof cueSchema>;
 
+/** Movimientos de cámara de una foto. «alternate» solo existe en la plantilla. */
+export const clipMotionSchema = z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'pan-up', 'pan-down']);
+
+/**
+ * Animación de entrada y salida de un texto (ver animation.ts). Todos los campos
+ * son ausentes o con valor: `request_media_job` quita los null (jsonb_strip_nulls).
+ */
+export const textAnimationSchema = z.strictObject({
+  in: z.enum(TEXT_IN_ANIMATIONS),
+  out: z.enum(TEXT_OUT_ANIMATIONS),
+  seconds: z.number().min(0.1).max(1.5).optional(),
+});
+
+/**
+ * Portada del reel: un fotograma del propio vídeo (segundo del reel) o una foto
+ * de la biblioteca de la marca. El trabajador la deja como JPEG junto al vídeo.
+ */
+export const coverSchema = z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('frame'), at: z.number().min(0).max(REEL_PLAN_V2_MAX_SECONDS) }),
+  z.strictObject({ type: z.literal('photo'), path: storagePathSchema }),
+]);
+export type ReelCover = z.output<typeof coverSchema>;
+
 const clipBase = {
   id: elementIdSchema,
   path: storagePathSchema,
@@ -247,7 +271,9 @@ export const clipV2Schema = z.discriminatedUnion('type', [
     /** Segundos en pantalla. */
     seconds: z.number().min(0.5).max(10),
     /** Movimiento de la foto; por defecto, el de la plantilla. */
-    motion: z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left']).optional(),
+    motion: clipMotionSchema.optional(),
+    /** Cuánto se amplía o se desplaza (0,08 = un 8 %); por defecto, el de la plantilla. */
+    motionAmount: z.number().min(0).max(0.3).optional(),
   }),
   z.strictObject({
     ...clipBase,
@@ -271,6 +297,8 @@ export const textV2Schema = z
     end: z.number().positive(),
     position: textPositionSchema,
     style: textStyleSchema,
+    /** Entrada y salida; sin ella, fundido (como siempre). */
+    animation: textAnimationSchema.optional(),
   })
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
 export type ReelTextV2 = z.output<typeof textV2Schema>;
@@ -295,6 +323,8 @@ export const reelPlanV2Schema = z
         license: z.strictObject({ confirmed: z.boolean(), note: z.string().max(300).optional() }).optional(),
       })
       .optional(),
+    /** Portada del reel (opcional). */
+    cover: coverSchema.optional(),
     /** Tipografía por defecto de la marca (la pone la base de datos si hay textos o subtítulos). */
     fontPath: fontPathSchema.optional(),
   })
