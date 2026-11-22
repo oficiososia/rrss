@@ -35,6 +35,8 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_MEDIA_WORKER_ENABLED': JSON.stringify('true'),
     'import.meta.env.VITE_REEL_LIKE_ENABLED': JSON.stringify('true'),
+    // «Preparar un plan con IA» (campanas-voz.html) solo se ofrece con la IA de texto encendida.
+    'import.meta.env.VITE_AI_TEXT_ENABLED': JSON.stringify('true'),
   },
   server: { port: 5391, strictPort: true },
   optimizeDeps: { exclude: ['onnxruntime-web'] },

@@ -600,6 +600,22 @@ servidor lo tiene configurado y el navegador puede grabar; si no, el dictado del
 transcriptor real (que acepte `keywords[]` y la calidad en español); la política de
 privacidad, que todavía no recoge este motor (sí el registro de tratamientos, `docs/rgpd.md`).
 
+### Dictar en cualquier campo donde se le cuenta algo a la IA (`f40/campanas-voz`)
+
+`src/features/ai/DictableField.tsx` es un cuadro de texto (o de una línea, `as="input"`) con un botón de
+micrófono al lado. Usa **el mismo motor y el mismo aviso previo** que el copiloto (apartado 12: el que haya
+elegido la persona, el transcriptor si el servidor lo tiene y, si no, el dictado del navegador). Pulsar para
+hablar; lo dictado se añade al final de lo que ya hay (nunca lo borra), respeta el máximo de caracteres del campo
+y se corrige a mano. Sin dictado posible en el navegador no sale el botón y el campo es el de siempre.
+
+Dónde está: «¿Qué quieres preparar?» de «Preparar un plan con IA» (y la respuesta a la pregunta de la IA),
+«¿Qué fondo quieres?» de «Editar foto → Fondo con IA», «¿De qué quieres que vaya tu reel?» de «Hacer un reel como
+este», «Indicación propia» de «Animar con IA» y «Encargo» de «Generar imagen con IA». En los otros campos el
+comportamiento no cambia (mismas propiedades, mismo máximo); solo se añade el micrófono. En modo agencia el
+dictado sigue valiendo (es transcripción, no redacción).
+
+**Sin probar:** el micrófono real en estos campos (las pruebas simulan el dictado del navegador y las funciones).
+
 ## 13. Banco de pruebas
 
 `scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 75 órdenes en

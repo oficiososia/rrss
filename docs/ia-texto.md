@@ -237,6 +237,7 @@ delimitado y se trata como dato.
 | `profile.proposal` | Texto ya extraído de las fuentes (hasta 20 fuentes y 400.000 caracteres) y, si existe, el perfil actual | Una **propuesta** con la forma del perfil y notas para quien revisa. No guarda nada |
 | `brand.check` | Perfil de marca y el texto | Veredicto por criterio (`tone`, `banned_topics`): `pass`, `fail` o `uncertain`, con explicación y citas. Global: `pass`, `fail` o `review` |
 | `campaign.plan` | Perfil de marca, instrucción («prepara la semana que viene»), fechas (1–63 días), destinos (red/formato del catálogo), descripción de hasta 60 recursos de la biblioteca y hasta 5 fuentes de texto (60.000 caracteres) | Una **propuesta** de plan: objetivo, resumen, razonamiento (observado / respaldado por datos / hipótesis, con nota sobre los datos) y piezas (red, formato, fecha, idea, pie de borrador, etiquetas, recursos sugeridos, por qué). No guarda nada |
+| `campaign.brief` | Perfil de marca, lo que cuenta la persona (hasta 2000 caracteres, dictado o escrito), la fecha de hoy, los destinos de las redes de la marca y, para ajustar, la propuesta anterior (`adjust`: `shorter` o `longer`) o la respuesta a la pregunta anterior | O UNA pregunta corta, o la **propuesta de los datos del formulario** de «Preparar un plan»: nombre, objetivo, redes, fechas (con la duración razonada: «Te propongo 3 semanas porque…»), publicaciones por semana, reparto por red y formato y una fase por semana. Además, lo que ha costado (`costMicros`, solo en esta acción). No crea nada. Registro y cupo de `campaign.plan` (no es un propósito nuevo) |
 | `editor.copilot` | Perfil de marca, lo dictado (hasta 2000 caracteres), resumen del documento (lienzo y capas) y hasta 10 fotos elegidas | Operaciones de editor de una lista cerrada, saneadas (textos solo dictados, fotos y logotipos permitidos, colores y tipografías de la marca) y lo descartado con su motivo. Se admite en modo agencia (provisional). Detalle en `docs/copiloto-voz.md` |
 
 **Unidad de los límites de texto.** Todo el producto cuenta en unidades UTF-16:
@@ -251,6 +252,36 @@ duda > visto bueno). Un `fail` sin una cita que esté en el texto se rebaja a
 duda. `review` significa «que lo revise una persona». La tarea nunca aprueba una
 pieza. Las reglas literales (longitud, expresiones exactas) no son de esta
 tarea: van en el verificador sin IA.
+
+### Rellenar el formulario de la campaña (`campaign.brief`)
+
+Acción de `ai-generate` que usa el diálogo «Preparar un plan con IA» (`src/features/campaigns/NewCampaignDialog.tsx`)
+para que la persona cuente lo que quiere, hablando o escribiendo, y la IA proponga el resto. Código:
+`supabase/functions/_shared/ai/text/tasks/campaign-brief.ts`; cliente: `src/features/campaigns/brief.ts`.
+
+- **Mismo propósito que el plan.** Se registra y cuenta para el cupo como `campaign.plan` (mismo proveedor y
+  modelo; con «Todo el texto» como valor por defecto), así que no hay variable ni migración nuevas. Salida
+  estructurada (esquema cerrado), una sola llamada, hasta 1.500 tokens de salida. En la pantalla de costes por tarea
+  (Plataforma → Integraciones) la media por plan mezcla los dos usos.
+- **Cómo decide la duración.** El modelo la razona con reglas fijas en sus instrucciones: «hasta Navidad» acaba el
+  24 de diciembre, «esta semana» o «la semana que viene» son semanas naturales (lunes a domingo), una campaña normal
+  dura de 1 a 4 semanas y nunca más de 9, y si la persona no dice cuánto debe durar propone la que encaja con el tema
+  y la explica. El producto lo sanea después sin IA: empieza como pronto mañana, fechas reales, 63 días como máximo,
+  una fase descrita por semana como mucho.
+- **Ritmo.** `perWeek` (publicaciones por semana, 14 como mucho) y `mix` (por red y formato, 7 como mucho cada uno);
+  se descarta lo que no sea de los destinos enviados. Si el reparto no sirve, se reparte a partes iguales entre las
+  redes y se dice en `notes`.
+- **Solo las redes de la marca.** El navegador envía únicamente los destinos de las redes con cuenta conectada o con
+  plantillas de la marca (Instagram si no hay ninguna); lo demás que diga el modelo se descarta.
+- **Una pregunta, no un interrogatorio.** Si falta un dato imprescindible (casi siempre, de qué trata), devuelve
+  `status: "question"`. Tras una respuesta (`answer`) o un ajuste ya no se admite otra pregunta.
+- **Ajustes.** «Más corta» y «Más larga» llaman otra vez con la propuesta anterior (una semana menos o más). «Solo
+  Instagram» se hace en el navegador, sin IA ni coste.
+- **Lo acordado llega al plan.** `campaign.plan` admite `input.agreement` (`objective`, `perWeek`, `mix`, `phases`):
+  fija el máximo de piezas (`ceil(días/7 × perWeek)`, 30 como mucho), viaja como material «acuerdo previo» (dato) y
+  se valida (solo destinos pedidos, ritmos acotados, textos cortos). Si la persona cambia fechas o redes después, el
+  navegador lo pone al día (sin fases si las semanas ya no cuadran, sin reparto de las redes quitadas).
+- **Modo agencia.** Igual que `campaign.plan`: 409 `agency_mode` antes de tocar el cupo; el diálogo no ofrece el botón.
 
 ### Plan de campaña (`campaign.plan`) y defensa ante instrucciones maliciosas
 
