@@ -435,3 +435,138 @@ la plantilla aparece en «Empieza con una plantilla» junto a las del catálogo.
 plano que ve el modelo se añadió `slots[].shot` (`detail`, `wide`, `person`, `text`), **opcional**: las
 plantillas de antes siguen siendo válidas y `buildReelFromTemplate` no lo usa (solo informa). El gancho
 ya tenía sitio (`texts[].role = "hook"`). Correspondencia completa en `docs/reel-como-este.md` §8.
+
+## 10. Editor «como los de móvil» (rama `f39/reels-editor-movil`, 22/11/2026)
+
+Petición del dueño: que montar un reel sea tan fácil como en CapCut o en el editor de reels de Instagram. Se
+toman sus **patrones de uso** (cómo se reparte la pantalla y qué gestos hay), no su aspecto, sus iconos ni
+sus nombres: el diseño sigue siendo el de la aplicación. Antes de tocar nada se miró cómo lo hacen hoy.
+
+### Qué hacen esos editores (consultado el 22/11/2026)
+
+Casi todo sale de guías de terceros de 2025-2026; CapCut no publica una lista oficial de atajos y la ayuda de
+Instagram no se dejó leer. Fuentes:
+
+- CapCut móvil y escritorio: hollyland.com/blog/topics/capcut-video-editing (22/06/2026),
+  videoproc.com/video-editor/how-to-use-capcut.htm (15/01/2026), unifab.ai/resource/how-to-use-capcut.htm
+  (10/11/2026), capcutguide.com/capcut-playhead (15/11/2026), capcut.com/resource/capcut-tutorial-for-beginners
+  (oficial, 20/08/2026) y fastshortcuts.com/shortcuts/capcut (27/09/2026).
+- Instagram «Edits»: about.fb.com/news/2025/04/introducing-edits-streamlined-video-creation-app (oficial),
+  buffer.com/resources/how-to-use-instagram-edits (23/04/2025) y socialmediatoday.com (12/11/2026, curvas de
+  velocidad).
+- Editor integrado de reels de Instagram: socialmediaexaminer.com (12/06/2023) y guidingtech.com (16/05/2024),
+  ya antiguas.
+- TikTok: newsroom.tiktok.com/en-us/editing-tools (2022). No aporta nada distinto.
+
+| Patrón | Quién lo hace | Aquí |
+| --- | --- | --- |
+| Vista previa arriba, línea de tiempo debajo y **barra inferior que cambia con lo elegido** (sin selección: añadir; con un clip: dividir, velocidad, volumen, sustituir…) | CapCut móvil, Edits | **Adoptado** (`ContextBar.tsx`). Nada elegido → Añadir, Texto, Música, Estilo, Plantilla, Subtítulos, Portada. Clip → Dividir, Recortar, Velocidad, Volumen, Silenciar, Filtro, Sustituir, Duplicar, Subtítulos, Borrar (una foto: Movimiento en lugar de velocidad y volumen). Texto → Editar, Estilo, Animación, Duración, Duplicar, Borrar. Música → Volumen, Al ritmo, Cambiar, Quitar |
+| **Tira de fotogramas** en cada clip | CapCut, Edits | **Adoptado**, perezosa: solo de lo que está a la vista, de uno en uno y en pausa mientras se reproduce |
+| El instante se elige **deslizando la pista bajo el cabezal** | CapCut móvil (descrito así en capcutguide; ninguna fuente dice literalmente «cabezal fijo en el centro») | **Adoptado** con el cabezal fijo en el centro, también en escritorio: un solo modelo, y la inercia la pone el desplazamiento del navegador |
+| **Pellizco** para ampliar la línea; en escritorio, Ctrl + rueda | CapCut, Edits, editor de Instagram | **Adoptado** (pellizco, Ctrl + rueda y botones, con «ajustar») |
+| Pistas apiladas de texto, audio y subtítulos; **onda** en el audio | CapCut, Edits de escritorio | **Adoptado**: textos en hasta tres filas, subtítulos, música con onda y golpes |
+| **Dividir** el clip elegido en el cabezal | Todos | **Adoptado** (botón y tecla S) |
+| **Velocidad** por clip | CapCut 0,1×–100× y curvas; Edits 0,1×–10×; Instagram 0,3×–4× | **Adoptado de 0,5× a 2×**: es lo que `atempo` de FFmpeg hace en un paso, en cualquier versión y sin cambiar el tono. Sin curvas |
+| **Volumen** por clip y silenciar | CapCut, Edits | **Adoptado** (de 0 a 100 %; sin refuerzo por encima) |
+| **Sustituir** conservando duración y efectos | CapCut, Edits | **Adoptado** |
+| Botón pequeño **entre dos clips** para la transición, con «aplicar a todos» | CapCut, editor de Instagram, TikTok | **Adoptado**, con vista previa al elegirla |
+| Texto: arrastrar y escalar sobre la vista previa, zonas seguras, estilos guardados | CapCut; Edits (zonas seguras y guías desde 2026) | **Adoptado**: arrastrar, esquina y pellizco para el tamaño, guías de centro, zonas de Instagram al arrastrar, dos toques para escribir y cuatro estilos prediseñados |
+| **Borradores que se guardan solos**; deshacer y rehacer junto a la línea | CapCut | **Adoptado** (borrador en el servidor, ver abajo) |
+| Marcadores de ritmo en la música | CapCut; Edits (junio de 2026) | Ya estaba (§8); ahora «Al ritmo» está en la barra de la música |
+| Atajos: Espacio reproduce, flechas por fotograma, Ctrl+Z, Supr | CapCut escritorio | **Adoptado.** Dividir es **S** (así lo pidió el dueño; en CapCut es Ctrl+B, que aquí pliega el menú lateral) |
+
+**No se adopta, y por qué:**
+
+- Rotar un texto y curvas de velocidad: el trabajador no los monta; habría que ampliar el motor.
+- Varias pistas de vídeo, pegatinas, efectos, pantalla verde, voz en off y extraer el sonido: otro alcance.
+- Catálogo de música: la licencia es de la marca; se sube la pista propia (ver «Otros cambios»).
+- Velocidad fuera de 0,5×–2×: encadenar `atempo` degrada el sonido.
+- Reordenar con solo arrastrar en móvil: sigue siendo con pulsación larga, para que el dedo desplace la línea.
+
+### Plan v2: campos nuevos (opcionales, sin nulos)
+
+| Dónde | Campo | Valores | Trabajador |
+| --- | --- | --- | --- |
+| Clip | `speed` | 0,5 a 2 (ausente = 1) | Lee `seconds × speed` del archivo, `setpts=(PTS-STARTPTS)/speed` y `atempo=speed`. El tramo dura `(out − in) / speed`; los subtítulos del clip (en tiempo del archivo) siguen a la imagen |
+| Clip y foto | `filter` | `bw`, `sepia`, `vivid`, `warm`, `cool`, `fade`, `drama` | Los nombres de los filtros rápidos de las fotos, **aproximados** con `hue`, `eq`, `colorbalance`, `colorchannelmixer`, `curves` y `unsharp` (`CLIP_FILTER_CHAINS`). No es la misma cuenta píxel a píxel que en las fotos: se avisa |
+| Texto | `offset` | `{ x, y }`, de −0,5 a 0,5 (fracción del ancho y del alto) | Se suma en píxeles enteros a la `x` y la `y` de `drawtext`, también con animación |
+
+Dividir, sustituir, duplicar y silenciar no añaden campos: dividir deja dos elementos seguidos del mismo
+archivo (el segundo entra con corte seco), así que el reel dura lo mismo. Sin `speed`, `filter` ni `offset`,
+la orden de FFmpeg es la de antes, carácter a carácter. Ejemplo compartido por los dos lados:
+`worker/tests/fixtures/plan-v2-pro.json`.
+
+### Borrador automático
+
+- Tabla `reel_drafts` (migración `20261228010000_reel_editor_pro.sql`, con vuelta atrás): una fila por pieza
+  de formato reel con el montaje tal cual está, aunque esté incompleto. La ve y la escribe quien **edita** la
+  marca (`save_reel_draft`, `discard_reel_draft`); al guardar una versión, un disparador la borra.
+- El editor guarda 1,5 s después del último cambio, al ocultar la pestaña y al salir de la pantalla
+  (`useAutosave.ts`). El indicador dice «Guardando…», «Borrador guardado», «Guardado» o «Sin guardar», y solo
+  dice «guardado» cuando el servidor lo confirma.
+- Al abrir la pieza, si hay borrador de la versión vigente se abre con él (y se puede descartar); si es de
+  una versión anterior, se ofrece recuperarlo. Un reel sin ninguna versión también vuelve como se dejó.
+- Si el guardado no llega (sin conexión), queda una copia en el navegador (`localStorage`) que se usa al
+  volver, y al salir por un enlace de la aplicación se pregunta antes. Si la tabla no responde (migración
+  sin aplicar), el editor funciona como antes, sin guardado automático.
+- **No es una versión**: no entra en el historial y no se puede montar, enviar a revisión ni aprobar.
+  «Montar el vídeo» sigue guardando una versión antes.
+- Un solo borrador por pieza: si dos personas editan a la vez el mismo reel, manda el último que guarda.
+
+### Rendimiento de la vista previa
+
+- El cabezal no es estado de React (`clock.ts`): al reproducir se dibuja el lienzo y se desliza la línea, y
+  solo el reloj se repinta (cada décima).
+- `prepareFrames`: el movimiento de cada foto, las líneas de cada texto y los subtítulos se calculan una vez
+  por montaje, no en cada fotograma.
+- Los `<video>` se crean cuando hacen falta (el que se ve y el siguiente, ya colocado en su entrada antes
+  del corte) y nunca hay más de cuatro; las fotos de más de 1600 px de alto se reducen al cargarlas.
+- Miniaturas: un fotograma por cada medio segundo de archivo, guardado y reutilizado a cualquier zoom.
+
+### Otros cambios de esta rama
+
+- Pantalla de trabajo: la página mide la ventana; solo se desplazan la línea de tiempo y el panel. En móvil
+  el panel es una hoja que sube al pedir una herramienta.
+- «Ver el vídeo» lo reproduce dentro del editor, con «Descargar», «Abrir en la biblioteca» y «Publicar ahora».
+- Música: «Subir un audio» en el propio diálogo (MP3, M4A o WAV). **No hay pistas incluidas**: no se puede
+  garantizar una licencia de uso comercial sin que el dueño elija la fuente.
+- Un texto nuevo dura 2,5 s (antes, 0,5 s si el cabezal estaba al final).
+- `?plantilla=<clave>` (lo pone «Nueva idea → Reel») abre el selector de esa plantilla de reel de la marca; y
+  «Plantilla», en la barra, reparte el material que ya tiene el reel en los planos de una plantilla.
+
+### Probado
+
+- Trabajador con FFmpeg real (`worker/tests/reel-editor-pro.test.ts`): velocidad al doble y a la mitad (dónde
+  cae el cambio de color y cuánto dura), un clip dividido da el mismo vídeo que entero, volumen por parte,
+  filtros y texto desplazado.
+- Base de datos (`tests/db/editor-reels.test.ts`, `aislamiento.test.ts`): campos nuevos admitidos y
+  rechazados, nulos quitados, borrador (permisos, piezas que no son reels, archivadas, borrado al guardar
+  versión), aislamiento entre organizaciones, y la migración se deshace y se vuelve a aplicar.
+- Aplicación: `editorPro.test.ts` (operaciones, plan igual que el trabajador, barra, estilos, borrador, onda),
+  `editorReels.test.tsx` y `timelineTactil.test.tsx` (barra por selección, dividir, sustituir, duplicar,
+  velocidad, filtro, transición, textos sobre el vídeo, guardado automático y vuelta, música subida,
+  plantilla por URL).
+- **Navegador real** (Chromium, `tests/layout/reel-editor.spec.ts`, sin Supabase): sin scroll de página a
+  1440×900, 1366×768 y 375×812 con 12 elementos; el cabezal en el centro; reproducción de 15 elementos a más
+  de 20 fotogramas por segundo; fotogramas del clip en la tira y en la vista previa; onda de la música;
+  Ctrl + rueda; arrastrar y editar un texto sobre el vídeo.
+
+### Sin probar
+
+- **Un móvil de verdad**: el pellizco, la inercia y la pulsación larga solo están probados con eventos
+  simulados.
+- **Safari / iOS**: el filtro del lienzo (`ctx.filter`, que ya usaba el desenfoque) y las unidades de
+  contenedor con las que se ajusta la vista previa.
+- Archivos reales de móvil en R2 (HEVC, vídeos largos): las miniaturas dependen de que el navegador los
+  decodifique.
+- El FFmpeg de la imagen de Fly (Alpine): las pruebas son con FFmpeg 9.0.2 local. `atempo` y los filtros de
+  color existen desde hace muchas versiones, pero no se ha montado allí.
+- La e2e `29-editor-reels.spec.ts` (adaptada a la barra nueva, sin ejecutar: necesita el stack local).
+- La migración en staging.
+
+### Para llevarlo a staging
+
+1. Migración `20261228010000_reel_editor_pro.sql` (vuelta atrás en `supabase/rollbacks/`). Es independiente
+   de `20270101010000_asset_usage.sql`, que tiene fecha posterior.
+2. Redesplegar el trabajador (`worker-fly.yml`): el anterior rechaza un plan con `speed`, `filter` u `offset`.
+3. La aplicación (Vercel), después de lo anterior.

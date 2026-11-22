@@ -75,6 +75,18 @@
                 ],
                 "additionalProperties": false
               },
+              "filter": {
+                "type": "string",
+                "enum": [
+                  "bw",
+                  "sepia",
+                  "vivid",
+                  "warm",
+                  "cool",
+                  "fade",
+                  "drama"
+                ]
+              },
               "type": {
                 "type": "string",
                 "const": "photo"
@@ -173,6 +185,18 @@
                 ],
                 "additionalProperties": false
               },
+              "filter": {
+                "type": "string",
+                "enum": [
+                  "bw",
+                  "sepia",
+                  "vivid",
+                  "warm",
+                  "cool",
+                  "fade",
+                  "drama"
+                ]
+              },
               "type": {
                 "type": "string",
                 "const": "video"
@@ -217,6 +241,11 @@
                   ],
                   "additionalProperties": false
                 }
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 2
               }
             },
             "required": [
@@ -409,6 +438,26 @@
             "required": [
               "in",
               "out"
+            ],
+            "additionalProperties": false
+          },
+          "offset": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": -0.5,
+                "maximum": 0.5
+              },
+              "y": {
+                "type": "number",
+                "minimum": -0.5,
+                "maximum": 0.5
+              }
+            },
+            "required": [
+              "x",
+              "y"
             ],
             "additionalProperties": false
           }

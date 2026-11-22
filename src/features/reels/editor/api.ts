@@ -4,14 +4,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { contentKeys } from '@/features/content/api';
 import { assetKeys } from '@/features/library/api';
-import type { BrandReelTemplateRow, ContentVersionRow, Json } from '@/lib/database.types';
+import type { BrandReelTemplateRow, ContentVersionRow, Json, ReelDraftRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
+import { readLocal, removeLocal, writeLocal } from '@/lib/localStore';
 import { supabase } from '@/lib/supabase';
 import { JOB_POLL_MS, REEL_KIND } from '../api';
 import { describeJob, isActive, type MediaJobSummary } from '../plan';
 import { validateReelTemplate, type ReelTemplate } from '../reelTemplate';
 import { REEL_TEMPLATES } from '../templates';
-import { finalizeProject, REEL_PLAN_VERSION, type ReelProject } from './project';
+import { finalizeProject, parseDraftProject, REEL_PLAN_VERSION, type ReelProject } from './project';
 
 export interface SaveReelInput {
   contentId: string;
@@ -143,4 +144,93 @@ export function useBrandReelTemplates(brandId: string) {
       );
     },
   });
+}
+
+// ───────────────────────────── Borrador automático ─────────────────────────────
+
+/** El montaje a medio hacer de una pieza, guardado solo por el editor (tabla `reel_drafts`). */
+export interface ReelDraft {
+  project: ReelProject;
+  /** Versión de la pieza sobre la que se trabajaba. */
+  baseVersion: number;
+  updatedAt: string;
+  /** De dónde sale: del servidor o de la copia de reserva de este navegador (que aún hay que subir). */
+  source: 'server' | 'local';
+}
+
+export const reelDraftKeys = (brandId: string, contentId: string) =>
+  ['brand', brandId, 'reel-draft', contentId] as const;
+
+/**
+ * Copia de reserva en este navegador, por si el borrador no llega al servidor (sin
+ * cobertura al salir, la pestaña se cierra a medio guardar…). Se escribe cuando un
+ * guardado falla o queda en el aire y se borra en cuanto el servidor confirma.
+ */
+interface LocalDraft {
+  data: unknown;
+  baseVersion: number;
+  at: string;
+}
+const localDraftKey = (contentId: string) => `rrss.reel-draft.${contentId}`;
+
+export function keepLocalDraft(contentId: string, project: ReelProject, baseVersion: number): void {
+  writeLocal(localDraftKey(contentId), { data: project, baseVersion, at: new Date().toISOString() } satisfies LocalDraft);
+}
+
+export function dropLocalDraft(contentId: string): void {
+  removeLocal(localDraftKey(contentId));
+}
+
+function readLocalDraft(contentId: string): ReelDraft | null {
+  const local = readLocal<LocalDraft | null>(localDraftKey(contentId), null);
+  if (!local || typeof local.baseVersion !== 'number' || typeof local.at !== 'string') return null;
+  const project = parseDraftProject(local.data);
+  return project ? { project, baseVersion: local.baseVersion, updatedAt: local.at, source: 'local' } : null;
+}
+
+/**
+ * El borrador de la pieza, si hay uno que el editor sepa abrir: el del servidor o, si es
+ * más reciente (un guardado que no llegó), la copia de reserva de este navegador.
+ */
+export async function fetchReelDraft(contentId: string): Promise<ReelDraft | null> {
+  const row: Pick<ReelDraftRow, 'data' | 'base_version' | 'updated_at'> | null = unwrap(
+    await supabase.from('reel_drafts').select('data, base_version, updated_at').eq('content_id', contentId).maybeSingle(),
+  );
+  const project = row ? parseDraftProject(row.data) : null;
+  const remote: ReelDraft | null =
+    row && project ? { project, baseVersion: row.base_version, updatedAt: row.updated_at, source: 'server' } : null;
+  const local = readLocalDraft(contentId);
+  if (local && (!remote || local.updatedAt > remote.updatedAt)) return local;
+  return remote;
+}
+
+/**
+ * El borrador con el que abrir el editor. Se lee una vez al entrar (sin caché entre
+ * visitas: lo que cuenta es lo que hay guardado en ese momento).
+ */
+export function useReelDraft(brandId: string, contentId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: reelDraftKeys(brandId, contentId),
+    queryFn: () => fetchReelDraft(contentId),
+    enabled,
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+/** Guarda el montaje tal cual está (aunque esté incompleto) como borrador de la pieza. Devuelve cuándo. */
+export async function saveReelDraft(contentId: string, project: ReelProject, baseVersion: number): Promise<string> {
+  return unwrap(
+    await supabase.rpc('save_reel_draft', {
+      p_content_id: contentId,
+      p_data: project as unknown as Json,
+      p_base_version: baseVersion,
+    }),
+  );
+}
+
+export async function discardReelDraft(contentId: string): Promise<void> {
+  unwrap(await supabase.rpc('discard_reel_draft', { p_content_id: contentId }));
 }

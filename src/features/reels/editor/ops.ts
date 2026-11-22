@@ -4,6 +4,8 @@
 import type { ReelTemplateSummary } from '../templates';
 import type { TextAnimation } from './animation';
 import {
+  CLIP_SPEED,
+  TEXT_OFFSET_LIMIT,
   MAX_CLIP_SEGMENT_SECONDS,
   MIN_SEGMENT_SECONDS,
   PHOTO_SECONDS,
@@ -16,7 +18,9 @@ import {
   type Cover,
   type Cue,
   type Music,
+  type ClipFilter,
   type PhotoClip,
+  type PlanTimeline,
   type ReelProject,
   type ReelText,
   type SubtitleSettings,
@@ -175,6 +179,7 @@ export function setTransition(project: ReelProject, id: string, transition: Tran
 
 /** Campos que se pueden cambiar de una foto o de un clip (los que no tenga su tipo se ignoran al validar). */
 export type ClipPatch = Partial<{
+  filter: ClipFilter | undefined;
   blur: number | undefined;
   motion: PhotoClip['motion'];
   motionAmount: number | undefined;
@@ -186,12 +191,157 @@ export function updateClip(project: ReelProject, id: string, patch: ClipPatch) {
   return mapClip(project, id, (c) => {
     const next: Record<string, unknown> = { ...c };
     for (const [key, value] of Object.entries(patch)) {
-      if (((key === 'motion' || key === 'motionAmount') && c.type !== 'photo') || (key === 'volume' && c.type !== 'video')) continue;
+      if (
+        ((key === 'motion' || key === 'motionAmount') && c.type !== 'photo') ||
+        (key === 'volume' && c.type !== 'video')
+      )
+        continue;
       if (value === undefined) delete next[key];
       else next[key] = value;
     }
     return next as Clip;
   });
+}
+
+// ───────────────────────────── Dividir, sustituir, velocidad ─────────────────────────────
+
+/** Elemento que se ve en el segundo `t` del reel (en una transición, el que entra). -1 si no hay. */
+export function clipIndexAt(timeline: Pick<PlanTimeline, 'starts' | 'durations'>, t: number): number {
+  let found = -1;
+  timeline.starts.forEach((start, index) => {
+    if (t >= start - 1e-6 && t < start + timeline.durations[index]! - 1e-6) found = index;
+  });
+  return found;
+}
+
+/**
+ * ¿Se puede dividir el elemento `index` en el segundo `t` del reel? Las dos partes tienen que
+ * quedarse con el mínimo de un tramo (0,5 s de archivo en un clip, 0,5 s en una foto).
+ */
+export function canSplitAt(
+  project: ReelProject,
+  timeline: Pick<PlanTimeline, 'starts' | 'durations'>,
+  index: number,
+  t: number,
+): boolean {
+  const clip = project.plan.clips[index];
+  if (!clip || project.plan.clips.length >= REEL_MAX_CLIPS) return false;
+  const at = t - timeline.starts[index]!;
+  const speed = clip.type === 'video' ? (clip.speed ?? 1) : 1;
+  const left = at * speed;
+  const right = (timeline.durations[index]! - at) * speed;
+  return left >= MIN_SEGMENT_SECONDS - 1e-6 && right >= MIN_SEGMENT_SECONDS - 1e-6;
+}
+
+/**
+ * Divide un elemento en dos en el segundo `at` contado desde donde empieza a verse (segundos
+ * del reel). La primera parte conserva el identificador y su transición de entrada; la segunda
+ * entra con un corte seco, así que el reel dura lo mismo y se ve igual hasta que se toque una
+ * de las dos. Un clip conserva en las dos partes volumen, velocidad, filtro y subtítulos (van
+ * en tiempo del archivo: cada parte enseña los suyos). Si alguna parte no llega al mínimo, no
+ * cambia nada.
+ */
+export function splitClip(project: ReelProject, id: string, at: number, fileSeconds: number | null = null) {
+  const index = project.plan.clips.findIndex((c) => c.id === id);
+  const clip = project.plan.clips[index];
+  if (!clip || project.plan.clips.length >= REEL_MAX_CLIPS) return project;
+  const secondId = newId('c', allIds(project));
+  const cut: Transition = { type: 'cut', seconds: 0 };
+  let parts: [Clip, Clip];
+  if (clip.type === 'photo') {
+    const first = round(at);
+    const second = round(clip.seconds - first);
+    if (first < PHOTO_SECONDS.min || second < PHOTO_SECONDS.min) return project;
+    parts = [
+      { ...clip, seconds: first },
+      { ...clip, id: secondId, seconds: second, transition: cut },
+    ];
+  } else {
+    const end = Math.min(clip.out, fileSeconds ?? clip.out);
+    const point = round(clip.in + at * (clip.speed ?? 1));
+    if (point - clip.in < MIN_SEGMENT_SECONDS - 1e-6 || end - point < MIN_SEGMENT_SECONDS - 1e-6) return project;
+    parts = [
+      { ...clip, out: point },
+      { ...clip, id: secondId, in: point, out: clip.out, transition: cut },
+    ];
+  }
+  const clips = [...project.plan.clips];
+  clips.splice(index, 1, ...parts);
+  return withPlan(project, { clips });
+}
+
+/**
+ * Sustituye el archivo de un elemento conservando su sitio, su duración y sus efectos
+ * (transición, desenfoque, filtro; en un clip, además volumen y velocidad). El tramo de un
+ * clip se conserva si cabe en el archivo nuevo; si no, se toma el final que quepa. Los
+ * subtítulos y el punto de interés eran del archivo anterior: se quitan.
+ */
+export function replaceClip(project: ReelProject, id: string, asset: SourceAsset, template: ReelTemplateSummary) {
+  return mapClip(project, id, (clip): Clip => {
+    const common = {
+      id: clip.id,
+      path: asset.storage_path,
+      ...(clip.transition ? { transition: clip.transition } : {}),
+      ...(clip.blur !== undefined ? { blur: clip.blur } : {}),
+      ...(clip.filter ? { filter: clip.filter } : {}),
+    };
+    const fileSeconds = asset.duration_ms && asset.duration_ms > 0 ? asset.duration_ms / 1000 : null;
+    if (asset.kind === 'video') {
+      const speed = clip.type === 'video' ? (clip.speed ?? 1) : 1;
+      const length = clip.type === 'video' ? clip.out - clip.in : clip.seconds;
+      let start = clip.type === 'video' ? clip.in : 0;
+      let end = start + length;
+      if (fileSeconds !== null && end > fileSeconds) {
+        end = fileSeconds;
+        start = Math.max(0, end - length);
+      }
+      if (end - start < MIN_SEGMENT_SECONDS) end = start + MIN_SEGMENT_SECONDS;
+      return {
+        ...common,
+        type: 'video',
+        in: round(start),
+        out: round(end),
+        volume: clip.type === 'video' ? clip.volume : template.audio.clipVolume,
+        ...(speed !== 1 ? { speed } : {}),
+      };
+    }
+    const seconds =
+      clip.type === 'photo'
+        ? clip.seconds
+        : round(clamp((clip.out - clip.in) / (clip.speed ?? 1), PHOTO_SECONDS.min, PHOTO_SECONDS.max));
+    return {
+      ...common,
+      type: 'photo',
+      seconds,
+      ...(clip.type === 'photo' && clip.motion ? { motion: clip.motion } : {}),
+      ...(clip.type === 'photo' && clip.motionAmount !== undefined ? { motionAmount: clip.motionAmount } : {}),
+    };
+  });
+}
+
+/** Velocidad de un clip (0,5 a 2). A velocidad normal el campo no se guarda. */
+export function setClipSpeed(project: ReelProject, id: string, speed: number) {
+  return mapClip(project, id, (c) => {
+    if (c.type !== 'video') return c;
+    const value = round(clamp(speed, CLIP_SPEED.min, CLIP_SPEED.max));
+    const next = { ...c };
+    if (Math.abs(value - 1) < 0.005) delete next.speed;
+    else next.speed = value;
+    return next;
+  });
+}
+
+/** Silencia un clip o le devuelve el sonido (el volumen del estilo; si el estilo los silencia, el original). */
+export function toggleClipMute(project: ReelProject, id: string, template: ReelTemplateSummary) {
+  return mapClip(project, id, (c) =>
+    c.type === 'video' ? { ...c, volume: c.volume === 0 ? template.audio.clipVolume || 1 : 0 } : c,
+  );
+}
+
+/** La misma transición en todos los cortes del reel. */
+export function setAllTransitions(project: ReelProject, transition: Transition) {
+  const value = { ...transition, seconds: round(transition.seconds) };
+  return withPlan(project, { clips: project.plan.clips.map((c) => ({ ...c, transition: { ...value } })) });
 }
 
 // ───────────────────────────── Textos ─────────────────────────────
@@ -209,6 +359,9 @@ export function brandTextStyle(
   };
 }
 
+/** Lo que dura un texto recién añadido. */
+export const NEW_TEXT_SECONDS = 2.5;
+
 export function addText(
   project: ReelProject,
   template: ReelTemplateSummary,
@@ -217,8 +370,10 @@ export function addText(
   total: number,
 ): ReelProject {
   if (project.plan.texts.length >= REEL_MAX_TEXTS) return project;
-  const start = round(clamp(at, 0, Math.max(0, total - 0.5)));
-  const end = round(Math.max(start + 0.5, Math.min(start + 2, total || start + 2)));
+  // Dura 2,5 s (o lo que dure el reel). Con el cabezal cerca del final, se adelanta para que quepa entero.
+  const length = total > 0 ? Math.min(NEW_TEXT_SECONDS, total) : NEW_TEXT_SECONDS;
+  const start = round(clamp(at, 0, Math.max(0, total - length)));
+  const end = round(start + Math.max(0.5, length));
   const text: ReelText = {
     id: newId('t', allIds(project)),
     text: 'Texto',
@@ -236,6 +391,39 @@ export function updateText(project: ReelProject, id: string, patch: Partial<Omit
 
 export function updateTextStyle(project: ReelProject, id: string, patch: Partial<TextStyle>) {
   return mapText(project, id, (t) => ({ ...t, style: { ...t.style, ...patch } }));
+}
+
+/** Copia un texto (mismo momento y estilo), un poco más abajo para que se vean los dos. */
+export function duplicateText(project: ReelProject, id: string) {
+  const source = project.plan.texts.find((t) => t.id === id);
+  if (!source || project.plan.texts.length >= REEL_MAX_TEXTS) return project;
+  const y = clamp((source.offset?.y ?? 0) + 0.08, -TEXT_OFFSET_LIMIT, TEXT_OFFSET_LIMIT);
+  const copy: ReelText = {
+    ...source,
+    id: newId('t', allIds(project)),
+    offset: { x: source.offset?.x ?? 0, y: round(y, 3) },
+  };
+  return withPlan(project, { texts: [...project.plan.texts, copy] });
+}
+
+/** Coloca un texto arrastrándolo en la vista previa: desplazamiento desde su sitio. En (0, 0) el campo no se guarda. */
+export function setTextOffset(project: ReelProject, id: string, offset: { x: number; y: number }) {
+  return mapText(project, id, (t) => {
+    const x = round(clamp(offset.x, -TEXT_OFFSET_LIMIT, TEXT_OFFSET_LIMIT), 3);
+    const y = round(clamp(offset.y, -TEXT_OFFSET_LIMIT, TEXT_OFFSET_LIMIT), 3);
+    const next = { ...t };
+    if (x === 0 && y === 0) delete next.offset;
+    else next.offset = { x, y };
+    return next;
+  });
+}
+
+/** Tamaño de un texto al escalarlo en la vista previa (entre el 2 % y el 15 % del ancho). */
+export function setTextSize(project: ReelProject, id: string, sizeRatio: number) {
+  return mapText(project, id, (t) => ({
+    ...t,
+    style: { ...t.style, sizeRatio: round(clamp(sizeRatio, 0.02, 0.15), 3) },
+  }));
 }
 
 export function removeText(project: ReelProject, id: string) {
