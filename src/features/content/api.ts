@@ -300,6 +300,45 @@ export async function archiveContentItem(input: { contentId: string; archived?: 
 }
 
 /**
+ * Copia una pieza: otra idea con el mismo formato y, si tiene diseño, la misma
+ * versión vigente como primera versión. La copia nace como borrador sin
+ * aprobar, sin fecha y sin campaña.
+ */
+export async function duplicateContentItem(input: { contentId: string; organizationId: string }): Promise<ContentItemRow> {
+  const source: ContentItemRow = unwrap(
+    await supabase.from('content_items').select('*').eq('id', input.contentId).single(),
+  );
+  const copy = await createContentItem({
+    organizationId: input.organizationId,
+    brandId: source.brand_id,
+    title: `Copia de ${source.title}`.slice(0, 200),
+    network: source.network,
+    format: source.format,
+  });
+  if (source.current_version > 0) {
+    const version: ContentVersionRow = unwrap(
+      await supabase
+        .from('content_versions')
+        .select('*')
+        .eq('content_id', source.id)
+        .eq('version', source.current_version)
+        .single(),
+    );
+    // El documento ya se validó al guardarse: se copia tal cual (también el proyecto de un reel).
+    unwrap(
+      await supabase.rpc('save_content_version', {
+        p_content_id: copy.id,
+        p_data: version.data,
+        p_schema_version: version.schema_version,
+        p_change_note: `Copia de «${source.title}»`,
+        p_expected_version: null,
+      }),
+    );
+  }
+  return copy;
+}
+
+/**
  * Lo que se expone de cada mutación. No incluye `mutate` a propósito: los
  * avisos y las redirecciones que siguen a un cambio deben colgar de la promesa
  * de `mutateAsync`, que se resuelve aunque la pantalla que lo lanzó ya no esté
@@ -344,6 +383,10 @@ export function useContentMutations(organizationId: string, brandId: string) {
   const restore = useMutation({ mutationFn: restoreContentVersion, onSuccess });
   const setStatus = useMutation({ mutationFn: setContentStatus, onSuccess });
   const archive = useMutation({ mutationFn: archiveContentItem, onSuccess });
+  const duplicate = useMutation({
+    mutationFn: (contentId: string) => duplicateContentItem({ contentId, organizationId }),
+    onSuccess,
+  });
 
   return {
     create: asyncOnly(create),
@@ -352,5 +395,6 @@ export function useContentMutations(organizationId: string, brandId: string) {
     restore: asyncOnly(restore),
     setStatus: asyncOnly(setStatus),
     archive: asyncOnly(archive),
+    duplicate: asyncOnly(duplicate),
   };
 }

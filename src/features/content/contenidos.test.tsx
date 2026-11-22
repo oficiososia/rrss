@@ -175,48 +175,127 @@ describe('Lista de contenidos', () => {
 
     await user.click(nav.getByRole('link', { name: 'Contenidos' }));
     const list = await screen.findByTestId('content-list');
-    const rows = within(list).getAllByTestId('content-row');
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent('Menú de otoño');
-    expect(rows[0]).toHaveTextContent('Instagram · Publicación');
-    expect(rows[0]).toHaveTextContent('versión 1');
-    expect(rows[0]).toHaveTextContent('Borrador');
-    expect(rows[1]).toHaveTextContent('sin diseño');
-    // Solo lectura: no puede crear.
+    // Se abre en la primera pestaña con algo: la idea sin diseño, marcada como vacía.
+    const ideas = within(list).getAllByTestId('content-card');
+    expect(ideas).toHaveLength(1);
+    expect(ideas[0]).toHaveTextContent('Vídeo de la terraza');
+    expect(ideas[0]).toHaveTextContent('Idea');
+    expect(ideas[0]).toHaveTextContent('Vacía');
+    expect(screen.getByTestId('content-count-idea')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
+
+    await user.click(screen.getByTestId('content-tab-preparing'));
+    const cards = within(await screen.findByTestId('content-list')).getAllByTestId('content-card');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent('Menú de otoño');
+    expect(cards[0]).toHaveTextContent('Publicación');
+    expect(cards[0]).toHaveTextContent('En preparación');
+    expect(cards[0]).not.toHaveTextContent('Vacía');
+    // Con la vista de lista, la misma pieza en una fila compacta.
+    await user.click(screen.getByTestId('content-view-list'));
+    expect(within(screen.getByTestId('content-list')).getAllByTestId('content-row')).toHaveLength(1);
+    // Solo lectura: no puede crear, ni elegir, ni archivar.
     expect(screen.queryByTestId('content-new')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('content-select')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('content-archive')).not.toBeInTheDocument();
   });
 
-  it('filtra por estado, red, nombre y archivadas', async () => {
+  it('filtra por formato, nombre y archivadas, y los contadores siguen al filtro', async () => {
     seedWorkspace({ orgRole: 'owner' });
     fake.tables.content_items = [
       item(),
-      item({ id: 'content-2', title: 'Vídeo de la terraza', network: 'tiktok', format: 'video', status: 'idea' }),
+      item({ id: 'content-2', title: 'Vídeo de la terraza', network: 'instagram', format: 'reel', status: 'idea' }),
       item({ id: 'content-3', title: 'Navidad 2025', archived_at: '2026-01-10T09:00:00Z' }),
     ];
     const { user } = renderApp(CONTENT);
     await screen.findByTestId('content-list');
-    expect(screen.getAllByTestId('content-row')).toHaveLength(2);
+    expect(screen.getByTestId('content-count-idea')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
 
-    await user.selectOptions(screen.getByTestId('content-status-filter'), 'idea');
-    await waitFor(() => expect(screen.getAllByTestId('content-row')).toHaveLength(1));
-    expect(screen.getByTestId('content-row')).toHaveTextContent('Vídeo de la terraza');
+    await user.selectOptions(screen.getByTestId('content-format-filter'), 'post');
+    await waitFor(() => expect(screen.getByTestId('content-count-idea')).toHaveTextContent('0'));
+    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
 
-    await user.selectOptions(screen.getByTestId('content-status-filter'), '');
-    await user.selectOptions(screen.getByTestId('content-network-filter'), 'instagram');
-    await waitFor(() => expect(screen.getAllByTestId('content-row')).toHaveLength(1));
-    expect(screen.getByTestId('content-row')).toHaveTextContent('Menú de otoño');
-
-    await user.selectOptions(screen.getByTestId('content-network-filter'), '');
+    await user.selectOptions(screen.getByTestId('content-format-filter'), '');
     await user.type(screen.getByTestId('content-search'), 'terraza');
-    await waitFor(() => expect(screen.getAllByTestId('content-row')).toHaveLength(1));
-    expect(screen.getByTestId('content-row')).toHaveTextContent('Vídeo de la terraza');
+    await waitFor(() => expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('0'));
+    expect(within(screen.getByTestId('content-list')).getByTestId('content-card')).toHaveTextContent(
+      'Vídeo de la terraza',
+    );
 
     await user.clear(screen.getByTestId('content-search'));
     // Las archivadas, desde «⋯»: no ocupan un filtro más.
     await chooseMoreAction(user, 'content-more', 'content-show-archived');
     expect(await screen.findByTestId('content-archived-notice')).toHaveTextContent('Estás viendo las archivadas');
-    await waitFor(() => expect(screen.getAllByTestId('content-row')).toHaveLength(1));
-    expect(screen.getByTestId('content-row')).toHaveTextContent('Navidad 2025');
+    await waitFor(() => expect(screen.getAllByTestId('content-card')).toHaveLength(1));
+    expect(screen.getByTestId('content-card')).toHaveTextContent('Navidad 2025');
+  });
+
+  it('separa las programadas y las publicadas según su publicación', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    fake.tables.content_items = [
+      item({ id: 'a', title: 'Aprobada sola', status: 'approved' }),
+      item({ id: 'b', title: 'Con fecha', status: 'approved' }),
+      item({ id: 'c', title: 'Ya salió', status: 'approved' }),
+    ];
+    fake.tables.scheduled_publications = [
+      {
+        id: 'p1',
+        brand_id: BRAND_ID,
+        content_id: 'b',
+        status: 'scheduled',
+        scheduled_at: '2026-12-01T10:00:00Z',
+        published_at: null,
+        hold_reason: null,
+      },
+      {
+        id: 'p2',
+        brand_id: BRAND_ID,
+        content_id: 'c',
+        status: 'published',
+        scheduled_at: '2026-11-01T10:00:00Z',
+        published_at: '2026-11-01T10:00:00Z',
+        hold_reason: null,
+      },
+    ];
+    const { user } = renderApp(CONTENT);
+    await screen.findByTestId('content-list');
+    expect(screen.getByTestId('content-count-ready')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-scheduled')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-published')).toHaveTextContent('1');
+    await user.click(screen.getByTestId('content-tab-scheduled'));
+    const card = await screen.findByTestId('content-card');
+    expect(card).toHaveTextContent('Con fecha');
+    expect(card).toHaveTextContent('Programada');
+    expect(card).toHaveTextContent('Sale el');
+  });
+
+  it('elige varias y las archiva de una vez, y limpia las vacías', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    fake.tables.content_items = [
+      item({ id: 'a', title: 'Vacía 1', status: 'idea', current_version: 0 }),
+      item({ id: 'b', title: 'Vacía 2', status: 'idea', current_version: 0 }),
+      item({ id: 'c', title: 'Vacía 3', status: 'draft', current_version: 0 }),
+      item({ id: 'd', title: 'Con diseño', status: 'idea', current_version: 1 }),
+    ];
+    fake.rpc('archive_content_item', (args) => {
+      const row = fake.tables.content_items!.find((r) => r.id === args.p_content_id)!;
+      row.archived_at = args.p_archived ? '2026-11-22T10:00:00Z' : null;
+      return row;
+    });
+    const { user } = renderApp(CONTENT);
+    await screen.findByTestId('content-list');
+    await user.click(within(screen.getAllByTestId('content-card')[0]!).getByTestId('content-select'));
+    await user.click(within(screen.getAllByTestId('content-card')[1]!).getByTestId('content-select'));
+    expect(screen.getByTestId('content-selection')).toHaveTextContent('2 elegidas');
+    await user.click(screen.getByTestId('content-archive-selected'));
+    await user.click(await screen.findByTestId('confirm-action'));
+    await waitFor(() => expect(fake.callsTo('archive_content_item', 'rpc')).toHaveLength(2));
+
+    // Las vacías que quedan se limpian desde «⋯».
+    await chooseMoreAction(user, 'content-more', 'content-clean-empty');
+    await user.click(await screen.findByTestId('confirm-action'));
+    await waitFor(() => expect(fake.callsTo('archive_content_item', 'rpc').length).toBeGreaterThanOrEqual(3));
   });
 
   it('sin contenidos, explica cómo empezar', async () => {
@@ -227,14 +306,13 @@ describe('Lista de contenidos', () => {
 });
 
 describe('Crear una idea', () => {
-  it('elige red y formato del catálogo y abre el editor que toca (un reel, el de reels)', async () => {
+  it('elige el formato con una tarjeta y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.type(dialog.getByTestId('create-content-title'), 'Reel del vermut');
-    await user.selectOptions(dialog.getByTestId('create-content-network'), 'instagram');
-    await user.selectOptions(dialog.getByTestId('create-content-format'), 'reel');
+    await user.click(dialog.getByTestId('create-content-format-reel'));
     expect(dialog.getByText(/Es un formato de vídeo/)).toBeInTheDocument();
     await user.click(dialog.getByTestId('create-content-submit'));
 
@@ -253,14 +331,17 @@ describe('Crear una idea', () => {
     expect(screen.queryByRole('button', { name: /IA/ })).not.toBeInTheDocument();
   });
 
-  it('sin nombre, no se crea y lo dice', async () => {
+  it('sin nombre se llama como el formato y el día, no «Reel nuevo» a secas', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-new'));
     const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByTestId('create-content-format-carousel'));
     await user.click(dialog.getByTestId('create-content-submit'));
-    expect(await dialog.findByText('Ponle un nombre al contenido.')).toBeInTheDocument();
-    expect(fake.callsTo('content_items', 'insert')).toHaveLength(0);
+    await waitFor(() => expect(fake.callsTo('content_items', 'insert')).toHaveLength(1));
+    const payload = fake.callsTo('content_items', 'insert')[0]!.payload as { title: string; format: string };
+    expect(payload.format).toBe('carousel');
+    expect(payload.title).toMatch(/^Carrusel · \d{1,2} \p{L}+/u);
   });
 });
 

@@ -50,8 +50,7 @@ async function piezaConTexto(page: Page, titulo: string, texto: string): Promise
   await page.goto(`${marca()}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];

@@ -94,8 +94,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await page.goto(`/o/${orgA}/m/${marcaA}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill('Menú Navidad');
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('carousel');
+  await page.getByTestId('create-content-format-carousel').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText('Menú Navidad');
   const pieza = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())![1]!;
@@ -191,8 +190,7 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill('Prueba de inyección');
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
