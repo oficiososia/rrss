@@ -1026,9 +1026,8 @@ Detalle en `docs/publicacion.md` («Calendario para planificar»). Sin migració
 - **Añadido tras la auditoría de usabilidad (tanda D)**: «Nueva idea → Reel» ya no dice que el vídeo
   «llegará más adelante»; ofrece las plantillas de reel de la marca (`brand_reel_templates`) con su muestra
   en movimiento y «Hacer un reel como este» (si el servidor puede), con el botón «Crear y abrir» fijo abajo.
-  Con una plantilla de reel, la pieza se abre en el editor con `?plantilla=<clave>`; **el editor de reels
-  todavía no lee ese parámetro** (cambio pendiente de unas tres líneas en `ReelEditor.tsx`, fuera de esta
-  rama): hasta entonces abre su propia lista de plantillas. Las plantillas de pieza salen en una rejilla de
+  Con una plantilla de reel, la pieza se abre en el editor con `?plantilla=<clave>`; el editor de reels
+  lo lee desde la rama `f39/reels-editor-movil` y abre el selector de esa plantilla. Las plantillas de pieza salen en una rejilla de
   miniaturas grandes y filtradas por el formato. La red ya no se pregunta (solo Instagram se publica) y los
   formatos que no se publican solos lo dicen. El coste de «Hacer un reel como este» se dice como «≈ N % del
   cupo de este mes» (lo ven los administradores; el resto, en créditos).
@@ -1066,3 +1065,31 @@ Petición del dueño: «un producto de calidad» con menos carga visual.
 - **Sin probar**: descarga de varios archivos a la vez (los navegadores pueden pedir permiso),
   arrastrar desde el escritorio con archivos reales, miniaturas reales (el banco no firma URL) y el
   móvil real.
+
+## Editor de reels «como los de móvil» (rama `f39/reels-editor-movil`, 22/11/2026)
+
+Petición del dueño (lo que más le importa) y hallazgos H1, H3, H4, H15 y H33 de la auditoría de usabilidad.
+Detalle, patrones adoptados y fuentes en `docs/editor-reels.md` §10.
+
+- **Implementado**: pantalla fija sin scroll de página (vista previa 9:16 grande, barra de herramientas que
+  cambia con lo elegido y línea de tiempo con el cabezal fijo en el centro; panel al lado en escritorio y
+  hoja en móvil); tira de fotogramas por clip, textos apilados, música con onda; zoom con pellizco, Ctrl +
+  rueda y botones; dividir en el cabezal, sustituir, duplicar, velocidad 0,5×–2×, volumen y silenciar,
+  filtros de color, transición por corte con vista previa; textos que se arrastran, se escalan y se editan
+  sobre el vídeo, con guías y cuatro estilos prediseñados; atajos (Espacio, S, Supr, ← →, Ctrl+Z/Y, Ctrl+D);
+  **guardado automático** del montaje como borrador (`reel_drafts`) con indicador, recuperación al volver y
+  pregunta al salir si no se pudo guardar; «Ver el vídeo» dentro del editor; subir el audio desde el diálogo
+  de la música; `?plantilla=<clave>`.
+- **Plan v2 ampliado** (compatible): `speed` y `filter` en el clip, `filter` en la foto, `offset` en el texto;
+  a la vez en la aplicación, el trabajador y la base de datos.
+- **Migración** `20261228010000_reel_editor_pro.sql` (validación del plan y tabla `reel_drafts` con sus dos
+  funciones y un disparador; vuelta atrás en `supabase/rollbacks/`). **Sin aplicar en staging.**
+- **Probado**: unitarias, componentes, base de datos (con aislamiento y deshacer/rehacer la migración),
+  trabajador con FFmpeg real y maquetación en Chromium real a 1440, 1366 y 375 px, con reproducción,
+  miniaturas y onda de verdad.
+- **Sin probar**: un móvil real (pellizco, inercia, pulsación larga), Safari/iOS, archivos reales de móvil en
+  R2, el FFmpeg de la imagen de Fly, la e2e 29 (adaptada, sin ejecutar) y la migración en staging.
+- **No hecho, a propósito**: pistas de música incluidas (hace falta que el dueño elija una fuente con licencia
+  de uso comercial); rotar textos, curvas de velocidad, pegatinas y varias pistas de vídeo (el trabajador no
+  los monta).
+- **Para staging**: migración → redesplegar el trabajador (el anterior rechaza los campos nuevos) → Vercel.
