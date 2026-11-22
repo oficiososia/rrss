@@ -43,6 +43,13 @@ export const EMPTY_FILTERS: LibraryFilters = {
 
 export const RECENT_DAYS = 14;
 
+/** Texto para comparar al buscar: sin mayúsculas ni tildes («Chuletón» = «chuleton»). */
+export const fold = (text: string): string =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+
 type Provenance = { type?: unknown; steps?: unknown; job_kind?: unknown; kind?: unknown } | null;
 
 function provenanceOf(asset: Pick<MediaAssetRow, 'provenance'>): Provenance {
@@ -71,6 +78,21 @@ export function isCutout(asset: Pick<MediaAssetRow, 'provenance' | 'file_name'>)
 export function isAiMade(asset: Pick<MediaAssetRow, 'provenance'>): boolean {
   const type = provenanceOf(asset)?.type;
   return type === 'ai_generation' || type === 'ai_animation' || stepKinds(asset).includes('ai_background');
+}
+
+/** Carpetas donde la propia aplicación deja lo que genera (exportaciones, ediciones, reels, informes). */
+const GENERATED_FOLDERS = ['Exportaciones', 'Ediciones', 'Reels', 'Informes'];
+
+/**
+ * Archivo que generó la aplicación (exportación del editor, foto editada, IA, reel,
+ * informe) y no algo que subió una persona: los selectores lo ocultan salvo que se pida.
+ */
+export function isGenerated(asset: Pick<MediaAssetRow, 'provenance' | 'folder' | 'file_name'>): boolean {
+  const type = provenanceOf(asset)?.type;
+  if (typeof type === 'string' && type !== '') return true;
+  if (isCutout(asset)) return true;
+  const top = asset.folder.split(' / ')[0] ?? '';
+  return GENERATED_FOLDERS.includes(top);
 }
 
 export const isPhoto = (asset: Pick<MediaAssetRow, 'kind' | 'mime_type'>): boolean =>
@@ -107,14 +129,14 @@ export function applyFilters(
   usage: ReadonlyMap<string, number>,
   now: number = Date.now(),
 ): MediaAssetRow[] {
-  const query = filters.search.trim().toLowerCase();
+  const query = fold(filters.search.trim());
   const kindChips = [...filters.chips].filter((c) => KIND_CHIPS.has(c));
   const otherChips = [...filters.chips].filter((c) => !KIND_CHIPS.has(c));
   const out = assets.filter((a) => {
     if (filters.folder === '' && a.folder !== '') return false;
     if (filters.folder && !isInside(a.folder, filters.folder)) return false;
     if (filters.tag && !a.tags.includes(filters.tag)) return false;
-    if (query && !`${a.file_name} ${a.folder} ${a.tags.join(' ')}`.toLowerCase().includes(query)) return false;
+    if (query && !fold(`${a.file_name} ${a.folder} ${a.tags.join(' ')}`).includes(query)) return false;
     if (kindChips.length && !kindChips.some((c) => matchesChip(c, a, usage, now))) return false;
     return otherChips.every((c) => matchesChip(c, a, usage, now));
   });

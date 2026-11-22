@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MediaAssetRow } from '@/lib/database.types';
-import { applyFilters, EMPTY_FILTERS, idsBetween, isAiMade, isCutout } from './filters';
+import { applyFilters, EMPTY_FILTERS, fold, idsBetween, isAiMade, isCutout, isGenerated } from './filters';
 import {
   breadcrumbs,
   buildFolderTree,
@@ -118,5 +118,32 @@ describe('filtros', () => {
     expect(idsBetween(['a', 'b', 'c', 'd'], 'b', 'd')).toEqual(['b', 'c', 'd']);
     expect(idsBetween(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['b', 'c', 'd']);
     expect(idsBetween(['a', 'b'], 'zz', 'b')).toEqual(['b']);
+  });
+});
+
+describe('búsqueda sin tildes', () => {
+  const list = [
+    row('a', { file_name: 'Chuletón ternera.jpg' }),
+    row('b', { file_name: 'x.jpg', folder: 'Platos / Postres' }),
+    row('c', { file_name: 'y.jpg', tags: ['Crème brûlée'] }),
+  ];
+  const find = (search: string) =>
+    applyFilters(list, { ...EMPTY_FILTERS, search }, new Map()).map((a) => a.id);
+
+  it('encuentra con o sin tildes y mayúsculas, por nombre, carpeta y etiqueta', () => {
+    expect(fold('Chuletón ÑU')).toBe('chuleton nu');
+    expect(find('chuleton')).toEqual(['a']);
+    expect(find('CHULETÓN')).toEqual(['a']);
+    expect(find('postre')).toEqual(['b']);
+    expect(find('creme brulee')).toEqual(['c']);
+    expect(find('platos / post')).toEqual(['b']);
+  });
+
+  it('distingue lo generado por la aplicación de lo que sube una persona', () => {
+    expect(isGenerated(row('x'))).toBe(false);
+    expect(isGenerated(row('x', { provenance: { type: 'photo_edit' } }))).toBe(true);
+    expect(isGenerated(row('x', { folder: 'Reels' }))).toBe(true);
+    expect(isGenerated(row('x', { folder: 'Platos / Reels' }))).toBe(false);
+    expect(isGenerated(row('x', { file_name: 'Sin fondo · plato.png' }))).toBe(true);
   });
 });
