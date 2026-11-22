@@ -1,18 +1,20 @@
-// Punto único para quitar el fondo de una foto: foto → la misma foto con el fondo
-// transparente. Todo lo que necesite un recorte (el diálogo «Editar foto» y el panel
-// de fotos del editor) pasa por aquí, así la cadena de motores se puede cambiar sin
-// tocar a quien lo usa.
+// Punto único para quitar el fondo de una foto: foto → la misma foto con el fondo transparente.
+// Todo lo que necesite un recorte (el diálogo «Editar foto» y el panel de fotos del editor) pasa
+// por aquí, así la cadena de motores se puede cambiar sin tocar a quien lo usa.
 //
-// Cadena (docs/edicion-fotos.md, §7):
-//   1. NAVEGADOR: BEN2 si hay WebGPU y memoria; si no, IS-Net (engine.ts).
-//   2. SERVIDOR (`api/cutout-mask.ts`, el mismo IS-Net con el mismo refinado): si el
-//      navegador no puede (sin WebAssembly, poca memoria), falla (modelo, memoria,
-//      red del modelo) o el dispositivo declara menos de 4 GB, y hay sesión y marca.
-//   Tras un fallo de MEMORIA en el navegador, las fotos siguientes van directas al
-//   servidor hasta recargar la página.
+// Cadena (docs/edicion-fotos.md, §7), cada paso solo si se puede y, si falla, el siguiente:
+//   1. NAVEGADOR con BEN2 (calidad alta): si hay WebGPU, adaptador y memoria.
+//   2. SERVIDOR, trabajo `media.cutout` del trabajador de medios (BEN2 en CPU, calidad alta):
+//      si `VITE_MEDIA_WORKER_ENABLED` está activo y la foto es de la biblioteca de la marca.
+//      Suele tardar menos de un minuto (arranque de la máquina + ~16 s de modelo); se cancela.
+//   3. FUNCIÓN DE VERCEL (`api/cutout-mask`, IS-Net): APAGADA por defecto; solo con
+//      `VITE_CUTOUT_SERVER_URL` definida.
+//   4. NAVEGADOR con IS-Net refinado («calidad básica»): último recurso, sin WebGPU ni servidor.
 // «Nada que recortar» y cancelar cortan la cadena: otro motor daría lo mismo.
+import { mediaWorkerEnabled } from '@/config/app';
 import type { Pixels } from '../pixels';
 import {
+  browserCanRunBen2,
   cutoutSupport,
   describeCutoutError,
   isCutoutCancelled,
@@ -22,46 +24,51 @@ import {
   type CutoutSupport,
 } from './engine';
 import { NoSubjectError } from './mask';
-import { CUTOUT_MODEL_NAME } from './model';
+import { BEN2_MODEL_NAME, CUTOUT_MODEL_NAME } from './model';
 import { CutoutServerError, cutoutServerAvailable, removeBackgroundOnServer, type ServerOptions } from './server';
+import { removeBackgroundByJob, type JobOptions } from './serverJob';
 
 export interface BackgroundRemoval {
   /** Misma foto con el fondo transparente (mismas medidas que la entrada). */
   pixels: Pixels;
   /** Nombre del modelo, para la procedencia del resultado. */
   model: string;
-  /** `high` (BEN2) o `basic` (IS-Net: respaldo sin WebGPU, tras un fallo o en el servidor): la interfaz lo dice. */
+  /** `high` (BEN2, en el navegador o en el servidor) o `basic` (IS-Net: último recurso o función de Vercel). */
   quality: 'high' | 'basic';
   /** Dónde se ha hecho. */
   where: 'browser' | 'server';
 }
 
-/** Memoria (GB, `navigator.deviceMemory`) por debajo de la cual se prefiere el servidor. */
-export const SERVER_FIRST_BELOW_GB = 4;
-
 /** Piezas cambiables (en las pruebas, dobles). */
 export interface RemovalDeps {
   browserSupport: () => CutoutSupport;
+  /** ¿Puede este navegador con BEN2 (WebGPU y memoria)? */
+  ben2Capable: () => Promise<boolean>;
   browser: (
     image: Pixels,
+    engine: 'ben2' | 'isnet',
     onProgress: ((p: CutoutProgress) => void) | undefined,
     signal: AbortSignal | undefined,
   ) => Promise<CutoutResult>;
+  /** ¿Hay trabajador de medios (`VITE_MEDIA_WORKER_ENABLED`)? */
+  jobEnabled: () => boolean;
+  job: (image: Pixels, options: JobOptions) => Promise<Pixels>;
+  /** ¿Está encendida la función de Vercel (`VITE_CUTOUT_SERVER_URL`)? Por defecto, no. */
   serverAvailable: () => boolean;
   server: (image: Pixels, options: ServerOptions) => Promise<Pixels>;
-  deviceMemory: () => number | undefined;
 }
 
 const defaultDeps: RemovalDeps = {
   browserSupport: () => cutoutSupport(),
-  browser: (image, onProgress, signal) => removeBackgroundInBrowser(image, onProgress, { signal }),
+  ben2Capable: () => browserCanRunBen2(),
+  browser: (image, engine, onProgress, signal) => removeBackgroundInBrowser(image, onProgress, { signal, engine }),
+  jobEnabled: () => mediaWorkerEnabled(),
+  job: (image, options) => removeBackgroundByJob(image, options),
   serverAvailable: () => cutoutServerAvailable(),
   server: (image, options) => removeBackgroundOnServer(image, options),
-  deviceMemory: () =>
-    typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
 };
 
-/** El navegador se quedó sin memoria en esta sesión: las siguientes fotos van al servidor. */
+/** El navegador se quedó sin memoria con BEN2 en esta sesión: no se vuelve a probar hasta recargar. */
 let browserOutOfMemory = false;
 
 export function resetRemovalSession(): void {
@@ -75,10 +82,10 @@ function isOutOfMemory(error: unknown): boolean {
 
 /** ¿Puede este navegador quitar el fondo, solo o con ayuda del servidor? Si no, el botón no sale. */
 export function removalSupport(
-  deps: Pick<RemovalDeps, 'browserSupport' | 'serverAvailable'> = defaultDeps,
+  deps: Pick<RemovalDeps, 'browserSupport' | 'serverAvailable' | 'jobEnabled'> = defaultDeps,
 ): CutoutSupport {
   const browser = deps.browserSupport();
-  if (browser.ok || deps.serverAvailable()) return { ok: true };
+  if (browser.ok || deps.serverAvailable() || deps.jobEnabled()) return { ok: true };
   return browser;
 }
 
@@ -102,7 +109,14 @@ export function describeRemovalError(error: unknown): string {
 export interface RemovalOptions {
   /** Marca de la foto: sin ella no se puede usar el servidor (comprueba que la persona puede editarla). */
   brandId?: string;
+  /**
+   * La foto como recurso de la biblioteca: el trabajo del servidor la lee de ahí (no se sube nada).
+   * Sin ella (o si no es JPEG, PNG o WebP), el servidor no se usa.
+   */
+  source?: { storage_path: string; mime_type: string; kind: string };
 }
+
+const JOB_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 
 export async function removeBackground(
   image: Pixels,
@@ -112,16 +126,28 @@ export async function removeBackground(
   deps: RemovalDeps = defaultDeps,
 ): Promise<BackgroundRemoval> {
   const browserOk = deps.browserSupport().ok;
-  const serverOk = Boolean(options.brandId) && deps.serverAvailable();
-  const memory = deps.deviceMemory();
-  const serverFirst =
-    serverOk && (!browserOk || browserOutOfMemory || (typeof memory === 'number' && memory < SERVER_FIRST_BELOW_GB));
+  const source = options.source;
+  const jobOk =
+    Boolean(options.brandId && source) &&
+    (source!.kind === 'image' || source!.kind === 'logo') &&
+    JOB_MIME.includes(source!.mime_type) &&
+    deps.jobEnabled();
+  const vercelOk = Boolean(options.brandId) && deps.serverAvailable();
 
-  const viaBrowser = async (): Promise<BackgroundRemoval> => {
-    const r = await deps.browser(image, onProgress, signal);
+  const viaBrowser = (engine: 'ben2' | 'isnet') => async (): Promise<BackgroundRemoval> => {
+    const r = await deps.browser(image, engine, onProgress, signal);
     return { pixels: r.pixels, model: r.model, quality: r.quality, where: 'browser' };
   };
-  const viaServer = async (): Promise<BackgroundRemoval> => {
+  const viaJob = async (): Promise<BackgroundRemoval> => {
+    const pixels = await deps.job(image, {
+      brandId: options.brandId!,
+      sourcePath: source!.storage_path,
+      signal,
+      onProgress: (state) => onProgress?.({ phase: 'server-job', state }),
+    });
+    return { pixels, model: BEN2_MODEL_NAME, quality: 'high', where: 'server' };
+  };
+  const viaVercel = async (): Promise<BackgroundRemoval> => {
     const pixels = await deps.server(image, {
       brandId: options.brandId!,
       signal,
@@ -130,17 +156,18 @@ export async function removeBackground(
     return { pixels, model: CUTOUT_MODEL_NAME, quality: 'basic', where: 'server' };
   };
 
-  const order = [
-    ...(browserOk ? [{ name: 'browser' as const, run: viaBrowser }] : []),
-    ...(serverOk ? [{ name: 'server' as const, run: viaServer }] : []),
-  ];
-  if (serverFirst) order.reverse();
-  if (order.length === 0)
+  const order: Array<{ name: string; run: () => Promise<BackgroundRemoval> }> = [];
+  if (browserOk && !browserOutOfMemory && (await deps.ben2Capable())) {
+    order.push({ name: 'navegador (BEN2)', run: viaBrowser('ben2') });
+  }
+  if (jobOk) order.push({ name: 'servidor (trabajador)', run: viaJob });
+  if (vercelOk) order.push({ name: 'servidor (función de Vercel)', run: viaVercel });
+  if (browserOk) order.push({ name: 'navegador (IS-Net)', run: viaBrowser('isnet') });
+  if (order.length === 0) {
     throw new Error(
-      deps.browserSupport().ok
-        ? 'No se puede quitar el fondo aquí.'
-        : (deps.browserSupport() as { reason: string }).reason,
+      browserOk ? 'No se puede quitar el fondo aquí.' : (deps.browserSupport() as { reason: string }).reason,
     );
+  }
 
   let first: unknown;
   for (const step of order) {
@@ -149,8 +176,8 @@ export async function removeBackground(
     } catch (error) {
       if (isCutoutCancelled(error) || error instanceof NoSubjectError || (error as Error)?.name === 'NoSubjectError')
         throw error;
-      if (step.name === 'browser' && isOutOfMemory(error)) browserOutOfMemory = true;
-      console.warn(`[recorte] falla el recorte en ${step.name === 'browser' ? 'el navegador' : 'el servidor'}`, error);
+      if (step.name === 'navegador (BEN2)' && isOutOfMemory(error)) browserOutOfMemory = true;
+      console.warn(`[recorte] falla el recorte en ${step.name}`, error);
       // Se enseña el error del primer intento (lo que la persona esperaba que pasara).
       first ??= error;
     }

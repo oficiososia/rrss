@@ -55,6 +55,8 @@ Cálculo (*estimación*): en el contenedor, con 2 CPU, un reel de 10 s tardó 8,
 - Disco raíz de la imagen parada, unos 0,35 GB × 0,15 $ → **~0,05 $**.
 - Texto de documentos, informes PDF y despertares de respaldo del cron: de céntimos.
 
+**Con 4 GB (desde `f21`, «Quitar el fondo»).** Memoria adicional de Fly: ~5 $ por GB al mes (*estimación*, confirmar en <https://docs.fly.io/about/pricing>), así que `shared-cpu-2x` con 4 GB sale a unos 23 $ al mes encendida en Ashburn y **unos 27 $ en Fráncfort** (≈ 0,037 $ por hora, *estimación* con el mismo +15 %). Cada recorte de fondo ocupa la máquina unos 10 s de arranque + 18–35 s de modelo (medido en escritorio 17–18 s; en Fly sin medir) + 30 s de espera de salida si no llega otro: **~1 minuto → unos 0,6 $ por cada 1000 recortes** (*estimación*; los trabajos que llegan juntos comparten arranque y espera). La imagen crece ~220 MB (el modelo): ~0,03 $ al mes más de disco parado. Para volver a 2 GB (sin recorte de fondo en el servidor): `memory = "2gb"` en `fly.toml`.
+
 Aunque se multiplicara por diez, quedaría por debajo de 1 $ al mes. Lo único que no se puede estimar bien hoy es la duración de los vídeos de móvil reales (4K, HEVC, varios minutos): el README lo marca como «falta medir».
 
 ---
@@ -108,7 +110,7 @@ Para **crear la app** desde GitHub Actions hace falta, una sola vez, un token de
    - *Config path* (ruta de la configuración), si la pide: `fly.toml` — relativa al directorio de trabajo. **No** `worker/fly.toml`: buscaría `worker/worker/fly.toml` (fallo conocido en el foro de Fly).
    - Con eso Fly usa nuestro `fly.toml` tal cual. **Si propone generar archivos nuevos** (una rama `flyio-new-files`, un `Dockerfile` o un `fly.toml` suyo), es que no ha encontrado el nuestro: revisar el directorio, no aceptar.
 5. **Nombre de la app:** `rrss-worker` (el de `fly.toml`). Si está cogido en Fly, usar otro (p. ej. `rrss-worker-oficiosos`) y avisar a Claude para cambiarlo también en `fly.toml`. Organización: la personal.
-6. **Región, tamaño y puertos.** Región **Frankfurt (`fra`)**. Tamaño **shared-cpu-2x, 2 GB** (si lo pregunta; ya viene en `fly.toml`). **Sin puerto ni servicio HTTP**: si pide un puerto interno, dejarlo vacío o quitar el servicio; el trabajador no escucha en ningún puerto. Sin base de datos ni Redis.
+6. **Región, tamaño y puertos.** Región **Frankfurt (`fra`)**. Tamaño **shared-cpu-2x, 4 GB** (si lo pregunta; ya viene en `fly.toml`; desde `f21`, por «Quitar el fondo»: BEN2 llega a ~2,3 GB de pico y con 2 GB no cabe). **Sin puerto ni servicio HTTP**: si pide un puerto interno, dejarlo vacío o quitar el servicio; el trabajador no escucha en ningún puerto. Sin base de datos ni Redis.
 7. **Secretos** (en el formulario si tiene apartado de *Secrets* / *Environment variables*; si no, después en la app → *Secrets*). Exactamente dos, como **secretos** (no como variables a la vista):
 
    | Nombre | Valor | De dónde sale |
@@ -161,7 +163,7 @@ Con `--aplicar` (y `WORKER_GATEWAY_TOKEN=rrss_wgt_…` en el entorno, generado e
 - `[[restart]] policy = "never"`: el borrador ponía `"no"`, que **no** es un valor de `fly.toml` (admite `"always"`, `"never"` y `"on-failure"`, el de por defecto; <https://docs.fly.io/reference/configuration>).
 - `kill_signal = "SIGTERM"` explícito (Fly manda SIGINT por defecto; el trabajador atiende los dos) y `kill_timeout = 30`.
 - `WORKER_IDLE_EXIT_MS = "30000"` (antes 10 s): recoge lo que llegue justo detrás y evita que el despliegue tome por fallo un proceso que sale enseguida. Coste extra: céntimos al año.
-- `swap_size_mb = 1024`: margen de memoria para FFmpeg con vídeos grandes, además de los 2 GB.
+- `swap_size_mb = 1024`: margen de memoria para FFmpeg con vídeos grandes, además de los 4 GB (eran 2 GB hasta `f21`).
 - Sin `[http_service]` ni `[[services]]`: ningún puerto.
 
 ### 4.7 Cómo comprobar que funciona con un reel de prueba

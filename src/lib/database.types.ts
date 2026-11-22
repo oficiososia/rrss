@@ -557,7 +557,7 @@ export type AiMediaGenerationOutput = {
 // de alta en `media_assets` con su procedencia (columna común `provenance`,
 // `type` = 'media_job'), y `jobs.result.assets` lo apunta.
 
-export type MediaJobKind = 'media.reel.template' | 'media.image.process';
+export type MediaJobKind = 'media.reel.template' | 'media.image.process' | 'media.cutout';
 
 type MediaJobFunctions = {
   request_media_job: {

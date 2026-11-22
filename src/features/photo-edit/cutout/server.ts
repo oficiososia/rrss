@@ -7,12 +7,14 @@ import type { Pixels } from '../pixels';
 import { NoSubjectError } from './mask';
 import { resizeAreaChannel } from './resample';
 
-/** Dirección de la función. Vacía = el servidor no está disponible (desarrollo local, pruebas). */
+/**
+ * Dirección de la función de Vercel (`api/cutout-mask`, f18). APAGADA por defecto: sin
+ * `VITE_CUTOUT_SERVER_URL` (o con `off`) no se usa. Para encenderla, `/api/cutout-mask` (o su URL).
+ * El servidor de verdad es el trabajador de medios (`serverJob.ts`, trabajo `media.cutout`).
+ */
 export function cutoutServerUrl(): string {
   const configured = String(import.meta.env.VITE_CUTOUT_SERVER_URL ?? '').trim();
-  if (configured === 'off') return '';
-  if (configured) return configured;
-  return import.meta.env.PROD ? '/api/cutout-mask' : '';
+  return configured === 'off' ? '' : configured;
 }
 
 export function cutoutServerAvailable(): boolean {

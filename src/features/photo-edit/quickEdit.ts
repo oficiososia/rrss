@@ -26,7 +26,7 @@ export async function runQuickEdit(options: {
 }): Promise<MediaAssetRow> {
   const { asset, url, save, onProgress } = options;
   const { pixels } = await loadPixels(url);
-  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id });
+  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id, source: asset });
   const result = cut.pixels;
   const steps: PhotoEditStep[] = [{ kind: 'remove_background', engine: 'browser', model: cut.model }];
   const transparent = analyzeImage(result).transparent;

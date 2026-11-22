@@ -45,11 +45,13 @@ swap_size_mb = 1024
   # a Fly: el trabajador entra por la función worker-gateway con su token y
   # no arranca si en Fly encuentra SUPABASE_SERVICE_ROLE_KEY.
 
-# shared-cpu-2x con 2 GB: FFmpeg usa los dos núcleos y monta un reel vertical
-# 1080×1920 sin quedarse sin memoria (worker/README.md, «Tiempos medidos»).
+# shared-cpu-2x con 4 GB: FFmpeg usa los dos núcleos y monta un reel vertical 1080×1920 con 2 GB
+# (worker/README.md, «Tiempos medidos»), pero «Quitar el fondo» (BEN2 con onnxruntime-node, 2 hilos y
+# arena desactivada) llega a ~2,3 GB de pico: con 2 GB se quedaría sin memoria. Solo se paga el rato
+# que la máquina trabaja (docs/alojamiento.md). Cambiarlo: `fly scale memory 4096 -a rrss-worker`.
 [[vm]]
   size = "shared-cpu-2x"
-  memory = "2gb"
+  memory = "4gb"
 
 # Al salir el proceso (también con código 0), Fly NO la vuelve a arrancar: se
 # queda parada hasta la próxima llamada de la base de datos. Los valores que

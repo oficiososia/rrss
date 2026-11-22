@@ -5,6 +5,7 @@
 // arranca el bucle. Por defecto (`WORKER_MODE=drain`) vacía la cola
 // y termina, para alojamientos que arrancan el contenedor bajo demanda.
 import { loadConfig } from './config.ts';
+import { createOrtEngine, modelAvailable } from './cutout/engine.ts';
 import { errorMessage } from './errors.ts';
 import { findDefaultFont } from './ffmpeg/fonts.ts';
 import { runProcess, toolsFromEnv } from './ffmpeg/run.ts';
@@ -38,6 +39,16 @@ async function main(): Promise<number> {
   if (!defaultFontFile)
     logger.warn('worker.font_missing', { hint: 'Define WORKER_FONT_FILE para poner texto en los vídeos' });
 
+  // «Quitar el fondo» solo si el modelo está en la máquina (en Fly va dentro de la imagen).
+  const cutout = modelAvailable(config.WORKER_CUTOUT_MODEL)
+    ? createOrtEngine({ modelPath: config.WORKER_CUTOUT_MODEL, threads: config.WORKER_CUTOUT_THREADS })
+    : undefined;
+  if (!cutout) {
+    logger.warn('worker.cutout_disabled', {
+      hint: `No está el modelo (${config.WORKER_CUTOUT_MODEL}): no se atienden los trabajos media.cutout`,
+    });
+  }
+
   // Por defecto, el intermediario `worker-gateway` con el token del trabajador
   // (sin ninguna clave de Supabase). Con la clave de servicio, solo en local/CI.
   let queue: JobQueue;
@@ -68,7 +79,7 @@ async function main(): Promise<number> {
   const worker = createWorker({
     queue,
     storage,
-    handlers: createMediaHandlers({ tools, defaultFontFile, fontsDir: config.WORKER_FONTS_DIR }),
+    handlers: createMediaHandlers({ tools, defaultFontFile, fontsDir: config.WORKER_FONTS_DIR, cutout }),
     logger,
     workerId: config.WORKER_ID,
     mode: config.WORKER_MODE,

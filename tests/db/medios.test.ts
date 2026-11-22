@@ -629,6 +629,151 @@ describe('el resultado llega a la biblioteca al completarse', () => {
   });
 });
 
+describe('quitar el fondo en el servidor (media.cutout)', () => {
+  const cutoutResult = (outputPath: string, extra: Row = {}): Row => ({
+    source: { width: 4000, height: 3000 },
+    model: 'ben2-base-fp16',
+    output: { path: outputPath, width: 4000, height: 3000, bytes: 3_100_000 },
+    timings: { downloadMs: 10, inferenceMs: 9000 },
+    ...extra,
+  });
+  const cancel = async (user: TestUser, id: string) => {
+    const { sql, params } = rpcStatement('cancel_media_job', { p_job_id: id });
+    return (await as<{ data: JobRow }>(db, user, sql, params))[0]!.data;
+  };
+
+  it('la base fija la salida, el modelo y el motor: el cliente solo dice qué foto', async () => {
+    const job = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    expect(job).toMatchObject({ kind: 'media.cutout', status: 'queued', brand_id: marcaA, organization_id: orgA });
+    expect(job.payload).toMatchObject({ source: { path: fotoA }, model: 'ben2-base-fp16', engine: 'servidor' });
+    expect(job.payload.output!.path).toMatch(new RegExp(`^${orgA}/${marcaA}/ediciones/[0-9a-f-]{36}\\.png$`));
+  });
+
+  it('una carga con campos de más, otra salida o un modelo propio se rechaza', async () => {
+    const bad = /solo admite la ruta de la foto/;
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: fotoA }, output: { path: fotoA } }, bad);
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: fotoA }, model: 'otro' }, bad);
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: fotoA, extra: 1 } }, bad);
+    await rejected(editor, marcaA, 'media.cutout', {}, bad);
+  });
+
+  it('la foto de origen tiene que ser una imagen de ESA marca, en un formato que se lee', async () => {
+    const noEs = /no es un recurso de esta marca|no es válida/;
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: fotoB } }, noEs); // otra organización
+    await rejected(ana, marcaA, 'media.cutout', { source: { path: fotoA2 } }, noEs); // otra marca, misma organización
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: clipA } }, noEs); // un vídeo
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: docA } }, noEs);
+    await rejected(
+      editor,
+      marcaA,
+      'media.cutout',
+      { source: { path: `${orgA}/${marcaA}/../${marcaA2}/media/otra.jpg` } },
+      noEs,
+    );
+    const gif = await asset(ana, orgA, marcaA, 'image', 'animada.gif', 'image/gif');
+    await rejected(
+      editor,
+      marcaA,
+      'media.cutout',
+      { source: { path: gif } },
+      /solo se puede quitar el fondo a JPEG, PNG o WebP/,
+    );
+  });
+
+  it('solo quien edita la marca lo encarga; el aislamiento entre marcas se mantiene', async () => {
+    for (const user of [cliente, lector, berta]) {
+      await rejected(user, marcaA, 'media.cutout', { source: { path: fotoA } }, /No tienes permiso para crear medios/);
+    }
+    // Una persona de la marca B no encarga sobre su marca con la foto de la A.
+    await rejected(berta, marcaB, 'media.cutout', { source: { path: fotoA } }, /no es un recurso de esta marca/);
+  });
+
+  it('cuenta en el tope de cinco trabajos de medios por marca y repetir la clave devuelve el mismo', async () => {
+    const first = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } }, 'recorte-clave-1');
+    const again = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } }, 'recorte-clave-1');
+    expect(again.id).toBe(first.id);
+    for (let i = 0; i < 4; i++) await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    await rejected(editor, marcaA, 'media.cutout', { source: { path: fotoA } }, /Hay 5 trabajos de medios en marcha/);
+  });
+
+  it('el trabajador reclama el tipo nuevo y al terminar el PNG entra en «Ediciones» con su procedencia', async () => {
+    const job = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    const [claimed] = await claim();
+    expect(claimed).toMatchObject({ id: job.id, kind: 'media.cutout' });
+    const done = await complete(job.id, cutoutResult(job.payload.output!.path));
+    expect(done.status).toBe('succeeded');
+    const rows = await assetsOf(job.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: 'image',
+      origin: 'generated',
+      storage_path: job.payload.output!.path,
+      file_name: 'Sin fondo · plato.png',
+      mime_type: 'image/png',
+      bytes: 3_100_000,
+      width: 4000,
+      height: 3000,
+      folder: 'Ediciones',
+      tags: ['edición'],
+    });
+    const source = (
+      await db.query<{ id: string }>(`select id from public.media_assets where storage_path = $1`, [fotoA])
+    )[0]!;
+    expect(rows[0]!.provenance).toMatchObject({
+      type: 'media_job',
+      kind: 'media.cutout',
+      job_id: job.id,
+      source_asset_id: source.id,
+      model: 'ben2-base-fp16',
+      engine: 'servidor',
+      sources: [{ type: 'photo', asset_id: source.id, path: fotoA }],
+    });
+    expect((await jobById(job.id)).result!.assets).toEqual([
+      { id: rows[0]!.id, path: job.payload.output!.path, kind: 'image' },
+    ]);
+  });
+
+  it('un resultado con otra ruta no cierra el trabajo ni crea nada', async () => {
+    const job = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    await claim();
+    await expect(complete(job.id, cutoutResult(`${orgA}/${marcaA}/ediciones/otro.png`))).rejects.toThrow(
+      /no corresponde a su encargo/,
+    );
+    await expect(complete(job.id, { ok: true })).rejects.toThrow(/no corresponde a su encargo/);
+    expect(await jobById(job.id)).toMatchObject({ status: 'running' });
+    expect(await assetsOf(job.id)).toEqual([]);
+  });
+
+  it('se cancela como los demás; lo cancelado no llega a la biblioteca', async () => {
+    const job = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    await claim();
+    expect(await cancel(editor, job.id)).toMatchObject({ status: 'cancelled' });
+    await expect(complete(job.id, cutoutResult(job.payload.output!.path))).rejects.toThrow();
+    expect(await assetsOf(job.id)).toEqual([]);
+    const other = await request(editor, marcaA, 'media.cutout', { source: { path: fotoA } });
+    for (const user of [cliente, lector, berta]) {
+      await denied(db, user, `select public.cancel_media_job($1)`, [other.id], /No tienes permiso para cancelar/);
+    }
+  });
+
+  it('el recurso de una marca solo entra en la biblioteca de ESA marca', async () => {
+    const job = await request(berta, marcaB, 'media.cutout', { source: { path: fotoB } });
+    await claim();
+    await complete(job.id, cutoutResult(job.payload.output!.path));
+    const rows = await db.query<AssetRow & { brand_id: string; organization_id: string }>(
+      `select * from public.media_assets where provenance ->> 'job_id' = $1`,
+      [job.id],
+    );
+    expect(rows.map((r) => [r.brand_id, r.organization_id])).toEqual([[marcaB, orgB]]);
+    expect(rows[0]!.storage_path.startsWith(`${orgB}/${marcaB}/ediciones/`)).toBe(true);
+    // Quien solo está en la marca A no ve el recurso ni el trabajo de la B.
+    expect(
+      await as(db, editor, `select 1 from public.media_assets where provenance ->> 'job_id' = $1`, [job.id]),
+    ).toEqual([]);
+    expect(await as(db, editor, `select 1 from public.jobs where id = $1`, [job.id])).toEqual([]);
+  });
+});
+
 describe('contrato con el trabajador (su bucle real contra la cola SQL)', () => {
   const sqlQueue: JobQueue = {
     async claim({ worker, kinds, limit, leaseSeconds }) {

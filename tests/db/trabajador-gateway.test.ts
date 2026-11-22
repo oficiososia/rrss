@@ -309,6 +309,45 @@ describe('cada operación comprueba trabajo, trabajador y marca', () => {
     expect(write.status).toBe(403);
   });
 
+  it('media.cutout: el trabajador del token lo reclama y solo escribe en «ediciones» de SU marca', async () => {
+    const out = `${org}/${marca}/ediciones/${randomUUID()}.png`;
+    const job = await enqueue(marca, org, 'media.cutout', {
+      source: { path: `${org}/${marca}/media/${randomUUID()}.jpg` },
+      output: { path: out },
+    });
+    const claimed = await post(TOKEN, '/claim', {
+      worker: 'media-1',
+      kinds: ['media.cutout'],
+      limit: 1,
+      leaseSeconds: 60,
+    });
+    expect(claimed.status).toBe(200);
+    expect((claimed.json.jobs as Array<{ id: string; kind: string }>).map((j) => [j.id, j.kind])).toEqual([
+      [job, 'media.cutout'],
+    ]);
+    const mine = await post(TOKEN, '/write-url', {
+      worker: 'media-1',
+      jobId: job,
+      path: out,
+      contentType: 'image/png',
+      bytes: 1000,
+    });
+    expect(mine.status).toBe(200);
+    for (const other of [`${orgB}/${marcaB}/ediciones/x.png`, `${org}/${marcaB}/ediciones/x.png`]) {
+      const r = await post(TOKEN, '/write-url', {
+        worker: 'media-1',
+        jobId: job,
+        path: other,
+        contentType: 'image/png',
+        bytes: 1000,
+      });
+      expect(r.status).toBe(403);
+    }
+    expect(await post(TOKEN, '/fail', { worker: 'media-1', jobId: job, error: 'prueba' })).toMatchObject({
+      status: 200,
+    });
+  });
+
   it('un trabajo de otra marca reservado por otro trabajador no se toca', async () => {
     const ajeno = await enqueue(marcaB, orgB);
     // Lo reserva un trabajador con la clave de servicio (modo local), no el del token.

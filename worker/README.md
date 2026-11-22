@@ -12,6 +12,7 @@ termina.
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bucle (reclamar, ejecutar, cerrar, reintentos, apagado ordenado)        | Implementado y probado contra la cola real (PGlite) y contra una cola en memoria                                                                                                       |
 | `media.image.process` — imagen a las proporciones de las redes          | Implementado y probado con archivos reales                                                                                                                                             |
+| `media.cutout` — quitar el fondo (BEN2) → PNG con alfa en «Ediciones»    | Implementado; probado con un motor doble (`tests/cutout.test.ts`) y medido con el modelo real en local (`scripts/bench-cutout.ts`); sin probar en Fly |
 | `media.reel.template` — reel vertical por plantilla                     | Implementado y probado con archivos reales, también dentro del contenedor                                                                                                              |
 | Plan v2 del editor de reels (recortes, transición por elemento, textos con estilo, subtítulos quemados, volumen por clip, música) | Implementado y probado con FFmpeg real (`tests/reel-editor-render.test.ts`, 21/11/2026); el plan v1 se migra a v2 al leerlo (`migratePlanV1`). Esquemas `schemas/reel-plan.v2` y `reel-payload.v2`. Ver `docs/editor-reels.md` |
 | `media.video.derivatives` — póster, versión comprimida, otra proporción | Implementado y probado con archivos reales                                                                                                                                             |
@@ -100,7 +101,7 @@ docker run --rm --name rrss-worker-test rrss-worker-test npm run test:reel
 docker run --rm --name rrss-worker-1 -e SUPABASE_URL=… -e WORKER_GATEWAY_TOKEN=… rrss-worker
 ```
 
-La imagen es `node:22-alpine` con `ffmpeg` y `font-dejavu` de Alpine, y corre
+La imagen es `node:22-trixie-slim` (Debian; desde `f21`, antes Alpine: sin probar el cambio de FFmpeg) con `ffmpeg` y `fonts-dejavu-core`, y corre
 con el usuario `node` (uid 1000, sin privilegios). Ocupa unos 300 MB en disco
 (Docker Desktop la lista como 450 MB): 150 MB son Node y 130 MB las bibliotecas
 de FFmpeg. Se puede reducir con un FFmpeg compilado a medida (solo x264 y AAC);
@@ -158,7 +159,7 @@ trabajo → recurso sigue siendo `jobs.result.assets`.
 1. **Encargo** (`supabase/migrations/20261118220000_media_jobs_library.sql`):
    `request_media_job(marca, tipo, entrada, clave)` es `SECURITY DEFINER`; lo
    puede llamar cualquier usuario con sesión, pero solo encola si puede
-   **editar** la marca. Solo `media.reel.template` y `media.image.process`. La
+   **editar** la marca. Solo `media.reel.template`, `media.image.process` y `media.cutout`. La
    entrada se restringe campo a campo (sin plantillas completas ni `fontPath`),
    cada ruta de entrada tiene que ser un **recurso de la biblioteca de esa
    marca** del tipo que toca (foto, clip o audio), y la **ruta de salida la pone
@@ -388,6 +389,8 @@ permitirlos cuando se use.
 | `WORKER_FONT_FILE`            | DejaVu Sans si está instalada | Tipografía por defecto                                                                                       |
 | `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                  |
 | `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                     |
+| `WORKER_CUTOUT_MODEL`         | `/app/models/ben2-base-fp16.onnx` | Modelo BEN2 fp16 (en la imagen Docker). Si el archivo no existe, el trabajador NO reclama `media.cutout` (avisa en el arranque) |
+| `WORKER_CUTOUT_THREADS`       | `2`                           | Hilos de onnxruntime (la máquina es shared-cpu-2x; la arena de memoria va siempre desactivada)                |
 | `WORKER_MAX_UPLOAD_BYTES`     | `52428800` (50 MB)            | Tope de cada archivo subido (el del cubo en el plan gratuito). Por encima, fallo sin reintento con el motivo |
 | `WORKER_MEDIA_STORAGE`        | `auto`                        | Solo en `service-key`. `auto`: pregunta a la función `media-storage` dónde está cada archivo (Cloudflare R2 o Supabase) y dónde subir los resultados, sin credenciales de R2; si la función no está desplegada, Supabase Storage. `supabase`: solo Supabase Storage (docs/almacenamiento-r2.md). Con el intermediario lo decide él |
 
@@ -448,7 +451,7 @@ comandos probados en local, pero **no se ha ejecutado en GitHub**.
 
 | Componente                        | Licencia                                                           | Uso                                                                                                                                                                        |
 | --------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| FFmpeg / ffprobe                  | LGPL/GPL según compilación; la de Alpine incluye x264 y es **GPL** | **Binario externo**: se lanza como proceso, no se enlaza ni se modifica. Si algún día se distribuye la imagen a terceros, hay que ofrecer el código fuente correspondiente |
+| FFmpeg / ffprobe                  | LGPL/GPL según compilación; la de Debian incluye x264 y es **GPL** | **Binario externo**: se lanza como proceso, no se enlaza ni se modifica. Si algún día se distribuye la imagen a terceros, hay que ofrecer el código fuente correspondiente |
 | zod 4.6                           | MIT                                                                | Validación de cargas                                                                                                                                                       |
 | unpdf 2.1.0 (incluye pdf.js)      | MIT (pdf.js: Apache-2.0)                                           | Texto de los PDF (`source.extract`)                                                                                                                                        |
 | mammoth 1.13.0                    | BSD-2-Clause (jszip: MIT o GPL-3.0, se usa como MIT; pako: MIT y Zlib) | Texto de los Word .docx                                                                                                                                                |
@@ -459,7 +462,10 @@ comandos probados en local, pero **no se ha ejecutado en GitHub**.
 | vitest 3.2                        | MIT                                                                | Desarrollo                                                                                                                                                                 |
 | @types/node 22                    | MIT                                                                | Desarrollo                                                                                                                                                                 |
 | DejaVu Sans (`font-dejavu`)       | Licencia libre de Bitstream Vera/DejaVu                            | Tipografía por defecto en el contenedor                                                                                                                                    |
-| Node.js (imagen `node:22-alpine`) | MIT                                                                | Entorno                                                                                                                                                                    |
+| Node.js (imagen `node:22-trixie-slim`) | MIT                                                           | Entorno (Debian, no Alpine: onnxruntime-node solo trae binarios para glibc)                                                                                                 |
+| onnxruntime-node 1.30.0           | MIT                                                                | Ejecuta BEN2 en CPU (`media.cutout`)                                                                                                                                       |
+| BEN2 base fp16 (`onnx-community/BEN2-ONNX`) | MIT (ficha del modelo)                                   | Quitar el fondo; 219 MB dentro de la imagen, con sha256 fijado en el `Dockerfile`                                                                                           |
+| sharp 0.34.5 (libvips)            | Apache-2.0 (libvips: LGPL-3.0, binario precompilado)               | Leer y escribir las fotos de `media.cutout`                                                                                                                                |
 
 No se usa Remotion (su licencia de empresa es de pago para un SaaS que
 renderiza por cuenta de clientes) ni ninguna otra biblioteca de vídeo.
@@ -500,3 +506,21 @@ medir con vídeos reales de móvil (4K, HEVC, varios minutos).
 - Seguimiento del sujeto al cambiar de proporción, subtítulos, voz en off,
   varias pistas de música, animación de capas.
 - Limpieza de trabajos antiguos y prioridad por plan (pendientes de la cola).
+
+## `media.cutout` (quitar el fondo)
+
+Foto de la biblioteca → PNG con alfa en `<org>/<marca>/ediciones/<uuid>.png`. Carga:
+`{ source: { path }, output: { path }, model: "ben2-base-fp16", engine: "servidor" }`; la base de
+datos fija todo menos la foto (`request_media_job`, migración `20261214010000`). Detalle, cadena
+del panel y mediciones: `docs/edicion-fotos.md`, §7 («Quitar el fondo en el servidor»).
+
+- **Memoria:** pico ~2,2–2,3 GB medido en escritorio (también con 12 MP) → `fly.toml` con **4 GB**.
+- **Sesión:** se abre al empezar cada trabajo y se libera al terminar (también si falla); 2 hilos,
+  `enableCpuMemArena=false`.
+- **Código compartido con la aplicación:** `src/cutout/shared/` es una COPIA GENERADA de
+  `src/features/photo-edit/cutout/{mask,refine,resample}.ts` (`npm run sync:cutout`); la prueba
+  `tests/cutout.test.ts` falla si se desfasa.
+- **Medir con el modelo real:** `node scripts/bench-cutout.ts <modelo.onnx> <foto>…` (un proceso por foto;
+  `BENCH_OUT=<carpeta>` deja los PNG).
+- **Sin modelo no se reclama:** en local, sin `WORKER_CUTOUT_MODEL`, el trabajador no atiende
+  `media.cutout` (los trabajos quedan en cola).

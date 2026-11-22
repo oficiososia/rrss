@@ -400,7 +400,8 @@ extensión `.js`, porque el servidor lo carga en Node):
 
 1. Navegador con WebGPU y memoria → **BEN2** (calidad alta).
 2. Navegador sin WebGPU → **IS-Net** con el refinado nuevo (calidad básica).
-3. **Servidor** (`api/cutout-mask.ts`, el mismo IS-Net y el mismo refinado) si: el
+3. *(Sustituido en `f21`, ver «Quitar el fondo en el servidor, con el trabajador de medios»: ahora el servidor es el
+   trabajo `media.cutout` con BEN2, y esta función queda apagada por defecto.)* **Servidor** (`api/cutout-mask.ts`, el mismo IS-Net y el mismo refinado) si: el
    navegador no puede (sin WebAssembly, menos de 2 GB), o falla (modelo, memoria,
    red del modelo), o el dispositivo declara menos de 4 GB (se prueba primero el
    servidor y, si falla, el navegador). Tras quedarse sin memoria, las fotos
@@ -409,9 +410,8 @@ extensión `.js`, porque el servidor lo carga en Node):
 4. «Nada que recortar» y cancelar cortan la cadena.
 
 El botón «Quitar el fondo» sale si el navegador puede **o** hay servidor
-(`VITE_CUTOUT_SERVER_URL`; por defecto `/api/cutout-mask` solo en la compilación
-de producción; `off` lo apaga; en `vite dev` y en las pruebas e2e no hay
-servidor).
+(`VITE_CUTOUT_SERVER_URL`; **desde `f21` sin definir = apagada** y `off` también; antes, por
+defecto `/api/cutout-mask` en la compilación de producción).
 
 **Servidor.**
 
@@ -518,6 +518,88 @@ El resto de esta sección describe IS-Net, que sigue siendo el respaldo.
   `playwright.config.ts`) cambia únicamente lo que devuelve el worker por una
   máscara elíptica; el resto del camino es real. Sin esa variable no existe esa
   rama en el paquete de producción.
+
+### Quitar el fondo en el servidor, con el trabajador de medios — rama `f21/cutout-fly`, 22/11/2026
+
+Decisión del dueño: probar BEN2 en el servidor con la máquina de Fly que ya existe
+(trabajador de medios, Node + FFmpeg), en vez de la función de Vercel de `f18`.
+
+**Qué hay.**
+
+- **Trabajo `media.cutout`** (`worker/src/handlers/cutout.ts`): foto de la biblioteca → PNG con
+  alfa en la carpeta «Ediciones» de la marca. Lee la foto con `sharp` (EXIF aplicado, como mucho
+  4096 px de lado), prepara la entrada de BEN2 (1×3×1024×1024, ImageNet), ejecuta **BEN2 base
+  fp16** con `onnxruntime-node` (CPU, **2 hilos, arena de memoria desactivada**), limpia la
+  máscara (motas, islas, agujeros) y escribe el PNG. La **sesión del modelo se abre al empezar
+  cada trabajo y se libera al terminar**, también si falla; la máquina se apaga al vaciar la cola.
+- **Mismo código que el navegador, sin duplicarlo a mano.** El preprocesado y el postprocesado
+  (`toBen2Input`, `ben2Mask`, `applyMask` con `cleanMask`, `resample`) son los de
+  `src/features/photo-edit/cutout/`. La imagen Docker solo lleva `worker/` y Node exige `.ts` en
+  las importaciones, así que se **copian** a `worker/src/cutout/shared/` con
+  `npm run sync:cutout` (en `worker/`), que reescribe las importaciones. Una prueba
+  (`worker/tests/cutout.test.ts`) falla si la copia se queda desfasada. Es la única duplicación
+  (copia generada, no escrita a mano).
+- **Modelo dentro de la imagen Docker**, no en el primer uso: la máquina se apaga al vaciar la
+  cola y su disco no persiste, así que «en el primer uso» sería bajar 219 MB en cada arranque
+  (más la dependencia de Hugging Face en cada trabajo). El `Dockerfile` lo baja en el *build*
+  con `ADD --checksum=sha256:dfdc25f4…cedf1` y la revisión del repositorio fijada
+  (`c552aa82…`): si el archivo cambia, el build falla. El sha256 coincide con el `lfs.oid` que
+  publica Hugging Face y con la copia de las pruebas (219 121 675 bytes). Coste: imagen ~220 MB
+  más grande, que no se paga con la máquina parada más allá del disco (~0,03 $/mes).
+- **Imagen de Debian en vez de Alpine.** `onnxruntime-node` solo trae binarios para glibc; en
+  musl no carga. La base pasa a `node:22-trixie-slim` (FFmpeg 7.1 de Debian en lugar del de
+  Alpine). **No se ha construido ni probado esa imagen** (ver «Sin probar»).
+- **Base de datos** (migración `20261214010000_media_cutout.sql`, con vuelta atrás): `request_media_job`
+  admite `media.cutout`; el cliente solo manda `{source: {path}}` (la ruta tiene que ser un
+  recurso de la marca, JPEG/PNG/WebP) y la base **fija** la salida
+  (`<org>/<marca>/ediciones/<uuid>.png`), el modelo (`ben2-base-fp16`) y el motor (`servidor`);
+  el disparador de `jobs` da de alta el PNG (`origin generated`, carpeta «Ediciones», etiqueta
+  «edición») con procedencia `media_job` `{kind, job_id, source_asset_id, model, engine, sources}`;
+  `cancel_media_job` y el tope de trabajos por marca (5) lo incluyen. `is_media_worker_kind`
+  y `worker-gateway` ya cubrían `media.%`: no se tocan.
+- **Panel** (`cutout/remover.ts`, `cutout/serverJob.ts`). Cadena nueva:
+  1. **Navegador con BEN2** si hay WebGPU, adaptador y memoria.
+  2. **Servidor** (trabajo `media.cutout`) si `VITE_MEDIA_WORKER_ENABLED=true`, hay marca y la
+     foto es de la biblioteca (JPEG, PNG o WebP). Sondea cada 2 s, plazo de 3 min, se cancela
+     (`cancel_media_job`). Texto: «Quitando el fondo en el servidor… (suele tardar menos de un
+     minuto)». Calidad alta (BEN2).
+  3. **Función de Vercel** `api/cutout-mask` (`f18`): **APAGADA por defecto.** Ahora sin
+     `VITE_CUTOUT_SERVER_URL` significa apagada (antes, en producción, `/api/cutout-mask`);
+     `off` también la apaga. Para volver a encenderla: `VITE_CUTOUT_SERVER_URL=/api/cutout-mask`.
+     No se ha borrado.
+  4. **IS-Net refinado en el navegador**, último recurso («calidad básica»).
+
+  «Nada que recortar» y cancelar cortan la cadena. El botón sale si el navegador puede **o** hay
+  trabajador o función de Vercel.
+- **Qué queda en la biblioteca.** El PNG que deja el trabajo es un recurso propio (carpeta
+  «Ediciones», listado entre las ediciones de la foto). El panel baja ese PNG, **solo usa su
+  alfa** y lo pone sobre los píxeles que ya tiene; si luego se guarda otra edición (fondo
+  nuevo…), esa es otra copia. Es decir, un recorte por el servidor deja el PNG intermedio en la
+  biblioteca además del resultado final. Límite conocido, aceptado por sencillez.
+
+**Medido** (22/11/2026, Windows, procesador de escritorio, `onnxruntime-node` 1.30.0, 2 hilos,
+arena desactivada, `worker/scripts/bench-cutout.ts`: manejador completo, un proceso por foto):
+
+| Foto | Medidas salida | Total | Modelo (inferencia) | Carga de la sesión | Preparar + postprocesar + PNG | Pico de memoria (RSS) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `coulant-postre` | 1351×1123 | 18,2 s | 15,8 s | 2,0 s | 0,34 s | 2211 MB |
+| `chuleton-cocina` | 1152×1536 | 17,2 s | 15,4 s | 1,4 s | 0,37 s | 2201 MB |
+| `botella-gin-cristal` | 1152×1536 | 17,1 s | 15,3 s | 1,4 s | 0,39 s | 2189 MB |
+| 12 MP sintética (4032×3024) | 4032×3024 | 18,1 s | 15,4 s | 1,4 s | 1,2 s | 2291 MB |
+
+El modelo manda: ~15,5 s y ~2,2 GB, con casi nada de diferencia entre una foto de 1,5 MP y una
+de 12 MP (el modelo siempre trabaja a 1024×1024; la foto grande solo suma ~0,8 s y ~100 MB). El
+PNG de 12 MP pesa 21,8 MB (el tope de subida es 50 MB). Con la máquina de Fly esperar unos
+**+10 s de arranque** y que `shared-cpu-2x` sea más lenta que un procesador de escritorio
+(*estimación*: 20–35 s por foto). **La cifra de Fly no está medida**: hay que medirla tras desplegar.
+Con **2 GB la máquina se queda sin memoria** (pico 2,2–2,3 GB + el sistema): por eso
+`fly.toml` pasa a **4 GB**. `coulant-postre` conserva el plato blanco (62 % de la foto queda opaco).
+
+**Sin probar:** la imagen Docker (Debian, descarga del modelo con `--checksum`, `sharp` y
+`onnxruntime-node` en glibc) no se ha construido en esta sesión; el trabajo completo en Fly
+(tiempo real, memoria real, arranque desde parada, `swap`); el panel contra el trabajador real
+(las pruebas usan dobles y el cliente de Supabase simulado); la prueba e2e (el recorte en e2e va
+simulado en el navegador y no pasa por esta cadena).
 
 ## 6. Pruebas
 

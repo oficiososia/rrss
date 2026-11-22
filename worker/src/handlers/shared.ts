@@ -3,6 +3,7 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import type { CutoutEngine } from '../cutout/engine.ts';
 import { PermanentError } from '../errors.ts';
 import type { MediaTools } from '../ffmpeg/run.ts';
 import type { HandlerContext } from '../handler.ts';
@@ -15,6 +16,8 @@ export interface MediaDeps {
   defaultFontFile?: string;
   /** Carpeta con tipografías instaladas en el trabajador (`<nombre>.ttf` u `.otf`). */
   fontsDir?: string;
+  /** Motor de «Quitar el fondo». Sin él (no hay modelo en la máquina) no se atiende `media.cutout`. */
+  cutout?: CutoutEngine;
 }
 
 /** Valida la carga del trabajo. Una carga inválida no se reintenta. */

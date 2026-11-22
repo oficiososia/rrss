@@ -1,5 +1,6 @@
 // Registro de manejadores: los tipos de trabajo que este trabajador reclama.
 import type { Handler } from '../handler.ts';
+import { createCutoutHandler } from './cutout.ts';
 import { createImageProcessHandler } from './image-process.ts';
 import { createReelTemplateHandler } from './reel-template.ts';
 import { createReportPdfHandler } from './report-pdf.ts';
@@ -21,5 +22,7 @@ export function createMediaHandlers(deps: MediaDeps): Handler[] {
     createSourceExtractHandler(),
     // Informe mensual de analítica (Fase 5).
     createReportPdfHandler(),
+    // Quitar el fondo (BEN2 en CPU): solo si la máquina tiene el modelo (`deps.cutout`); si no, no reclama el tipo.
+    ...(deps.cutout ? [createCutoutHandler({ engine: deps.cutout })] : []),
   ];
 }
