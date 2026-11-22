@@ -1234,7 +1234,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               </Button>
               {showSafeZone && (
                 <span data-testid="safe-zone-note">
-                  En rojo, lo que puede tapar la interfaz de {networkLabel(item.network)}.
+                  {safeZone.unsafe.length > 0 && safeZone.safe.top === 0 && safeZone.safe.bottom >= state.document.canvas.height
+                    ? `En rojo, lo que se recorta en la rejilla del perfil de ${networkLabel(item.network)}.`
+                    : `En rojo, lo que puede tapar la interfaz de ${networkLabel(item.network)}.`}
                   {safeZone.provenance === 'unverified' ? ' Orientativo: la red no publica la cifra.' : ''}
                 </span>
               )}

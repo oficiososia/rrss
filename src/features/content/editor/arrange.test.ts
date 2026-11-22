@@ -9,6 +9,7 @@ import {
   layersInRect,
   normalizeRect,
   snapBox,
+  snapGroup,
   snapTargets,
   unionBounds,
 } from './arrange';
@@ -266,5 +267,34 @@ describe('editor: varias capas', () => {
     expect(run(start(), { type: 'select', id: 'a' }, { type: 'group' }).past).toHaveLength(0);
     const state = run(start(), { type: 'selectMany', ids: ['a', 'b'] }, { type: 'group' }, { type: 'remove', id: 'a' });
     expect(byId(state, 'b').groupId).toBeUndefined();
+  });
+});
+
+describe('guías al mover varias capas', () => {
+  const CANVAS_TARGETS = () => snapTargets(CANVAS, [rect('fija', 600, 100, 200, 100)]);
+  const a = rect('a', 100, 100, 100, 100);
+  const b = rect('b', 300, 300, 100, 100);
+
+  it('pega el borde de la caja conjunta (no el de cada capa) y da la guía', () => {
+    // Conjunto: de x=100 a 400. Arrastrado 195 a la derecha su borde derecho queda en 595; la fija empieza en 600.
+    const snap = snapGroup([a, b], { x: 195, y: 0 }, CANVAS_TARGETS(), 8);
+    expect(snap.dx).toBe(5);
+    expect(snap.guides.vertical).toEqual([600]);
+  });
+
+  it('centra el conjunto en el lienzo', () => {
+    const w = CANVAS.width;
+    // El conjunto mide 300 de ancho; centrado empieza en (w - 300) / 2.
+    const snap = snapGroup([a, b], { x: (w - 300) / 2 - 100 + 3, y: 0 }, snapTargets(CANVAS, []), 8);
+    expect(snap.dx).toBe(-3);
+    expect(snap.guides.vertical).toContain(w / 2);
+  });
+
+  it('lejos de todo no corrige nada', () => {
+    expect(snapGroup([a, b], { x: 37, y: 41 }, CANVAS_TARGETS(), 8)).toEqual({
+      dx: 0,
+      dy: 0,
+      guides: { vertical: [], horizontal: [] },
+    });
   });
 });

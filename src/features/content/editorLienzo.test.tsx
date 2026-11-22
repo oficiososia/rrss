@@ -117,7 +117,13 @@ function seed(
   const base = createEmptyDocument({ aspectRatio: options.ratio ?? '1:1' });
   const document: ContentDocument = {
     ...base,
-    pages: [{ id: 'p1', name: '', layers: options.layers ?? [shape('a', 100, 100), shape('b', 400, 300), shape('c', 700, 600), text('t', 'Hola')] }],
+    pages: [
+      {
+        id: 'p1',
+        name: '',
+        layers: options.layers ?? [shape('a', 100, 100), shape('b', 400, 300), shape('c', 700, 600), text('t', 'Hola')],
+      },
+    ],
     copy: { ...base.copy, caption: options.caption ?? '' },
   };
   const item: ContentItemRow = {
@@ -321,8 +327,16 @@ describe('Editor: zonas seguras', () => {
     expect(await screen.findByTestId('brandcheck-finding-TEXT_IN_UNSAFE_ZONE')).toBeInTheDocument();
   });
 
-  it('una publicación del muro no tiene zonas seguras', async () => {
-    await openEditor();
+  it('una publicación cuadrada enseña la rejilla del perfil (dos franjas laterales, orientativas)', async () => {
+    const { user } = await openEditor();
+    expect(stub()).toHaveAttribute('data-safe-zone', '0');
+    await user.click(screen.getByTestId('safe-zone-toggle'));
+    expect(stub()).toHaveAttribute('data-safe-zone', '2');
+    expect(screen.getByTestId('safe-zone-note')).toHaveTextContent(/rejilla del perfil.*Orientativo/);
+  });
+
+  it('un formato sin zonas (carrusel) no ofrece el botón', async () => {
+    await openEditor({ format: 'carousel' });
     expect(screen.queryByTestId('safe-zone-toggle')).not.toBeInTheDocument();
   });
 });

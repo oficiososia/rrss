@@ -10,20 +10,26 @@ function storyWithText(y: number, height = 150): ContentDocument {
   return contentDocumentSchema.parse({
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { ...STORY, backgroundColor: '#FFFFFF' },
-    pages: [{ id: 'p1', name: '', layers: [
+    pages: [
       {
-        id: 't',
-        type: 'text',
-        x: 140,
-        y,
-        width: 800,
-        height,
-        text: 'Hoy, menú de otoño',
-        fontFamily: 'sans-serif',
-        fontSize: 80,
-        color: '#111111',
+        id: 'p1',
+        name: '',
+        layers: [
+          {
+            id: 't',
+            type: 'text',
+            x: 140,
+            y,
+            width: 800,
+            height,
+            text: 'Hoy, menú de otoño',
+            fontFamily: 'sans-serif',
+            fontSize: 80,
+            color: '#111111',
+          },
+        ],
       },
-    ] }],
+    ],
   });
 }
 
@@ -50,12 +56,31 @@ describe('zonas seguras del catálogo', () => {
 
   it('no hay zona si el formato no la tiene o el lienzo no es de su proporción', () => {
     expect(
-      safeZoneFor(getFormatSpec('instagram', 'post'), { aspectRatio: '1:1', width: 1080, height: 1080 }),
+      safeZoneFor(getFormatSpec('instagram', 'post'), { aspectRatio: '16:9', width: 1080, height: 608 }),
+    ).toBeNull();
+    expect(
+      safeZoneFor(getFormatSpec('facebook', 'page_post'), { aspectRatio: '1:1', width: 1080, height: 1080 }),
     ).toBeNull();
     expect(
       safeZoneFor(getFormatSpec('instagram', 'story'), { aspectRatio: '4:5', width: 1080, height: 1350 }),
     ).toBeNull();
     expect(safeZoneFor(undefined, STORY)).toBeNull();
+  });
+
+  it('las publicaciones de Instagram en 1:1 y 4:5 tienen la zona de la rejilla del perfil (orientativa, sin cifra publicada)', () => {
+    const post = getFormatSpec('instagram', 'post');
+    const square = safeZoneFor(post, { aspectRatio: '1:1', width: 1080, height: 1080 })!;
+    expect(square.safe).toMatchObject({ left: 135, right: 945, top: 0, bottom: 1080 });
+    expect(square.unsafe).toHaveLength(2);
+    const portrait = safeZoneFor(post, { aspectRatio: '4:5', width: 1080, height: 1350 })!;
+    expect(portrait.safe.left).toBeCloseTo(33.75);
+    expect(portrait.safe.right).toBeCloseTo(1046.25);
+    for (const zone of [square, portrait]) {
+      expect(zone.provenance).toBe('unverified');
+      expect(zone.note).toMatch(/orientativa/);
+    }
+    // El formato sigue sin zona «oficial» en `safeZone`: las extras no la sustituyen.
+    expect(post!.safeZone).toBeUndefined();
   });
 
   it('shareOutside mide qué parte de una caja queda fuera', () => {
