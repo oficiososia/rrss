@@ -222,6 +222,9 @@ const TENANT_TABLES = [
   'brand_design_templates',
   // Operación y control de gasto (avisos solo para superadministradores).
   'platform_alerts',
+  // «Hacer un reel como este»: análisis de vídeos de referencia y plantillas de reel de marca.
+  'reel_references',
+  'brand_reel_templates',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -2978,5 +2981,157 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
       await denied(db, user, `select private.platform_alerts_scan()`, [], /permission denied/);
       await denied(db, user, `select private.ai_global_cap_micros()`, [], /permission denied/);
     }
+  });
+});
+
+describe('«Hacer un reel como este» (20261223010000)', () => {
+  const analizar = (user: TestUser, brand: string, org: string, key: string) =>
+    as<{ data: { id: string; payload: { reference: { id: string }; output: { dir: string } } } }>(
+      db,
+      user,
+      `select to_jsonb(j) as data from public.request_media_job($1, 'media.reel.analyze', $2::jsonb, $3) j`,
+      [brand, JSON.stringify({ source: { path: `${org}/${brand}/referencias/${randomUUID()}.mp4` } }), key],
+    ).then((rows) => rows[0]!.data);
+  const plantilla = JSON.stringify({
+    schemaVersion: 1,
+    name: 'Plantilla',
+    shots: [
+      { id: 's1', seconds: 2, kind: 'detalle', media: 'video', description: '', transition: { type: 'cut', seconds: 0 } },
+    ],
+    texts: [],
+  });
+  const guardar = (user: TestUser, brand: string) =>
+    as<{ id: string }>(db, user, `select id from public.save_brand_reel_template($1, 'Plantilla', $2::jsonb)`, [
+      brand,
+      plantilla,
+    ]).then((rows) => rows[0]!.id);
+  let refA1: string;
+  let refB1: string;
+  let jobRefA1: string;
+
+  it('una organización no ve los análisis ni las plantillas de reel de otra', async () => {
+    const a = await analizar(editorA, marcaA1, orgA, 'aislamiento-reel-como-este-a1');
+    const b = await analizar(berta, marcaB1, orgB, 'aislamiento-reel-como-este-b1');
+    refA1 = a.payload.reference.id;
+    refB1 = b.payload.reference.id;
+    jobRefA1 = a.id;
+    await guardar(editorA, marcaA1);
+    await guardar(berta, marcaB1);
+    for (const table of ['reel_references', 'brand_reel_templates']) {
+      const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deB.map((r) => r.org),
+        table,
+      ).toEqual([orgB]);
+      const deA = await as(db, ana, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deA.map((r) => r.org),
+        table,
+      ).toEqual([orgA]);
+      expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
+      expect(await as(db, ajeno, `select 1 from public.${table}`), table).toEqual([]);
+      // Dentro de la organización: quien no ve la marca no ve nada; quien la ve (cliente), sí.
+      expect(await as(db, sinMarcaA, `select 1 from public.${table}`), table).toEqual([]);
+      expect((await as(db, clienteA, `select 1 from public.${table}`)).length, table).toBeGreaterThan(0);
+    }
+  });
+
+  it('no se encarga el análisis en la marca de otro ni con un archivo de otra marca', async () => {
+    const permiso = /No tienes permiso para crear medios/;
+    await denied(
+      db,
+      berta,
+      `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, 'aislamiento-reel-como-este-x1')`,
+      [marcaA1, JSON.stringify({ source: { path: `${orgA}/${marcaA1}/referencias/${randomUUID()}.mp4` } })],
+      permiso,
+    );
+    await denied(
+      db,
+      clienteA,
+      `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, 'aislamiento-reel-como-este-x2')`,
+      [marcaA1, JSON.stringify({ source: { url: 'https://videos.example/v.mp4' } })],
+      permiso,
+    );
+    // Con permiso en su marca, pero apuntando a la carpeta de otra (también de su misma organización).
+    for (const [org, brand] of [
+      [orgB, marcaB1],
+      [orgA, marcaA2],
+    ]) {
+      await denied(
+        db,
+        editorA,
+        `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, $3)`,
+        [
+          marcaA1,
+          JSON.stringify({ source: { path: `${org}/${brand}/referencias/${randomUUID()}.mp4` } }),
+          `aislamiento-reel-como-este-${brand}`,
+        ],
+        /carpeta de referencias de esta marca/,
+      );
+    }
+  });
+
+  it('nadie escribe estas tablas desde la API, ni descarta, enlaza o guarda en lo de otro', async () => {
+    for (const table of ['reel_references', 'brand_reel_templates']) {
+      await denied(db, ana, `delete from public.${table}`, [], /permission denied/);
+      await denied(db, ana, `update public.${table} set id = id`, [], /permission denied/);
+    }
+    await denied(
+      db,
+      ana,
+      `insert into public.brand_reel_templates (brand_id, organization_id, template_key, name, spec)
+       values ($1, $2, 'x', 'x', $3::jsonb)`,
+      [marcaA1, orgA, plantilla],
+      /permission denied/,
+    );
+    for (const user of [berta, clienteA, sinMarcaA, ajeno]) {
+      await denied(db, user, `select public.discard_reel_reference($1)`, [refA1], /No tienes permiso/);
+      await denied(
+        db,
+        user,
+        `select public.set_reel_reference_content($1, $2)`,
+        [refA1, contentA1],
+        /No tienes permiso/,
+      );
+      await denied(
+        db,
+        user,
+        `select public.save_brand_reel_template($1, 'Otra', $2::jsonb)`,
+        [marcaA1, plantilla],
+        /No tienes permiso/,
+      );
+      await denied(db, user, `select public.cancel_media_job($1)`, [jobRefA1], /No tienes permiso/);
+    }
+    // El análisis de otra organización no vale como origen de una plantilla propia.
+    await denied(
+      db,
+      editorA,
+      `select public.save_brand_reel_template($1, 'Otra', $2::jsonb, $3)`,
+      [marcaA1, plantilla, refB1],
+      /no es de esta marca/,
+    );
+    await denied(db, null, `select public.discard_reel_reference($1)`, [refA1], /permission denied/);
+  });
+
+  it('las funciones del servidor y las internas no se llaman con una sesión', async () => {
+    for (const user of [ana, superadmin, ajeno]) {
+      await denied(db, user, `select public.reel_reference_claim($1, true)`, [refA1], /permission denied/);
+      await denied(
+        db,
+        user,
+        `select public.reel_reference_finish($1, '{}'::jsonb, 0, '{}'::uuid[])`,
+        [refA1],
+        /permission denied/,
+      );
+      await denied(db, user, `select public.reel_references_expire($1)`, [marcaA1], /permission denied/);
+      await denied(db, user, `select private.reel_reference_release_files($1, true)`, [refA1], /permission denied/);
+      await denied(db, user, `select private.reel_references_expire(null)`, [], /permission denied/);
+    }
+    // El trabajo del análisis de A no lo ve la otra organización.
+    expect(await as(db, berta, `select 1 from public.jobs where id = $1`, [jobRefA1])).toEqual([]);
+    // Limpieza: solo lo descarta quien edita su marca, y no toca el de la otra organización.
+    await as(db, editorA, `select public.discard_reel_reference($1)`, [refA1]);
+    expect(await db.query(`select 1 from public.reel_references where id = $1`, [refA1])).toEqual([]);
+    expect(await db.query(`select 1 from public.reel_references where id = $1`, [refB1])).toHaveLength(1);
   });
 });
