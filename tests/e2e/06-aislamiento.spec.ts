@@ -14,13 +14,12 @@ test('Bruno (organización B) no ve nada de la organización A en la interfaz ni
   // En su interfaz solo existen su organización y su marca.
   await page.goto('/');
   await expect(page).toHaveURL(new RegExp(`/o/${dato('orgB')}`));
-  await page.getByTestId('org-switcher').first().click();
-  await expect(page.getByRole('menuitem').filter({ hasText: ORG_B })).toBeVisible();
-  await expect(page.getByRole('menuitem').filter({ hasText: ORG_A })).toHaveCount(0);
-  await page.keyboard.press('Escape');
+  // Un solo selector (el de marcas): nombra su organización y no ofrece ni la otra ni sus marcas.
+  await expect(page.getByTestId('org-name').first()).toHaveText(ORG_B);
   await page.getByTestId('brand-switcher').first().click();
   await expect(page.getByRole('menuitem').filter({ hasText: MARCA_B })).toBeVisible();
   await expect(page.getByRole('menuitem').filter({ hasText: MARCA_A })).toHaveCount(0);
+  await expect(page.getByTestId('brand-menu')).not.toContainText(ORG_A);
   await page.keyboard.press('Escape');
 
   // Por URL directa, cualquier pantalla de la organización A le dice que no tiene acceso.
@@ -54,7 +53,7 @@ test('con la sesión de Bruno, la API tampoco entrega ni deja tocar datos de la 
   const s = await abrir(browser, 'bruno');
   const { page } = s;
   await page.goto('/');
-  await expect(page.getByTestId('org-switcher').first()).toBeVisible();
+  await expect(page.getByTestId('brand-switcher').first()).toBeVisible();
 
   // La clave anónima del stack local (pública), la misma que recibe la aplicación (playwright.config.ts).
   const anon = process.env.E2E_SUPABASE_ANON_KEY ?? '';

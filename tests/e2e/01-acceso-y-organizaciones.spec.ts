@@ -55,7 +55,7 @@ test('Ana se registra, confirma el correo y crea una organización de tipo empre
   guardarEstado({ orgA });
   // Sin los límites del plan «Prueba»: los escenarios siguientes son anteriores a los planes.
   await asignarPlan(orgA, 'legacy');
-  await expect(s.page.getByTestId('org-switcher').first()).toContainText(ORG_A);
+  await expect(s.page.getByTestId('org-name').first()).toContainText(ORG_A);
 
   sinErrores(s, [ERROR_400]);
   await s.context.close();
@@ -73,7 +73,7 @@ test('Ana cierra sesión, no entra con una contraseña mala y vuelve a entrar co
   await expect(s.page.getByTestId('auth-error')).toBeVisible();
 
   await entrar(s.page, 'ana');
-  await expect(s.page.getByTestId('org-switcher').first()).toContainText(ORG_A);
+  await expect(s.page.getByTestId('org-name').first()).toContainText(ORG_A);
   await guardarSesion(s.context, 'ana');
 
   sinErrores(s, [ERROR_400]);
@@ -98,10 +98,11 @@ test('Bruno se registra y crea una organización independiente de tipo agencia',
   await expect(s.page.getByText(`Las marcas que gestiona ${ORG_B}.`)).toBeVisible();
   await expect(s.page.getByTestId('new-brand-empty')).toBeVisible();
 
-  // Solo ve su organización.
-  await s.page.getByTestId('org-switcher').first().click();
-  await expect(s.page.getByRole('menuitem').filter({ hasText: ORG_B })).toBeVisible();
-  await expect(s.page.getByRole('menuitem').filter({ hasText: ORG_A })).toHaveCount(0);
+  // Solo ve su organización: el selector (único, el de marcas) la nombra y no ofrece nada de la otra.
+  await expect(s.page.getByTestId('org-name').first()).toHaveText(ORG_B);
+  await s.page.getByTestId('brand-switcher').first().click();
+  await expect(s.page.getByTestId('brand-menu')).toBeVisible();
+  await expect(s.page.getByTestId('brand-menu')).not.toContainText(ORG_A);
   await s.page.keyboard.press('Escape');
 
   await guardarSesion(s.context, 'bruno');
