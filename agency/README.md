@@ -67,6 +67,8 @@ npm run agencia -- entregar-plan <id> <carpeta>/plan.json
 npm run agencia -- importadas [<marca>] [--descargar] [--limite N]
 npm run agencia -- comprobar-plantillas <plantillas.json>
 npm run agencia -- entregar-plantillas <marca> <plantillas.json> [--manual]
+npm run agencia -- catalogo [<juego>]
+npm run agencia -- cargar-catalogo <marca> <juego> [--cargar] [--solo reels|publicaciones] [--tema <tema.json>]
 npm run agencia -- comentar <id> "texto"
 npm run agencia -- soltar <id>
 ```
@@ -81,8 +83,10 @@ npm run agencia -- soltar <id>
 | `comprobar-plan` | Sin red: valida un plan de campaña con el mismo esquema que la aplicación (`src/features/campaigns/plan.ts`) contra la campaña de `campana.json`, y ensaya el motor que lo convertirá en borradores |
 | `entregar-plan` | Vuelve a leer la campaña del servidor, valida y llama a `deliver_campaign_plan`: el encargo queda entregado y la campaña, «por revisar». No crea piezas: las crea el motor cuando el cliente acepta el plan en Campañas |
 | `importadas` | Sin marca, las marcas con publicaciones importadas de Instagram; con marca, deja en `<trabajo>/plantillas-<marca>/` lo importado, su resumen, el perfil, la biblioteca y, con `--descargar`, las imágenes más recientes, para sacar las plantillas de diseño (docs/importar-publicaciones.md) |
-| `comprobar-plantillas` | Sin red: valida el archivo con el esquema del documento v3 y del análisis de la aplicación |
+| `comprobar-plantillas` | Sin red: valida el archivo con el esquema del documento (versión 3, 4 o 5) y del análisis de la aplicación |
 | `entregar-plantillas` | Valida y llama a `deliver_design_templates`: las guarda como plantillas de la marca (la base de datos exige recursos de la marca y ejemplos que sean publicaciones importadas) |
+| `catalogo` | Sin red: los juegos del catálogo de plantillas y lo que lleva cada uno (ver «Catálogo de plantillas») |
+| `cargar-catalogo` | **En seco por defecto**: arma un juego con los colores y tipografías del perfil de la marca, lo valida y lo escribe en `<trabajo>/catalogo-<marca>/<juego>/`. Con `--cargar` lo guarda en la marca |
 | `comentar` | Comentario en la conversación del encargo |
 | `soltar` | Devuelve un encargo tomado a la cola sin entregarlo |
 
@@ -130,6 +134,56 @@ Ejemplo completo: [`ejemplos/entrega.json`](./ejemplos/entrega.json).
   proporción recomendada para la red.
 - Las imágenes y logotipos solo pueden ser recursos de la biblioteca de la marca
   (`assetId`), nunca imágenes incrustadas.
+
+## Catálogo de plantillas
+
+`agency/catalogo/` trae cuatro juegos de plantillas listos para cargar en una marca. Cada uno lleva **10
+plantillas de reel** (con estructura: planos, duraciones, textos animados, movimiento de cámara, música
+sugerida y portada) y **10 de publicación o carrusel** (documentos v5 del editor):
+
+| Juego | Para quién |
+| --- | --- |
+| `restaurante` | Restaurantes, asadores, marisquerías y casas de comidas |
+| `cocteleria` | Coctelerías, bares de copas y pubs |
+| `gimnasio` | Gimnasios, boxes, clubes de boxeo y centros de entrenamiento |
+| `generico` | Cualquier negocio |
+
+En el catálogo no hay nada de ningún cliente: los nombres son neutros («Así se hace», «3 motivos»,
+«Antes y después», «Oferta de la semana»…), los textos son de muestra y los colores y tipografías van
+**por papeles** (fondo oscuro, fondo claro, acento, titulares, texto). Al cargar, cada papel se llena con
+el perfil de la marca (`visual.colors` y `visual.fonts`): el primer color con color de verdad es el
+acento, el primero muy oscuro el fondo oscuro, el primero muy claro el fondo claro, y la primera
+tipografía la de los titulares. Si el reparto no convence, un archivo de tema fija los papeles que haga
+falta (`--tema tema.json`, p. ej. `{ "dark": "#22272A", "accentOnDark": "#D7AD65" }`).
+
+```sh
+cd agency
+npm run agencia -- catalogo                 # qué hay (sin red)
+npm run agencia -- catalogo gimnasio        # un juego, con lo que necesita cada plantilla
+
+# 1. En seco: lee el perfil de la marca, arma y valida. NO guarda nada.
+npm run agencia -- cargar-catalogo <id-de-la-marca> restaurante
+#    Deja tema.json, publicaciones.json y reels.json en <trabajo>/catalogo-<marca>/restaurante/ para mirarlos.
+
+# 2. De verdad: lo mismo y además lo guarda en la marca.
+npm run agencia -- cargar-catalogo <id-de-la-marca> restaurante --cargar
+
+# Solo una mitad, o con el tema corregido:
+npm run agencia -- cargar-catalogo <id-de-la-marca> restaurante --solo reels --tema tema.json --cargar
+
+# Sin red, con un perfil exportado (siempre en seco):
+npm run agencia -- cargar-catalogo - restaurante --perfil perfil.json
+```
+
+- Las publicaciones se guardan como plantillas **manuales** (`deliver_design_templates`) y los reels con
+  `deliver_reel_templates` (origen `catalog`; migración `20261224010000`, que tiene que estar aplicada).
+- Cargar otra vez el mismo juego **actualiza** las mismas plantillas (misma clave): no duplica. Cada juego
+  usa su prefijo (`rest-`, `coct-`, `gim-`, `gen-`), así que una marca puede tener el de su sector y el genérico.
+- Hace falta poder **editar** la marca. Tope: 60 plantillas de reel por marca.
+- Las fotos de las publicaciones son marcadores («Foto (sustituir)»): una plantilla solo puede llevar
+  recursos de la biblioteca de la marca.
+- Por qué estas plantillas: `docs/plantillas-competencia.md`. El formato de las de reel:
+  `docs/editor-reels.md`, sección 9.
 
 ## Encargos de tipo «plan» (Campañas)
 

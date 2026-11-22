@@ -971,10 +971,25 @@ export type BrandDesignTemplateRow = {
   updated_at: string;
 };
 
+/** Plantilla de reel de una marca; `document` es la de `src/features/reels/reelTemplate.ts`. */
+export type BrandReelTemplateRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  template_key: string;
+  name: string;
+  document: Json;
+  source: 'catalog' | 'reference' | 'editor';
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type ImportTables = {
   social_import_runs: Table<SocialImportRunRow>;
   social_imported_media: Table<SocialImportedMediaRow>;
   brand_design_templates: Table<BrandDesignTemplateRow>;
+  brand_reel_templates: Table<BrandReelTemplateRow>;
 };
 
 type ImportFunctions = {
@@ -982,6 +997,11 @@ type ImportFunctions = {
   rename_design_template: { Args: { p_template_id: string; p_name: string }; Returns: BrandDesignTemplateRow };
   duplicate_design_template: { Args: { p_template_id: string }; Returns: BrandDesignTemplateRow };
   deliver_design_templates: { Args: { p_brand_id: string; p_templates: Json }; Returns: BrandDesignTemplateRow[] };
+  deliver_reel_templates: {
+    Args: { p_brand_id: string; p_templates: Json; p_source?: BrandReelTemplateRow['source'] };
+    Returns: BrandReelTemplateRow[];
+  };
+  delete_reel_template: { Args: { p_template_id: string }; Returns: undefined };
 };
 
 type PublicationFunctions = {
