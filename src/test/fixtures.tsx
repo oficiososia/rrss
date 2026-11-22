@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '@/App';
+import { LEGAL_VERSIONS } from '@/features/legal/legal';
 import type { BrandRole, BrandRow, OrgKind, OrgRole } from '@/lib/database.types';
 import { fake, makeUser } from './fakeSupabase';
 
@@ -69,6 +70,15 @@ export function seedWorkspace({ orgRole, brandRole, kind = 'business', brands, p
     : [];
   fake.tables.profiles = [{ user_id: ME.id, email: ME.email, full_name: 'Yo Mismo', locale: 'es' }];
   fake.tables.platform_admins = platformAdmin ? [{ user_id: ME.id }] : [];
+  // Con las versiones vigentes de los documentos legales ya aceptadas (si no, `LegalGate` bloquea).
+  fake.tables.legal_acceptances = (['terms', 'privacy'] as const).map((document, i) => ({
+    id: i + 1,
+    user_id: ME.id,
+    document,
+    version: LEGAL_VERSIONS[document],
+    accepted_at: '2026-10-01T09:00:00Z',
+    source: 'signup',
+  }));
 }
 
 /** Añade a otra persona a la organización (y, si se indica, a la marca). */
