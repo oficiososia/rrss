@@ -1,36 +1,49 @@
-# Copiloto por voz del editor
+# Copiloto del editor (voz y teclado)
 
-Estado a 20/11/2026 (arreglos de la evaluación sin API en `f5/copiloto-arreglos`:
-color legible por uso, órdenes relativas y ambiguas). **Sin probar contra un proveedor
-de IA real** (no hay cuentas) ni con el dictado real de un navegador: probado
-con el proveedor simulado de pruebas locales y una Web Speech API simulada.
+Estado a 22/11/2026, rama `f37/copiloto-herramientas`. La persona dicta o **escribe** una
+orden en el editor de una pieza («pon el título arriba y más grande», «foto difuminada
+detrás, esta», «siguiente página», «deshaz») y el copiloto la ejecuta sobre el documento.
+**No genera imágenes ni redacta**: los textos van exactamente como se dicen.
 
-La persona dicta en el editor de una pieza («quiero hacer el menú de Navidad,
-foto difuminada detrás, esta, encima el logotipo y el menú con estos platos…»)
-y el copiloto va montando la composición con las capas del documento v2/v3:
-foto de fondo (desenfocada si se pide), logotipo de la marca y textos con las
-tipografías y los colores del perfil. **No genera imágenes ni redacta**: los
-textos van exactamente como se dictan.
+Lo medido con un proveedor real (22/11/2026, staging, OpenAI, servidor general, **ruta JSON
+anterior**): `gpt-6-luna` hizo bien 8 de 8 órdenes, ~2,7 s de media en servidor y 0,00045
+créditos por orden; `gpt-6.1-terra`, igual de bien y 10 veces más caro. Cada orden mandaba
+~3.200 tokens de entrada (1.435 leídos de caché) y sacaba 50–120. **La ruta de herramientas
+de este documento no se ha probado todavía contra un proveedor real**: está probada con el
+proveedor simulado, la base de datos real y respuestas HTTP simuladas de cada adaptador. El
+banco del apartado 13 es la forma de medirla.
 
 | Pieza | Estado |
 |---|---|
-| Desenfoque de imágenes en el documento (versión 3), lienzo, exportación y reels del trabajador | Implementado y probado (unitarias, base de datos y FFmpeg en el trabajador) |
-| Tarea `editor.copilot` en `ai-generate` (esquema estricto, saneado, cupo y coste) | Implementada y probada con la base de datos real y el proveedor simulado |
-| Interfaz (botón «Dictar», transcripción en vivo, órdenes, foto «esta», deshacer) | Implementada; prueba de extremo a extremo (`tests/e2e/19-copiloto-voz.spec.ts`) en verde en local (19/11/2026) |
-| Dictado real del navegador y calidad con un modelo real | **Sin probar** |
+| Ruta de **herramientas** (function calling): 23 herramientas, una por operación del editor; adaptadores de OpenAI y de Claude (API directa, Vertex, Bedrock) | Implementada; probada con simulados y base de datos real. **Sin probar con proveedor real** |
+| Ruta **JSON** (la anterior, 8 operaciones) detrás de `AI_TEXT_EDITOR_COPILOT_MODE=json` | Sin cambios; es la medida con `gpt-6-luna` |
+| **Intérprete local** de órdenes frecuentes (sin IA, coste cero) | Implementado; 234 pruebas |
+| **Órdenes por teclado** (campo junto al micrófono; sirve sin micrófono) | Implementado; componentes y e2e 19 (la e2e, sin ejecutar en local) |
+| **Motor de voz**: dictado del navegador o transcriptor (`ai-transcribe`) | Implementado con micrófono y transcriptor SIMULADOS. **Sin probar con micrófono ni transcriptor reales** |
+| Banco de pruebas `scripts/copiloto-banco.ts` (75 órdenes) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
+| Desenfoque de imágenes, color legible de los textos, aviso previo al dictado | Como estaban (apartados 6, 7 y 9 bis) |
 
 ## 1. Cómo funciona
 
 ```
-voz ──(Web Speech API, es-ES)──► frase terminada = ORDEN
-ORDEN + estado del documento + fotos elegidas ──► ai-generate (editor.copilot)
-                                                  │  perfil de marca (lo lee la función, RLS)
-                                                  ▼
-                       operaciones validadas y saneadas en el servidor
-                                                  ▼
- navegador: esquema estricto → textos dictados → aplicar (posición, tipografía, color)
-            → validar el documento con su esquema → UN paso de deshacer
+voz (navegador o transcriptor) o teclado ──► ORDEN
+ORDEN ──► intérprete local (órdenes frecuentes) ──► operaciones, sin IA ─────────┐
+   │ si no encaja con seguridad                                                 │
+   ▼                                                                            │
+ORDEN + estado compacto del documento + fotos elegidas ──► ai-generate           │
+        (editor.copilot: herramientas o JSON)   │ perfil de marca (RLS)         │
+                                                ▼                               │
+                     operaciones validadas y saneadas en el servidor            │
+                                                ▼                               ▼
+ navegador: esquema estricto → textos dictados → deshacer/rehacer → aplicar (UN paso de
+            deshacer, validado con el esquema del documento) → abrir lo que toque del editor
 ```
+
+- **Entrada.** Por voz (apartado 12) o por teclado: el campo «Escribe una orden» del panel
+  (Enter envía). Las dos siguen el mismo camino. Sin micrófono, sin permiso o en un
+  navegador que no dicta, el copiloto se abre igual y se usa escribiendo; el botón del
+  editor pasa a llamarse «Copiloto».
+- **Intérprete local.** Apartado 11. Lo que resuelve no llama a la IA ni gasta cupo.
 
 - **Dictado.** `src/features/content/copilot/speech.ts`. Continuo, con texto
   provisional en pantalla mientras se habla. Cada frase terminada es una orden;
@@ -50,7 +63,14 @@ ORDEN + estado del documento + fotos elegidas ──► ai-generate (editor.copi
   y legible sobre lo que tiene debajo (apartado 7), textos que no se pisan,
   logotipo con sus proporciones.
 - **Deshacer.** Cada orden aplicada es la acción `replace` del editor: un solo
-  paso de Ctrl+Z, aunque haya puesto fondo, logotipo y tres textos.
+  paso de Ctrl+Z, aunque haya puesto fondo, logotipo y tres textos, añadido una
+  página o cambiado la proporción. «Deshaz» y «rehaz» son órdenes: usan el
+  mismo historial que Ctrl+Z.
+- **Lo que no es cambiar el documento** (`CopilotHost`, en `ContentEditorPage.tsx`):
+  deshacer, rehacer, ir a otra página, guardar una versión, abrir las plantillas y
+  los flujos de foto que ya existen (quitar el fondo, modo retrato, «Editar foto»,
+  cambiar la foto por otra de la biblioteca). El copiloto los lanza; no los
+  reimplementa.
 - **«Esta foto».** Cuenta la imagen elegida en el lienzo y las fotos elegidas
   con «Elegir foto» en el panel del copiloto (de la biblioteca o subida desde
   el dispositivo; queda en la biblioteca). Si la orden pide una foto y no hay
@@ -59,24 +79,46 @@ ORDEN + estado del documento + fotos elegidas ──► ai-generate (editor.copi
   persona y las fotos, suyas. Si coloca una imagen generada con IA de la
   biblioteca, la marca sale por esa imagen como siempre.
 
-## 2. Operaciones
+## 2. Operaciones y herramientas
 
-Lista cerrada (`op`); cada operación trae todos los campos, a `null` los que no
-aplican: `target` (capa existente), `text`, `style` (`title`, `subtitle`,
-`body`, `small`), `assetId`, `position` (`top`, `upper`, `middle`, `lower`,
-`bottom`), `align`, `color`, `font`, `blur` (0–100), `dx` y `dy` (solo
-`move_layer`: pasos enteros de −6 a 6).
+Una operación es `op` más los campos que usa (los demás, `null`). El contrato es el mismo en
+el servidor (`editor-copilot.ts`) y en el navegador (`copilot/operations.ts`). En la ruta de
+herramientas, **cada operación es una herramienta** con ese nombre, esquema estricto y una
+descripción corta (`editor-copilot-tools.ts`); una orden compuesta son varias llamadas en
+paralelo. Es una sola vuelta: el modelo llama y el editor ejecuta.
 
-| `op` | Qué hace |
-|---|---|
-| `add_text` | Añade un texto dictado |
-| `update_text` | Cambia el texto o el estilo de una capa de texto |
-| `set_background_image` | Pone (o cambia) la foto que cubre todo el lienzo; con `blur`, difuminada |
-| `blur_image` | Desenfoca una imagen (sin `target`, la de fondo) |
-| `add_logo` | Pone un logotipo del perfil |
-| `move_layer` | Mueve una capa a una posición o alineación, o en relativo con `dx`/`dy` |
-| `remove_layer` | Quita una capa |
-| `set_background_color` | Color de fondo del lienzo (y revisa que los textos se sigan leyendo) |
+| Herramienta (`op`) | Qué hace | Ruta JSON |
+|---|---|---|
+| `add_text` | Añade un texto dictado (estilo, sitio, alineación, color y tipografía de la marca) | Sí |
+| `update_text` | Cambia el contenido o el estilo de un texto (también negrita y cursiva) | Sí (sin negrita ni cursiva) |
+| `set_effect` | Pone o quita contorno, sombra o fondo de etiqueta a un texto; la sombra, también en fotos y figuras | No |
+| `move_layer` | Mueve una capa a un sitio o en pasos del 5 % del lienzo | Sí |
+| `resize_layer` | Agranda o reduce una capa (en un texto, la letra); cada paso, un 15 % | No |
+| `arrange_layer` | Orden de apilado: al frente, un nivel arriba o abajo, al fondo | No |
+| `duplicate_layer` / `remove_layer` | Duplica o borra una capa | Solo borrar |
+| `style_layer` | Opacidad, giro, ocultar o mostrar, bloquear o desbloquear | No |
+| `add_shape` / `style_shape` | Añade una figura (rectángulo, elipse, triángulo, estrella, corazón, flecha, destello, globo, línea); relleno y borde | No |
+| `set_background_image` | Foto de fondo en todo el lienzo; con `blur`, difuminada | Sí |
+| `add_image` | Foto suelta encima; sin foto elegida, el editor abre la biblioteca | No |
+| `blur_image` | Desenfoca una foto | Sí |
+| `adjust_image` | Filtros rápidos y luz y color (brillo, contraste, saturación, temperatura, nitidez) | No |
+| `transform_image` | Girar 90°, voltear, encaje (llenar o entera) y recorte por proporción | No |
+| `image_backdrop` | Qué se ve detrás de una foto: nada, color, degradado o la misma foto desenfocada | No |
+| `photo_flow` | Abre un flujo del editor: quitar el fondo, modo retrato, editar la foto, cambiarla por otra de la biblioteca | No |
+| `add_logo` | Pone el logotipo de la marca | Sí |
+| `set_background_color` / `set_canvas_ratio` | Color de fondo y proporción del lienzo | Solo el color |
+| `page` | Páginas del carrusel: añadir, duplicar, borrar, mover, ir a | No |
+| `editor` | Deshacer, rehacer, guardar una versión, abrir las plantillas | No |
+
+Todo se aplica con las funciones que ya usa el editor a mano (`applyLayerPatch`,
+`reorderLayers`, `duplicateLayer`, `turnQuarter`, `flipPhoto`, `largestCrop`, `adaptDocument`,
+`addPage`…). «Aplicar plantilla» y «guardar versión» abren o ejecutan lo mismo que sus
+botones. Lo que **no** hace el copiloto: elegir una plantilla concreta por su nombre, recorte
+libre arrastrando, grupos, distribuir, y nada de aprobar, programar o publicar.
+
+**«Esto», «eso».** El editor manda qué capas están elegidas (`selected`). Una operación sin
+capa se reparte entre las elegidas del tipo que toca (una foto para las de foto); si no hay
+ninguna, las de foto van a la de fondo y el resto se descarta diciéndolo.
 
 **Órdenes relativas** (reglas de las instrucciones fijas, 20/11/2026):
 
@@ -89,12 +131,13 @@ aplican: `target` (capa existente), `text`, `style` (`title`, `subtitle`,
   aplica nada.
 - «más difuminada» / «menos difuminada»: el desenfoque actual de la capa
   (viaja en el estado del documento) ± 20, entre 0 y 100.
-- **Compatibilidad al desplegar.** El esquema de salida lo comparten la
-  función y el editor. La función solo manda `dx`/`dy` en las operaciones que
-  los usan, y el editor los acepta ausentes (valen `null`): un editor anterior
-  sigue aceptando todas las demás órdenes mientras se despliega la función, y
-  un editor nuevo funciona con una función anterior. Lo más limpio es
-  desplegar primero la aplicación y después `ai-generate`.
+- **Compatibilidad al desplegar.** La función manda `op` y los campos con valor;
+  las ocho operaciones de siempre llevan además sus nueve campos de antes (a
+  `null`), y el editor acepta cualquier campo ausente (vale `null`). Un editor
+  anterior sigue aceptando las órdenes que solo usan lo de antes y rechaza
+  entera («respuesta no válida», sin cambiar nada) la que traiga una operación o
+  un campo nuevo; un editor nuevo funciona con una función anterior. **Desplegar
+  primero la aplicación y después `ai-generate`.**
 
 **Órdenes ambiguas.** Si una orden se refiere a una capa y ninguna coincide
 («el título» y ningún texto lo parece) o coinciden varias, la IA no la hace y
@@ -172,6 +215,8 @@ frases, no descartar en silencio.
 |---|---|---|
 | `VITE_AI_VOICE_COPILOT_ENABLED` | Despliegue de la aplicación | `true` enseña «Dictar». Además hace falta `VITE_AI_TEXT_ENABLED=true`, que el servidor diga que la IA de texto está configurada (`platform-integrations`, como el resto de la IA; regla de honestidad: sin proveedor, no sale) y un navegador con dictado |
 | `AI_TEXT_EDITOR_COPILOT_PROVIDER` / `_MODEL` | Plataforma → Integraciones → IA de texto («Copiloto por voz del editor», migración `20261123010000`) o secretos de `ai-generate` | Adaptador y modelo solo para el copiloto (si no, los de `AI_TEXT_PROVIDER` / `AI_TEXT_MODEL`) |
+| `AI_TEXT_EDITOR_COPILOT_MODE` | Plataforma → Integraciones → IA de texto → «Copiloto del editor» (migración `20261226010000`) o secreto | `tools` o `json`. Vacío = `tools` si el adaptador admite herramientas (OpenAI y Claude sí; Mistral no: usa JSON) |
+| `AI_TEXT_EDITOR_COPILOT_EFFORT` | Ídem | Esfuerzo de razonamiento: `none`, `minimal`, `low`…; `off` = no se envía. Vacío = el mínimo conocido: con OpenAI y herramientas, `none` (apartado 10); con Claude no se envía (para Haiku 5.5, poner `low`) |
 
 Sin llevar a `.env.example` (pendiente conocido de `docs/ESTADO.md`).
 
@@ -182,6 +227,10 @@ Petición:
   "input": { "transcript": "…", "document": { "canvas": {…}, "layers": [{ "id", "type", "text"?, "x", "y", "width", "height", "locked"?, "blur"? }] },
              "assets": [{ "id": "<uuid>", "name": "mesa.jpg" }] } }
 ```
+
+Además, `document.selected` (capas elegidas) y `document.page` (`{ index, count }`), y
+`input.mode` (`tools` | `json`) para pedir una ruta en esa petición (lo usa el banco para
+comparar; las dos pasan por el mismo saneado).
 
 Respuesta 200: `{ action, generationId, operations, discarded: [{ index, op, reason }], note }`.
 
@@ -262,6 +311,15 @@ el logotipo que choca con un texto se reduce (hasta la mitad, sin deformar)
 para caber en el hueco y, si no cabe, se pone y se avisa.
 
 ## 9. Qué modelo usar
+
+> **Actualización del 22/11/2026.** Ya hay una medida real: con OpenAI (servidor general) y
+> la ruta JSON, `gpt-6-luna` hizo bien 8 de 8 órdenes a 0,00045 créditos por orden y
+> `gpt-6.1-terra` lo mismo a 0,0045. **Decisión del dueño: `gpt-6-luna` y ruta de
+> herramientas**, a medir con el banco (apartado 13). La comparativa de abajo es la del
+> 21/11, anterior a esa medida: sus «estimada» para OpenAI quedan superadas por ella, y su
+> recomendación de Haiku 5.5 sigue siendo la alternativa a medir. Para `gpt-6-luna`:
+> `AI_TEXT_EDITOR_COPILOT_PROVIDER=openai`, `AI_TEXT_EDITOR_COPILOT_MODEL=gpt-6-luna` y nada
+> en `AI_TEXT_EDITOR_COPILOT_EFFORT` (se envía `none`, apartado 10).
 
 Comparativa del 21/11/2026. Solo documentación: no se ha gastado API ni se ha
 cambiado código. **La calidad solo está medida en la familia Claude** (con la
@@ -429,11 +487,172 @@ navegador (Google o Microsoft, según el navegador), no la aplicación, que solo
 «Entendido, empezar a dictar» no se escucha nada. Probado en componentes y en la e2e 19 (sin
 ejecutar en local).
 
-## 10. Pendiente
+## 10. Ruta de herramientas: prompt, caché y razonamiento
 
-- Probar con un proveedor real (calidad de la interpretación en español, coste
-  por orden) y con el dictado real de Chrome, Edge y Safari.
-- Registro de tratamientos: el dictado de Chrome envía el audio a Google.
-- Corregir una orden mal entendida escribiéndola (hoy solo por voz o a mano en
-  el editor).
+**Qué viaja** (`editor-copilot-tools.ts`), en este orden:
+
+1. Herramientas (23) e instrucciones cortas, sin ejemplos: **idénticas para todas las marcas
+   y personas**. Es lo que el proveedor puede leer de caché.
+2. La marca en tres líneas (colores con su uso, tipografías, si hay logotipo): estable por
+   marca. Ya no viaja el perfil entero.
+3. El documento en una línea por capa, con identificadores cortos (`c1`, `c2`…; el servidor
+   los traduce), las fotos elegidas como `f1`, `f2`… y la orden.
+
+**Tokens** con el contador del proveedor simulado (4 caracteres por token; no es el recuento
+de ningún proveedor), perfil de marca completo y documento de 6 capas
+(`tests/db/ia-copiloto-herramientas.test.ts`):
+
+| Ruta | Total | Común a todas las marcas | Marca | Variable (documento + orden) |
+|---|---|---|---|---|
+| JSON (antes) | 2.455 | 1.390 (instrucciones 1.090 + esquema 300) | 835 | 230 |
+| Herramientas (ahora) | 3.122 | 2.973 (herramientas 2.441 + instrucciones 532) | 33 | 116 |
+
+- **El total sube un 27 %**: las 23 herramientas pesan. Lo que baja es lo que no se puede
+  compartir entre marcas (marca + variable): de 1.065 a 149 tokens.
+- El objetivo «menos de 1.500 tokens de entrada sin caché por orden» se cumple **cuando el
+  prefijo común se lee de caché** (quedarían unos 150–250 reales sin caché); en la primera
+  orden tras un rato sin uso, no: se paga todo (del orden de 4.000 tokens reales, si la
+  proporción real/estimado es la medida en la ruta JSON, 1,3).
+- OpenAI (guía de caché, 22/11/2026): desde GPT-5.6 el mínimo cacheable son 1.024 tokens, la
+  caché dura 30 minutos por defecto y **escribirla cuesta 1,25 veces la entrada**. El prefijo
+  común (unos 3.000 tokens) supera el mínimo y es el mismo para todo el mundo, así que
+  basta con que alguien use el copiloto cada media hora. **El adaptador cuenta hoy las
+  escrituras de caché de OpenAI como entrada normal** (pendiente: leer
+  `cache_write_tokens` y ponerle precio).
+- Claude: `cache_control` en las instrucciones (herramientas + instrucciones) y en la marca.
+  El mínimo cacheable depende del modelo (de 512 a 4.096 tokens): comprobar el de Haiku 5.5.
+- Latencia objetivo (< 1,5 s en servidor con `gpt-6-luna`): **sin medir**. Lo que debería
+  bajarla: razonamiento a `none`, salida de 30–80 tokens (llamadas en vez de un JSON con doce
+  claves por operación) y prefijo en caché.
+
+**Formato por proveedor** (consultado el 22/11/2026):
+
+- **OpenAI, Chat Completions**: `tools: [{ type: "function", function: { name, description,
+  parameters, strict: true } }]`, `tool_choice: "auto"`, `parallel_tool_calls: true`; las
+  llamadas llegan en `choices[0].message.tool_calls[]` con `function.arguments` como texto
+  JSON y `finish_reason: "tool_calls"`. En modo estricto todas las propiedades van en
+  `required`, `additionalProperties: false` y lo opcional admite `null`.
+  **`gpt-6-luna` solo admite herramientas en Chat Completions con `reasoning_effort: "none"`**
+  (su página de modelo; su valor por defecto es `medium`): por eso es el valor por defecto
+  del copiloto con OpenAI. `gpt-6 Astra` y `gpt-6.1 Sol` no admiten herramientas en Chat
+  Completions (piden la API Responses, que este adaptador no usa): con ellos, ruta JSON.
+- **Claude** (API directa, Vertex y Bedrock comparten cuerpo): `tools: [{ name, description,
+  input_schema, strict: true }]`, `tool_choice: { type: "auto" }` (forzar una herramienta da
+  400 en los modelos actuales), llamadas en paralelo activadas por defecto, bloques
+  `tool_use` en la respuesta y `stop_reason: "tool_use"`. Razonamiento: `output_config.effort`
+  (`low` para Haiku 5.5; Haiku 4.5 no lo admite).
+
+## 11. Intérprete local: órdenes frecuentes sin IA
+
+`copilot/localCommands.ts` (`interpretLocally`), función pura que se prueba antes de llamar
+al modelo. Si la orden ENTERA (sin muletillas) encaja con seguridad, devuelve las operaciones
+y **no hay llamada, ni coste, ni espera**; si no, la orden va a la IA. En el panel salen con
+la etiqueta «Sin IA».
+
+| Grupo | Ejemplos |
+|---|---|
+| Deshacer, rehacer | «deshaz», «deshaz lo último», «rehaz» |
+| Guardar, plantillas | «guarda», «guarda la versión», «abre las plantillas» |
+| Sobre lo elegido | «borra esto», «duplícalo», «más grande», «un poco más pequeño», «súbelo», «a la derecha», «céntralo», «tráelo al frente», «al fondo», «oculta esto», «bloquea esto» |
+| Desenfoque | «más difuminada», «menos difuminada» (la foto elegida o la de fondo) |
+| Páginas | «siguiente página», «página anterior», «ve a la página 3», «añade una página», «duplica la página», «borra esta página» |
+
+A la IA a propósito: órdenes compuestas («más grande y más arriba»), las que nombran una
+capa («borra el título»), las que traen una corrección («no, mejor…») y las ambiguas («quita
+el fondo»). Sin nada elegido, «más grande» contesta «No hay ninguna capa elegida…» sin
+llamar a la IA.
+
+## 12. Motor de voz: navegador o transcriptor
+
+El copiloto pasa la voz a texto con uno de dos motores. La persona elige en el panel («Voz»)
+y se recuerda en su navegador (`rrss.voiceEngine`). Por defecto, el transcriptor si el
+servidor lo tiene configurado y el navegador puede grabar; si no, el dictado del navegador.
+
+| | Dictado del navegador | Transcriptor |
+|---|---|---|
+| Cómo se usa | Escucha de seguido; cada frase es una orden | Pulsar para hablar; al callarse 1,5 s (o al pulsar «Parar y enviar») se transcribe. Una grabación = una orden. Medidor del nivel del micrófono |
+| Adónde va el audio | Al servicio de voz del navegador (Google o Microsoft); la aplicación solo recibe el texto | Se graba en el dispositivo, se envía a nuestro servidor (`ai-transcribe`) y de ahí a OpenAI |
+| Qué se guarda | Nada en el producto | El audio no. El texto transcrito sí, en el registro de uso de IA (`ai_generations.output`, uso `editor.dictation`) |
+| Cupo y coste | No cuenta | Cuenta para el cupo: por segundos de audio (`gpt-transcribe`, 82,5 micros por segundo; una orden de 5 s, unos 0,0004 USD), aparte de la orden |
+| Región | No se puede elegir | La de OpenAI: UE con `eu.api.openai.com`; sin él no se carga salvo `AI_ALLOW_NON_EU_PROCESSING=true` |
+
+- **Código.** `recording.ts` (`useRecordedDictation`), `transcriber.ts`, `voiceEngine.ts`,
+  `MicLevel.tsx`.
+- **Formato.** `ai-transcribe` solo admite WAV: lo grabado (webm, mp4 u ogg) se decodifica en
+  el navegador, se pasa a 16 kHz mono, se le quita el silencio de los extremos y se envía en
+  trozos de 15 s como mucho. El audio solo existe en memoria mientras se graba y se envía.
+- **Límites.** 30 s por grabación. Si en 8 s no se oye nada, se deja de grabar. Si no hubo
+  voz, no se envía nada ni se gasta cupo.
+- **Vocabulario de pista.** Con el audio viajan nombres que es probable oír (marca, capas,
+  fotos elegidas): hasta 30, de 40 caracteres. Con `gpt-transcribe` van como `keywords[]`;
+  con otros modelos, como `prompt`. No se guardan.
+- **Aviso previo.** Uno por motor, con su «No volver a mostrar»; dice adónde va el audio con
+  ese motor. Mientras no se acepta no se escucha, pero el campo de texto ya funciona.
+- **Habla real.** El modelo recibe la regla de quedarse con la intención final («el título,
+  no, el subtítulo») y el filtro de textos perdona los titubeos (sonidos como «eh» y una
+  palabra repetida seguida), no palabras, tildes ni números distintos.
+- **Desplegar.** `ai-transcribe` (acepta `meta.purpose` y `meta.hints`; nunca se había
+  desplegado). Sin migraciones.
+
+**Sin probar:** micrófono real en Chrome, Edge, Firefox y Safari; que el navegador lea lo que
+él mismo graba (sobre todo el mp4 de Safari); los umbrales de voz y de silencio, que son fijos
+(en un local ruidoso puede no detectarse el silencio y cortar el tope de 30 s); el
+transcriptor real (que acepte `keywords[]` y la calidad en español); la política de
+privacidad, que todavía no recoge este motor (sí el registro de tratamientos, `docs/rgpd.md`).
+
+### Dictar en cualquier campo donde se le cuenta algo a la IA (`f40/campanas-voz`)
+
+`src/features/ai/DictableField.tsx` es un cuadro de texto (o de una línea, `as="input"`) con un botón de
+micrófono al lado. Usa **el mismo motor y el mismo aviso previo** que el copiloto (apartado 12: el que haya
+elegido la persona, el transcriptor si el servidor lo tiene y, si no, el dictado del navegador). Pulsar para
+hablar; lo dictado se añade al final de lo que ya hay (nunca lo borra), respeta el máximo de caracteres del campo
+y se corrige a mano. Sin dictado posible en el navegador no sale el botón y el campo es el de siempre.
+
+Dónde está: «¿Qué quieres preparar?» de «Preparar un plan con IA» (y la respuesta a la pregunta de la IA),
+«¿Qué fondo quieres?» de «Editar foto → Fondo con IA», «¿De qué quieres que vaya tu reel?» de «Hacer un reel como
+este», «Indicación propia» de «Animar con IA» y «Encargo» de «Generar imagen con IA». En los otros campos el
+comportamiento no cambia (mismas propiedades, mismo máximo); solo se añade el micrófono. En modo agencia el
+dictado sigue valiendo (es transcripción, no redacción).
+
+**Sin probar:** el micrófono real en estos campos (las pruebas simulan el dictado del navegador y las funciones).
+
+## 13. Banco de pruebas
+
+`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 75 órdenes en
+español con sus operaciones esperadas: 58 base (simples, compuestas, ambiguas, imposibles,
+hostelería y gimnasio) y 17 de habla titubeante. 11 las resuelve el intérprete local; 33 no
+se pueden expresar por la ruta JSON.
+
+- **En seco (por defecto, sin red ni coste):** `npx vite-node scripts/copiloto-banco.ts`.
+  Un proveedor simulado responde lo esperado y cada caso pasa por la tarea real, el saneado y
+  el editor: comprueba que el banco y la cadena son ejecutables de principio a fin y saca los
+  tokens por ruta. No mide la calidad de ningún modelo.
+- **Real (`--apply`, gasta cupo; sin ejecutar todavía):**
+
+  ```powershell
+  $env:COPILOTO_BANCO_URL = 'https://<ref>.supabase.co'
+  $env:COPILOTO_BANCO_ANON_KEY = '<clave anon>'
+  $env:COPILOTO_BANCO_TOKEN = '<access_token de la sesión de alguien que edite la marca>'
+  $env:COPILOTO_BANCO_BRAND = '<uuid de la marca>'
+  npx vite-node scripts/copiloto-banco.ts --apply --salida banco-resultados.json
+  ```
+
+  Antes de empezar dice cuántas llamadas hará (por defecto 106: 64 por herramientas y 42 por
+  JSON) y una estimación, y pregunta (o `--si`). Tabla por ruta y modelo: aciertos, latencia
+  p50/p95, tokens de entrada, salida y caché, y coste (los lee de `ai_generations`). Para
+  comparar modelos: cambiar el modelo en Plataforma → Integraciones y relanzar con el mismo
+  `--salida`. El token solo se lee de la variable de entorno; no se imprime ni se guarda.
+- **Audio (`--audio scripts/copiloto-banco/audio`, solo con `--apply`):** grabaciones (`.wav`;
+  `.m4a` y `.webm` si hay `ffmpeg`) con su `casos.json` → `ai-transcribe` → copiloto, con su
+  tabla. Sin grabaciones, se salta. Cómo grabarlas: `scripts/copiloto-banco/audio/LEEME.md`.
+
+## 14. Pendiente
+
+- **Medir la ruta de herramientas con un proveedor real** (banco con `--apply`): aciertos,
+  latencia, tokens y coste frente a JSON, con `gpt-6-luna` y con Haiku 5.5.
+- Desplegar: la aplicación, después `ai-generate`, `ai-transcribe` y `platform-integrations`;
+  migración `20261226010000`.
+- Precio de la escritura de caché de OpenAI (hoy se cuenta como entrada normal).
+- Probar el dictado y el transcriptor con micrófonos reales (apartado 12).
+- Elegir una plantilla concreta por voz; recorte libre.
 - Ofrecer el desenfoque en la pantalla de reels.

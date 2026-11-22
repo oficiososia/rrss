@@ -162,7 +162,7 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
     description:
       'Qué proveedor y qué modelo redacta cada tarea, las credenciales de cada proveedor y la tabla de precios. Sin precio completo, el modelo no genera.',
     testDescription:
-      'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, OpenAI, Bedrock) o pide un token de acceso (Vertex). No genera texto ni gasta cupo.',
+      'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, OpenAI, Bedrock) o pide un token de acceso (Vertex). Después hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero. No gasta el cupo de ninguna organización.',
     groups: [
       {
         title: 'Todo el texto: proveedor y modelo por defecto',
@@ -274,6 +274,31 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             options: YES_NO,
           },
           { key: 'AI_TIMEOUT_MS', label: 'Tiempo máximo por llamada (ms)', secret: false, placeholder: '60000' },
+        ],
+      },
+      {
+        title: 'Copiloto del editor',
+        description:
+          'Cómo entiende las órdenes el copiloto del editor (dictadas o escritas). «Herramientas» es lo normal: gasta menos y sabe hacer todo lo del editor; «JSON» es la ruta anterior, para comparar.',
+        fields: [
+          {
+            key: 'AI_TEXT_EDITOR_COPILOT_MODE',
+            label: 'Ruta del copiloto',
+            secret: false,
+            input: 'select',
+            options: [
+              { value: 'tools', label: 'Herramientas (recomendada)' },
+              { value: 'json', label: 'JSON (la anterior)' },
+            ],
+            help: 'Vacío = herramientas, si el proveedor las admite (OpenAI y Claude; Mistral usa JSON).',
+          },
+          {
+            key: 'AI_TEXT_EDITOR_COPILOT_EFFORT',
+            label: 'Esfuerzo de razonamiento del copiloto',
+            secret: false,
+            placeholder: 'none',
+            help: 'Vacío = el mínimo conocido (OpenAI con herramientas: none, lo único con lo que gpt-6-luna admite herramientas). Claude Haiku 5.5: low. «off» = no se envía (modelos que no razonan).',
+          },
         ],
       },
       {

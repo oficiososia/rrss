@@ -187,12 +187,64 @@ const ADAPTERS: { name: string; model: string; make: Factory; prelude: Reply[]; 
   },
 ];
 
-describe.each(ADAPTERS)('$name', ({ model, make, prelude, ok, errorBody }) => {
+describe.each(ADAPTERS)('$name', ({ name, model, make, prelude, ok, errorBody }) => {
   const run = async (...replies: Reply[]) => {
     const http = fakeFetch(...prelude, ...replies);
     const provider = await make(http.fetch);
     return { provider, calls: http.calls, generate: () => provider.generate(request(model)) };
   };
+
+  it('herramientas: quien las admite las envía en modo estricto y devuelve las llamadas; Mistral no las admite', async () => {
+    const tool = {
+      name: 'move_layer',
+      description: 'Mueve una capa.',
+      parameters: {
+        type: 'object',
+        properties: { target: { type: 'string', maxLength: 64 }, dy: { type: ['integer', 'null'], minimum: -6, maximum: 6 } },
+        required: ['target', 'dy'],
+        additionalProperties: false,
+      },
+    };
+    // Cada familia responde a su manera: bloques `tool_use` (Claude) o `message.tool_calls` (OpenAI).
+    const claude = ok === ANTHROPIC_OK;
+    const reply = claude
+      ? { ...ANTHROPIC_OK, stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'move_layer', input: { target: 'c2', dy: -2 } }] }
+      : {
+          ...MISTRAL_OK,
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{ id: 'c1', type: 'function', function: { name: 'move_layer', arguments: '{"target":"c2","dy":-2}' } }],
+              },
+            },
+          ],
+        };
+    const { provider, calls } = await run({ body: reply });
+    if (!provider.supportsTools) {
+      // Sin herramientas, quien llama usa la salida estructurada (el copiloto cae a la ruta JSON).
+      expect(name).toBe('Mistral');
+      return;
+    }
+    const result = await provider.generate({ ...request(model), input: { ...INPUT, outputSchema: undefined, tools: [tool] } });
+    expect(result.output).toEqual({
+      text: '',
+      finish_reason: 'stop',
+      tool_calls: [{ name: 'move_layer', arguments: { target: 'c2', dy: -2 } }],
+    });
+    const body = calls[calls.length - 1]!.body;
+    const sent = JSON.stringify(body.tools);
+    expect(sent).toContain('"strict":true');
+    expect(sent).toContain('"additionalProperties":false');
+    // Las restricciones que el proveedor no admite en modo estricto no viajan.
+    expect(sent).not.toMatch(/maxLength|minimum|maximum/);
+    expect(body.tool_choice).toEqual(claude ? { type: 'auto' } : 'auto');
+    expect(body).not.toHaveProperty('response_format');
+    expect(body).not.toHaveProperty('output_config');
+  });
 
   it('éxito: devuelve el texto, por qué terminó y el consumo', async () => {
     const t = await run({ body: ok });

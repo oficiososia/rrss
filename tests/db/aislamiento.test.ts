@@ -908,6 +908,47 @@ describe('filtros de la biblioteca', () => {
   });
 });
 
+describe('en qué piezas se usa un archivo (asset_usage)', () => {
+  const insertAsset = `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+     values ($1::uuid, $2::uuid, 'image', $2::text || '/' || $1::text || '/media/' || gen_random_uuid() || '.jpg', 'uso.jpg', 'image/jpeg', 1)
+     returning id::text as id`;
+  type Uso = { asset_id: string; content_id: string; title: string; archived: boolean };
+  const usos = (user: TestUser, brand: string) =>
+    as<Uso>(db, user, `select asset_id::text, content_id::text, title, archived from public.asset_usage($1)`, [brand]);
+
+  it('devuelve las piezas vigentes que citan el archivo, y nada de los que no se usan', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca de usos');
+    const [usado] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [libre] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [pieza] = await as<{ id: string }>(
+      db,
+      ana,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Chuletón', 'instagram', 'post') returning id::text as id`,
+      [marca, orgA],
+    );
+    // Versión 1 cita el archivo; la vigente (2) ya no: no cuenta como uso.
+    await as(db, ana, `select public.save_content_version($1, $2::jsonb, 1)`, [
+      pieza!.id,
+      JSON.stringify({ schemaVersion: 1, layers: [{ assetId: usado!.id }] }),
+    ]);
+    expect(await usos(ana, marca)).toEqual([
+      { asset_id: usado!.id, content_id: pieza!.id, title: 'Chuletón', archived: false },
+    ]);
+    await as(db, ana, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 2, '')`, [pieza!.id]);
+    expect(await usos(ana, marca)).toEqual([]);
+    expect(libre!.id).toBeTruthy();
+    // La pieza no debe quedar: otras pruebas cuentan las piezas que ve Ana.
+    await db.query(`delete from public.content_items where id = $1`, [pieza!.id]);
+  });
+
+  it('una marca ajena o sin acceso devuelve cero filas, y sin sesión se deniega', async () => {
+    expect(await usos(ana, marcaB1)).toEqual([]);
+    expect(await usos(sinMarcaA, marcaA1)).toEqual([]);
+    await denied(db, null, `select * from public.asset_usage($1)`, [marcaA1]);
+  });
+});
+
 describe('IA y cola de trabajos', () => {
   // Las fuentes de conocimiento encolan su propia extracción (`source.extract`):
   // aquí cuentan solo los trabajos que crea la prueba.
@@ -3285,5 +3326,113 @@ describe('borrador automático del reel (20261228010000)', () => {
     expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelA1])).toEqual([]);
     expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelB1])).toHaveLength(1);
     await db.query(`delete from public.content_items where id in ($1, $2)`, [reelA1, reelB1]);
+  });
+});
+
+describe('modo de trabajo de la organización (autogestión o agencia)', () => {
+  let propia: string, marcaPropia: string, ajena: string, marcaAjena: string, editorPropia: TestUser;
+
+  beforeAll(async () => {
+    editorPropia = await createUser(db, 'editor@propia.test', 'Editor propia');
+    // Como nace de verdad: en autogestión.
+    propia = await createOrg(db, ana, 'Propia', 'business', 'default');
+    marcaPropia = await createBrand(db, ana, propia, 'Marca propia');
+    await join(db, ana, editorPropia, propia, 'member', marcaPropia, 'editor');
+    ajena = await createOrg(db, berta, 'Ajena', 'business', 'default');
+    marcaAjena = await createBrand(db, berta, ajena, 'Marca ajena');
+  });
+
+  const modo = async (id: string) =>
+    (await db.query<{ work_mode: string }>(`select work_mode from public.organizations where id = $1`, [id]))[0]!
+      .work_mode;
+
+  it('una organización nueva nace en autogestión y una de tipo agencia, en modo agencia', async () => {
+    expect(await modo(propia)).toBe('self');
+    expect(await modo(await createOrg(db, ana, 'Nueva agencia', 'agency', 'default'))).toBe('agency');
+  });
+
+  it('solo administran el modo de trabajo propietarios y administradores de su organización', async () => {
+    expect(
+      await as(db, editorPropia, `update public.organizations set work_mode = 'agency' where id = $1 returning id`, [propia]),
+    ).toEqual([]);
+    expect(await as(db, berta, `update public.organizations set work_mode = 'agency' where id = $1 returning id`, [propia])).toEqual([]);
+    expect(await modo(propia)).toBe('self');
+    await denied(db, ana, `update public.organizations set work_mode = 'otro' where id = $1`, [propia], /check constraint/);
+  });
+
+  it('en autogestión no se puede poner una marca en modo agencia, ni al crearla ni después', async () => {
+    await denied(db, ana, `update public.brands set ai_mode = 'agency' where id = $1`, [marcaPropia], /por su cuenta/);
+    // Ni siquiera con privilegios de servidor (un guion SQL, por ejemplo).
+    await expect(
+      db.query(`insert into public.brands (organization_id, name, ai_mode) values ($1, 'X', 'agency')`, [propia]),
+    ).rejects.toThrow(/por su cuenta/);
+  });
+
+  it('pasar a modo agencia deja elegir el modo de cada marca, y volver a autogestión las devuelve a IA', async () => {
+    await as(db, ana, `update public.organizations set work_mode = 'agency' where id = $1`, [propia]);
+    await as(db, ana, `update public.brands set ai_mode = 'agency' where id = $1`, [marcaPropia]);
+    await as(db, ana, `update public.organizations set work_mode = 'self' where id = $1`, [propia]);
+    const [marca] = await db.query<{ ai_mode: string }>(`select ai_mode from public.brands where id = $1`, [marcaPropia]);
+    expect(marca!.ai_mode).toBe('api');
+    // No toca las marcas de otras organizaciones.
+    expect(await modo(ajena)).toBe('self');
+  });
+
+  it('el cambio de modo queda en el registro de actividad', async () => {
+    const registros = await as<{ data: { work_mode?: string } }>(
+      db,
+      ana,
+      `select data from public.audit_logs where organization_id = $1 and entity_type = 'organizations' and action = 'update'`,
+      [propia],
+    );
+    expect(registros.map((r) => r.data.work_mode)).toContain('self');
+  });
+
+  describe('gasto de la organización (org_usage_overview)', () => {
+    const mes = `${new Date().toISOString().slice(0, 7)}-01`;
+    const consulta = `select organization_id, ai_cost_micros from public.org_usage_overview($1, $2::date)`;
+
+    it('lo ve el propietario en autogestión, y solo el suyo', async () => {
+      const filas = await as<{ organization_id: string }>(db, ana, consulta, [propia, mes]);
+      expect(filas.map((f) => f.organization_id)).toEqual([propia]);
+      await denied(db, ana, consulta, [ajena, mes], /propietario/);
+      await denied(db, berta, consulta, [propia, mes], /propietario/);
+    });
+
+    it('no lo ven administradores, editores, ajenos ni quien no ha iniciado sesión', async () => {
+      await join(db, ana, adminA, propia, 'admin');
+      await denied(db, adminA, consulta, [propia, mes], /propietario/);
+      await denied(db, editorPropia, consulta, [propia, mes], /propietario/);
+      await denied(db, null, consulta, [propia, mes], /permission denied|propietario/);
+    });
+
+    it('en modo agencia no lo ve ni su propietario (el coste real es de la agencia); el superadministrador sí', async () => {
+      await denied(db, gema, consulta, [agencia, mes], /propietario/);
+      expect(await as(db, superadmin, consulta, [agencia, mes])).toHaveLength(1);
+      expect(await as(db, superadmin, consulta, [propia, mes])).toHaveLength(1);
+    });
+
+    it('pide el primer día del mes', async () => {
+      await denied(db, ana, consulta, [propia, '2026-11-15'], /primer día/);
+    });
+  });
+
+  it('las plantillas del catálogo se guardan con los mismos permisos de siempre: quien edita la marca, y nadie de fuera', async () => {
+    const entrega = JSON.stringify([
+      {
+        key: 'catalogo-prueba',
+        name: 'De catálogo',
+        document: {
+          kind: 'rrss.reel-template',
+          schemaVersion: 1,
+          style: { id: 'corte-ritmico' },
+          purpose: 'p',
+          slots: [{ id: 's', kind: 'image' }],
+        },
+      },
+    ]);
+    const deliver = `select template_key from public.deliver_reel_templates($1, $2::jsonb, 'catalog')`;
+    await denied(db, berta, deliver, [marcaPropia, entrega], /edita/);
+    await denied(db, ana, deliver, [marcaAjena, entrega], /edita/);
   });
 });

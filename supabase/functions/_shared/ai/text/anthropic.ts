@@ -64,6 +64,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Anth
 
   return {
     id: ANTHROPIC_PROVIDER_ID,
+    supportsTools: true,
 
     estimateUsage(request): AiUsage {
       return estimateTextUsage(request.input, { cacheWrites: true });

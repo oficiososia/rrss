@@ -30,6 +30,7 @@ import {
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { Badge, Button, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { DictableField } from '@/features/ai/DictableField';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { useGenerationProgress } from '@/features/ai/imageApi';
 import { formatMicros } from '@/features/ai/money';
@@ -2079,14 +2080,16 @@ function AiAction({
           <label className="block text-sm font-medium" htmlFor={`photo-edit-ai-bg-${asset.id}`}>
             ¿Qué fondo quieres?
           </label>
-          <input
+          <DictableField
+            as="input"
+            brandId={asset.brand_id}
             id={`photo-edit-ai-bg-${asset.id}`}
             type="text"
             maxLength={500}
             value={background}
-            onChange={(e) => setBackground(e.target.value)}
+            onValueChange={setBackground}
             placeholder="Por ejemplo: mesa de mármol blanco con luz cálida"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            className="h-auto rounded-md py-2"
             data-testid="photo-edit-ai-background-text"
           />
           <div className="flex flex-wrap gap-2" aria-label="Sugerencias de fondo">

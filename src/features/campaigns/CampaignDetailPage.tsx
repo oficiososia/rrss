@@ -4,8 +4,10 @@ import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge, Button, ConfirmDialog, ErrorState, Notice, Skeleton, Spinner } from '@/components/ui';
 import { contentPaths, networkLabel } from '@/features/content/labels';
+import { useBrandTemplates } from '@/features/content/templates/api';
 import { useAssetsByIds } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useBrandReelTemplates } from '@/features/reels/editor/api';
 import { REQUEST_STATUS_LABEL, requestPaths } from '@/features/requests/labels';
 import type { CampaignRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -15,6 +17,7 @@ import { CAMPAIGN_STATUS_LABEL, CAMPAIGN_STATUS_TONE, campaignPaths } from './la
 import { campaignPlanSchema, shortDay, validatePlan, type CampaignPiece, type CampaignPlan } from './plan';
 import { PieceSheet, WeekStrip, type WeekPiece } from './PlanWeek';
 import { usePiecePreviews, type PreviewRequest } from './previews';
+import { suggestTemplates } from './templateHints';
 
 export function CampaignDetailPage() {
   const { campaignId = '' } = useParams();
@@ -95,6 +98,14 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
     }
   }
 
+  // De qué plantilla de la marca saldría cada pieza, cuando encaja (solo una sugerencia).
+  const designTemplates = useBrandTemplates(brand.id);
+  const reelTemplates = useBrandReelTemplates(brand.id);
+  const templateHints = useMemo(
+    () => suggestTemplates(draft?.pieces ?? [], designTemplates.data ?? [], reelTemplates.data ?? []),
+    [draft, designTemplates.data, reelTemplates.data],
+  );
+
   // Las piezas de la tira: las creadas (campaña aceptada) o las del plan.
   const pieces: WeekPiece[] = useMemo(() => {
     if (accepted) {
@@ -113,6 +124,7 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
           piece,
           content: link,
           issues: [],
+          templateHint: piece ? (templateHints[link.piece_index] ?? null) : null,
         };
       });
     }
@@ -126,8 +138,9 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
       piece,
       content: null,
       issues: issues.filter((i) => i.path.startsWith(`pieces.${index}.`)),
+      templateHint: templateHints[index] ?? null,
     }));
-  }, [accepted, contents.data, draft, campaign.current_plan_version, issues]);
+  }, [accepted, contents.data, draft, campaign.current_plan_version, issues, templateHints]);
 
   const previewRequests: PreviewRequest[] = useMemo(
     () =>

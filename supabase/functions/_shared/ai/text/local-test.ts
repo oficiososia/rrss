@@ -15,7 +15,7 @@
 // marca y del encargo, para que la prueba pueda comprobar que lo generado
 // respeta el perfil de cada marca (no es un texto fijo). No es IA: va marcado
 // como simulado en `ai_generations` (proveedor `simulated`).
-import type { AiModelSpec, AiProviderRequest } from '../contract.ts';
+import type { AiModelSpec, AiProviderRequest, AiToolCall } from '../contract.ts';
 import { createSimulatedProvider, SIMULATED_PROVIDER_ID, type SimulatedProvider } from '../simulated-provider.ts';
 import { TEXT_PURPOSES, type AiTextConfig, type Env } from './config.ts';
 import { TEXT_UNITS } from './prompt.ts';
@@ -279,6 +279,106 @@ function campaignPlan(request: AiProviderRequest): string {
   });
 }
 
+/**
+ * Rellenar el formulario de una campaña (`campaign.brief`), con reglas fijas y
+ * sin modelo. Entiende «N semanas», «hasta navidad(es)», el nombre de una red y
+ * «reels»; sin tema (menos de tres palabras) y sin respuesta previa, pregunta.
+ * Ante «ignora lo anterior» imita a un modelo comprometido: una red que no está
+ * en la lista y fechas pasadas (el producto las descarta).
+ */
+function campaignBrief(request: AiProviderRequest): string {
+  const prompt = request.input.prompt;
+  const instruction = material(request, 'lo que quiere') ?? '';
+  const today = material(request, 'hoy') ?? '2026-01-01';
+  const answer = material(request, 'respuesta');
+  const current = (() => {
+    try {
+      return JSON.parse(material(request, 'propuesta actual') ?? 'null') as {
+        startDate: string;
+        endDate: string;
+        networks: string[];
+        mix: { network: string; format: string; perWeek: number }[];
+        title: string;
+        objective: string;
+        weeks: { title: string; focus: string }[];
+      } | null;
+    } catch {
+      return null;
+    }
+  })();
+  const targets = [...prompt.matchAll(/- Destino: ([a-z0-9_]+)\/([a-z0-9_]+)/g)].map((m) => ({
+    network: m[1]!,
+    format: m[2]!,
+  }));
+  const empty = {
+    question: '',
+    title: '',
+    objective: '',
+    networks: [] as string[],
+    startDate: '',
+    endDate: '',
+    perWeek: 0,
+    mix: [] as { network: string; format: string; perWeek: number }[],
+    weeks: [] as { title: string; focus: string }[],
+    why: '',
+  };
+  const words = instruction.split(/\s+/).filter(Boolean).length;
+  if (!current && !answer && words < 3) {
+    return JSON.stringify({ ...empty, question: '¿De qué trata la campaña o qué quieres dar a conocer?' });
+  }
+
+  const day = (value: string) => Date.parse(`${value}T00:00:00Z`) / 86_400_000;
+  const iso = (n: number) => new Date(n * 86_400_000).toISOString().slice(0, 10);
+  const todayN = day(today);
+  const monday = todayN + (((8 - new Date(todayN * 86_400_000).getUTCDay()) % 7) || 7);
+  const text = `${instruction} ${answer ?? ''}`.toLowerCase();
+
+  let start = monday;
+  let weeks = Number(/(\d+)\s+semanas?/.exec(text)?.[1] ?? '0');
+  if (/navidad/.test(text)) {
+    const year = new Date(todayN * 86_400_000).getUTCFullYear();
+    weeks = Math.max(1, Math.ceil((day(`${year}-12-24`) - monday + 1) / 7));
+  }
+  if (!weeks) weeks = 3;
+  if (current) {
+    start = day(current.startDate);
+    weeks = Math.max(1, Math.ceil((day(current.endDate) - start + 1) / 7));
+    if (/acorta/.test(prompt)) weeks = Math.max(1, weeks - 1);
+    if (/alarga/.test(prompt)) weeks += 1;
+  }
+  weeks = Math.min(9, weeks);
+
+  const named = [...new Set(targets.map((t) => t.network))].filter((n) => text.includes(n));
+  const networks = named.length ? named : current?.networks?.length ? current.networks : [targets[0]?.network ?? 'instagram'];
+  const reels = /reels?/.test(text);
+  const mix = networks.flatMap((network) => {
+    const formats = targets.filter((t) => t.network === network);
+    const reel = formats.find((f) => /reel|video|short/.test(f.format));
+    const rest = formats.find((f) => f !== reel) ?? formats[0];
+    const out: { network: string; format: string; perWeek: number }[] = [];
+    if (reel && reels) out.push({ network, format: reel.format, perWeek: 2 });
+    if (rest && !(rest === reel && out.length)) out.push({ network, format: rest.format, perWeek: reels ? 1 : 2 });
+    return out;
+  });
+  const names = ['Anuncio', 'Platos', 'Cierre', 'Recuerdo'];
+  const evil = /ignora lo anterior/i.test(`${instruction} ${prompt}`);
+  return JSON.stringify({
+    ...empty,
+    title: current?.title ?? `[simulado] ${sentence(instruction.slice(0, 40)).replace(/\.$/, '')}`,
+    objective: current?.objective ?? `[simulado] ${sentence(instruction.slice(0, 120))}`,
+    networks: evil ? ['x', ...networks] : networks,
+    startDate: evil ? '2001-01-01' : iso(start),
+    endDate: evil ? '2001-02-01' : iso(start + weeks * 7 - 1),
+    perWeek: mix.reduce((sum, m) => sum + m.perWeek, 0),
+    mix,
+    weeks: Array.from({ length: weeks }, (_, i) => ({
+      title: names[Math.min(i, names.length - 1)]!,
+      focus: `[simulado] Semana ${i + 1} de ${weeks}.`,
+    })),
+    why: `[simulado] Te propongo ${weeks} ${weeks === 1 ? 'semana' : 'semanas'} porque lo pide el texto o, si no, es lo normal.`,
+  });
+}
+
 /** Analítica: una hipótesis por cada uno de los dos primeros datos, citándolo; nada inventado. */
 function analyticsSummary(request: AiProviderRequest): string {
   let datos: Array<{ id: string; dato: string }> = [];
@@ -374,6 +474,58 @@ function editorCopilot(request: AiProviderRequest): string {
 }
 
 /**
+ * El mismo copiloto simulado por la ruta de HERRAMIENTAS: las mismas reglas
+ * fijas, devueltas como llamadas (una por cambio). Lee el material compacto
+ * («orden», «fotos» como f1, f2…) y nombra las fotos por su alias. Ante «ignora
+ * lo anterior» imita igual a un modelo comprometido: un texto no dictado y una
+ * foto que no está entre las elegidas (f9).
+ */
+function editorCopilotTools(request: AiProviderRequest): { text: string; tool_calls: AiToolCall[] } {
+  const legacy = { ...request, input: { ...request.input, context: [...(request.input.context ?? [])] } };
+  // Reutiliza las reglas de arriba: «orden» es el dictado y las fotos van por alias.
+  const order = material(request, 'orden') ?? '';
+  const photos = (material(request, 'fotos') ?? '')
+    .split('\n')
+    .map((line) => line.trim().split(' ')[0])
+    .filter((alias): alias is string => Boolean(alias));
+  legacy.input.context.push({ label: 'dictado', content: order });
+  legacy.input.context.push({
+    label: 'fotos elegidas',
+    content: JSON.stringify(photos.map((alias) => ({ id: alias }))),
+  });
+  // El perfil compacto no trae los logotipos: basta con saber si hay.
+  const plan = JSON.parse(editorCopilot(legacy)) as { operations: Record<string, unknown>[] };
+  const calls: AiToolCall[] = plan.operations.map((op) => {
+    if (op.op === 'set_background_image') {
+      const photo = typeof op.assetId === 'string' && /^f\d+$/.test(op.assetId) ? op.assetId : op.assetId ? 'f9' : null;
+      return { name: 'set_background_image', arguments: { photo, blur: (op.blur as number | null) ?? null } };
+    }
+    if (op.op === 'blur_image') return { name: 'blur_image', arguments: { target: null, blur: op.blur as number } };
+    if (op.op === 'add_logo') {
+      return {
+        name: 'add_logo',
+        arguments: { position: (op.position as string | null) ?? null, align: (op.align as string | null) ?? null },
+      };
+    }
+    return {
+      name: 'add_text',
+      arguments: {
+        text: op.text as string,
+        style: (op.style as string | null) ?? null,
+        position: (op.position as string | null) ?? null,
+        align: null,
+        color: (op.color as string | null) ?? null,
+        font: null,
+      },
+    };
+  });
+  return {
+    text: calls.length ? '' : '[simulado] No he entendido ningún cambio en la orden.',
+    tool_calls: calls,
+  };
+}
+
+/**
  * «Hacer un reel como este», determinista: NO mira los fotogramas. Lee la
  * medición (cuántos planos y si son imagen fija) y reparte tipos de plano en
  * orden; los textos salen del perfil y de la idea de la marca. Sirve para
@@ -442,12 +594,16 @@ const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
   brand_check: brandCheck,
   brand_profile_proposal: profileProposal,
   campaign_plan: campaignPlan,
+  campaign_brief: campaignBrief,
 };
 
 export function createLocalTestProvider(): SimulatedProvider {
   return createSimulatedProvider({
     respond: (request) => {
       const name = request.input.outputSchema?.name;
+      if (!name && request.input.tools?.some((spec) => spec.name === 'set_background_image')) {
+        return editorCopilotTools(request);
+      }
       return name ? RESPONDERS[name]?.(request) : undefined;
     },
   });

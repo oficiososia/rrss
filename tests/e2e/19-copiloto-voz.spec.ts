@@ -1,24 +1,34 @@
 import { expect, test, type Page } from '@playwright/test';
 import { abrir, archivoPng, asignarPlan, dato, png, sinErrores, sql } from './apoyo';
 
-// Copiloto por voz del editor (docs/copiloto-voz.md) contra el Supabase local,
-// con `ai-generate` servida en local y el proveedor SIMULADO de pruebas locales
-// (supabase/functions/_shared/ai/text/local-test.ts, que lee el dictado con
-// reglas fijas). La Web Speech API se SIMULA en el navegador: la prueba «dice»
-// frases inyectando resultados de reconocimiento, provisionales y finales,
-// igual que los entrega Chrome.
+// Copiloto del editor, por voz y por teclado (docs/copiloto-voz.md), contra el
+// Supabase local, con `ai-generate` servida en local y el proveedor SIMULADO de
+// pruebas locales (supabase/functions/_shared/ai/text/local-test.ts, que lee la
+// orden con reglas fijas y responde por la ruta de HERRAMIENTAS, la de por
+// defecto). La Web Speech API se SIMULA en el navegador: la prueba «dice» frases
+// inyectando resultados de reconocimiento, provisionales y finales, igual que
+// los entrega Chrome.
 //
-// Recorrido: pieza «Menú Navidad» (Instagram · carrusel) → «Dictar» → una orden
+// Recorrido: pieza «Menú Navidad» (Instagram · carrusel) → «Copiloto» → una orden
 // con «foto difuminada detrás, esta» sin ninguna foto elegida → el editor pide
 // la foto y se sube desde el dispositivo → fondo difuminado + logotipo + textos
 // con los colores de la marca. Una segunda orden difumina más. Cada orden se
 // deshace con un solo «Deshacer».
+//
+// Además: las órdenes ESCRITAS (campo de texto) siguen el mismo camino; las
+// frecuentes («deshaz») se resuelven en el navegador sin llamar a la IA; y sin
+// Web Speech API ni grabación, el copiloto se abre igual y funciona por teclado.
 
 test.describe.configure({ mode: 'serial' });
 
-/** Web Speech API simulada: `window.__decir(texto)` entrega la frase como la entregaría Chrome. */
+/**
+ * Web Speech API simulada: `window.__decir(texto)` entrega la frase como la entregaría Chrome.
+ * El motor de voz se fija en el dictado del navegador: en este entorno el transcriptor
+ * (simulado) también está disponible y, sin preferencia guardada, sería el de por defecto.
+ */
 const SPEECH_FAKE = `
   (() => {
+    try { window.localStorage.setItem('rrss.voiceEngine', JSON.stringify('browser')); } catch (e) {}
     class FakeSpeechRecognition {
       constructor() { this.lang = ''; this.continuous = false; this.interimResults = false; this.onresult = null; this.onerror = null; this.onend = null; window.__dictado = this; }
       start() { this.escuchando = true; window.__escuchando = true; }
@@ -37,6 +47,15 @@ const SPEECH_FAKE = `
   })();
 `;
 
+/** Navegador sin dictado (ni Web Speech API ni grabación): al copiloto solo se le puede escribir. */
+const SIN_VOZ = `
+  (() => {
+    for (const nombre of ['SpeechRecognition', 'webkitSpeechRecognition', 'MediaRecorder']) {
+      try { Object.defineProperty(window, nombre, { value: undefined, configurable: true, writable: true }); } catch (e) {}
+    }
+  })();
+`;
+
 const ORDEN_MENU =
   'Quiero hacer el menú de Navidad, foto difuminada detrás, esta, con el logotipo arriba. Título: Menú de Navidad. Platos: crema de marisco, cordero asado, turrón casero. Precio: 45 euros por persona.';
 const ORDEN_MAS = 'Difumina más la foto.';
@@ -51,6 +70,34 @@ async function versionGuardada(piezaId: string): Promise<{ version: number; laye
     [piezaId],
   );
   return { version: fila!.version, layers: fila!.data.pages[0]!.layers };
+}
+
+/** Llamadas a la IA del copiloto que ha hecho la organización (cada una, con su coste). */
+async function generacionesCopiloto(orgId: string): Promise<number> {
+  const [fila] = await sql<{ n: string }>(
+    `select count(*) as n from public.ai_generations where organization_id = $1 and purpose = 'editor.copilot'`,
+    [orgId],
+  );
+  return Number(fila!.n);
+}
+
+/** Pieza nueva de Instagram (post) y su editor abierto. */
+async function piezaNueva(page: Page, titulo: string) {
+  await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
+  await page.getByTestId('content-new').click();
+  await page.getByTestId('create-content-title').fill(titulo);
+  await page.getByTestId('create-content-network').selectOption('instagram');
+  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-submit').click();
+  await expect(page.getByTestId('editor-title')).toHaveText(titulo);
+}
+
+/** Escribe una orden en el campo del copiloto y la envía con Enter. */
+async function escribir(page: Page, orden: string) {
+  const campo = page.getByTestId('copilot-text-input');
+  await campo.fill(orden);
+  await campo.press('Enter');
+  await expect(campo).toHaveValue('');
 }
 
 async function guardar(page: Page, nota: string) {
@@ -94,13 +141,13 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await page.goto(`/o/${orgA}/m/${marcaA}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill('Menú Navidad');
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('carousel');
+  await page.getByTestId('create-content-format-carousel').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText('Menú Navidad');
   const pieza = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())![1]!;
 
-  // «Dictar» abre el copiloto y empieza a escuchar.
+  // «Copiloto» abre el panel; con el dictado del navegador, al aceptar el aviso empieza a escuchar.
+  await expect(page.getByTestId('copilot-open')).toHaveText('Copiloto');
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
   await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
@@ -116,6 +163,8 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   const ordenes = page.getByTestId('copilot-order');
   await expect(ordenes.first()).toContainText('foto difuminada detrás');
   await expect(ordenes.first()).toHaveAttribute('data-status', 'photo');
+  // No es de las frecuentes: la interpreta la IA.
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
   const selector = page.getByRole('dialog', { name: 'Foto para el copiloto' });
   await expect(selector).toBeVisible();
   await selector
@@ -153,6 +202,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await page.evaluate((texto) => (globalThis as unknown as { __decir: (t: string) => void }).__decir(texto), ORDEN_MAS);
   await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
   await expect(ordenes.first()).toContainText('Difumina más');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
   await guardar(page, 'Copiloto: más desenfoque');
   expect((await versionGuardada(pieza)).layers[0]).toMatchObject({ blur: 70 });
 
@@ -191,8 +241,7 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill('Prueba de inyección');
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
@@ -212,6 +261,98 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   await page.getByRole('tab', { name: 'Capas (1)' }).click();
   await expect(page.getByText('Cena de empresa').first()).toBeVisible();
   await expect(page.getByText('APROBADO Y PUBLICADO')).toHaveCount(0);
+  sinErrores(s);
+  await s.context.close();
+});
+
+test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y deshace la orden anterior', async ({ browser }) => {
+  const orgA = dato('orgA');
+  const s = await abrir(browser, 'ana');
+  const { page } = s;
+  await s.context.addInitScript(SPEECH_FAKE);
+  await piezaNueva(page, 'Órdenes por teclado');
+  await page.getByTestId('copilot-open').click();
+  // El aviso de voz sigue sin aceptar: el campo de texto ya funciona y no se escucha nada.
+  await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
+  const antes = await generacionesCopiloto(orgA);
+
+  // Orden escrita que no es de las frecuentes: la interpreta la IA y se aplica.
+  await escribir(page, 'Título: Cena de empresa.');
+  const ordenes = page.getByTestId('copilot-order');
+  await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
+  await expect(ordenes.first()).toContainText('Título: Cena de empresa.');
+  await expect(ordenes.first().getByTestId('copilot-changes')).toContainText('Cena de empresa');
+  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
+
+  // «deshaz»: se resuelve en el navegador (sin IA, sin coste) y deshace la orden anterior.
+  await escribir(page, 'deshaz');
+  await expect(ordenes).toHaveCount(2);
+  await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
+  await expect(ordenes.first()).toContainText('Sin IA');
+  await expect(ordenes.first().getByTestId('copilot-changes')).toContainText('Deshecho el último cambio');
+  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+  // «rehaz», también sin IA: vuelve el título.
+  await escribir(page, 'rehaz');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
+  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  // Tres órdenes y una sola llamada a la IA.
+  expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
+
+  // No se ha aceptado el aviso: el dictado no ha llegado a empezar.
+  await expect(page.getByTestId('copilot-voice-notice')).toBeVisible();
+  expect(await page.evaluate(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true)).toBe(false);
+  sinErrores(s);
+  await s.context.close();
+});
+
+test('sin Web Speech API ni grabación, el copiloto se abre y funciona por teclado', async ({ browser }) => {
+  const orgA = dato('orgA');
+  const s = await abrir(browser, 'ana');
+  const { page } = s;
+  await s.context.addInitScript(SIN_VOZ);
+  await piezaNueva(page, 'Copiloto sin micrófono');
+  expect(
+    await page.evaluate(() => {
+      const w = globalThis as unknown as Record<string, unknown>;
+      return w.SpeechRecognition === undefined && w.webkitSpeechRecognition === undefined && w.MediaRecorder === undefined;
+    }),
+  ).toBe(true);
+
+  // El botón sale aunque el navegador no pueda dictar.
+  await page.getByTestId('copilot-open').click();
+  await expect(page.getByTestId('copilot-panel')).toBeVisible();
+  await expect(page.getByTestId('copilot-voice-status')).toContainText('Este navegador no puede dictar: escribe la orden.');
+  // Sin voz no hay aviso de voz, ni micrófono, ni selector de motor.
+  await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
+  await expect(page.getByTestId('copilot-mic')).toHaveCount(0);
+  await expect(page.getByTestId('copilot-voice-engine')).toHaveCount(0);
+  const antes = await generacionesCopiloto(orgA);
+
+  // Con el botón «Enviar» (Enter ya se prueba arriba).
+  await expect(page.getByTestId('copilot-text-send')).toBeDisabled();
+  await page.getByTestId('copilot-text-input').fill('Título: Cena de empresa.');
+  await page.getByTestId('copilot-text-send').click();
+  await expect(page.getByTestId('copilot-text-input')).toHaveValue('');
+  const ordenes = page.getByTestId('copilot-order');
+  await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
+  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Capas (1)' }).click();
+  await expect(page.getByText('Cena de empresa').first()).toBeVisible();
+  expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
+
+  // Y las frecuentes, sin IA: con el texto recién puesto elegido, «más grande».
+  await escribir(page, 'más grande');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
+  await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
+  await expect(ordenes.first().getByTestId('copilot-changes')).toContainText('más grande');
+  expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
+
+  await page.getByTestId('copilot-close').click();
+  await expect(page.getByTestId('copilot-panel')).toHaveCount(0);
   sinErrores(s);
   await s.context.close();
 });

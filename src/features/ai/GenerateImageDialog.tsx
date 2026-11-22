@@ -1,6 +1,7 @@
 import { Check, Images, Sparkles } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Badge, Button, Dialog, Field, Notice, Select, Skeleton, Spinner, Textarea } from '@/components/ui';
+import { Badge, Button, Dialog, Field, Notice, Select, Skeleton, Spinner } from '@/components/ui';
+import { DictableField } from './DictableField';
 import { previewPath, useAssets, useSignedUrls } from '@/features/library/api';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { cn } from '@/lib/utils';
@@ -149,12 +150,13 @@ function ImageGenerator({
           error={prompt.length > MAX_IMAGE_PROMPT_CHARS ? 'El encargo es demasiado largo.' : null}
         >
           {(p) => (
-            <Textarea
+            <DictableField
               {...p}
+              brandId={brandId}
               rows={4}
               value={prompt}
               disabled={busy}
-              onChange={(e) => setPrompt(e.target.value)}
+              onValueChange={setPrompt}
               placeholder="Por ejemplo: mesa de madera con un plato de temporada, luz cálida de ventana, sin personas ni texto."
               data-testid="ai-image-prompt"
             />

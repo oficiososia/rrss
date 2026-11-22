@@ -26,6 +26,11 @@ import {
 import { createSimulatedTranscriptionProvider, SIMULATED_TRANSCRIPTION_MODEL } from './simulated.ts';
 
 export const TRANSCRIPTION_PURPOSE = 'reel.subtitles';
+/** Dictado del copiloto por voz del editor con el motor «transcriptor» (docs/copiloto-voz.md). */
+export const DICTATION_PURPOSE = 'editor.dictation';
+/** Para qué se puede pedir una transcripción: mismo modelo y mismo precio, apuntes separados. */
+export const TRANSCRIPTION_PURPOSES = [TRANSCRIPTION_PURPOSE, DICTATION_PURPOSE] as const;
+export type TranscriptionPurpose = (typeof TRANSCRIPTION_PURPOSES)[number];
 /** Lo que se dice en un vídeo de referencia («Hacer un reel como este»). */
 export const REFERENCE_TRANSCRIPT_PURPOSE = 'reel.like.transcript';
 
@@ -70,7 +75,7 @@ export function loadTranscriptionConfig(env: Env, options: { fetch?: Transcripti
           model: SIMULATED_TRANSCRIPTION_MODEL,
           task: 'transcription',
           microsPerUnit: { [TRANSCRIPTION_UNIT]: LOCAL_TEST_TRANSCRIPTION_PRICE },
-          purposes: [TRANSCRIPTION_PURPOSE, REFERENCE_TRANSCRIPT_PURPOSE],
+          purposes: [...TRANSCRIPTION_PURPOSES, REFERENCE_TRANSCRIPT_PURPOSE],
         },
       ],
       unavailable: {},
@@ -117,7 +122,7 @@ export function loadTranscriptionConfig(env: Env, options: { fetch?: Transcripti
       model,
       task: 'transcription',
       microsPerUnit: { [TRANSCRIPTION_UNIT]: rate },
-      purposes: [TRANSCRIPTION_PURPOSE, REFERENCE_TRANSCRIPT_PURPOSE],
+      purposes: [...TRANSCRIPTION_PURPOSES, REFERENCE_TRANSCRIPT_PURPOSE],
     });
   }
   for (const [id, reason] of Object.entries(unavailable))

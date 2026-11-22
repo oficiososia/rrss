@@ -73,6 +73,7 @@ export function createBedrockProvider(options: BedrockProviderOptions): AiProvid
 
   return {
     id: BEDROCK_PROVIDER_ID,
+    supportsTools: true,
 
     estimateUsage(request): AiUsage {
       return estimateTextUsage(request.input, { cacheWrites: true });

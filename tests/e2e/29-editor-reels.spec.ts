@@ -91,8 +91,7 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   await page.getByTestId('content-new').click();
   const alta = page.getByRole('dialog');
   await alta.getByTestId('create-content-title').fill(`Reel del editor ${vez}`);
-  await alta.getByTestId('create-content-network').selectOption('instagram');
-  await alta.getByTestId('create-content-format').selectOption('reel');
+  await alta.getByTestId('create-content-format-reel').click();
   await alta.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('reel-editor')).toBeVisible();
   const contentId = page.url().split('/contenidos/')[1]!.split('?')[0]!;

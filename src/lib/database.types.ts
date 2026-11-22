@@ -23,10 +23,14 @@ export type ProfileRow = {
   updated_at: string;
 };
 
+export type OrgWorkMode = 'self' | 'agency';
+
 export type OrganizationRow = {
   id: string;
   name: string;
   kind: OrgKind;
+  /** Cómo trabaja la organización: `self` (lo llevan ellos) o `agency` (migración 20261227010000). */
+  work_mode: OrgWorkMode;
   settings: Json;
   created_by: string | null;
   created_at: string;
@@ -93,6 +97,17 @@ export type KnowledgeSourceRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Una pieza (vigente) donde se usa un archivo de la biblioteca (`asset_usage`, migración 20270101010000). */
+export type AssetUsageRow = {
+  asset_id: string;
+  content_id: string;
+  title: string;
+  network: string;
+  format: string;
+  status: ContentStatus;
+  archived: boolean;
 };
 
 export type MediaAssetRow = {
@@ -1757,6 +1772,7 @@ type OperationTables = {
 
 type OperationFunctions = {
   platform_usage_overview: { Args: { p_period_start: string }; Returns: PlatformUsageRow[] };
+  org_usage_overview: { Args: { p_organization_id: string; p_period_start: string }; Returns: PlatformUsageRow[] };
   platform_storage_by_brand: { Args: Record<string, never>; Returns: PlatformStorageRow[] };
   platform_ai_global_status: { Args: Record<string, never>; Returns: PlatformAiGlobalStatus };
   platform_price_review: { Args: { p_period_start: string }; Returns: PlatformPriceRow[] };
@@ -1770,7 +1786,7 @@ export type Database = {
     Tables: {
       profiles: Table<ProfileRow, never, { full_name?: string; locale?: string }>;
       platform_admins: Table<{ user_id: string; created_at: string }>;
-      organizations: Table<OrganizationRow, never, { name?: string; kind?: OrgKind; settings?: Json }>;
+      organizations: Table<OrganizationRow, never, { name?: string; kind?: OrgKind; work_mode?: OrgWorkMode; settings?: Json }>;
       organization_members: Table<OrganizationMemberRow>;
       brands: Table<
         BrandRow,
@@ -1875,6 +1891,7 @@ export type Database = {
         Returns: BrandProfileRow;
       };
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
+      asset_usage: { Args: { p_brand_id: string }; Returns: AssetUsageRow[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     } & Phase2Functions &
       ContentFunctions &

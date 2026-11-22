@@ -1,62 +1,83 @@
-import { ArrowRight, BookOpen, CheckCircle2, Images, Palette, Users } from 'lucide-react';
+import { ArrowRight, Clapperboard, Film, Images, PenSquare, Sparkles, type LucideIcon } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge, Card, CardBody, CardHeader, ErrorState, Notice, PageHeader, Skeleton } from '@/components/ui';
-import { ActivityList } from '@/features/audit/ActivityList';
-import { useAssetCount } from '@/features/library/api';
-import { useAuditLogs } from '@/features/orgs/api';
+import { ActionNotice, Badge, LinkButton, Notice, PageHeader } from '@/components/ui';
+import { reelLikeEnabled } from '@/config/app';
+import { CreateContentDialog } from '@/features/content/CreateContentDialog';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { BRAND_ROLE_LABEL } from '@/features/permissions/roles';
+import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
+import { useReelLikeOptions } from '@/features/reels/like/api';
+import { useSocialAccounts } from '@/features/social/api';
 import { AccountAttentionNotice } from '@/features/social/AccountAttentionNotice';
-import { useActiveProfile, useSources } from './api';
+import { connectedAccountsPath } from '@/features/social/links';
+import { cn } from '@/lib/utils';
+import { useActiveProfile } from './api';
 import { profileCompleteness } from './completeness';
+import { LatestPublished, StalledList, WeekStrip } from './home/sections';
+import { useLatestPublished, useStalledPublications } from './home/useHomeData';
 import { parseProfile } from './profile';
 
-function Stat({
-  label,
-  value,
-  to,
-  icon: Icon,
-}: {
+interface TileProps {
+  icon: LucideIcon;
   label: string;
-  value: number | undefined;
-  to: string;
-  icon: typeof Images;
-}) {
-  return (
-    <Link to={to} className="group block rounded-xl">
-      <Card className="flex items-center gap-4 p-5 transition-shadow group-hover:shadow-pop">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-          <Icon className="h-5 w-5" aria-hidden />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-2xl font-semibold tabular-nums">
-            {value === undefined ? <Skeleton className="h-7 w-10" /> : value}
-          </span>
-          <span className="block text-sm text-muted">{label}</span>
-        </span>
-        <ArrowRight className="h-4 w-4 text-muted transition-transform group-hover:translate-x-0.5" aria-hidden />
-      </Card>
+  testId: string;
+  to?: string;
+  onClick?: () => void;
+}
+
+/** Un acceso grande: icono y una acción en pocas palabras. */
+function Tile({ icon: Icon, label, testId, to, onClick }: TileProps) {
+  const classes = cn(
+    'flex min-h-[4.5rem] w-full items-center gap-3 rounded-xl border border-border bg-surface px-3 text-left text-sm font-semibold sm:px-4',
+    'transition-shadow hover:shadow-pop focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+  );
+  const content = (
+    <>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary sm:h-11 sm:w-11">
+        <Icon className="h-5 w-5" aria-hidden />
+      </span>
+      <span className="min-w-0 flex-1 leading-snug">{label}</span>
+    </>
+  );
+  return to ? (
+    <Link to={to} className={classes} data-testid={testId}>
+      {content}
     </Link>
+  ) : (
+    <button type="button" onClick={onClick} className={classes} data-testid={testId}>
+      {content}
+    </button>
   );
 }
 
+/** Inicio de la marca: qué hacer hoy. Lo que sale esta semana, lo que está parado y los accesos grandes. */
 export function BrandHomePage() {
-  const { org, isAdmin } = useOrg();
+  const { org } = useOrg();
   const { brand, role, can } = useBrand();
   const base = `/o/${org.id}/m/${brand.id}`;
-  const profile = useActiveProfile(brand.id);
-  const assetCount = useAssetCount(brand.id);
-  const sources = useSources(brand.id);
-  const activity = useAuditLogs(org.id, { brandId: brand.id, pageSize: 8, enabled: isAdmin });
-
-  const completeness = profile.data !== undefined ? profileCompleteness(parseProfile(profile.data?.data)) : null;
+  const canEdit = can('edit');
   const canManage = can('manage');
+  const [creating, setCreating] = useState<string | null>(null);
+  const [now] = useState(() => new Date());
+
+  const profile = useActiveProfile(brand.id);
+  const completeness = profile.data !== undefined ? profileCompleteness(parseProfile(profile.data?.data)) : null;
+  const stalled = useStalledPublications(brand.id);
+  const published = useLatestPublished(brand.id, now);
+  const modes = useSocialConnectModes();
+  const accounts = useSocialAccounts(brand.id, modes.publishing);
+  const notConnected = modes.publishing && accounts.isSuccess && accounts.data.length === 0;
+  // «Hacer un reel como este» solo sale si el servidor puede hacerlo para esta marca.
+  const like = useReelLikeOptions(brand.id, reelLikeEnabled() && canEdit);
+  const stalledItems = stalled.data ?? [];
 
   return (
     <>
       <PageHeader
         title={brand.name}
         description={[brand.sector, `Tu rol: ${BRAND_ROLE_LABEL[role]}`].filter(Boolean).join(' · ')}
+        className="!mb-4"
         action={
           brand.status !== 'active' && (
             <Badge tone={brand.status === 'archived' ? 'neutral' : 'warning'}>
@@ -66,135 +87,86 @@ export function BrandHomePage() {
         }
       />
 
-      <div className="mb-6 empty:hidden">
-        <AccountAttentionNotice />
-      </div>
-
-      {brand.status === 'archived' && (
-        <div className="mb-6">
+      <div className="mb-4 space-y-2 empty:hidden" data-testid="home-notices">
+        {brand.status === 'archived' && (
           <Notice tone="warning">
             Esta marca está archivada. Sus datos se conservan; un gestor puede reactivarla desde «Marca».
           </Notice>
-        </div>
-      )}
+        )}
+        <AccountAttentionNotice />
+        {notConnected && (
+          <ActionNotice
+            tone="info"
+            title="Instagram sin conectar: lo programado no saldrá solo"
+            action={
+              canManage ? (
+                <LinkButton to={connectedAccountsPath(org.id, brand.id)} data-testid="home-connect">
+                  Conectar Instagram
+                </LinkButton>
+              ) : undefined
+            }
+            why={canManage ? undefined : 'Solo quien gestiona la marca puede conectar la cuenta: avísale.'}
+            data-testid="home-not-connected"
+          />
+        )}
+      </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Stat label="Archivos en la biblioteca" value={assetCount.data} to={`${base}/biblioteca`} icon={Images} />
-        <Stat
-          label="Fuentes de conocimiento"
-          value={sources.data?.length}
-          to={`${base}/marca?seccion=fuentes`}
-          icon={BookOpen}
+      <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4" data-testid="home-tiles">
+        {canEdit && (
+          <>
+            <Tile icon={PenSquare} label="Nueva publicación" testId="home-new-post" onClick={() => setCreating('post')} />
+            <Tile icon={Film} label="Nuevo reel" testId="home-new-reel" onClick={() => setCreating('reel')} />
+            {like.data?.available && (
+              <Tile
+                icon={Sparkles}
+                label="Hacer un reel como este"
+                testId="home-reel-like"
+                to={`${base}/biblioteca/reels/como-este`}
+              />
+            )}
+          </>
+        )}
+        <Tile
+          icon={canEdit ? Images : Clapperboard}
+          label={canEdit ? 'Subir fotos' : 'Ver la biblioteca'}
+          testId="home-upload"
+          to={`${base}/biblioteca`}
         />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader
-            title="Perfil de marca"
-            description="Cuanto más completo, mejor entenderá la IA cómo es la marca."
-            action={
-              completeness && (
-                <span className="text-2xl font-semibold tabular-nums" data-testid="completeness-percent">
-                  {completeness.percent}%
-                </span>
-              )
-            }
-          />
-          <CardBody>
-            {profile.isPending ? (
-              <Skeleton className="h-32" />
-            ) : profile.isError ? (
-              <ErrorState error={profile.error} onRetry={() => void profile.refetch()} />
-            ) : completeness ? (
-              <>
-                <div
-                  className="h-2 overflow-hidden rounded-full bg-subtle"
-                  role="progressbar"
-                  aria-valuenow={completeness.percent}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label="Perfil completado"
-                >
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${completeness.percent}%` }}
-                  />
-                </div>
-                {completeness.missing.length === 0 ? (
-                  <p className="mt-4 flex items-center gap-2 text-sm text-success">
-                    <CheckCircle2 className="h-4 w-4" aria-hidden />
-                    El perfil está completo.
-                  </p>
-                ) : (
-                  <>
-                    <p className="mb-2 mt-4 text-sm font-medium">Siguientes pasos</p>
-                    <ul className="space-y-1">
-                      {completeness.missing.slice(0, 5).map((check) =>
-                        canManage ? (
-                          <li key={check.key}>
-                            <Link
-                              to={`${base}/marca?seccion=${check.section}`}
-                              className="flex min-h-[2.5rem] items-center justify-between gap-3 rounded-lg px-2.5 text-sm hover:bg-subtle"
-                            >
-                              {check.label}
-                              <ArrowRight className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-                            </Link>
-                          </li>
-                        ) : (
-                          <li key={check.key} className="px-2.5 py-2 text-sm text-muted">
-                            {check.label}
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  </>
-                )}
-              </>
-            ) : null}
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader title="Accesos rápidos" />
-          <CardBody className="grid gap-2">
-            {[
-              {
-                to: `${base}/biblioteca`,
-                label: can('edit') ? 'Subir fotos y vídeos' : 'Ver la biblioteca',
-                icon: Images,
-              },
-              {
-                to: `${base}/marca`,
-                label: canManage ? 'Editar el perfil de marca' : 'Ver el perfil de marca',
-                icon: Palette,
-              },
-              { to: `${base}/equipo`, label: canManage ? 'Gestionar el equipo' : 'Ver el equipo', icon: Users },
-            ].map(({ to, label, icon: Icon }) => (
-              <Link
-                key={to}
-                to={to}
-                className="flex min-h-[2.75rem] items-center gap-3 rounded-lg border border-border px-3 text-sm font-medium hover:bg-subtle"
-              >
-                <Icon className="h-4 w-4 text-muted" aria-hidden />
-                <span className="flex-1">{label}</span>
-                <ArrowRight className="h-4 w-4 text-muted" aria-hidden />
-              </Link>
-            ))}
-          </CardBody>
-        </Card>
+      <div className="space-y-5">
+        <WeekStrip orgId={org.id} brandId={brand.id} now={now} />
+        {(stalledItems.length > 0 || published.items.length > 0) && (
+          <div className={cn('grid gap-5', stalledItems.length > 0 && published.items.length > 0 && 'lg:grid-cols-2')}>
+            {stalledItems.length > 0 && (
+              <StalledList orgId={org.id} brandId={brand.id} items={stalledItems} canFix={canEdit} />
+            )}
+            {published.items.length > 0 && <LatestPublished orgId={org.id} brandId={brand.id} items={published.items} />}
+          </div>
+        )}
+        {completeness && completeness.percent < 100 && canManage && (
+          <Link
+            to={`${base}/marca`}
+            className="flex min-h-11 items-center gap-3 rounded-xl border border-border px-3 text-sm hover:bg-subtle"
+            data-testid="home-profile"
+          >
+            <span className="font-semibold tabular-nums" data-testid="completeness-percent">
+              {completeness.percent}%
+            </span>
+            <span className="flex-1">del perfil de marca. Completarlo mejora los textos de la IA.</span>
+            <ArrowRight className="h-4 w-4 text-muted" aria-hidden />
+          </Link>
+        )}
       </div>
 
-      {isAdmin && (
-        <Card className="mt-6">
-          <CardHeader title="Actividad reciente" description="Últimos cambios en esta marca." />
-          <ActivityList
-            page={activity.data}
-            isPending={activity.isPending}
-            error={activity.error}
-            onRetry={() => void activity.refetch()}
-          />
-        </Card>
+      {canEdit && (
+        <CreateContentDialog
+          organizationId={org.id}
+          brandId={brand.id}
+          open={creating !== null}
+          onOpenChange={(open) => !open && setCreating(null)}
+          initialFormat={creating ?? undefined}
+        />
       )}
     </>
   );

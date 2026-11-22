@@ -1,4 +1,12 @@
-// Tarea: copiloto por voz del editor (`editor.copilot`).
+// Tarea: copiloto del editor (`editor.copilot`), por voz o por teclado.
+//
+// Dos rutas, que acaban en las mismas operaciones y el mismo saneado:
+//   * `tools` (por defecto si el adaptador lo admite): function calling del
+//     proveedor, una herramienta por operación (editor-copilot-tools.ts), con
+//     todo lo que el editor hace a mano y un prompt corto y cacheable;
+//   * `json` (la de siempre, para comparar): salida estructurada con las ocho
+//     operaciones de la primera versión y el perfil de marca entero.
+// Se elige con AI_TEXT_EDITOR_COPILOT_MODE (`tools` | `json`).
 //
 // La persona dicta en el editor («foto difuminada detrás, encima el logotipo y
 // el menú con estos platos…») y esta tarea convierte lo dictado en OPERACIONES
@@ -24,7 +32,19 @@
 //
 // Puede usarse en marcas en modo agencia (decisión provisional, ver
 // docs/ESTADO.md): no redacta texto, solo coloca lo dictado.
-import type { AiOutputSchema, AiService, Json, JsonSchema } from '../../contract.ts';
+import { AiError, type AiOutputSchema, type AiService, type AiToolCall, type Json, type JsonSchema } from '../../contract.ts';
+import {
+  compactBrand,
+  compactDocument,
+  compactPhotos,
+  EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+  EDITOR_COPILOT_TOOL_PROMPT,
+  EDITOR_COPILOT_TOOLS,
+  operationsFromToolCalls,
+  TOOL_EDITOR_ACTIONS,
+  TOOL_PAGE_ACTIONS,
+  TOOL_PHOTO_FLOWS,
+} from './editor-copilot-tools.ts';
 import {
   AiTaskInputError,
   brandProfileContext,
@@ -54,7 +74,11 @@ export const BLUR_STEP = 20;
  */
 export const MAX_MOVE_STEPS = 6;
 
-export const COPILOT_OPS = [
+/** «Más grande» o «más pequeño»: pasos de tamaño (cada uno, un 15 %), como mucho 4 por orden. */
+export const MAX_SIZE_STEPS = 4;
+
+/** Las ocho operaciones de la primera versión: las únicas de la ruta JSON. */
+export const COPILOT_LEGACY_OPS = [
   'add_text',
   'update_text',
   'set_background_image',
@@ -64,7 +88,29 @@ export const COPILOT_OPS = [
   'remove_layer',
   'set_background_color',
 ] as const;
+/** Todas (las de la ruta de herramientas): el mismo listado que `COPILOT_OPS` del editor. */
+export const COPILOT_OPS = [
+  ...COPILOT_LEGACY_OPS,
+  'resize_layer',
+  'arrange_layer',
+  'duplicate_layer',
+  'style_layer',
+  'set_effect',
+  'add_shape',
+  'style_shape',
+  'add_image',
+  'adjust_image',
+  'transform_image',
+  'image_backdrop',
+  'photo_flow',
+  'set_canvas_ratio',
+  'page',
+  'editor',
+] as const;
 export type CopilotOp = (typeof COPILOT_OPS)[number];
+
+export const COPILOT_MODES = ['tools', 'json'] as const;
+export type CopilotMode = (typeof COPILOT_MODES)[number];
 
 export const TEXT_STYLES = ['title', 'subtitle', 'body', 'small'] as const;
 export const POSITIONS = ['top', 'upper', 'middle', 'lower', 'bottom'] as const;
@@ -72,7 +118,10 @@ export const ALIGNS = ['left', 'center', 'right'] as const;
 /** Colores neutros que siempre se admiten además de la paleta de la marca. */
 export const NEUTRAL_COLORS = ['#FFFFFF', '#000000'] as const;
 
-/** Una operación tal como la devuelve la IA (todas las claves están; las que no aplican, a null). */
+/**
+ * Una operación: `op` y sus campos; los que no aplican, a null. Los doce
+ * primeros son los de la ruta JSON; el resto solo los usa la de herramientas.
+ */
 export interface CopilotOperation {
   op: CopilotOp;
   /** Capa existente a la que se refiere (su id en el estado del documento). */
@@ -94,14 +143,86 @@ export interface CopilotOperation {
   dx: number | null;
   /** Solo move_layer: pasos hacia abajo (+) o hacia arriba (−). */
   dy: number | null;
+  /** Segundo color: borde de una figura o final de un degradado. */
+  color2: string | null;
+  /** resize_layer: pasos de tamaño. */
+  steps: number | null;
+  bold: boolean | null;
+  italic: boolean | null;
+  /** set_effect: outline, shadow o background, y si se pone o se quita. */
+  effect: string | null;
+  on: boolean | null;
+  order: string | null;
+  shape: string | null;
+  opacity: number | null;
+  rotation: number | null;
+  visible: boolean | null;
+  locked: boolean | null;
+  filter: string | null;
+  brightness: number | null;
+  contrast: number | null;
+  saturation: number | null;
+  temperature: number | null;
+  sharpness: number | null;
+  turn: boolean | null;
+  flip: string | null;
+  fit: string | null;
+  crop: string | null;
+  backdrop: string | null;
+  ratio: string | null;
+  /** page, photo_flow y editor: qué hacer. */
+  action: string | null;
+  page: number | null;
+  direction: string | null;
+}
+
+const LEGACY_FIELDS = ['target', 'text', 'style', 'assetId', 'position', 'align', 'color', 'font', 'blur'] as const;
+const EXTRA_FIELDS = [
+  'dx',
+  'dy',
+  'color2',
+  'steps',
+  'bold',
+  'italic',
+  'effect',
+  'on',
+  'order',
+  'shape',
+  'opacity',
+  'rotation',
+  'visible',
+  'locked',
+  'filter',
+  'brightness',
+  'contrast',
+  'saturation',
+  'temperature',
+  'sharpness',
+  'turn',
+  'flip',
+  'fit',
+  'crop',
+  'backdrop',
+  'ratio',
+  'action',
+  'page',
+  'direction',
+] as const;
+
+/** Operación con todos sus campos a null. */
+export function emptyOperation(op: CopilotOp): CopilotOperation {
+  const operation: Record<string, unknown> = { op };
+  for (const key of [...LEGACY_FIELDS, ...EXTRA_FIELDS]) operation[key] = null;
+  return operation as unknown as CopilotOperation;
 }
 
 /**
- * Operación tal como sale hacia el navegador: `dx` y `dy` solo van cuando se
- * usan, para que un editor anterior (que no los conoce y valida con un esquema
- * estricto) siga aceptando todas las demás órdenes mientras se despliega.
+ * Operación tal como sale hacia el navegador: `op` y los campos con valor. Las
+ * ocho operaciones de la primera versión llevan además sus nueve campos de
+ * siempre (a null si no aplican), para que un editor anterior —que valida con
+ * un esquema estricto— siga aceptándolas mientras se despliega.
  */
-export type CopilotOperationOut = Omit<CopilotOperation, 'dx' | 'dy'> & { dx?: number; dy?: number };
+export type CopilotOperationOut = { op: CopilotOp } & { [key: string]: Json };
 
 export interface CopilotDiscarded {
   /** Posición de la operación en la respuesta de la IA (desde 0). */
@@ -127,6 +248,10 @@ export interface CopilotLayerSummary {
 export interface CopilotDocumentSummary {
   canvas: { aspectRatio: string; width: number; height: number; backgroundColor: string };
   layers: CopilotLayerSummary[];
+  /** Capas elegidas en el editor («esto», «eso»). */
+  selected?: string[];
+  /** Página activa (desde 1) y cuántas hay. */
+  page?: { index: number; count: number };
 }
 
 export interface CopilotAssetRef {
@@ -141,9 +266,26 @@ export interface EditorCopilotRequest {
   document: CopilotDocumentSummary;
   /** Fotos que la persona ha elegido para esta pieza («esta foto»). */
   assets?: CopilotAssetRef[];
+  /** Ruta pedida en la petición (para comparar); si no, la del ajuste. */
+  mode?: CopilotMode;
+}
+
+/** Ajustes del copiloto (variables AI_TEXT_EDITOR_COPILOT_*). */
+export interface EditorCopilotOptions {
+  /** `tools` (por defecto, si el adaptador lo admite) o `json`. */
+  mode?: CopilotMode;
+  /**
+   * Esfuerzo de razonamiento que se pide al modelo: el valor del proveedor
+   * (`none`, `minimal`, `low`…), `off` para no enviar nada, o sin definir para
+   * el mínimo conocido (OpenAI con herramientas: `none`, lo único con lo que
+   * `gpt-6-luna` admite herramientas en Chat Completions).
+   */
+  effort?: string;
 }
 
 export interface EditorCopilotResult extends TaskMeta {
+  /** Ruta que se ha usado de verdad. */
+  mode: CopilotMode;
   operations: CopilotOperationOut[];
   discarded: CopilotDiscarded[];
   /** Explicación breve para la persona (no va al diseño). */
@@ -191,7 +333,7 @@ const nullable = (schema: JsonSchema): JsonSchema => {
 const operationSchema: JsonSchema = {
   type: 'object',
   properties: {
-    op: { type: 'string', enum: [...COPILOT_OPS] },
+    op: { type: 'string', enum: [...COPILOT_LEGACY_OPS] },
     target: nullable({ type: 'string', maxLength: 64 }),
     text: nullable({ type: 'string', maxLength: MAX_TEXT_CHARS }),
     style: nullable({ type: 'string', enum: [...TEXT_STYLES] }),
@@ -267,6 +409,17 @@ export function readDocumentSummary(value: unknown): CopilotDocumentSummary {
       ...(finite(l.blur) ? { blur: l.blur } : {}),
     };
   });
+  // Lo elegido en el editor y la página activa: opcionales (un editor anterior no los manda).
+  const ids = new Set(clean.map((layer) => layer.id));
+  const { selected, page } = value as Record<string, unknown>;
+  const chosen = Array.isArray(selected)
+    ? selected.filter((id): id is string => typeof id === 'string' && ids.has(id)).slice(0, MAX_DOCUMENT_LAYERS)
+    : [];
+  const p = (typeof page === 'object' && page !== null ? page : {}) as Record<string, unknown>;
+  const pageInfo =
+    Number.isInteger(p.index) && Number.isInteger(p.count) && (p.count as number) >= 1 && (p.count as number) <= 10
+      ? { index: Math.min(Math.max(p.index as number, 1), p.count as number), count: p.count as number }
+      : undefined;
   return {
     canvas: {
       aspectRatio: c.aspectRatio,
@@ -275,6 +428,8 @@ export function readDocumentSummary(value: unknown): CopilotDocumentSummary {
       backgroundColor: c.backgroundColor.toUpperCase(),
     },
     layers: clean,
+    ...(chosen.length > 0 ? { selected: chosen } : {}),
+    ...(pageInfo ? { page: pageInfo } : {}),
   };
 }
 
@@ -331,19 +486,36 @@ export function dictationWords(text: string): string {
     .trim();
 }
 
+/** Sonidos de titubeo: no son palabras de ningún texto. */
+const HESITATIONS = new Set(['eh', 'ehh', 'em', 'emm', 'ehm', 'mm', 'mmm', 'hmm', 'um', 'uh', 'uhm']);
+
+/**
+ * Lo dictado sin titubeos: fuera los sonidos («eh», «mmm») y las palabras
+ * repetidas seguidas («el el título»). Igual que en el editor.
+ */
+export function withoutHesitations(words: string): string {
+  const out: string[] = [];
+  for (const word of words.split(' ')) {
+    if (!word || HESITATIONS.has(word) || out[out.length - 1] === word) continue;
+    out.push(word);
+  }
+  return out.join(' ');
+}
+
 /**
  * ¿Está este texto dictado? Cada línea debe aparecer en el dictado con las
- * mismas palabras y en el mismo orden. Se perdonan las mayúsculas y los signos
- * de puntuación (el dictado del navegador los pone a su manera); las palabras,
- * las tildes y los números, no.
+ * mismas palabras y en el mismo orden. Se perdonan las mayúsculas, los signos
+ * de puntuación (el dictado los pone a su manera) y los titubeos del habla
+ * («eh», una palabra repetida); las palabras, las tildes y los números, no.
  */
 export function isDictated(text: string, transcript: string): boolean {
-  const haystack = ` ${dictationWords(transcript)} `;
+  const words = dictationWords(transcript);
+  const haystacks = [` ${words} `, ` ${withoutHesitations(words)} `];
   const lines = text.split('\n').filter((line) => line.trim() !== '');
   if (lines.length === 0) return false;
   return lines.every((line) => {
-    const words = dictationWords(line);
-    return words !== '' && haystack.includes(` ${words} `);
+    const needle = dictationWords(line);
+    return needle !== '' && haystacks.some((haystack) => haystack.includes(` ${needle} `));
   });
 }
 
@@ -354,115 +526,339 @@ export interface SanitizeContext {
   allowance: BrandStyleAllowance;
 }
 
-const REQUIRES_TARGET = new Set<CopilotOp>(['update_text', 'move_layer', 'remove_layer']);
+type LayerType = CopilotLayerSummary['type'];
+
+/** Operaciones que actúan sobre una capa concreta: sin `target`, valen las elegidas en el editor. */
+const NEEDS_TARGET = new Set<CopilotOp>([
+  'update_text',
+  'move_layer',
+  'remove_layer',
+  'resize_layer',
+  'arrange_layer',
+  'duplicate_layer',
+  'style_layer',
+  'set_effect',
+  'style_shape',
+]);
+/** Operaciones de foto: sin `target`, las fotos elegidas o, si no, la de fondo (lo resuelve el editor). */
+const IMAGE_OPS = new Set<CopilotOp>(['blur_image', 'adjust_image', 'transform_image', 'image_backdrop', 'photo_flow']);
+
+/** Tipos de capa que admite una operación (null = cualquiera). */
+function allowedTypes(op: CopilotOperation): LayerType[] | null {
+  if (op.op === 'update_text') return ['text'];
+  if (op.op === 'style_shape') return ['shape'];
+  if (IMAGE_OPS.has(op.op)) return ['image'];
+  if (op.op === 'set_effect') return op.effect === 'shadow' ? ['text', 'image', 'shape'] : ['text'];
+  return null;
+}
+
+const WRONG_TYPE: Partial<Record<CopilotOp, string>> = {
+  update_text: 'Solo se puede cambiar el texto de una capa de texto.',
+  style_shape: 'Solo las figuras tienen relleno y borde.',
+  set_effect: 'Ese efecto solo vale para textos (la sombra, también para fotos y figuras).',
+  blur_image: 'Solo se pueden desenfocar las imágenes.',
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /**
  * Descarta lo que no cuadra y limpia lo que se puede limpiar. Una operación
  * que no se puede aplicar tal cual se descarta entera (con su motivo); un
  * color o una tipografía que no son de la marca se quitan (el editor pone los
- * de la marca) y se avisa.
+ * de la marca) y se avisa. Una operación sin capa («esto», «eso») se reparte
+ * entre las capas elegidas en el editor. `indexes` dice a qué posición de la
+ * respuesta de la IA corresponde cada operación (por omisión, la suya).
  */
 export function sanitizeOperations(
   raw: CopilotOperation[],
   context: SanitizeContext,
+  indexes?: number[],
 ): { operations: CopilotOperation[]; discarded: CopilotDiscarded[] } {
   const layers = new Map(context.document.layers.map((layer) => [layer.id, layer]));
+  const selected = (context.document.selected ?? []).map((id) => layers.get(id)).filter((l) => l !== undefined);
   const assetIds = new Set(context.assets.map((asset) => asset.id));
   const colors = new Set([...context.allowance.colors, ...NEUTRAL_COLORS]);
   const fonts = new Set(context.allowance.fonts);
   const logos = new Set(context.allowance.logoIds);
+  const pageCount = context.document.page?.count;
   const operations: CopilotOperation[] = [];
   const discarded: CopilotDiscarded[] = [];
 
-  raw.slice(0, MAX_OPERATIONS).forEach((original, index) => {
-    const drop = (reason: string) => discarded.push({ index, op: original.op, reason });
-    const op: CopilotOperation = { ...original };
-    op.assetId = op.assetId ? op.assetId.toLowerCase() : null;
+  raw.slice(0, MAX_OPERATIONS).forEach((original, position) => {
+    const index = indexes?.[position] ?? position;
+    const drop = (reason: string) => {
+      discarded.push({ index, op: original.op, reason });
+    };
+    const notice = (reason: string) => discarded.push({ index, op: original.op, reason });
+    const base: CopilotOperation = { ...emptyOperation(original.op), ...original };
+    base.assetId = base.assetId ? base.assetId.toLowerCase() : null;
 
     // Texto: solo lo dictado.
-    if (op.text !== null) {
-      const text = op.text.replace(/\r/g, '').trim();
+    if (base.text !== null) {
+      const text = base.text.replace(/\r/g, '').trim();
       if (text.split('\n').length > MAX_TEXT_LINES) return drop('El texto tiene demasiadas líneas.');
       if (!isDictated(text, context.transcript)) {
         return drop('El texto no está en lo dictado: el copiloto no redacta, solo coloca lo que se dice.');
       }
-      op.text = text;
+      base.text = text;
     }
-    if (op.op === 'add_text' && !op.text) return drop('Falta el texto dictado.');
+    if (base.op === 'add_text' && !base.text) return drop('Falta el texto dictado.');
 
-    // Capa de destino: debe existir (y no estar bloqueada para cambiarla).
-    if (op.target !== null) {
-      const layer = layers.get(op.target);
-      if (!layer) return drop('Se refiere a una capa que no existe en el diseño.');
-      if (layer.locked && op.op !== 'add_text') return drop('La capa está bloqueada.');
-      if (op.op === 'update_text' && layer.type !== 'text') return drop('Solo se puede cambiar el texto de una capa de texto.');
-      if (op.op === 'blur_image' && layer.type !== 'image') return drop('Solo se pueden desenfocar las imágenes.');
-    } else if (REQUIRES_TARGET.has(op.op)) {
-      return drop('No dice a qué capa se refiere.');
+    // Sin capa: las elegidas en el editor que valgan para la operación.
+    const types = allowedTypes(base);
+    let targets: (string | null)[] = [base.target];
+    if (base.target === null && (NEEDS_TARGET.has(base.op) || IMAGE_OPS.has(base.op))) {
+      const fitting = selected.filter((layer) => !types || types.includes(layer.type)).map((layer) => layer.id);
+      if (fitting.length > 0) targets = fitting;
+      else if (NEEDS_TARGET.has(base.op)) return drop('No dice a qué capa se refiere.');
     }
 
-    // Fotos y logotipos: solo los enviados o los del perfil.
-    if (op.op === 'set_background_image' && op.assetId !== null && !assetIds.has(op.assetId)) {
-      return drop('La foto no está entre las elegidas para esta pieza.');
-    }
-    if (op.op === 'add_logo') {
-      if (op.assetId !== null && !logos.has(op.assetId)) return drop('Ese logotipo no es de la marca.');
-      if (op.assetId === null && logos.size === 0) return drop('La marca no tiene logotipos en su perfil.');
-    } else if (op.op !== 'set_background_image' && op.assetId !== null) {
-      op.assetId = null;
-    }
+    for (const target of targets) {
+      if (operations.length >= MAX_OPERATIONS) return;
+      const op: CopilotOperation = { ...base, target };
 
-    if (op.op === 'set_background_color' && op.color === null) return drop('Falta el color.');
-    if (op.color !== null) {
-      const color = op.color.toUpperCase();
-      if (!colors.has(color)) {
-        if (op.op === 'set_background_color') return drop('Ese color no es de la paleta de la marca.');
-        discarded.push({ index, op: op.op, reason: 'El color no es de la marca: se usa el de la marca.' });
-        op.color = null;
-      } else {
-        op.color = color;
+      // Capa de destino: debe existir, ser del tipo que toca y no estar bloqueada.
+      if (op.target !== null) {
+        const layer = layers.get(op.target);
+        if (!layer) {
+          drop('Se refiere a una capa que no existe en el diseño.');
+          continue;
+        }
+        const unlocking = op.op === 'style_layer' && op.locked === false;
+        if (layer.locked && op.op !== 'add_text' && op.op !== 'duplicate_layer' && !unlocking) {
+          drop('La capa está bloqueada.');
+          continue;
+        }
+        if (types && !types.includes(layer.type)) {
+          drop(WRONG_TYPE[op.op] ?? 'Eso solo se puede hacer con una foto.');
+          continue;
+        }
       }
-    }
-    if (op.font !== null) {
-      const family = [...fonts].find((f) => f.toLowerCase() === op.font!.trim().toLowerCase());
-      if (!family) {
-        discarded.push({ index, op: op.op, reason: 'La tipografía no es de la marca: se usa la de la marca.' });
-        op.font = null;
-      } else {
-        op.font = family;
-      }
-    }
-    if (op.blur !== null) op.blur = Math.min(100, Math.max(0, Math.round(op.blur)));
-    if (op.op === 'blur_image' && op.blur === null) op.blur = DEFAULT_BLUR;
-    // Movimiento relativo: solo al mover, en pasos enteros y acotados; en cada
-    // eje manda el sitio concreto si también lo dice.
-    const steps = (value: number | null | undefined) => {
-      if (op.op !== 'move_layer' || typeof value !== 'number' || !Number.isFinite(value)) return null;
-      const clamped = Math.min(MAX_MOVE_STEPS, Math.max(-MAX_MOVE_STEPS, Math.round(value)));
-      return clamped === 0 ? null : clamped;
-    };
-    op.dx = op.align !== null ? null : steps(op.dx);
-    op.dy = op.position !== null ? null : steps(op.dy);
-    if (op.op === 'move_layer' && op.position === null && op.align === null && op.dx === null && op.dy === null) {
-      return drop('No dice adónde moverla.');
-    }
 
-    operations.push(op);
+      // Fotos y logotipos: solo los enviados o los del perfil.
+      if ((op.op === 'set_background_image' || op.op === 'add_image') && op.assetId !== null && !assetIds.has(op.assetId)) {
+        drop('La foto no está entre las elegidas para esta pieza.');
+        continue;
+      }
+      if (op.op === 'add_logo') {
+        if (op.assetId !== null && !logos.has(op.assetId)) {
+          drop('Ese logotipo no es de la marca.');
+          continue;
+        }
+        if (op.assetId === null && logos.size === 0) {
+          drop('La marca no tiene logotipos en su perfil.');
+          continue;
+        }
+      } else if (op.op !== 'set_background_image' && op.op !== 'add_image' && op.assetId !== null) {
+        op.assetId = null;
+      }
+
+      // Colores: solo la paleta de la marca (y blanco y negro).
+      if (op.op === 'set_background_color' && op.color === null) {
+        drop('Falta el color.');
+        continue;
+      }
+      let dropped = false;
+      for (const key of ['color', 'color2'] as const) {
+        const value = op[key];
+        if (value === null) continue;
+        const color = value.toUpperCase();
+        if (colors.has(color)) {
+          op[key] = color;
+        } else if (op.op === 'set_background_color') {
+          drop('Ese color no es de la paleta de la marca.');
+          dropped = true;
+          break;
+        } else {
+          notice('El color no es de la marca: se usa el de la marca.');
+          op[key] = null;
+        }
+      }
+      if (dropped) continue;
+      if (op.font !== null) {
+        const family = [...fonts].find((f) => f.toLowerCase() === op.font!.trim().toLowerCase());
+        if (!family) {
+          notice('La tipografía no es de la marca: se usa la de la marca.');
+          op.font = null;
+        } else {
+          op.font = family;
+        }
+      }
+      if (op.blur !== null) op.blur = clamp(Math.round(op.blur), 0, 100);
+      if (op.op === 'blur_image' && op.blur === null) op.blur = DEFAULT_BLUR;
+      // Movimiento relativo: solo al mover, en pasos enteros y acotados; en cada
+      // eje manda el sitio concreto si también lo dice.
+      const steps = (value: number | null | undefined) => {
+        if (op.op !== 'move_layer' || typeof value !== 'number' || !Number.isFinite(value)) return null;
+        const clamped = clamp(Math.round(value), -MAX_MOVE_STEPS, MAX_MOVE_STEPS);
+        return clamped === 0 ? null : clamped;
+      };
+      op.dx = op.align !== null ? null : steps(op.dx);
+      op.dy = op.position !== null ? null : steps(op.dy);
+      if (op.op === 'move_layer' && op.position === null && op.align === null && op.dx === null && op.dy === null) {
+        drop('No dice adónde moverla.');
+        continue;
+      }
+
+      // Lo propio de cada operación nueva.
+      const problem = checkExtra(op, pageCount);
+      if (problem) {
+        drop(problem);
+        continue;
+      }
+      operations.push(op);
+    }
   });
   return { operations, discarded };
 }
 
+/** Comprobaciones de las operaciones que solo tiene la ruta de herramientas. Devuelve el problema, o null. */
+function checkExtra(op: CopilotOperation, pageCount: number | undefined): string | null {
+  const has = (...keys: (keyof CopilotOperation)[]) => keys.some((key) => op[key] !== null);
+  switch (op.op) {
+    case 'resize_layer': {
+      const steps = op.steps === null ? 0 : clamp(Math.round(op.steps), -MAX_SIZE_STEPS, MAX_SIZE_STEPS);
+      if (steps === 0) return 'No dice cuánto cambiar el tamaño.';
+      op.steps = steps;
+      return null;
+    }
+    case 'arrange_layer':
+      return op.order === null ? 'No dice adónde llevarla en el orden de capas.' : null;
+    case 'style_layer':
+      if (op.opacity !== null) op.opacity = clamp(Math.round(op.opacity), 0, 100);
+      if (op.rotation !== null) op.rotation = clamp(Math.round(op.rotation), -180, 180);
+      return has('opacity', 'rotation', 'visible', 'locked') ? null : 'No dice qué cambiar de la capa.';
+    case 'set_effect':
+      if (op.effect === null) return 'No dice qué efecto.';
+      if (op.on === null) op.on = true;
+      return null;
+    case 'add_shape':
+      return op.shape === null ? 'No dice qué figura.' : null;
+    case 'style_shape':
+      return has('color', 'color2') ? null : 'No dice qué cambiar de la figura.';
+    case 'adjust_image':
+      for (const key of ['brightness', 'contrast', 'saturation', 'temperature'] as const) {
+        if (op[key] !== null) op[key] = clamp(Math.round(op[key]!), -100, 100);
+      }
+      if (op.sharpness !== null) op.sharpness = clamp(Math.round(op.sharpness), 0, 100);
+      return has('filter', 'brightness', 'contrast', 'saturation', 'temperature', 'sharpness')
+        ? null
+        : 'No dice qué ajustar de la foto.';
+    case 'transform_image':
+      if (op.turn === false) op.turn = null;
+      return has('turn', 'flip', 'fit', 'crop') ? null : 'No dice qué hacer con la foto.';
+    case 'image_backdrop':
+      return op.backdrop === null ? 'No dice qué poner detrás de la foto.' : null;
+    case 'photo_flow':
+      return op.action !== null && TOOL_PHOTO_FLOWS.includes(op.action) ? null : 'No dice qué hacer con la foto.';
+    case 'set_canvas_ratio':
+      return op.ratio === null ? 'No dice qué proporción.' : null;
+    case 'page': {
+      if (op.action === null || !TOOL_PAGE_ACTIONS.includes(op.action)) return 'No dice qué hacer con la página.';
+      if (op.action === 'move' && op.page === null) return 'No dice a qué puesto mover la página.';
+      if (op.action === 'go' && op.page === null && op.direction === null) return 'No dice a qué página ir.';
+      if (op.page !== null && pageCount !== undefined && op.page > pageCount) return 'Esa página no existe.';
+      return null;
+    }
+    case 'editor':
+      return op.action !== null && TOOL_EDITOR_ACTIONS.includes(op.action) ? null : 'No dice qué acción del editor.';
+    default:
+      return null;
+  }
+}
+
 // ── Tarea ────────────────────────────────────────────────────────────────
+
+/** Ruta que se usará: la pedida si el adaptador la admite; si no, JSON. */
+export function resolveCopilotMode(
+  service: AiService,
+  wanted: CopilotMode | undefined,
+): { mode: CopilotMode; provider: string | null } {
+  const capabilities = service.capabilities?.('text', EDITOR_COPILOT_PURPOSE) ?? null;
+  const mode = (wanted ?? 'tools') === 'tools' && capabilities?.tools ? 'tools' : 'json';
+  return { mode, provider: capabilities?.provider ?? null };
+}
+
+/** Parámetros de esfuerzo de razonamiento según el adaptador (ver `EditorCopilotOptions.effort`). */
+export function effortParams(provider: string | null, mode: CopilotMode, effort: string | undefined): Record<string, string> {
+  const value = effort?.trim().toLowerCase();
+  if (value === 'off') return {};
+  if (provider === 'openai') {
+    // gpt-6-luna solo admite herramientas en Chat Completions con «none».
+    const chosen = value ?? (mode === 'tools' ? 'none' : undefined);
+    return chosen ? { reasoning_effort: chosen } : {};
+  }
+  return value ? { effort: value } : {};
+}
 
 export async function runEditorCopilot(
   service: AiService,
   actor: TaskActor,
   request: EditorCopilotRequest,
+  options: EditorCopilotOptions = {},
 ): Promise<EditorCopilotResult> {
   const transcript = requireText(request.transcript, 'lo dictado', MAX_TRANSCRIPT_CHARS);
   const document = readDocumentSummary(request.document);
   const assets = readAssets(request.assets);
   const allowance = brandAllowance(request.brandProfile);
+  const wanted = COPILOT_MODES.includes(request.mode as CopilotMode) ? request.mode : options.mode;
+  const { mode, provider } = resolveCopilotMode(service, wanted);
+  const effort = effortParams(provider, mode, options.effort);
+  const context: SanitizeContext = { transcript, document, assets, allowance };
+
+  if (mode === 'tools') {
+    if (typeof request.brandProfile !== 'object' || request.brandProfile === null || Array.isArray(request.brandProfile)) {
+      throw new AiTaskInputError('El perfil de marca no tiene el formato esperado.');
+    }
+    const compact = compactDocument(document);
+    const photos = compactPhotos(assets);
+    const result = await service.generate({
+      userId: actor.userId,
+      brandId: actor.brandId,
+      task: 'text',
+      purpose: EDITOR_COPILOT_PURPOSE,
+      input: {
+        instructions: EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+        prompt: EDITOR_COPILOT_TOOL_PROMPT,
+        context: [
+          { label: 'marca', content: compactBrand(request.brandProfile, allowance), cacheable: true },
+          { label: 'documento', content: compact.text },
+          ...(assets.length > 0 ? [{ label: 'fotos', content: photos.text }] : []),
+          { label: 'orden', content: transcript },
+        ],
+        tools: EDITOR_COPILOT_TOOLS,
+        // La misma clave para todas las marcas: herramientas e instrucciones son idénticas.
+        cacheKey: `${EDITOR_COPILOT_PURPOSE}:tools`,
+        params: { max_output_tokens: TOOLS_MAX_OUTPUT_TOKENS, ...effort },
+      },
+    });
+    const calls = Array.isArray(result.output.tool_calls) ? (result.output.tool_calls as unknown as AiToolCall[]) : [];
+    if (calls.length === 0 && result.output.finish_reason === 'length') {
+      throw new AiError('invalid_output', 'La respuesta de la IA se ha cortado antes de terminar. Inténtalo de nuevo.', {
+        generationId: result.generationId,
+        retryable: true,
+      });
+    }
+    const converted = operationsFromToolCalls(
+      calls.slice(0, MAX_OPERATIONS * 2),
+      { layerIds: compact.layerIds, photoIds: photos.photoIds },
+      emptyOperation,
+    );
+    const { operations, discarded } = sanitizeOperations(converted.operations, context, converted.indexes);
+    const note = typeof result.output.text === 'string' ? result.output.text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    return {
+      generationId: result.generationId,
+      provider: result.provider,
+      model: result.model,
+      usage: result.usage,
+      costMicros: result.costMicros,
+      latencyMs: result.latencyMs,
+      mode,
+      operations: operations.map(toResponseOperation),
+      discarded: [...converted.discarded, ...discarded].sort((a, b) => a.index - b.index).slice(0, 40),
+      note,
+    };
+  }
 
   const { data, meta } = await runStructuredTask(service, {
     actor,
@@ -470,22 +866,37 @@ export async function runEditorCopilot(
     instructions: EDITOR_COPILOT_INSTRUCTIONS,
     context: [
       brandProfileContext(request.brandProfile),
-      { label: 'estado del documento', content: stableStringify(document as unknown as Json) },
+      // Como siempre: lienzo y capas. Lo elegido y la página solo los usa la ruta de herramientas.
+      {
+        label: 'estado del documento',
+        content: stableStringify({ canvas: document.canvas, layers: document.layers } as unknown as Json),
+      },
       { label: 'fotos elegidas', content: stableStringify(assets as unknown as Json) },
       { label: 'dictado', content: transcript },
     ],
     prompt: 'Convierte el material «dictado» en operaciones del editor, siguiendo las reglas.',
     schema: EDITOR_COPILOT_SCHEMA,
     maxOutputTokens: 3000,
+    params: effort,
   });
 
   const answer = data as unknown as { operations: CopilotOperation[]; note: string };
-  const { operations, discarded } = sanitizeOperations(answer.operations, { transcript, document, assets, allowance });
-  return { ...meta, operations: operations.map(toResponseOperation), discarded, note: answer.note.trim() };
+  const { operations, discarded } = sanitizeOperations(answer.operations, context);
+  return { ...meta, mode, operations: operations.map(toResponseOperation), discarded, note: answer.note.trim() };
 }
 
-/** Quita `dx`/`dy` cuando no se usan (ver `CopilotOperationOut`). */
+/** Salida corta: unas pocas llamadas con pocos argumentos. */
+export const TOOLS_MAX_OUTPUT_TOKENS = 1000;
+
+const LEGACY_OP_SET = new Set<string>(COPILOT_LEGACY_OPS);
+
+/** Deja `op` y los campos con valor (ver `CopilotOperationOut`). */
 export function toResponseOperation(op: CopilotOperation): CopilotOperationOut {
-  const { dx, dy, ...rest } = op;
-  return { ...rest, ...(dx !== null ? { dx } : {}), ...(dy !== null ? { dy } : {}) };
+  const out: Record<string, Json> = { op: op.op };
+  const bag = op as unknown as Record<string, Json>;
+  if (LEGACY_OP_SET.has(op.op)) for (const key of LEGACY_FIELDS) out[key] = bag[key] ?? null;
+  for (const key of [...LEGACY_FIELDS, ...EXTRA_FIELDS]) {
+    if (bag[key] !== null && bag[key] !== undefined) out[key] = bag[key]!;
+  }
+  return out as CopilotOperationOut;
 }

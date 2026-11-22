@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f36/reel-como-este`; antes, `f33/integraciones-sencillas`).
+Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -20,6 +20,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
 | Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
+| Modo de trabajo de la organización | «Lo llevamos nosotros» (autogestión) o «Nos lo lleva una agencia» por organización; en autogestión toda la IA a mano, sin Encargos ni textos de agencia; «Cargar plantillas del catálogo» desde la app; gasto propio para el propietario (`docs/modo-de-trabajo.md`) | Base de datos (PGlite) y componentes; el modo agencia sigue pasando sus pruebas | Aplicar `20261227010000` en staging; verlo en un navegador real; «Tareas» internas en vez de Encargos | — |
 | Legal / RGPD | Páginas como plantillas, consentimiento, descarga, borrado, registro de tratamientos, etiqueta de IA | Base de datos y e2e 17 | Revisión de abogado, contratos de encargo, plazos | Abogado |
 
 **En staging** (https://rrss-omega.vercel.app), según el último dato verificado
@@ -877,6 +878,46 @@ Detalle en `docs/integraciones-sencillas.md`. Migración `20261222010000_precios
   implementar: `docs/integraciones-sencillas.md` §6); medir con nuestros casos los modelos que hoy
   salen como «sin medir con nuestros casos»; precio por imagen (la fuente solo da precio por token de imagen).
 
+## Copiloto del editor por herramientas, teclado y transcriptor (rama `f37/copiloto-herramientas`, 22/11/2026)
+
+Detalle en `docs/copiloto-voz.md`. Decisión del dueño: «vamos con luna y todo con
+herramientas para ver si sale mejor».
+
+- **Antes:** el copiloto solo admitía voz (dictado del navegador), devolvía un JSON con 8
+  operaciones, mandaba el perfil de marca entero en cada orden y «deshaz» contestaba «No
+  puedo deshacer desde aquí». «Probar conexión» de IA de texto solo listaba modelos.
+- **Ahora:**
+  - **Herramientas** (function calling) por defecto: 23 herramientas, una por operación, con
+    todo lo que el editor hace a mano (textos y efectos, capas, figuras, fotos, lienzo,
+    páginas, deshacer, guardar, plantillas y los flujos de foto). Adaptadores de OpenAI y de
+    Claude por la misma interfaz (`AiInput.tools`). La ruta JSON sigue detrás de
+    `AI_TEXT_EDITOR_COPILOT_MODE=json`.
+  - **Órdenes frecuentes sin IA** (intérprete local): «deshaz», «guarda», «más grande»,
+    «siguiente página»… coste cero y respuesta inmediata.
+  - **Órdenes por teclado**: campo de texto en el panel; el copiloto sale y funciona sin
+    micrófono.
+  - **Dos motores de voz**: dictado del navegador o transcriptor de OpenAI (`ai-transcribe`,
+    con cupo), a elegir; aviso de privacidad por motor.
+  - **Prompt compacto**: herramientas e instrucciones comunes delante (cacheables), marca en
+    tres líneas, documento en una línea por capa.
+  - **«Probar conexión» de IA de texto hace una generación mínima real** (1 token de salida
+    por modelo configurado) con el mismo endpoint que las tareas: una clave que lista modelos
+    pero no puede generar ya no da «Funciona».
+  - **Banco** `scripts/copiloto-banco.ts`: 75 órdenes; en seco por defecto.
+- **Probado:** unitarias, componentes y base de datos (proveedores y micrófono simulados);
+  e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI).
+- **Sin probar contra nada real:** la ruta de herramientas con OpenAI o Claude (formato,
+  `strict`, `reasoning_effort: "none"`, caché), el transcriptor, el micrófono, la sonda de
+  generación y el banco con `--apply`. Los objetivos de latencia (< 1,5 s) y de tokens sin
+  caché (< 1.500) **no están medidos**: con el contador del simulado el total por orden sube
+  de 2.455 a 3.122 tokens y lo no compartible entre marcas baja de 1.065 a 149; que se cumpla
+  depende de que el proveedor lea de caché el prefijo común.
+- **Para llevar a staging (en este orden):** aplicación → migración `20261226010000` (dos
+  ajustes de Integraciones, con vuelta atrás) → funciones `ai-generate`, `ai-transcribe` y
+  `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13).
+- **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
+  política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.
+
 ## «Hacer un reel como este» (rama `f36/reel-como-este`, 22/11/2026)
 
 Una persona sube un reel que le gusta (o pega su enlace) y el sistema lo estudia y lo rehace con las
@@ -906,3 +947,122 @@ ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs
 - **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
   `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
   `VITE_REEL_LIKE_ENABLED=true`.
+
+## Preparar un plan de campaña dictando y con la IA que rellena el formulario (rama `f40/campanas-voz`, 22/11/2026)
+
+Petición del dueño: «aquí hay que meter también el copiloto con IA para que puedas dictar lo que quieres, y la IA te
+tiene que ayudar a hacer la duración y todo». Detalle: `docs/ia-texto.md` («Rellenar el formulario de la campaña») y
+`docs/copiloto-voz.md` («Dictar en cualquier campo»).
+
+- **Antes:** el diálogo «Preparar un plan con IA» era un formulario con la instrucción, las ocho redes marcables, dos
+  fechas y un nombre; la duración y el ritmo se decidían a mano y el texto solo se escribía.
+- **Ahora:**
+  - Arriba, solo «¿Qué quieres preparar?», con micrófono (mismo motor y aviso que el copiloto del editor), y un botón
+    para que la IA proponga. La propuesta trae una frase de por qué («Te propongo 3 semanas porque…»), la duración,
+    el ritmo por formato, las redes, el objetivo y la semana a semana; queda **rellenada** en «Detalles» (plegados,
+    con un resumen de una línea) para corregirla. Se ajusta con «Más corta», «Más larga» (llaman a la IA) y «Solo
+    Instagram» (sin IA). Si falta un dato, UNA pregunta corta. El coste de la propuesta se ve en pequeño.
+  - Por defecto, «Detalles» enseña solo las redes de la marca (conectadas o con plantillas; Instagram si no hay);
+    «Otras redes» enseña el resto, desmarcadas.
+  - «Preparar el plan» lleva lo acordado (ritmo, reparto, fases, objetivo) a `campaign.plan`, que fija el máximo de
+    piezas con él; cada pieza del plan dice de qué plantilla de diseño o de reel de la marca encajaría
+    (**sugerencia**: el motor al aceptar todavía no aplica la plantilla; se elige al preparar la pieza).
+  - Componente reutilizable `DictableField`, en los campos de texto libre de «Editar foto» (fondo con IA), «Hacer
+    un reel como este», «Animar con IA» y «Generar imagen con IA», sin cambiar su comportamiento.
+- **Probado:** componentes (dictado y aviso, propuesta, ajustes, pregunta única, sin IA/sin cupo, modo agencia,
+  acuerdo hacia el plan, sugerencias de plantilla), base de datos (`campaign.brief`: saneado de redes/fechas/ritmo,
+  pregunta, ajustes, agencia, cupo, `agreement`), maquetación a 375 px en Chromium.
+- **Sin probar:** ningún modelo real con `campaign.brief` (la calidad de la duración y del ritmo propuestos); el
+  micrófono real en el diálogo; que «Más corta/larga» devuelva siempre una semana menos/más (el producto no lo
+  comprueba, solo sanea).
+- **Decisiones:** `campaign.brief` se registra como `campaign.plan` (sin variable ni migración nuevas); si se quiere
+  un modelo más barato solo para esto habrá que separar el propósito (migración del catálogo de Integraciones).
+- **Para llevarlo a staging:** redesplegar `ai-generate`; la aplicación. Sin migraciones.
+## Calendario para planificar (rama `f41/calendario`, 22/11/2026)
+
+Detalle en `docs/publicacion.md` («Calendario para planificar»). Sin migración.
+
+- **Hecho**: vistas Semana (por defecto en pantallas anchas), Mes compacto y Lista (por defecto en móvil;
+  se recuerda la elegida en el dispositivo); tarjetas con miniatura, hora de la marca, red y formato con
+  icono y estado con color y texto; vista rápida (pie de foto, «Abrir», «Mover a…», «Publicar ahora»,
+  «Cancelar») con el motivo y el botón de arreglo de las «Detenidas»; arrastrar para mover (conserva la hora)
+  con «Deshacer»; «+» solo al pasar el ratón o enfocar; bandeja «Por programar» arrastrable; huecos de la
+  semana, contador frente al objetivo y franja de campañas (solo lectura); filtros de estado, red, formato
+  y campaña en una fila; página sin scroll (el calendario se desplaza por dentro).
+- **Probado**: `calendarPlan.test.ts`, `calendarioVistas.test.tsx` (tres vistas, mover, huecos, bandeja,
+  permisos), el resto de pruebas del calendario adaptadas a la vista rápida; maquetación en Chromium a
+  1440 y 375 px (`tests/layout/calendario.spec.ts`).
+- **Sin probar**: e2e 13 y 23 adaptadas a la vista rápida, **sin ejecutar** (solo CI); arrastrar con el
+  ratón real (las pruebas simulan los eventos de arrastrar); pantallas táctiles reales.
+- **Límites**: la hora no se cambia arrastrando (solo el día; la hora, con «Mover a…»); el objetivo semanal
+  se guarda en el dispositivo, no en la marca (compartirlo entre personas pide una migración); sin vista
+  de día ni «Por red» (las sustituyen la semana y el filtro de red).
+
+## Inicio de la marca y Contenidos con miniaturas (rama `f42/inicio-contenidos`, 22/11/2026)
+
+- **Implementado**: Contenidos es una rejilla de tarjetas con la miniatura real de la pieza (primera
+  página dibujada con el motor de las plantillas y su caché; reels con su portada o el primer clip;
+  esquema de capas si no se puede dibujar; icono del formato si no hay diseño), vista de lista compacta
+  (se recuerda), pestañas por etapa con contador (Ideas · En preparación · Listas · Programadas ·
+  Publicadas: mezclan el estado de la pieza con el de su publicación), búsqueda, formato y campaña en
+  una fila, acciones rápidas (abrir, duplicar, programar, archivar con «Deshacer»), selección múltiple
+  para archivar, marca «Vacía» (sin ninguna versión guardada) y «Archivar las vacías» de una vez; la
+  pantalla vacía ofrece «Nueva idea» y hasta tres plantillas. «Nueva idea» elige el formato con
+  tarjetas (Publicación, Carrusel, Reel, Historia, con su proporción), el nombre es opcional («Reel · 22
+  nov») y «Crear y abrir» lleva al editor que toca. El inicio de la marca responde «qué hago hoy»:
+  accesos grandes (Nueva publicación, Nuevo reel, Hacer un reel como este si el servidor puede, Subir
+  fotos), la semana en siete columnas con miniaturas, lo parado con su botón de arreglo, lo último
+  publicado con cifras solo si existen y los avisos (Instagram sin conectar, acceso que caduca).
+- **Quitado del inicio** (a propósito): los contadores de archivos y fuentes, «Accesos rápidos» y
+  «Actividad reciente» (sigue en Configuración → Actividad). El porcentaje del perfil queda como una
+  línea para quien gestiona la marca, solo si falta algo.
+- **Sin migración.** Las piezas y las publicaciones se leen con las tablas de siempre.
+- **Probado**: unitarias (etapas, semana), componentes (lista, miniaturas, acciones, vacío, inicio),
+  maquetación en Chromium a 375, 768 y 1366 px (sin scroll lateral, miniaturas dibujadas de verdad, el
+  inicio cabe en 1366×768 y 1024×768 sin bajar la página). Las e2e se adaptaron (el formato ya no es un
+  desplegable) y corren en CI.
+- **Sin probar**: con una marca real y muchas piezas (la lista trae hasta 600 y enseña de 24 en 24);
+  miniaturas de reels con vídeo real (en el banco no hay recursos firmados); el aspecto en un móvil real.
+- **Añadido tras la auditoría de usabilidad (tanda D)**: «Nueva idea → Reel» ya no dice que el vídeo
+  «llegará más adelante»; ofrece las plantillas de reel de la marca (`brand_reel_templates`) con su muestra
+  en movimiento y «Hacer un reel como este» (si el servidor puede), con el botón «Crear y abrir» fijo abajo.
+  Con una plantilla de reel, la pieza se abre en el editor con `?plantilla=<clave>`; **el editor de reels
+  todavía no lee ese parámetro** (cambio pendiente de unas tres líneas en `ReelEditor.tsx`, fuera de esta
+  rama): hasta entonces abre su propia lista de plantillas. Las plantillas de pieza salen en una rejilla de
+  miniaturas grandes y filtradas por el formato. La red ya no se pregunta (solo Instagram se publica) y los
+  formatos que no se publican solos lo dicen. El coste de «Hacer un reel como este» se dice como «≈ N % del
+  cupo de este mes» (lo ven los administradores; el resto, en créditos).
+
+## Biblioteca y Analítica más claras (rama `f43/biblioteca-analitica`, 22/11/2026)
+
+Petición del dueño: «un producto de calidad» con menos carga visual.
+
+- **Implementado (Biblioteca)**: barra lateral de carpetas en árbol con contadores (selector en móvil)
+  y migas de pan; mover arrastrando o con «Mover a…»; crear, renombrar y eliminar carpeta vacía; rejilla
+  con miniaturas (`thumb_path`) de tamaño ajustable, pintada por tandas; selección con casillas y Mayús
+  con barra de acciones (mover, etiquetar, descargar hasta 20, eliminar con confirmación); chips Fotos,
+  Vídeos, Logotipos, Con fondo quitado, Hechas con IA, Sin usar y Recientes; orden por fecha, nombre o uso;
+  búsqueda sin distinguir tildes por nombre, etiqueta y carpeta; ficha como panel lateral con ← y →,
+  «Dónde se usa», «Editar foto», «Usar en una publicación» (crea la idea con la foto), «Usar en un reel»
+  (`reels?con=<id>`) y «Animar con IA…» si está disponible; subir arrastrando a la página o a una
+  carpeta, con progreso, error claro y «Reintentar» por archivo; `PhotoPanel` reutilizable
+  (`docs/panel-de-fotos.md`), sin conectar a ningún editor.
+- **Implementado (Analítica)**: frase del periodo con la variación en palabras, de 3 a 4 cifras grandes
+  (elegir una la lleva al gráfico), gráfico de línea con guía por puntero y teclado y tabla día a día,
+  «Lo que mejor funcionó» con miniaturas, y el resto plegado en «Más detalle». Estados honestos sin
+  cuenta, sin cifras y con la cuenta por reconectar. Ambas pantallas son pantallas de trabajo: la página
+  no se desplaza (y no llevan el pie legal, como el editor).
+- **Migración** `20270101010000_asset_usage.sql` (función de lectura `asset_usage`, con la RLS de quien
+  pregunta; vuelta atrás en `supabase/rollbacks/`). Sin aplicar en staging. Sin ella, la pantalla no
+  inventa usos: oculta «Sin usar» y «Más usadas».
+- **Limitación conocida**: una carpeta vacía creada desde la pantalla solo existe en ese navegador hasta
+  que se mueve un archivo dentro (en la base de datos una carpeta es el texto de `media_assets.folder`).
+  La biblioteca lee de una vez hasta 5.000 archivos por marca (avisa si hay más).
+- **Probado**: componentes (`biblioteca.test.tsx`, `photoPanel.test.tsx`, `analitica.test.tsx`), unitarias
+  (`carpetas.test.ts`, `resumen.test.ts`), base de datos (`aislamiento.test.ts`, `asset_usage`) y
+  maquetación en Chromium real a 375, 768 y 1366 px (`tests/layout/biblioteca-analitica.spec.ts`).
+  e2e 04, 11, 15 y 24 adaptadas a la interfaz nueva (la 04 con un caso nuevo) **sin ejecutar**: necesitan
+  el stack local.
+- **Sin probar**: descarga de varios archivos a la vez (los navegadores pueden pedir permiso),
+  arrastrar desde el escritorio con archivos reales, miniaturas reales (el banco no firma URL) y el
+  móvil real.

@@ -574,6 +574,86 @@ describe('región de OpenAI', () => {
   });
 });
 
+describe('«Probar conexión» de la IA de texto genera de verdad', () => {
+  const COST =
+    'Probar conexión hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero.';
+
+  it('las tarjetas de IA de texto avisan del coste junto al botón; las demás no', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    serveIntegrations();
+    renderApp('/plataforma/integraciones');
+    const openai = await screen.findByTestId('integration-openai');
+    const hint = within(openai).getByTestId('integration-test-hint');
+    expect(hint).toHaveTextContent(COST);
+    // Ya no promete que no gasta.
+    expect(hint).not.toHaveTextContent(/No genera nada|ni gasta/);
+    // El aviso está al lado del botón: en el mismo formulario.
+    expect(hint.closest('form')).toBe(within(openai).getByTestId('integration-test').closest('form'));
+    // Claude se prueba con la misma integración: mismo aviso.
+    expect(within(screen.getByTestId('integration-claude')).getByTestId('integration-test-hint')).toHaveTextContent(COST);
+    // Las pruebas que no generan nada no llevan el aviso.
+    for (const id of ['comfyui', 'stripe', 'meta']) {
+      const other = within(screen.getByTestId(`integration-${id}`)).getByTestId('integration-test-hint');
+      expect(other).not.toHaveTextContent('generación mínima real');
+    }
+  });
+
+  it('si la clave lista modelos pero el servidor la rechaza al generar, sale «No funciona» con el motivo y el detalle', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    const server = serveIntegrations();
+    server.settings.push({
+      setting_key: 'OPENAI_API_KEY',
+      integration: 'ai_text',
+      is_secret: true,
+      value: null,
+      hint: '…abcd',
+      updated_at: '2026-11-19T10:00:00Z',
+      updated_by_email: 'otra@example.com',
+    });
+    const rejected =
+      'La clave lista modelos, pero el servidor europeo de OpenAI (eu.api.openai.com) la rechaza al generar con «gpt-6-luna» (401): revisa que la clave sea de un proyecto con región Europa.';
+    fake.fn('platform-integrations', (raw) => {
+      const body = raw as { action: string; integration?: string; values?: Record<string, string | null> };
+      if (body.action === 'test') {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            message: rejected,
+            fix: 'openai_global',
+            checks: [
+              { name: 'OpenAI', ok: true, message: 'OpenAI acepta la clave (eu.api.openai.com).' },
+              { name: 'Generar con openai/gpt-6-luna', ok: false, message: rejected, fix: 'openai_global' },
+              {
+                name: 'Coste de la prueba',
+                ok: null,
+                message:
+                  'Se ha hecho 1 generación mínima real (1 token de salida por cada modelo configurado): coste despreciable, pero no cero. No consume el cupo de ninguna organización.',
+              },
+            ],
+          },
+        };
+      }
+      return serveOnce(server, body);
+    });
+    const { user } = renderApp('/plataforma/integraciones');
+    const card = await screen.findByTestId('integration-openai');
+    await user.click(within(card).getByTestId('integration-test'));
+    expect(payloads('test')).toEqual([{ action: 'test', integration: 'ai_text' }]);
+    const result = await within(card).findByTestId('integration-test-result');
+    expect(result).toHaveTextContent('No funciona');
+    expect(result).toHaveTextContent('la rechaza al generar con «gpt-6-luna» (401)');
+    // El detalle: listar fue bien, generar no, y lo que ha costado la prueba.
+    expect(within(result).getByLabelText('Bien').closest('li')).toHaveTextContent('OpenAI acepta la clave');
+    expect(within(result).getByLabelText('Mal').closest('li')).toHaveTextContent('Generar con openai/gpt-6-luna');
+    expect(within(result).getByLabelText('No se comprueba').closest('li')).toHaveTextContent(
+      'coste despreciable, pero no cero',
+    );
+    // Y sigue ofreciendo el servidor general en un clic.
+    expect(await within(card).findByTestId('openai-region-fix')).toBeInTheDocument();
+  });
+});
+
 describe('precios al día y sugerencias de modelo', () => {
   it('enseña la sugerencia por tarea con su precio por uso, de dónde salen los precios y qué no se ha medido', async () => {
     seedWorkspace({ orgRole: 'owner', platformAdmin: true });

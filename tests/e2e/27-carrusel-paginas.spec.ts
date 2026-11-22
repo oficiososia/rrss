@@ -27,8 +27,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   await page.goto(`${marca()}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill(TITULO);
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('carousel');
+  await page.getByTestId('create-content-format-carousel').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];

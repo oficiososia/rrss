@@ -1,4 +1,4 @@
-// Subtítulos automáticos de los reels: la función `ai-transcribe` (handler.ts)
+// Subtítulos automáticos de los reels y dictado del copiloto: la función `ai-transcribe` (handler.ts)
 // con la base de datos real, el servicio de IA de siempre y la transcripción
 // simulada; y el adaptador de OpenAI contra un HTTP simulado (sin clave real).
 // Cupo, permiso y plan los impone `ai_reserve_generation`, como en el texto.
@@ -10,10 +10,13 @@ import {
   loadTranscriptionConfig,
   transcriptionPrice,
   transcriptionReady,
-  TRANSCRIPTION_PURPOSE,
+  TRANSCRIPTION_PURPOSES,
 } from '../../supabase/functions/_shared/ai/transcription/config.ts';
 import {
   createOpenAiTranscriptionProvider,
+  MAX_HINT_CHARS,
+  MAX_HINTS,
+  sanitizeTranscriptionHints,
   TRANSCRIPTION_UNIT,
 } from '../../supabase/functions/_shared/ai/transcription/openai.ts';
 import {
@@ -42,7 +45,7 @@ const MODELS: AiModelSpec[] = [
     model: SIMULATED_TRANSCRIPTION_MODEL,
     task: 'transcription',
     microsPerUnit: { [TRANSCRIPTION_UNIT]: PRICE },
-    purposes: [TRANSCRIPTION_PURPOSE],
+    purposes: [...TRANSCRIPTION_PURPOSES],
   },
 ];
 
@@ -113,10 +116,18 @@ async function setup(options: { quota?: number | null; price?: number | null } =
     sessions.set(token, user);
     return token;
   };
-  const send = async (token: string, chunks: Array<{ seconds: number; data?: Uint8Array }>, brandId = brand) => {
+  const send = async (
+    token: string,
+    chunks: Array<{ seconds: number; data?: Uint8Array }>,
+    brandId = brand,
+    extra: Record<string, unknown> = {},
+  ) => {
     const form = new FormData();
     form.append('brandId', brandId);
-    form.append('meta', JSON.stringify({ chunks: chunks.map((c) => ({ seconds: c.seconds })), language: 'es' }));
+    form.append(
+      'meta',
+      JSON.stringify({ chunks: chunks.map((c) => ({ seconds: c.seconds })), language: 'es', ...extra }),
+    );
     chunks.forEach((c, i) => form.append(`chunk-${i}`, new Blob([c.data ?? wav(c.seconds)], { type: 'audio/wav' })));
     const response = await handler(
       new Request('https://funciones.test/ai-transcribe', {
@@ -225,6 +236,68 @@ describe('ai-transcribe', () => {
   });
 });
 
+describe('ai-transcribe: dictado del copiloto (uso propio y vocabulario de pista)', () => {
+  it('apunta el dictado con su uso y pasa las pistas saneadas al proveedor, sin guardarlas', async () => {
+    const t = await setup();
+    const result = await t.send(t.token, [{ seconds: 3.2 }], t.brand, {
+      purpose: 'editor.dictation',
+      hints: ['Casa Lola', '  Arroz   a banda ', 'casa lola', '<b>Título</b>', 'x', 42, 'línea\ncortada'],
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.segments).toEqual([{ index: 0, text: '[simulado] Frase 1 de 1 (3.2 s)' }]);
+    // Al proveedor: sin repetidos, sin < > ni saltos de línea, sin lo que no es texto.
+    expect(t.provider.calls[0]!.input.audio).toMatchObject({
+      language: 'es',
+      hints: ['Casa Lola', 'Arroz a banda', 'b Título /b', 'línea cortada'],
+    });
+    const [generation] = await generations(t.org);
+    expect(generation).toMatchObject({
+      task: 'transcription',
+      purpose: 'editor.dictation',
+      status: 'succeeded',
+      cost_micros: 400,
+      usage: { audio_seconds: 4 },
+    });
+    // Ni el sonido ni las pistas quedan en el registro; el texto transcrito, sí.
+    expect(JSON.stringify(generation)).not.toContain('Arroz a banda');
+    expect(JSON.stringify(generation)).not.toContain('RIFF');
+    expect(JSON.stringify(generation!.output)).toContain('[simulado] Frase 1 de 1');
+  });
+
+  it('sin `purpose` sigue siendo un subtítulo, sin pistas no manda ninguna y un uso desconocido se rechaza', async () => {
+    const t = await setup();
+    expect((await t.send(t.token, [{ seconds: 1 }])).status).toBe(200);
+    expect(t.provider.calls[0]!.input.audio).not.toHaveProperty('hints');
+    expect((await generations(t.org))[0]).toMatchObject({ purpose: 'reel.subtitles' });
+    const bad = await t.send(t.token, [{ seconds: 1 }], t.brand, { purpose: 'post.caption' });
+    expect(bad).toMatchObject({ status: 400, body: { error: { code: 'invalid_request' } } });
+    // Unas pistas que no son una lista se ignoran: son una ayuda, no un dato.
+    expect((await t.send(t.token, [{ seconds: 1 }], t.brand, { hints: 'Casa Lola' })).status).toBe(200);
+    expect(t.provider.calls).toHaveLength(2);
+    expect(t.provider.calls[1]!.input.audio).not.toHaveProperty('hints');
+  });
+
+  it('el dictado tampoco pasa sin cupo ni sin permiso de edición', async () => {
+    const poor = await setup({ quota: 300 });
+    expect(await poor.send(poor.token, [{ seconds: 4 }], poor.brand, { purpose: 'editor.dictation' })).toMatchObject({
+      status: 402,
+      body: { error: { code: 'quota_exhausted' } },
+    });
+    const t = await setup();
+    expect((await t.send(t.lectorToken, [{ seconds: 1 }], t.brand, { purpose: 'editor.dictation' })).status).toBe(403);
+    expect(poor.provider.calls).toHaveLength(0);
+    expect(t.provider.calls).toHaveLength(0);
+  });
+
+  it('las pistas tienen tope de número y de largo', () => {
+    const many = Array.from({ length: 80 }, (_, i) => `plato ${i}`);
+    expect(sanitizeTranscriptionHints(many)).toHaveLength(MAX_HINTS);
+    expect(sanitizeTranscriptionHints(['a'.repeat(200)])[0]).toHaveLength(MAX_HINT_CHARS);
+    expect(sanitizeTranscriptionHints(undefined)).toEqual([]);
+    expect(sanitizeTranscriptionHints([null, '', '  ', '>'])).toEqual([]);
+  });
+});
+
 describe('configuración y adaptador de OpenAI (HTTP simulado)', () => {
   it('sin clave, o sin el endpoint de la UE, no hay subtítulos; con ellos, gpt-transcribe con su precio', () => {
     expect(transcriptionReady({})).toBe(false);
@@ -232,6 +305,8 @@ describe('configuración y adaptador de OpenAI (HTTP simulado)', () => {
     expect(transcriptionReady({ OPENAI_API_KEY: 'sk-x', AI_ALLOW_NON_EU_PROCESSING: 'true' })).toBe(true);
     const config = loadTranscriptionConfig({ OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'https://eu.api.openai.com' });
     expect(config.models[0]).toMatchObject({ provider: 'openai', model: 'gpt-transcribe', task: 'transcription' });
+    // El mismo modelo sirve a los subtítulos de los reels, al dictado del copiloto y al vídeo de referencia.
+    expect(config.models[0]!.purposes).toEqual(['reel.subtitles', 'editor.dictation', 'reel.like.transcript']);
     expect(transcriptionPrice(config)).toBe(DEFAULT_TRANSCRIPTION_PRICES['gpt-transcribe']);
     // Otro modelo y otro precio, sin tocar código.
     const custom = loadTranscriptionConfig({
@@ -302,6 +377,39 @@ describe('configuración y adaptador de OpenAI (HTTP simulado)', () => {
       usage: { audio_seconds: 4 },
       providerRequestId: 'req_1',
     });
+
+    // Vocabulario de pista: `keywords[]` en gpt-transcribe y `prompt` en los demás modelos.
+    const hinted: Array<{ model: string; keywords: unknown[]; prompt: unknown }> = [];
+    const withHints = createOpenAiTranscriptionProvider({
+      apiKey: 'sk-secreta',
+      fetch: async (_url, init) => {
+        hinted.push({
+          model: String(init.body.get('model')),
+          keywords: init.body.getAll('keywords[]'),
+          prompt: init.body.get('prompt'),
+        });
+        return new Response(JSON.stringify({ text: 'ok' }), { status: 200 });
+      },
+    });
+    for (const model of ['gpt-transcribe', 'whisper-1']) {
+      await withHints.generate({
+        task: 'transcription',
+        model,
+        input: {
+          prompt: '',
+          audio: {
+            chunks: [{ data: wav(1), mimeType: 'audio/wav', seconds: 1 }],
+            language: 'es',
+            hints: ['Casa Lola', 'arroz <a banda>'],
+          },
+        },
+        signal: new AbortController().signal,
+      });
+    }
+    expect(hinted).toEqual([
+      { model: 'gpt-transcribe', keywords: ['Casa Lola', 'arroz a banda'], prompt: null },
+      { model: 'whisper-1', keywords: [], prompt: 'Casa Lola, arroz a banda' },
+    ]);
 
     // Un error de OpenAI no deja ver la clave.
     const failing = createOpenAiTranscriptionProvider({

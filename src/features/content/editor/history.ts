@@ -127,9 +127,10 @@ export type EditorAction =
    * Sustituye el documento entero en UN solo paso de deshacer (lo usa el
    * copiloto por voz: una orden dictada = un paso). Quien lo envía ya lo ha
    * validado con el esquema; aquí no se comprueba otra vez. La página activa
-   * no cambia (si sigue existiendo).
+   * no cambia (si sigue existiendo), salvo que se diga otra con `pageId` (una
+   * orden que añade una página o pasa a otra).
    */
-  | { type: 'replace'; document: ContentDocument; select?: string[] }
+  | { type: 'replace'; document: ContentDocument; select?: string[]; pageId?: string }
   /** Corta la agrupación: el próximo cambio será un paso nuevo aunque tenga la misma clave. */
   | { type: 'checkpoint' }
   | { type: 'undo' }
@@ -215,6 +216,21 @@ export function reorderLayers(layers: Layer[], id: string, to: ReorderTarget): L
   const [moved] = next.splice(index, 1);
   next.splice(target, 0, moved!);
   return next;
+}
+
+/** Copia de una capa, un poco desplazada, sin bloqueo y fuera del grupo de la original. */
+export function duplicateLayer(source: Layer, taken: readonly Layer[]): Layer {
+  const step = Math.max(10, Math.round(Math.min(source.width, source.height) * 0.04));
+  const copy = {
+    ...source,
+    id: newLayerId(taken),
+    name: source.name ? `${source.name} (copia)`.slice(0, 120) : '',
+    x: source.x + step,
+    y: source.y + step,
+    locked: false,
+  } as Layer;
+  delete copy.groupId; // la copia no entra en el grupo de la original
+  return copy;
 }
 
 let groupCounter = 0;
@@ -357,7 +373,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       };
     }
     case 'replace':
-      return commit(state, action.document, null, action.select ?? state.selectedIds);
+      return commit(state, action.document, null, action.select ?? state.selectedIds, action.pageId);
     case 'checkpoint':
       return state.lastKey === null ? state : { ...state, lastKey: null };
     case 'add': {
@@ -407,16 +423,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case 'duplicate': {
       const source = layers.find((layer) => layer.id === action.id);
       if (!source || layers.length >= MAX_LAYERS) return state;
-      const step = Math.max(10, Math.round(Math.min(source.width, source.height) * 0.04));
-      const copy = {
-        ...source,
-        id: newLayerId(layers),
-        name: source.name ? `${source.name} (copia)`.slice(0, 120) : '',
-        x: source.x + step,
-        y: source.y + step,
-        locked: false,
-      } as Layer;
-      delete copy.groupId; // la copia no entra en el grupo de la original
+      const copy = duplicateLayer(source, layers);
       return commitLayers(state, [...layers, copy], null, [copy.id]);
     }
     case 'removeSelection': {

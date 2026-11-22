@@ -60,7 +60,15 @@ import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
 import { useImageAgencyBlock } from '@/features/ai/imageApi';
-import { canEditPhoto, canEditWithAi, useAiEditOptions, useOriginalAsset } from '@/features/photo-edit/api';
+import {
+  canEditPhoto,
+  canEditWithAi,
+  useAiEditOptions,
+  useOriginalAsset,
+  useSaveEdit,
+} from '@/features/photo-edit/api';
+import { canRemoveBackground, describeRemovalError } from '@/features/photo-edit/cutout/remover';
+import { runQuickEdit } from '@/features/photo-edit/quickEdit';
 import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
 import type { PhotoToolsContext } from './editor/panels/PhotoPanel';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
@@ -84,7 +92,7 @@ import {
 } from './api';
 import { aiContentReasons, describeAiReasons } from './aiLabel';
 import { toneOfPalette } from './copilot/legibility';
-import { speechRecognitionAvailable } from './copilot/speech';
+import type { CopilotHost } from './copilot/VoiceCopilot';
 import {
   allLayers,
   createEmptyDocument,
@@ -99,7 +107,7 @@ import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog'
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { assetIdsOf } from './editor/canvas/nodes';
 import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
-import { activePageIndex, editorReducer, initEditor } from './editor/history';
+import { activePageIndex, editorReducer, initEditor, type EditorAction } from './editor/history';
 import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { MultiSelectionPanel } from './editor/panels/ArrangeControls';
@@ -297,12 +305,31 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   // En modo agencia la imagen con IA es del personal de la agencia, no de los miembros de la marca.
   const imageAgencyBlocked = useImageAgencyBlock(brand.id, aiImageOn && brand.ai_mode === 'agency');
   const aiImage = aiImageOn && !imageAgencyBlocked;
-  // Copiloto por voz: IA de texto configurada en el servidor + su interruptor +
-  // dictado en el navegador. No redacta (coloca lo dictado), por eso sí sale en
-  // marcas en modo agencia (decisión provisional, docs/ESTADO.md).
-  const [voiceSupported] = useState(() => aiVoiceCopilotEnabled() && speechRecognitionAvailable());
-  const voiceCopilot = voiceSupported && copilotTask;
+  // Copiloto del editor: IA de texto configurada en el servidor + su interruptor.
+  // Las órdenes se dictan o se escriben, así que sale también en navegadores sin
+  // dictado. No redacta (coloca lo dictado), por eso sí sale en marcas en modo
+  // agencia (decisión provisional, docs/ESTADO.md).
+  const [copilotEnabled] = useState(() => aiVoiceCopilotEnabled());
+  const voiceCopilot = copilotEnabled && copilotTask;
   const [copilotOpen, setCopilotOpen] = useState(false);
+  /** Foto (capa) a la que el copiloto ha pedido quitar el fondo; se hace cuando su recurso está listo. */
+  const pendingCutout = useRef<string | null>(null);
+  const [cutoutRequest, setCutoutRequest] = useState(0);
+  /** Capa cuya foto se va a cambiar por otra de la biblioteca (orden del copiloto). */
+  const [replaceLayerId, setReplaceLayerId] = useState<string | null>(null);
+  const saveEdit = useSaveEdit(brand.id);
+  // El estado al día también fuera del ciclo de React: el copiloto encadena
+  // órdenes (deshacer y, acto seguido, otra) sin esperar a que se repinte.
+  const stateRef = useRef(state);
+  useLayoutEffect(() => {
+    stateRef.current = state;
+  });
+  /** Despacha una acción determinista (deshacer, sustituir, ir a una página) y devuelve cómo queda. */
+  const run = (action: EditorAction) => {
+    stateRef.current = editorReducer(stateRef.current, action);
+    dispatch(action);
+    return stateRef.current;
+  };
 
   // Página activa: la que se ve en el lienzo y la que cambian las órdenes de capas.
   const pageIndex = activePageIndex(state);
@@ -422,6 +449,23 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             : undefined,
       }
     : undefined;
+
+  // «Quita el fondo» dicho al copiloto: lo mismo que el botón del panel de la foto.
+  useEffect(() => {
+    if (!editablePhoto || editablePhoto.layerId !== pendingCutout.current || !editablePhoto.url) return;
+    pendingCutout.current = null;
+    const { row, url, layerId } = editablePhoto;
+    const notice = toast.loading('Quitando el fondo…');
+    runQuickEdit({ asset: row, url, edit: { kind: 'cutout' }, save: (input) => saveEdit.mutateAsync(input) }).then(
+      (result) => {
+        dispatch({ type: 'update', id: layerId, patch: { source: { kind: 'asset', assetId: result.id }, fit: 'contain' } });
+        toast.success('Fondo quitado. La foto original sigue en la biblioteca y se deshace con Ctrl+Z.', { id: notice });
+      },
+      (error: unknown) => toast.error(describeRemovalError(error) || translateError(error), { id: notice }),
+    );
+    // `saveEdit` cambia en cada pintado: basta con la petición y la foto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cutoutRequest, editablePhoto]);
 
   // Marca de contenido generado con IA: la calcula la base de datos al guardar
   // (`item.ai_generated`); aquí se adelanta con lo que hay en pantalla.
@@ -594,9 +638,16 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
   }
 
-  /** Guarda una versión nueva. Devuelve su número, o null si no se ha podido guardar (ya se ha avisado). */
-  function save(note: string, expected = expectedVersion): Promise<number | null> {
-    const document = state.document;
+  /**
+   * Guarda una versión nueva. Devuelve su número, o null si no se ha podido guardar (ya se ha avisado).
+   * Con `showIssues`, si el diseño no se puede guardar se abre el diálogo de guardar con los motivos.
+   */
+  function save(
+    note: string,
+    expected = expectedVersion,
+    showIssues = false,
+    document = state.document,
+  ): Promise<number | null> {
     setSaveIssues([]);
     return mutations.saveVersion.mutateAsync({ contentId, document, note, expectedVersion: expected }).then(
       (row) => {
@@ -610,6 +661,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       (error: unknown) => {
         if (error instanceof DocumentError) {
           setSaveIssues(error.issues.length ? error.issues : [{ path: '', message: error.message }]);
+          if (showIssues) setSaveOpen(true);
           return null;
         }
         setSaveOpen(false);
@@ -713,6 +765,48 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     event.preventDefault();
     setConfirmLeave(true);
   }
+
+  /** Lo que el copiloto pide al editor que no es cambiar el documento. */
+  const copilotHost: CopilotHost = {
+    history: (kind) => {
+      const before = stateRef.current;
+      const next = run({ type: kind });
+      return next === before ? null : { document: next.document, pageIndex: activePageIndex(next) };
+    },
+    goToPage: (index) => void run({ type: 'selectPage', index }),
+    // Con el documento al día (el de la orden que se acaba de aplicar, aunque aún no se haya pintado).
+    save: () => {
+      const document = stateRef.current.document;
+      if (JSON.stringify(document) === baseline) toast.message('No hay cambios que guardar.');
+      else void save('', undefined, true, document);
+    },
+    openTemplates: () => setTemplateOpen(true),
+    photoFlow: (flow, layerId) => {
+      const layer = allLayers(stateRef.current.document).find((l) => l.id === layerId);
+      if (!layer || layer.type !== 'image' || layer.source.kind !== 'asset') {
+        return 'Esa foto no es de la biblioteca: no se puede editar desde aquí.';
+      }
+      const assetId = layer.source.assetId;
+      run({ type: 'select', id: layerId, exact: true });
+      setPanel('layer');
+      if (flow === 'replace') {
+        setReplaceLayerId(layerId);
+        return null;
+      }
+      const row = (assets.data ?? []).find((asset) => asset.id === assetId);
+      if (!row) return 'La foto aún se está cargando: repite la orden en un momento.';
+      if (!canEditPhoto(row)) return 'Esa foto no se puede editar.';
+      if (flow === 'remove_background') {
+        if (!canRemoveBackground()) return 'Este navegador no puede quitar el fondo.';
+        pendingCutout.current = layerId;
+        setCutoutRequest((n) => n + 1);
+        return null;
+      }
+      setPhotoEditTab(flow === 'portrait' ? 'portrait' : 'enhance');
+      setPhotoEditing(true);
+      return null;
+    },
+  };
 
   const canvas = state.document.canvas;
   const full = layers.length >= MAX_LAYERS;
@@ -1143,10 +1237,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               aria-pressed={copilotOpen}
               onClick={() => setCopilotOpen((open) => !open)}
               data-testid="copilot-open"
-              title="Monta el diseño hablando: foto de fondo, logotipo y textos"
+              title="Dicta o escribe lo que quieres cambiar: textos, fotos, capas, páginas…"
             >
               <Mic className="h-4 w-4" aria-hidden />
-              Dictar
+              Copiloto
             </Button>
           )}
           <span className="mx-1 h-6 w-px bg-border" aria-hidden />
@@ -1191,8 +1285,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <VoiceCopilot
             orgId={org.id}
             brandId={brand.id}
+            brandName={brand.name}
             document={state.document}
             pageIndex={pageIndex}
+            selectedIds={state.selectedIds}
+            pageLimits={pageRange}
+            allowedRatios={allowed?.ratios ?? null}
+            documentAssets={(assets.data ?? []).map((asset) => ({
+              id: asset.id,
+              name: asset.file_name,
+              width: asset.width,
+              height: asset.height,
+            }))}
+            host={copilotHost}
             brand={{
               palette: (profile?.visual.colors ?? []).map((c) => ({ hex: c.hex.toUpperCase(), role: c.role })),
               fonts: brandStyle.fonts,
@@ -1201,9 +1306,9 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             logoIds={logoIds}
             selectedImage={selectedImage}
             libraryPath={`${brandBase}/biblioteca`}
-            onApply={(document, touched) => {
-              // Una orden dictada = un paso de deshacer.
-              dispatch({ type: 'replace', document, select: touched });
+            onApply={(document, touched, index) => {
+              // Una orden = un paso de deshacer (y la página en la que deja).
+              run({ type: 'replace', document, select: touched, pageId: document.pages[index]?.id });
               setPanel('layer');
             }}
             onClose={() => setCopilotOpen(false)}
@@ -1588,6 +1693,26 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                 type: 'add',
                 layer: newImageLayer(canvas, everyLayer, { id: asset.id, name: asset.file_name }),
               });
+            }}
+          />
+          {/* «Cambia esta foto» dicho al copiloto: otra foto de la biblioteca para la misma capa. */}
+          <ImagePickerDialog
+            brandId={brand.id}
+            libraryPath={`${brandBase}/biblioteca`}
+            title="Cambiar la foto"
+            open={replaceLayerId !== null}
+            onOpenChange={(open) => {
+              if (!open) setReplaceLayerId(null);
+            }}
+            onPick={(asset) => {
+              if (replaceLayerId) {
+                dispatch({
+                  type: 'update',
+                  id: replaceLayerId,
+                  patch: { source: { kind: 'asset', assetId: asset.id }, name: asset.file_name.slice(0, 120) },
+                });
+              }
+              setReplaceLayerId(null);
             }}
           />
           {aiImage && (

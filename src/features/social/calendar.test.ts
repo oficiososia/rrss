@@ -14,23 +14,26 @@ import {
 } from './calendar';
 
 describe('fechas del calendario', () => {
-  it('la semana empieza en lunes y el mes se ve en 6 semanas completas', () => {
+  it('la semana empieza en lunes y el mes se ve en las semanas completas que toca', () => {
     expect(startOfWeek(new Date(2026, 10, 19)).getDate()).toBe(16); // miércoles 19 → lunes 16
     expect(startOfWeek(new Date(2026, 10, 22)).getDate()).toBe(16); // domingo 22 → lunes 16
     const mes = viewRange('month', new Date(2026, 10, 19));
-    expect(mes.days).toHaveLength(42);
+    expect(mes.days).toHaveLength(42); // noviembre de 2026 empieza en domingo: 6 semanas
+    expect(viewRange('month', new Date(2027, 1, 10)).days).toHaveLength(28); // febrero de 2027: 4 semanas justas
+    expect(viewRange('month', new Date(2026, 11, 10)).days).toHaveLength(35); // diciembre de 2026: 5 semanas
     expect(mes.from.getDay()).toBe(1);
     expect(mes.days.some((d) => d.getMonth() === 10 && d.getDate() === 1)).toBe(true);
     expect(mes.days.some((d) => d.getMonth() === 10 && d.getDate() === 30)).toBe(true);
     expect(viewRange('week', new Date(2026, 10, 19)).days).toHaveLength(7);
-    const dia = viewRange('day', new Date(2026, 10, 19, 15));
-    expect(dia.to.getTime() - dia.from.getTime()).toBe(86_400_000);
+    const lista = viewRange('agenda', new Date(2026, 10, 19, 15));
+    expect(lista.days).toHaveLength(28);
+    expect(lista.from.getDate()).toBe(16);
   });
 
-  it('avanza por mes, semana o día', () => {
+  it('avanza por mes, semana o cuatro semanas en la lista', () => {
     expect(shiftAnchor('month', new Date(2026, 0, 31), 1).getMonth()).toBe(1);
     expect(shiftAnchor('week', new Date(2026, 10, 19), -1).getDate()).toBe(12);
-    expect(shiftAnchor('day', new Date(2026, 10, 30), 1).getDate()).toBe(1);
+    expect(shiftAnchor('agenda', new Date(2026, 10, 30), 1).getDate()).toBe(28);
   });
 
   it('arrastrar a otro día conserva la hora; a una hora del día, cambia la hora', () => {
