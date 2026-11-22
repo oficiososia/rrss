@@ -906,3 +906,29 @@ ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs
 - **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
   `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
   `VITE_REEL_LIKE_ENABLED=true`.
+
+## Inicio de la marca y Contenidos con miniaturas (rama `f42/inicio-contenidos`, 22/11/2026)
+
+- **Implementado**: Contenidos es una rejilla de tarjetas con la miniatura real de la pieza (primera
+  página dibujada con el motor de las plantillas y su caché; reels con su portada o el primer clip;
+  esquema de capas si no se puede dibujar; icono del formato si no hay diseño), vista de lista compacta
+  (se recuerda), pestañas por etapa con contador (Ideas · En preparación · Listas · Programadas ·
+  Publicadas: mezclan el estado de la pieza con el de su publicación), búsqueda, formato y campaña en
+  una fila, acciones rápidas (abrir, duplicar, programar, archivar con «Deshacer»), selección múltiple
+  para archivar, marca «Vacía» (sin ninguna versión guardada) y «Archivar las vacías» de una vez; la
+  pantalla vacía ofrece «Nueva idea» y hasta tres plantillas. «Nueva idea» elige el formato con
+  tarjetas (Publicación, Carrusel, Reel, Historia, con su proporción), el nombre es opcional («Reel · 22
+  nov») y «Crear y abrir» lleva al editor que toca. El inicio de la marca responde «qué hago hoy»:
+  accesos grandes (Nueva publicación, Nuevo reel, Hacer un reel como este si el servidor puede, Subir
+  fotos), la semana en siete columnas con miniaturas, lo parado con su botón de arreglo, lo último
+  publicado con cifras solo si existen y los avisos (Instagram sin conectar, acceso que caduca).
+- **Quitado del inicio** (a propósito): los contadores de archivos y fuentes, «Accesos rápidos» y
+  «Actividad reciente» (sigue en Configuración → Actividad). El porcentaje del perfil queda como una
+  línea para quien gestiona la marca, solo si falta algo.
+- **Sin migración.** Las piezas y las publicaciones se leen con las tablas de siempre.
+- **Probado**: unitarias (etapas, semana), componentes (lista, miniaturas, acciones, vacío, inicio),
+  maquetación en Chromium a 375, 768 y 1366 px (sin scroll lateral, miniaturas dibujadas de verdad, el
+  inicio cabe en 1366×768 y 1024×768 sin bajar la página). Las e2e se adaptaron (el formato ya no es un
+  desplegable) y corren en CI.
+- **Sin probar**: con una marca real y muchas piezas (la lista trae hasta 600 y enseña de 24 en 24);
+  miniaturas de reels con vídeo real (en el banco no hay recursos firmados); el aspecto en un móvil real.
