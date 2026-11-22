@@ -21,8 +21,11 @@ import {
   dryRunCase,
   encodeWav,
   evaluateResponse,
+  failureOf,
   fitsJsonRoute,
+  fitsStepwise,
   formatAggregates,
+  isIncomplete,
   formatDryReport,
   main,
   parseArgs,
@@ -47,13 +50,14 @@ import {
   BENCH_DOCUMENTS,
   BENCH_GROUPS,
   BENCH_LIBRARIES,
+  MULTI_CASES,
   PLAN_CASES,
   type BenchCase,
   type ExpectedOperation,
 } from '../../scripts/copiloto-banco/casos.ts';
 import { copilotOp, isDictated } from '../../src/features/content/copilot/operations';
 import { isAiGenerated, matchLibraryPhotos, namesFoodOrProduct } from '../../src/features/content/copilot/plan';
-import type { CopilotMode } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot.ts';
+import { MAX_TOOL_TURNS, type CopilotMode } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot.ts';
 
 const byId = (id: string): BenchCase => {
   const found = BENCH_CASES.find((item) => item.id === id);
@@ -80,7 +84,7 @@ describe('casos del banco', () => {
     for (const group of ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio']) {
       expect(count(group), group).toBeGreaterThanOrEqual(5);
     }
-    // Identificadores únicos y documentos de partida que existen (los cuatro se usan).
+    // Identificadores únicos y documentos de partida que existen (los cinco se usan).
     expect(new Set(BENCH_CASES.map((item) => item.id)).size).toBe(BENCH_CASES.length);
     expect(new Set(BENCH_CASES.map((item) => item.document))).toEqual(new Set(Object.keys(BENCH_DOCUMENTS)));
     expect(BENCH_DOCUMENTS.seleccion.selectedIds).toEqual(['titulo']);
@@ -91,6 +95,74 @@ describe('casos del banco', () => {
     expect(count('plan')).toBe(PLAN_CASES.length);
     expect(PLAN_CASES.length).toBeGreaterThanOrEqual(5);
     expect(PLAN_CASES.length).toBeLessThanOrEqual(8);
+  });
+
+  it('órdenes con varias acciones o corregidas a mitad de frase (`multi`): las tres que fallaron en la prueba real y diez más', () => {
+    expect(BENCH_GROUPS).toContain('multi');
+    expect(MULTI_CASES.length).toBeGreaterThanOrEqual(13);
+    expect(BENCH_CASES.filter((item) => item.group === 'multi')).toEqual(MULTI_CASES);
+    // El documento de la prueba real: foto «Chuletón» de fondo, franja, subtítulo y título, en ese orden.
+    const steak = BENCH_DOCUMENTS.chuleton;
+    expect(steak.document.pages[0]!.layers.map((layer) => `${layer.id}:${layer.type}`)).toEqual([
+      'fondo:image',
+      'banda:shape',
+      'sub:text',
+      'titulo:text',
+    ]);
+    expect(steak.document.pages[0]!.layers[0]).toMatchObject({ name: 'Chuletón', x: 0, y: 0, width: 1080, height: 1350 });
+    expect(steak.document.pages[0]!.layers[1]).toMatchObject({ shape: 'rectangle', name: 'banda' });
+    expect(steak.selectedIds).toEqual([]);
+    // Todas van al modelo (ninguna es de las frecuentes) y todas piden dos o tres operaciones.
+    for (const item of MULTI_CASES) {
+      expect(item, item.id).toMatchObject({ document: 'chuleton', local: false });
+      expect(item.expected.length, item.id).toBeGreaterThanOrEqual(2);
+      expect(item.expected.length, item.id).toBeLessThanOrEqual(3);
+    }
+    // 1. «quita la franja y sube el título al centro de la foto»: las dos cosas.
+    const band = byId('multi-franja-titulo');
+    expect(band.order).toBe('quita la franja y sube el título al centro de la foto');
+    expect(band.expected).toEqual([
+      { op: 'remove_layer', target: 'banda' },
+      { op: 'move_layer', target: 'titulo', position: 'middle' },
+    ]);
+    // Centrarlo además en horizontal también vale; dejarlo donde estaba, no.
+    const moved = [
+      { op: 'remove_layer', target: 'banda' },
+      { op: 'move_layer', target: 'titulo', position: 'middle', align: 'center' },
+    ];
+    expect(compareOperations(band.expected, moved, { anyOrder: true }).ok).toBe(true);
+    expect(compareOperations(band.expected, [moved[1]!, moved[0]!], { anyOrder: band.anyOrder }).ok).toBe(true);
+    expect(compareOperations(band.expected, [moved[0]!], { anyOrder: true }).ok).toBe(false);
+    // 2. «el título, no, el subtítulo, más grande… y súbelo un poquito»: las dos sobre el SUBTÍTULO.
+    const corrected = byId('multi-subtitulo-corregido');
+    expect(corrected.order).toBe('eh... pon el... el título, no, el subtítulo, más grande... y súbelo un poquito');
+    const right = [
+      { op: 'resize_layer', target: 'sub', steps: 1 },
+      { op: 'move_layer', target: 'sub', dy: -1 },
+    ];
+    expect(compareOperations(corrected.expected, right, { anyOrder: true }).ok).toBe(true);
+    // Lo que hizo el modelo, y variantes que tampoco valen: tocar el título, o tocarlo además.
+    for (const received of [
+      [{ op: 'resize_layer', target: 'titulo', steps: 1 }],
+      [{ op: 'resize_layer', target: 'titulo', steps: 1 }, right[1]!],
+      [...right, { op: 'resize_layer', target: 'titulo', steps: 1 }],
+      [right[0]!, { op: 'move_layer', target: 'sub', dy: 1 }],
+      [{ op: 'resize_layer', target: 'sub', steps: -1 }, right[1]!],
+    ]) {
+      expect(compareOperations(corrected.expected, received, { anyOrder: true }).ok, JSON.stringify(received)).toBe(false);
+    }
+    // 3. «añade una página nueva y duplica esta»: las dos, en cualquier orden.
+    const pages = byId('multi-pagina-nueva-duplica');
+    expect(pages.order).toBe('añade una página nueva y duplica esta');
+    expect(pages).toMatchObject({ anyOrder: true, expected: [{ op: 'page', action: 'add' }, { op: 'page', action: 'duplicate' }] });
+    expect(compareOperations(pages.expected, [{ op: 'page', action: 'duplicate' }, { op: 'page', action: 'add' }], { anyOrder: true }).ok).toBe(true);
+    // Las demás: correcciones de objetivo, de valor y de acción, con muletillas.
+    const corrections = MULTI_CASES.filter((item) => /\bno\b|mejor|déjalo/i.test(item.order));
+    expect(corrections.length).toBeGreaterThanOrEqual(6);
+    expect(MULTI_CASES.filter((item) => /eh|a ver|bueno|…|\.\.\./i.test(item.order)).length).toBeGreaterThanOrEqual(8);
+    expect(MULTI_CASES.filter((item) => item.expected.length === 3).length).toBeGreaterThanOrEqual(2);
+    // Se filtran con --grupo multi.
+    expect(parseArgs(['--grupo', 'multi'])).toMatchObject({ group: 'multi' });
   });
 
   it('los casos de plan montan una pieza: hostelería, gimnasio y genérica, uno titubeante, uno sin fotos y uno que pide generar comida', () => {
@@ -175,9 +247,19 @@ describe('modo en seco', () => {
     const failures = report.results.filter((result) => !result.ok);
     expect(failures.map((failure) => `${failure.caseId} [${failure.mode}]: ${failure.problems.join(' | ')}`)).toEqual([]);
     expect(report.ok).toBe(true);
-    // Tres comprobaciones por caso: intérprete local, herramientas y JSON.
-    expect(report.results).toHaveLength(BENCH_CASES.length * 3);
+    // Tres comprobaciones por caso (intérprete local, herramientas y JSON) y, en los de varias
+    // acciones que caben en las vueltas, otra más: por herramientas con un modelo que las llama de una en una.
+    const stepwise = BENCH_CASES.filter((item) => fitsStepwise(item));
+    expect(stepwise.length).toBeGreaterThanOrEqual(30);
+    expect(report.results).toHaveLength(BENCH_CASES.length * 3 + stepwise.length);
     const of = (mode: string) => report.results.filter((result) => result.mode === mode);
+    expect(of('turns').map((result) => result.caseId)).toEqual(stepwise.map((item) => item.id));
+    for (const result of of('turns')) {
+      // Una vuelta por operación y otra para cerrar, con el tope del servidor.
+      expect(result.turns, result.caseId).toBe(Math.min(MAX_TOOL_TURNS, byId(result.caseId).expected.length + 1));
+    }
+    // Todo junto es siempre una sola vuelta.
+    expect(of('tools').every((result) => result.turns === 1)).toBe(true);
     // Por herramientas se expresan TODOS; por JSON, solo los que caben.
     expect(of('tools').every((result) => result.tokens !== undefined && !result.notExpressible)).toBe(true);
     expect(of('json').filter((result) => result.notExpressible).map((result) => result.caseId)).toEqual(
@@ -197,9 +279,126 @@ describe('modo en seco', () => {
     expect(text).toMatch(new RegExp(`^plan\\s+${PLAN_CASES.length}\\s+0\\s+${PLAN_CASES.length}$`, 'm'));
     expect(text).toContain(`Planes (órdenes que montan una pieza): ${PLAN_CASES.length} casos.`);
     expect(text).toContain('el banco no genera imágenes ni recorta');
+    expect(text).toMatch(new RegExp(`^multi\\s+${MULTI_CASES.length}\\s+0\\s+\\d+$`, 'm'));
+    expect(text).toContain(`así se han probado ${stepwise.length} casos de entre 2 y ${MAX_TOOL_TURNS} acciones.`);
+    // Con ese tope, todos los casos de varias acciones del banco caben de una en una.
+    expect(stepwise.map((item) => item.id)).toEqual(BENCH_CASES.filter((item) => item.expected.length >= 2).map((item) => item.id));
+    expect(text).not.toContain('NO cabrían');
     expect(text).toMatch(/^tools\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+$/m);
     expect(text).toContain(`La ruta JSON no puede expresar ${BENCH_CASES.filter((item) => !item.json).length} casos`);
     console.info(text);
+  });
+
+  it(`varias acciones: el modelo simulado las llama todas y cierra con «done» (una vuelta) o de una en una (hasta ${MAX_TOOL_TURNS} vueltas)`, async () => {
+    const band = byId('multi-franja-titulo');
+    // Todas juntas y el cierre: una vuelta, las dos operaciones y la nota de «done».
+    const together = await simulateServer(band, 'tools');
+    expect(together.turns).toBe(1);
+    expect((together.body.operations as { op: string }[]).map((operation) => operation.op)).toEqual(['remove_layer', 'move_layer']);
+    expect(together.body.note).toBe('Hecho.');
+    expect(together.body.discarded).toEqual([]);
+    // De una en una: una vuelta por operación y otra para cerrar; llega lo mismo.
+    const stepwise = await simulateServer(band, 'tools', { stepwise: true });
+    expect(stepwise.turns).toBe(band.expected.length + 1);
+    expect(stepwise.body.operations).toEqual(together.body.operations);
+    expect(stepwise.body.note).toBe('Hecho.');
+    expect(await dryRunCase(band, 'tools', { stepwise: true })).toMatchObject({
+      mode: 'turns',
+      ok: true,
+      turns: band.expected.length + 1,
+      problems: [],
+    });
+    // Tres acciones de una en una: tres vueltas y la del cierre, con su nota.
+    const three = byId('multi-tres-acciones');
+    expect(fitsStepwise(three)).toBe(true);
+    const full = await simulateServer(three, 'tools', { stepwise: true });
+    expect(full.turns).toBe(4);
+    expect(full.body.operations).toHaveLength(3);
+    expect(full.body.note).toBe('Hecho.');
+    // Un plan (cuatro llamadas) cabe entero: cuatro vueltas y el cierre.
+    const plan = byId('plan-menu-otono');
+    expect(plan.expected).toHaveLength(4);
+    expect(fitsStepwise(plan)).toBe(true);
+    const whole = await simulateServer(plan, 'tools', { stepwise: true });
+    expect(whole.turns).toBe(5);
+    expect(whole.turns).toBeLessThanOrEqual(MAX_TOOL_TURNS);
+    expect(evaluateResponse(plan, whole.body)).toMatchObject({ ok: true, problems: [] });
+    // También el que espera además una frase para la persona (tres llamadas y el cierre con la nota).
+    expect(fitsStepwise(byId('plan-genera-plato'))).toBe(true);
+    for (const item of PLAN_CASES) expect(fitsStepwise(item), item.id).toBe(true);
+    // Una orden ambigua (solo el cierre, con la pregunta): una vuelta en los dos casos.
+    const question = await simulateServer(byId('ambigua-el-texto'), 'tools', { stepwise: true });
+    expect(question).toMatchObject({ turns: 1, body: { operations: [], note: '¿A qué te refieres exactamente? Eso no lo puedo hacer así.' } });
+    expect(fitsStepwise(byId('ambigua-el-texto'))).toBe(false);
+    expect(fitsStepwise(byId('simple-sube-titulo'))).toBe(false);
+
+    // Lo que NO cabe: más acciones que vueltas. De una en una se queda en el tope: es una orden incompleta.
+    const words = ['Uno', 'Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis', 'Siete', 'Ocho'].slice(0, MAX_TOOL_TURNS + 1);
+    const long: BenchCase = {
+      ...byId('simple-titulo'),
+      id: 'demasiadas-acciones',
+      order: `Escribe estos textos: ${words.join('. ')}.`,
+      expected: words.map((word) => ({ op: 'add_text' as const, text: word })),
+    };
+    expect(words).toHaveLength(MAX_TOOL_TURNS + 1);
+    expect(fitsStepwise(long)).toBe(false);
+    // Todas juntas, sí caben (una vuelta).
+    expect(await dryRunCase(long, 'tools')).toMatchObject({ ok: true, turns: 1 });
+    const cut = await simulateServer(long, 'tools', { stepwise: true });
+    expect(cut.turns).toBe(MAX_TOOL_TURNS);
+    expect(cut.body.operations).toHaveLength(MAX_TOOL_TURNS);
+    const evaluation = evaluateResponse(long, cut.body);
+    expect(evaluation.ok).toBe(false);
+    expect(evaluation.failure).toBe('incomplete');
+    // Justo el tope de acciones cabe (sin vuelta para el cierre), salvo que se espere además una frase.
+    const exact: BenchCase = { ...long, id: 'justas', expected: long.expected.slice(0, MAX_TOOL_TURNS) };
+    expect(fitsStepwise(exact)).toBe(true);
+    expect(fitsStepwise({ ...exact, note: true })).toBe(false);
+    expect(await dryRunCase(exact, 'tools', { stepwise: true })).toMatchObject({ ok: true, turns: MAX_TOOL_TURNS });
+    // El informe lo dice: cuántos se han probado de una en una y cuáles no cabrían.
+    const report = await dryRun(MULTI_CASES, ['tools']);
+    expect(report.ok).toBe(true);
+    expect(report.results.filter((result) => result.mode === 'turns')).toHaveLength(MULTI_CASES.length);
+    const text = formatDryReport(report, MULTI_CASES, { detail: true });
+    expect(text).toContain(`hasta ${MAX_TOOL_TURNS} vueltas: así se han probado ${MULTI_CASES.length} casos de entre 2 y ${MAX_TOOL_TURNS} acciones.`);
+    expect(text).not.toContain('NO cabrían');
+    expect(text).toMatch(/^multi-franja-titulo\s+turns\s+bien \(3 vueltas\)/m);
+    // Los planes del banco caben todos; un caso con más acciones que vueltas, no, y se nombra.
+    expect(formatDryReport(await dryRun(PLAN_CASES, ['tools']), PLAN_CASES)).not.toContain('NO cabrían');
+    expect(formatDryReport(await dryRun([band, long], ['tools']), [band, long])).toContain(
+      'NO cabrían enteros 1 casos (más acciones que vueltas): demasiadas-acciones.',
+    );
+    // Solo por JSON no hay variante de una en una.
+    expect((await dryRun([band], ['json'])).results.map((result) => result.mode)).toEqual(['local', 'json']);
+  });
+
+  it('«añade una página nueva y duplica esta»: en el documento final hay una copia de la original y una vacía, llegue en el orden que llegue', async () => {
+    const pages = byId('multi-pagina-nueva-duplica');
+    expect(pages.pagesAfter).toEqual({ total: 4, copiesOfStart: 1, empty: 1 });
+    const add = copilotOp({ op: 'page', action: 'add' });
+    const duplicate = copilotOp({ op: 'page', action: 'duplicate' });
+    // Los dos órdenes dejan lo mismo: la página del chuletón, su copia, una vacía y la que ya había.
+    expect(applyProblems(pages, [add, duplicate])).toEqual([]);
+    expect(applyProblems(pages, [duplicate, add])).toEqual([]);
+    // A medias, o haciendo otra cosa, el documento final no cuadra y se dice qué falta.
+    expect(applyProblems(pages, [add])).toEqual([
+      'Se esperaban 4 páginas y quedan 3.',
+      'Se esperaban 1 copias de la página de partida (con sus capas) y hay 0.',
+    ]);
+    expect(applyProblems(pages, [duplicate])).toEqual(['Se esperaban 4 páginas y quedan 3.', 'Se esperaban 1 páginas vacías y hay 0.']);
+    expect(applyProblems(pages, [add, add])).toEqual([
+      'Se esperaban 1 copias de la página de partida (con sus capas) y hay 0.',
+      'Se esperaban 1 páginas vacías y hay 2.',
+    ]);
+    expect(applyProblems(pages, [duplicate, duplicate])).toEqual([
+      'Se esperaban 1 copias de la página de partida (con sus capas) y hay 2.',
+      'Se esperaban 1 páginas vacías y hay 0.',
+    ]);
+    // En seco pasa por las dos formas (todo junto y de una en una).
+    expect(await dryRunCase(pages, 'tools')).toMatchObject({ ok: true, problems: [] });
+    expect(await dryRunCase(pages, 'tools', { stepwise: true })).toMatchObject({ ok: true, problems: [] });
+    // Un caso sin esa comprobación no mira las páginas.
+    expect(applyProblems({ ...pages, pagesAfter: undefined }, [add])).toEqual([]);
   });
 
   it('lo que el caso dice que resuelve el intérprete local, lo resuelve sin IA; lo demás va al modelo', () => {
@@ -626,14 +825,67 @@ describe('agregados del modo real', () => {
     expect(aggregateResults([])).toEqual([]);
 
     const text = formatAggregates(aggregates);
-    expect(text).toMatch(/^openai\/modelo-a\s+tools\s+8\/10\s+80\.0\s+500\/1000\s+650\/1150\s+145\s+1500\s+20\s+0\.000055\s+0\.000545$/m);
-    expect(text).toMatch(/^desconocido\s+tools\s+1\/1\s+100\.0\s+—\/—\s+900\/900\s+—\s+—\s+—\s+—\s+0\.000000$/m);
+    // Tras los aciertos: incompletas, equivocadas, errores y cerradas en la primera vuelta («—» = no se sabe).
+    expect(text).toMatch(/^openai\/modelo-a\s+tools\s+8\/10\s+80\.0\s+0\s+2\s+0\s+—\s+500\/1000\s+650\/1150\s+145\s+1500\s+20\s+0\.000055\s+0\.000545$/m);
+    expect(text).toMatch(/^openai\/modelo-a\s+json\s+1\/2\s+50\.0\s+0\s+0\s+1\s+—\s+1000\/2000/m);
+    expect(text).toMatch(/^desconocido\s+tools\s+1\/1\s+100\.0\s+0\s+0\s+0\s+—\s+—\/—\s+900\/900\s+—\s+—\s+—\s+—\s+0\.000000$/m);
     // La lista de fallos enseña lo esperado y lo recibido.
     expect(text).toContain('Fallos de openai/modelo-a por «tools» (2):');
     expect(text).toContain('esperado: [{"op":"move_layer","target":"titulo","dy":-2}]');
     expect(text).toContain('recibido: [{"op":"resize_layer","target":"titulo","steps":1}]');
     expect(text).toContain('- caso [HTTP 502]');
     expect(formatAggregates([])).toBe('Sin resultados.');
+  });
+
+  it('separa las órdenes incompletas de las equivocadas y de los errores, y cuenta las que cerraron en la primera vuelta', () => {
+    const expected: ExpectedOperation[] = [
+      { op: 'remove_layer', target: 'banda' },
+      { op: 'move_layer', target: 'titulo', position: 'middle' },
+    ];
+    const removed = { op: 'remove_layer', target: 'banda' };
+    const moved = { op: 'move_layer', target: 'titulo', position: 'middle' };
+    // A medias: lo recibido es parte de lo esperado.
+    expect(isIncomplete(expected, [removed])).toBe(true);
+    expect(isIncomplete(expected, [moved])).toBe(true);
+    expect(isIncomplete(expected, [])).toBe(true);
+    // No es «a medias»: completo, con algo equivocado, o con algo de más.
+    expect(isIncomplete(expected, [removed, moved])).toBe(false);
+    expect(isIncomplete(expected, [{ op: 'remove_layer', target: 'titulo' }])).toBe(false);
+    expect(isIncomplete(expected, [removed, { op: 'page', action: 'add' }])).toBe(false);
+    expect(isIncomplete(expected, [removed, removed])).toBe(false);
+    expect(isIncomplete([], [])).toBe(false);
+    // Dos esperadas iguales: una recibida es la mitad.
+    expect(isIncomplete([expected[0]!, expected[0]!], [removed])).toBe(true);
+
+    const items = [
+      result({ caseId: 'bien', expected, received: [removed, moved], closedFirstTurn: true }),
+      result({ caseId: 'a-medias', ok: false, failure: 'incomplete', expected, received: [removed], closedFirstTurn: false }),
+      // Guardado antes de que se anotase el tipo de fallo: se deduce de lo esperado y lo recibido.
+      result({ caseId: 'a-medias-antiguo', ok: false, expected, received: [moved], closedFirstTurn: false }),
+      result({ caseId: 'otra-capa', ok: false, expected, received: [{ op: 'remove_layer', target: 'titulo' }], closedFirstTurn: true }),
+      result({ caseId: 'sin-nota', ok: false, failure: 'wrong', expected, received: [removed, moved], closedFirstTurn: null }),
+      result({ caseId: 'caido', ok: false, status: 502, expected, received: [] }),
+      result({ caseId: 'fuera-de-contrato', ok: false, failure: 'error', expected, received: [] }),
+    ];
+    expect(items.map((item) => failureOf(item))).toEqual([null, 'incomplete', 'incomplete', 'wrong', 'wrong', 'error', 'error']);
+    const [aggregate] = aggregateResults(items);
+    expect(aggregate).toMatchObject({ total: 7, hits: 1, incomplete: 2, wrong: 2, errors: 2, closedKnown: 4, closedFirst: 2 });
+    const text = formatAggregates([aggregate!]);
+    const header = text.split('\n')[0]!;
+    expect(header).toMatch(/aciertos\s+%\s+órdenes incompletas\s+equivocadas\s+errores\s+cerradas en la 1\.ª vuelta\s+lat\. servidor/);
+    expect(text).toMatch(/^openai\/modelo-a\s+tools\s+1\/7\s+14\.3\s+2\s+2\s+2\s+2\/4\s+800\/800/m);
+    expect(text).toContain('Órdenes incompletas: faltó alguna operación esperada (lo recibido era correcto, pero no todo).');
+    // El coste que se ve es el de la primera generación de cada orden: se dice tal cual.
+    expect(text).toContain(
+      `Por herramientas, una orden puede ser de varias generaciones (una por vuelta, hasta ${MAX_TOOL_TURNS}) y el banco solo ve la primera`,
+    );
+    expect(text).toContain('cuántas vueltas más hubo no se puede saber desde fuera');
+    expect(text).toContain('  - a-medias [incompleta]');
+    expect(text).toContain('  - a-medias-antiguo [incompleta]');
+    expect(text).toContain('  - otra-capa [equivocada]');
+    expect(text).toContain('  - caido [HTTP 502]');
+    // Por JSON (o sin poder leer la generación) no se sabe si cerró: «—».
+    expect(formatAggregates(aggregateResults([result({ mode: 'json' })]))).toMatch(/^openai\/modelo-a\s+json\s+1\/1\s+100\.0\s+0\s+0\s+0\s+—\s+800\/800/m);
   });
 });
 
@@ -667,6 +919,8 @@ function fakeService(
     override?: (benchCase: BenchCase, mode: CopilotMode, call: number) => Response | Error | undefined;
     transcript?: string;
     generations?: boolean;
+    /** ¿Llamó el modelo al cierre (`done`) en su primera respuesta? Por defecto, sí. */
+    closed?: boolean;
   } = {},
 ) {
   const calls: Recorded[] = [];
@@ -680,7 +934,21 @@ function fakeService(
     if (url.includes('/rest/v1/ai_generations')) {
       if (options.generations === false) return json(403, { message: `permiso denegado para ${TOKEN}` });
       return json(200, [
-        { provider: 'openai', model: 'modelo-de-prueba', usage: { input_tokens: 210, output_tokens: 35, cache_read_input_tokens: 2900 }, cost_micros: '321', latency_ms: 640 },
+        {
+          provider: 'openai',
+          model: 'modelo-de-prueba',
+          usage: { input_tokens: 210, output_tokens: 35, cache_read_input_tokens: 2900 },
+          cost_micros: '321',
+          latency_ms: 640,
+          // La salida de la primera vuelta: las llamadas del modelo, con o sin el cierre.
+          output: {
+            text: '',
+            tool_calls: [
+              { name: 'remove_layer', arguments: { target: 'c2' } },
+              ...(options.closed === false ? [] : [{ name: 'done', arguments: { note: 'Hecho.' } }]),
+            ],
+          },
+        },
       ]);
     }
     if (url.endsWith('/functions/v1/ai-transcribe')) {
@@ -804,7 +1072,7 @@ describe('modo real (`--apply`) con un servicio simulado', () => {
     // El modelo, los tokens, el coste y la latencia salen de ai_generations, con la sesión de la persona.
     const lookup = service.calls.find((call) => call.url.includes('/rest/v1/ai_generations'))!;
     expect(lookup.url).toBe(
-      'https://proyecto-de-prueba.supabase.co/rest/v1/ai_generations?id=eq.66666666-6666-4666-8666-666666666666&select=provider,model,usage,cost_micros,latency_ms',
+      'https://proyecto-de-prueba.supabase.co/rest/v1/ai_generations?id=eq.66666666-6666-4666-8666-666666666666&select=provider,model,usage,cost_micros,latency_ms,output',
     );
     expect(lookup.headers).toMatchObject({ authorization: `Bearer ${TOKEN}`, apikey: ANON });
     expect(report.results[0]).toMatchObject({
@@ -817,12 +1085,14 @@ describe('modo real (`--apply`) con un servicio simulado', () => {
       costMicros: 321,
       status: 200,
       generationId: '66666666-6666-4666-8666-666666666666',
+      // De esa primera generación sale también si el modelo cerró con «done» a la primera.
+      closedFirstTurn: true,
     });
     expect(report.results[0]!.e2eMs).toBe(250);
 
     // Tabla final por modelo y ruta, y resultados guardados para comparar con otra ejecución.
     const text = output();
-    expect(text).toMatch(new RegExp(`^openai/modelo-de-prueba\\s+tools\\s+${cases.length}/${cases.length}\\s+100\\.0\\s+640/640\\s+250/250\\s+210\\s+2900\\s+35\\s+0\\.000321`, 'm'));
+    expect(text).toMatch(new RegExp(`^openai/modelo-de-prueba\\s+tools\\s+${cases.length}/${cases.length}\\s+100\\.0\\s+0\\s+0\\s+0\\s+${cases.length}/${cases.length}\\s+640/640\\s+250/250\\s+210\\s+2900\\s+35\\s+0\\.000321`, 'm'));
     expect(text).toMatch(/^openai\/modelo-de-prueba\s+json\s+/m);
     expect(text).toContain('Audio: sin --audio <carpeta>, no se prueban grabaciones.');
     const stored = readOutput(file);
@@ -877,13 +1147,52 @@ describe('modo real (`--apply`) con un servicio simulado', () => {
     expect(report.results[0]).toMatchObject({
       problems: ['Operación 1: se esperaba «move_layer» y ha llegado «resize_layer».'],
       received: [{ op: 'resize_layer', target: 'titulo', steps: 1 }],
+      // Hizo otra cosa: equivocada, no incompleta.
+      failure: 'wrong',
     });
     expect(sleeps).toEqual([40, 40, 40, 40]);
     const text = output();
-    expect(text).toMatch(/^openai\/modelo-de-prueba\s+tools\s+1\/2\s+50\.0/m);
+    expect(text).toMatch(/^openai\/modelo-de-prueba\s+tools\s+1\/2\s+50\.0\s+0\s+1\s+0\s+2\/2/m);
     expect(text).toContain('Fallos de openai/modelo-de-prueba por «tools» (1):');
     expect(text).toContain('esperado: [{"op":"move_layer","target":"titulo","dy":-2}]');
     expect(text).toContain('recibido: [{"op":"resize_layer","target":"titulo","steps":1}]');
+  });
+
+  it('las tres órdenes que fallaron en la prueba real: a medias es «incompleta», otra capa es «equivocada», y se ve si cerró a la primera', async () => {
+    const answer = (operations: Record<string, unknown>[]) =>
+      new Response(
+        JSON.stringify({ action: 'editor.copilot', generationId: '66666666-6666-4666-8666-666666666666', operations, discarded: [], note: '' }),
+        { status: 200 },
+      );
+    // Lo que respondió el modelo aquel día: una sola herramienta por orden.
+    const observed: Record<string, Record<string, unknown>[]> = {
+      'multi-franja-titulo': [{ op: 'remove_layer', target: 'banda' }],
+      'multi-subtitulo-corregido': [{ op: 'resize_layer', target: 'titulo', steps: 1 }],
+      'multi-pagina-nueva-duplica': [{ op: 'page', action: 'add' }],
+    };
+    const service = fakeService({ closed: false, override: (benchCase) => (observed[benchCase.id] ? answer(observed[benchCase.id]!) : undefined) });
+    const { real, output } = deps(service);
+    const report = await runReal({ ...OPTIONS, modes: ['tools'], group: 'multi' }, real);
+    expect(report.results).toHaveLength(MULTI_CASES.length);
+    const of = (id: string) => report.results.find((item) => item.caseId === id)!;
+    expect(of('multi-franja-titulo')).toMatchObject({ ok: false, failure: 'incomplete', closedFirstTurn: false });
+    expect(of('multi-franja-titulo').problems).toEqual(['Se esperaban 2 operaciones (remove_layer, move_layer) y han llegado 1 (remove_layer).']);
+    expect(of('multi-subtitulo-corregido')).toMatchObject({ ok: false, failure: 'wrong' });
+    expect(of('multi-pagina-nueva-duplica')).toMatchObject({ ok: false, failure: 'incomplete' });
+    // Las otras diez, con un modelo que acierta, pasan (y no llevan tipo de fallo).
+    const passed = report.results.filter((item) => item.ok);
+    expect(passed).toHaveLength(MULTI_CASES.length - 3);
+    expect(passed.every((item) => item.failure === undefined)).toBe(true);
+    expect(report.exitCode).toBe(1);
+    const text = output();
+    const n = MULTI_CASES.length;
+    expect(text).toMatch(new RegExp(`^openai/modelo-de-prueba\\s+tools\\s+${n - 3}/${n}\\s+\\d+\\.\\d\\s+2\\s+1\\s+0\\s+0/${n}\\s+640/640`, 'm'));
+    expect(text).toContain('  - multi-franja-titulo [incompleta]');
+    expect(text).toContain('  - multi-subtitulo-corregido [equivocada]');
+    expect(text).toContain('  - multi-pagina-nueva-duplica [incompleta]');
+    // Antes de empezar se avisa de que una orden puede ser de varias generaciones.
+    expect(text).toContain(`Por herramientas, cada orden puede ser de varias generaciones (una por vuelta, hasta ${MAX_TOOL_TURNS}`);
+    expect(text).toContain('el banco solo ve la primera por su generationId');
   });
 
   it('el token no aparece en ninguna salida ni error, aunque el servicio o la red lo citen', async () => {

@@ -90,9 +90,26 @@ export function buildChatBody(request: Omit<AiProviderRequest, 'signal'>): Recor
   const { cacheable, volatile } = orderedContext(input);
   const user = [...cacheable, ...volatile].map(renderContextPart).concat(input.prompt).join('\n\n');
 
-  const messages: { role: string; content: string }[] = [];
+  const messages: Record<string, unknown>[] = [];
   if (input.instructions) messages.push({ role: 'system', content: input.instructions });
   messages.push({ role: 'user', content: user });
+  // Vueltas anteriores: las llamadas del modelo y el resultado de cada una
+  // (`role: "tool"` con su `tool_call_id`), para que siga donde lo dejó.
+  for (const turn of input.toolTurns ?? []) {
+    const calls = turn.calls.map((call, index) => ({ ...call, id: call.id ?? `call_${messages.length}_${index}` }));
+    messages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: calls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: JSON.stringify(call.arguments ?? {}) },
+      })),
+    });
+    calls.forEach((call, index) => {
+      messages.push({ role: 'tool', tool_call_id: call.id, content: turn.results[index] ?? 'hecho' });
+    });
+  }
 
   const body: Record<string, unknown> = {
     model: request.model,
@@ -123,7 +140,7 @@ export function buildChatBody(request: Omit<AiProviderRequest, 'signal'>): Recor
         strict: true,
       },
     }));
-    body.tool_choice = 'auto';
+    body.tool_choice = input.toolChoice === 'required' ? 'required' : 'auto';
     body.parallel_tool_calls = true;
   }
   if (input.cacheKey && (cacheable.length > 0 || body.tools)) body.prompt_cache_key = input.cacheKey;
@@ -156,7 +173,7 @@ export function parseChatResponse(body: unknown): AiProviderResult {
   // Llamadas a herramientas: `message.tool_calls[]` con los argumentos como
   // texto JSON. Con llamadas, `content` suele venir a null.
   const rawCalls = field(message, 'tool_calls');
-  const toolCalls: { name: string; arguments: Json }[] = [];
+  const toolCalls: { id?: string; name: string; arguments: Json }[] = [];
   if (Array.isArray(rawCalls)) {
     for (const call of rawCalls) {
       const fn = field(call, 'function');
@@ -169,7 +186,8 @@ export function parseChatResponse(body: unknown): AiProviderResult {
       } catch {
         args = null;
       }
-      toolCalls.push({ name, arguments: args });
+      const id = field(call, 'id');
+      toolCalls.push({ ...(typeof id === 'string' && id ? { id } : {}), name, arguments: args });
     }
   }
 
@@ -215,6 +233,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions): AiProvider
   return {
     id: OPENAI_PROVIDER_ID,
     supportsTools: true,
+    supportsToolTurns: true,
 
     estimateUsage(request): AiUsage {
       return estimateTextUsage(request.input, { cacheWrites: false });

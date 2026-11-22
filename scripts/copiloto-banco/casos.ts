@@ -26,6 +26,7 @@ import type { LibraryPhoto } from '../../src/features/content/copilot/plan';
 export const BENCH_LOGO = '22222222-2222-4222-8222-222222222222';
 export const PHOTO_BACKGROUND = '11111111-1111-4111-8111-111111111111';
 export const PHOTO_DISH = '33333333-3333-4333-8333-333333333333';
+export const PHOTO_STEAK = '44444444-4444-4444-8444-444444444444';
 
 export interface BenchAsset {
   id: string;
@@ -47,6 +48,7 @@ export const BENCH_DOCUMENT_ASSETS: BenchAsset[] = [
   { id: PHOTO_BACKGROUND, name: 'salón.jpg', width: 1600, height: 2000 },
   { id: PHOTO_DISH, name: 'plato.jpg', width: 1200, height: 800 },
   { id: BENCH_LOGO, name: 'logo.png', width: 400, height: 200 },
+  { id: PHOTO_STEAK, name: 'Chuletón', width: 1600, height: 2000 },
 ];
 
 /** El fondo que «generaría» la IA en un plan. En el banco no se genera nada: es solo un identificador. */
@@ -146,7 +148,7 @@ export const BENCH_BRAND_PROFILE = {
 
 // ── Documentos de partida ────────────────────────────────────────────────
 
-export const BENCH_DOCUMENT_IDS = ['vacio', 'menu', 'seleccion', 'carrusel'] as const;
+export const BENCH_DOCUMENT_IDS = ['vacio', 'menu', 'seleccion', 'carrusel', 'chuleton'] as const;
 export type BenchDocumentId = (typeof BENCH_DOCUMENT_IDS)[number];
 
 export interface BenchDocument {
@@ -237,6 +239,46 @@ function buildDocuments(): Record<BenchDocumentId, BenchDocument> {
   carousel = withPageLayers(carousel, 1, [line('texto2', 'Semana 1')]);
   carousel = checked(withPageLayers(carousel, 2, [line('texto3', 'Apúntate hoy')]));
 
+  // Como la pieza de la prueba real del 22/11/2026: foto «Chuletón» de fondo, una franja («banda»),
+  // el subtítulo («sub») y el título («titulo»), del fondo al frente. Carrusel de dos páginas.
+  const steak = createEmptyDocument({ aspectRatio: '4:5', pages: 2 });
+  const steakPhoto: ImageLayer = { ...newImageLayer(steak.canvas, [], { id: PHOTO_STEAK, name: 'Chuletón' }), id: 'fondo' };
+  const band: ShapeLayer = {
+    ...newShapeLayer(steak.canvas, [], 'rectangle', BRAND_COLORS.acento),
+    id: 'banda',
+    name: 'banda',
+    x: 0,
+    y: 930,
+    width: 1080,
+    height: 300,
+  };
+  const steakSubtitle: TextLayer = {
+    ...newTextLayer(steak.canvas, [], { fontFamily: 'Inter', color: '#FFFFFF' }),
+    id: 'sub',
+    text: 'Solo este fin de semana',
+    y: 1110,
+    fontSize: 48,
+    fontWeight: 400,
+    height: 70,
+  };
+  const steakTitle: TextLayer = {
+    ...newTextLayer(steak.canvas, [], { fontFamily: 'Recoleta', color: '#FFFFFF' }),
+    id: 'titulo',
+    text: 'Chuletón a la brasa',
+    y: 960,
+    fontSize: 90,
+    height: 120,
+  };
+  const booking: TextLayer = {
+    ...newTextLayer(steak.canvas, [], { fontFamily: 'Inter', color: BRAND_COLORS.texto }),
+    id: 'reserva',
+    text: 'Reserva tu mesa',
+    fontSize: 64,
+    fontWeight: 400,
+  };
+  let steakDocument = withPageLayers(steak, 0, [steakPhoto, band, steakSubtitle, steakTitle]);
+  steakDocument = checked(withPageLayers(steakDocument, 1, [booking]));
+
   return {
     vacio: {
       id: 'vacio',
@@ -270,6 +312,14 @@ function buildDocuments(): Record<BenchDocumentId, BenchDocument> {
       selectedIds: [],
       pageLimits: { min: 2, max: 10 },
     },
+    chuleton: {
+      id: 'chuleton',
+      description: 'Carrusel 4:5 de dos páginas; en la primera: foto «Chuletón» de fondo, franja, subtítulo y título',
+      document: steakDocument,
+      pageIndex: 0,
+      selectedIds: [],
+      pageLimits: { min: 2, max: 10 },
+    },
   };
 }
 
@@ -283,8 +333,13 @@ export const BENCH_DOCUMENTS: Record<BenchDocumentId, BenchDocument> = buildDocu
  * el copiloto devuelve pasos de plan y el banco evalúa SOLO ese plan (pasos,
  * fondo sin comida, fotos de la biblioteca, disposición, titular). Nunca
  * ejecuta los pasos de pago ni genera imágenes.
+ *
+ * `multi` son órdenes con VARIAS acciones (dos o tres) y/o corregidas a mitad de
+ * frase: lo que falló en la prueba real del 22/11/2026, cuando el modelo llamaba
+ * a una sola herramienta por respuesta. Aciertan solo si llegan TODAS las
+ * operaciones esperadas y sobre la capa que se dijo al final.
  */
-export const BENCH_GROUPS = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio', 'titubeo', 'plan'] as const;
+export const BENCH_GROUPS = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio', 'titubeo', 'multi', 'plan'] as const;
 export type BenchGroup = (typeof BENCH_GROUPS)[number];
 /** Los grupos «base» (todo menos el habla titubeante y los planes). */
 export const BASE_GROUPS: readonly BenchGroup[] = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio'];
@@ -352,6 +407,13 @@ export interface BenchCase {
   local: boolean;
   /** Solo en el grupo `plan`: lo que debe cumplir el plan. */
   plan?: PlanExpectation;
+  /**
+   * Cómo deben quedar las páginas del documento tras aplicar las operaciones:
+   * cuántas en total, cuántas copias de la página de la que se partía (con sus
+   * mismas capas) y cuántas páginas vacías. Se comprueba sobre el documento
+   * final, llegue lo esperado en el orden que llegue.
+   */
+  pagesAfter?: { total: number; copiesOfStart: number; empty: number };
 }
 
 type CaseFields = Omit<BenchCase, 'group' | 'json' | 'local' | 'anyOrder' | 'note'> &
@@ -668,6 +730,160 @@ const HESITANT = group('titubeo', [
   { id: 'titubeo-blanco-negro', order: 'Pon la foto en sepia… no, mejor en blanco y negro', document: 'menu', expected: [{ op: 'adjust_image', target: BACKGROUND, filter: 'bw' }] },
 ]);
 
+// Varias acciones en una orden y correcciones a mitad de frase, sobre la pieza del chuletón.
+// Las tres primeras son las que fallaron en la prueba real (22/11/2026, gpt-6-luna por herramientas).
+export const MULTI_CASES: BenchCase[] = group('multi', [
+  {
+    // Llegó solo `remove_layer banda`: faltó mover el título.
+    id: 'multi-franja-titulo',
+    order: 'quita la franja y sube el título al centro de la foto',
+    document: 'chuleton',
+    json: true,
+    anyOrder: true,
+    expected: [
+      { op: 'remove_layer', target: 'banda' },
+      // Con `align: 'center'` además, también vale (lo que no se nombra no se compara).
+      { op: 'move_layer', target: 'titulo', position: 'middle' },
+    ],
+  },
+  {
+    // Llegó `resize_layer titulo +1`: capa equivocada (la corrección se perdió) y faltó subirlo.
+    id: 'multi-subtitulo-corregido',
+    order: 'eh... pon el... el título, no, el subtítulo, más grande... y súbelo un poquito',
+    document: 'chuleton',
+    anyOrder: true,
+    // Las dos sobre el SUBTÍTULO; cualquier operación sobre el título es una de más y el caso falla.
+    expected: [
+      { op: 'resize_layer', target: 'sub', steps: 1 },
+      { op: 'move_layer', target: 'sub', dy: -1 },
+    ],
+  },
+  {
+    // Llegó solo `page add`.
+    id: 'multi-pagina-nueva-duplica',
+    order: 'añade una página nueva y duplica esta',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'page', action: 'add' },
+      { op: 'page', action: 'duplicate' },
+    ],
+    // «Esta» es la página de la que se parte: de las dos que había se pasa a cuatro, con una
+    // copia de la primera (foto, franja, subtítulo y título) y una vacía; nunca dos vacías.
+    pagesAfter: { total: 4, copiesOfStart: 1, empty: 1 },
+  },
+  {
+    id: 'multi-quita-sub-agranda-titulo',
+    order: 'Quita el subtítulo y haz el título más grande',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'remove_layer', target: 'sub' },
+      { op: 'resize_layer', target: 'titulo', steps: 1 },
+    ],
+  },
+  {
+    // Corrección de OBJETIVO: se borra la franja, no el título.
+    id: 'multi-corrige-objetivo',
+    order: 'Eh… borra el título, no, no, la franja, y baja un poco el subtítulo',
+    document: 'chuleton',
+    json: true,
+    anyOrder: true,
+    expected: [
+      { op: 'remove_layer', target: 'banda' },
+      { op: 'move_layer', target: 'sub', dy: 1 },
+    ],
+  },
+  {
+    // Corrección de VALOR: el color final es el principal.
+    id: 'multi-corrige-color',
+    order: 'Pon la franja en el color de acento… no, mejor en el principal, y tráela al frente',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'style_shape', target: 'banda', color: BRAND_COLORS.principal },
+      { op: 'arrange_layer', target: 'banda', order: 'front' },
+    ],
+  },
+  {
+    // Corrección de ACCIÓN: no se duplica, se borra.
+    id: 'multi-corrige-accion',
+    order: 'Duplica el título… bueno, no, mejor bórralo, y difumina la foto',
+    document: 'chuleton',
+    json: true,
+    anyOrder: true,
+    expected: [
+      { op: 'remove_layer', target: 'titulo' },
+      { op: 'blur_image', target: BACKGROUND, blur: { between: [30, 50] } },
+    ],
+  },
+  {
+    id: 'multi-tres-acciones',
+    order: 'Sube el título, baja el subtítulo y quita la franja',
+    document: 'chuleton',
+    json: true,
+    anyOrder: true,
+    expected: [
+      { op: 'move_layer', target: 'titulo', dy: -2 },
+      { op: 'move_layer', target: 'sub', dy: 2 },
+      { op: 'remove_layer', target: 'banda' },
+    ],
+  },
+  {
+    id: 'multi-sombra-negrita',
+    order: 'A ver, ponle sombra al título y, eh, pon el subtítulo en negrita',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'set_effect', target: 'titulo', effect: 'shadow', on: true },
+      { op: 'update_text', target: 'sub', bold: true },
+    ],
+  },
+  {
+    // Corrección que RETIRA una parte: el subtítulo, al final, no se toca.
+    id: 'multi-deja-subtitulo',
+    order: 'Pon la foto en blanco y negro, el título en negro y… y el subtítulo también, bueno, no, el subtítulo déjalo',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'adjust_image', target: BACKGROUND, filter: 'bw' },
+      { op: 'update_text', target: 'titulo', color: '#000000' },
+    ],
+  },
+  {
+    // Corrección de CUÁNTO: «mucho» (cuenta el sentido: hacia arriba) y, además, más grande.
+    id: 'multi-corrige-cuanto',
+    order: 'Sube el título un poco… no, mucho, súbelo mucho, y hazlo más grande',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'move_layer', target: 'titulo', dy: -4 },
+      { op: 'resize_layer', target: 'titulo', steps: 1 },
+    ],
+  },
+  {
+    // El orden importa: el título que se cambia es el de la copia.
+    id: 'multi-duplica-pagina-titulo',
+    order: 'Duplica la página y en la copia cambia el título por Entrecot a la brasa',
+    document: 'chuleton',
+    expected: [
+      { op: 'page', action: 'duplicate' },
+      { op: 'update_text', target: 'titulo', text: 'Entrecot a la brasa' },
+    ],
+  },
+  {
+    id: 'multi-cuadrado-franja-guarda',
+    order: 'Pon el lienzo cuadrado, eh, quita la franja y guarda',
+    document: 'chuleton',
+    anyOrder: true,
+    expected: [
+      { op: 'set_canvas_ratio', ratio: '1:1' },
+      { op: 'remove_layer', target: 'banda' },
+      { op: 'editor', action: 'save' },
+    ],
+  },
+]);
+
 // Órdenes que MONTAN una pieza: fondo creado con IA (solo el fondo), fotos reales de la
 // biblioteca colocadas encima y el titular. Las llamadas pueden venir en cualquier orden.
 const EITHER = { anyOf: [false, true] };
@@ -777,5 +993,6 @@ export const BENCH_CASES: BenchCase[] = [
   ...HOSPITALITY,
   ...GYM,
   ...HESITANT,
+  ...MULTI_CASES,
   ...PLAN_CASES,
 ];

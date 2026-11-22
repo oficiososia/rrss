@@ -384,6 +384,8 @@ function editorCopilot(request: AiProviderRequest): string {
  * otoñal y pon los platos en el centro»): devuelve los pasos de plan
  * (`generate_background`, `find_photos`, `place_photos`). Ante «genera un plato
  * de…» imita a un modelo que se salta la regla y pide generar comida.
+ *
+ * Como pide la tarea, cierra siempre con `done` y su nota para la persona.
  */
 function editorCopilotTools(request: AiProviderRequest): { text: string; tool_calls: AiToolCall[] } {
   const legacy = { ...request, input: { ...request.input, context: [...(request.input.context ?? [])] } };
@@ -451,10 +453,11 @@ function editorCopilotTools(request: AiProviderRequest): { text: string; tool_ca
     };
   });
   const all = [...planCalls, ...calls];
-  return {
-    text: all.length ? '' : '[simulado] No he entendido ningún cambio en la orden.',
-    tool_calls: all,
-  };
+  const note = all.length
+    ? `[simulado] ${all.length === 1 ? '1 cambio' : `${all.length} cambios`} a partir de la orden.`
+    : '[simulado] No he entendido ningún cambio en la orden.';
+  // Todas las llamadas en una vuelta y, la última, el cierre con la nota.
+  return { text: '', tool_calls: [...all, { name: 'done', arguments: { note } }] };
 }
 
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {

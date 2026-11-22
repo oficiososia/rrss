@@ -838,15 +838,16 @@ export function VoiceCopilot({
         </Button>
       </div>
 
+      {/* Aviso previo al dictado: una franja compacta, para no quitarle sitio al lienzo. */}
       {!noticeDone && engine && (
-        <div className="space-y-3">
-          <p className="text-sm" data-testid="copilot-voice-notice">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md bg-subtle px-2.5 py-1.5 text-xs">
+          <p className="min-w-0 flex-1 basis-64" data-testid="copilot-voice-notice">
             {voiceNoticeText(engine)}{' '}
             <Link to={legalPath('privacy')} target="_blank" className="text-primary underline">
               Política de privacidad
             </Link>
           </p>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex shrink-0 items-center gap-1.5">
             <input
               type="checkbox"
               className="h-4 w-4"
@@ -854,10 +855,11 @@ export function VoiceCopilot({
               onChange={(e) => setDontShowAgain(e.target.checked)}
               data-testid="copilot-voice-notice-hide"
             />
-            No volver a mostrar este aviso
+            No volver a mostrar
           </label>
           <Button
             size="sm"
+            className="shrink-0"
             onClick={() => {
               if (dontShowAgain) hideVoiceNotice(engine);
               setSeen((current) => ({ ...current, [engine]: true }));
@@ -865,9 +867,8 @@ export function VoiceCopilot({
             data-testid="copilot-voice-notice-ok"
           >
             <Mic className="h-4 w-4" aria-hidden />
-            Entendido, empezar a dictar
+            Entendido, dictar
           </Button>
-          <p className="text-xs text-muted">Sin dictar también funciona: escribe la orden aquí abajo.</p>
         </div>
       )}
 

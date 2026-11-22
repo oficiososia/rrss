@@ -859,7 +859,8 @@ herramientas para ver si sale mejor».
   - **Órdenes por teclado**: campo de texto en el panel; el copiloto sale y funciona sin
     micrófono.
   - **Dos motores de voz**: dictado del navegador o transcriptor de OpenAI (`ai-transcribe`,
-    con cupo), a elegir; aviso de privacidad por motor.
+    con cupo), a elegir; aviso de privacidad por motor, en una franja compacta que no tapa el
+    lienzo (auditoría de usabilidad).
   - **Prompt compacto**: herramientas e instrucciones comunes delante (cacheables), marca en
     tres líneas, documento en una línea por capa.
   - **«Probar conexión» de IA de texto hace una generación mínima real** (1 token de salida
@@ -880,10 +881,26 @@ herramientas para ver si sale mejor».
   e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI). Los planes, igual: todo
   con simulados (IA de texto, generador de imágenes, biblioteca y recorte) y un caso nuevo en
   la e2e 19, sin ejecutar.
-- **Sin probar contra nada real:** la ruta de herramientas con OpenAI o Claude (formato,
-  `strict`, `reasoning_effort: "none"`, caché), el transcriptor, el micrófono, la sonda de
-  generación y el banco con `--apply`. Los objetivos de latencia (< 1,5 s) y de tokens sin
-  caché (< 1.500) **no están medidos**: con el contador del simulado el total por orden sube
+- **Medido en staging con IA real** (22/11/2026, lo hizo el coordinador: `gpt-6-luna`,
+  servidor general de OpenAI, 10 órdenes sobre un documento de prueba, primera versión de la
+  ruta de herramientas): coste medio **100 micros por orden** (462 con JSON y luna; 4.495 con
+  terra), latencia de servidor **1,25 s** (3,07 s con JSON) y **562 tokens de entrada sin caché**
+  + 2.121 leídos de caché (3.308 + 1.345 con JSON). Los objetivos (< 1,5 s y < 1.500 tokens sin
+  caché) se cumplen en esa medida. **Acertó 7 de 10** (JSON, 10 de 10): en tres órdenes con dos
+  acciones solo llegó la primera y se perdió una corrección a mitad de frase; además no llegaba
+  la nota para la persona.
+- **Arreglo de las órdenes con varias acciones** (mismo día, **sin volver a medir con IA
+  real**). Causa: el código recogía todas las llamadas, pero el modelo emitía UNA por
+  respuesta (llama y espera el resultado, como en un bucle de herramientas) y solo se hacía una
+  vuelta; y con `gpt-6-luna` las herramientas exigen razonamiento `none` (la ruta JSON iba con
+  el razonamiento por defecto). Ahora: instrucciones explícitas («una orden puede necesitar
+  varias herramientas: llámalas todas»; «si la persona se corrige, vale lo último que dijo»),
+  herramienta de cierre `done` con la nota para la persona, `tool_choice: required` y, si el
+  modelo llama sin cerrar, hasta 5 vueltas devolviéndole «hecho» (solo OpenAI; cada vuelta es
+  una generación más, casi toda de caché). El banco tiene esos tres casos y diez más.
+- **Sin probar contra nada real:** el arreglo anterior, la ruta de herramientas con Claude, el
+  transcriptor, el micrófono, la sonda de generación y el banco con `--apply`. Con el contador
+  del simulado el total por orden sube
   de 2.455 a 3.473 tokens (3.122 antes de los pasos de plan) y lo no compartible entre marcas
   baja de 1.065 a 149; que se cumpla depende de que el proveedor lea de caché el prefijo común.
   De los planes no se ha probado nada real: ni que el modelo devuelva los pasos, ni un fondo
@@ -893,5 +910,7 @@ herramientas para ver si sale mejor».
   `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13). Los
   planes no añaden migraciones ni funciones: basta con la aplicación y `ai-generate` (en ese
   orden) y con que `ai-media` siga desplegada.
-- **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
+- **Pendiente:** volver a medir en staging las órdenes con varias acciones; si la corrección a
+  mitad de frase sigue fallando con razonamiento `none`, pasar el copiloto a la API Responses de
+  OpenAI (admite herramientas con razonamiento `low`); precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
   política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.

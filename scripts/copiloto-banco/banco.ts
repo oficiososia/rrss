@@ -49,9 +49,10 @@ import { pageView, validateDocument } from '../../src/features/content/document'
 import type { AiService, AiToolCall, Json, RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { createAiService } from '../../supabase/functions/_shared/ai/service.ts';
 import { countPromptTokens, createSimulatedProvider } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
-import { compactDocument, compactPhotos, EDITOR_COPILOT_TOOLS } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot-tools.ts';
+import { compactDocument, compactPhotos, DONE_TOOL, EDITOR_COPILOT_TOOLS } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot-tools.ts';
 import {
   EDITOR_COPILOT_PURPOSE,
+  MAX_TOOL_TURNS,
   readDocumentSummary,
   runEditorCopilot,
   type CopilotMode,
@@ -207,6 +208,33 @@ export function compareOperations(
   return { ok: problems.length === 0, problems };
 }
 
+/**
+ * ¿Es lo recibido una parte de lo esperado? Cada operación recibida coincide con
+ * una esperada distinta, pero falta alguna: la orden se quedó a medias (lo
+ * hecho estaba bien). Es el fallo de un modelo que llama a una sola herramienta
+ * cuando la orden pedía varias cosas.
+ */
+export function isIncomplete(expected: ExpectedOperation[], received: Record<string, unknown>[]): boolean {
+  if (received.length >= expected.length) return false;
+  const fits = (pending: Record<string, unknown>[], left: ExpectedOperation[]): boolean => {
+    if (pending.length === 0) return true;
+    const [first, ...rest] = pending as [Record<string, unknown>, ...Record<string, unknown>[]];
+    return left.some(
+      (candidate, index) =>
+        operationProblems(candidate, first).length === 0 && fits(rest, [...left.slice(0, index), ...left.slice(index + 1)]),
+    );
+  };
+  return fits(received, expected);
+}
+
+/**
+ * Por qué no acierta una orden:
+ *   * `incomplete`: faltó alguna operación esperada (lo recibido era correcto, pero no todo);
+ *   * `wrong`: otra capa, otro valor, una operación de más, un texto no dictado o la frase que faltaba;
+ *   * `error`: no hubo respuesta que el editor pudiera usar (red, HTTP distinto de 200, fuera del contrato).
+ */
+export type FailureKind = 'incomplete' | 'wrong' | 'error';
+
 // ── De lo esperado a lo que respondería un modelo perfecto ───────────────
 
 /** Valor concreto para simular: el primero de la lista o el centro del intervalo. */
@@ -263,6 +291,8 @@ export function toolCallsFor(setup: CaseSetup): AiToolCall[] {
 }
 
 const NOTE_FOR_PERSON = '¿A qué te refieres exactamente? Eso no lo puedo hacer así.';
+/** Nota de cierre del modelo simulado cuando no hay nada que preguntar. */
+const NOTE_DONE = 'Hecho.';
 
 /** La respuesta JSON (ruta anterior) de un modelo que acierta. */
 export function jsonAnswerFor(setup: CaseSetup): string {
@@ -309,6 +339,8 @@ export interface Evaluation {
   /** Operaciones que quedan tras validar y quitar lo no dictado (lo que el editor aplicaría). */
   operations: CopilotOperation[];
   note: string;
+  /** Si no acierta, por qué (ver `FailureKind`). */
+  failure?: FailureKind;
 }
 
 /**
@@ -320,7 +352,13 @@ export interface Evaluation {
 export function evaluateResponse(benchCase: BenchCase, body: unknown, transcript = benchCase.order): Evaluation {
   const response = parseCopilotResponse(body);
   if (!response) {
-    return { ok: false, problems: ['La respuesta no cumple el contrato del editor: no se aplicaría nada.'], operations: [], note: '' };
+    return {
+      ok: false,
+      problems: ['La respuesta no cumple el contrato del editor: no se aplicaría nada.'],
+      operations: [],
+      note: '',
+      failure: 'error',
+    };
   }
   const dictated = keepDictated(response.operations, transcript);
   const comparison = compareOperations(benchCase.expected, dictated.operations, { anyOrder: benchCase.anyOrder });
@@ -329,7 +367,17 @@ export function evaluateResponse(benchCase: BenchCase, body: unknown, transcript
   if (benchCase.note && response.note.trim() === '') problems.push('Se esperaba una frase para la persona (una pregunta o lo que no se puede hacer) y no ha llegado.');
   // Órdenes que montan una pieza: se evalúa el PLAN que saldría (sin ejecutar ningún paso).
   if (benchCase.plan) problems.push(...planProblemsFor(benchCase, dictated.operations));
-  return { ok: problems.length === 0, problems, operations: dictated.operations, note: response.note };
+  if (problems.length === 0) return { ok: true, problems, operations: dictated.operations, note: response.note };
+  // A medias (faltó algo de lo esperado y lo demás estaba bien) o equivocada.
+  const incomplete =
+    dictated.removed === 0 && isIncomplete(benchCase.expected, dictated.operations as unknown as Record<string, unknown>[]);
+  return {
+    ok: false,
+    problems,
+    operations: dictated.operations,
+    note: response.note,
+    failure: incomplete ? 'incomplete' : 'wrong',
+  };
 }
 
 const inCount = (expected: ExpectedCount, actual: number) =>
@@ -426,6 +474,27 @@ export function applyProblems(benchCase: BenchCase, operations: CopilotOperation
   const done = result.changes.length + result.flows.length + result.after.length + historyActions(picked).length;
   if (benchCase.expected.length > 0 && done === 0) problems.push('Las operaciones no han tenido ningún efecto en el editor.');
   if (benchCase.expected.length === 0 && result.document !== start.document) problems.push('No se esperaba ningún cambio y el documento ha cambiado.');
+  if (benchCase.pagesAfter) {
+    // Las páginas del documento final: una copia lleva las mismas capas que la original, con otros identificadores.
+    const shape = (layers: readonly object[]) =>
+      JSON.stringify(layers.map((layer) => ({ ...layer, id: undefined, groupId: undefined })));
+    const original = shape(start.document.pages[start.pageIndex]!.layers);
+    const pages = result.document.pages;
+    const same = pages.filter((page) => shape(page.layers) === original).length;
+    const found = {
+      total: pages.length,
+      // La original sigue estando: las demás con sus mismas capas son copias.
+      copiesOfStart: Math.max(0, same - 1),
+      empty: pages.filter((page) => page.layers.length === 0).length,
+    };
+    const wanted = benchCase.pagesAfter;
+    if (same === 0) problems.push('La página de la que se partía ya no está tal como era.');
+    if (found.total !== wanted.total) problems.push(`Se esperaban ${wanted.total} páginas y quedan ${found.total}.`);
+    if (found.copiesOfStart !== wanted.copiesOfStart) {
+      problems.push(`Se esperaban ${wanted.copiesOfStart} copias de la página de partida (con sus capas) y hay ${found.copiesOfStart}.`);
+    }
+    if (found.empty !== wanted.empty) problems.push(`Se esperaban ${wanted.empty} páginas vacías y hay ${found.empty}.`);
+  }
   return problems;
 }
 
@@ -458,13 +527,19 @@ export interface PromptTokens {
 export interface DryResult {
   caseId: string;
   group: BenchGroup;
-  /** `local` = la comprobación del intérprete local (sin IA). */
-  mode: CopilotMode | 'local';
+  /**
+   * `local` = la comprobación del intérprete local (sin IA). `turns` = por
+   * herramientas, con un modelo que llama DE UNA EN UNA y espera el resultado de
+   * cada herramienta (el servidor le devuelve «hecho» y le deja seguir).
+   */
+  mode: CopilotMode | 'local' | 'turns';
   ok: boolean;
   /** La ruta JSON no puede expresar el caso: no se ejecuta por ella. */
   notExpressible?: boolean;
   problems: string[];
   tokens?: PromptTokens;
+  /** Peticiones al modelo que ha hecho falta (vueltas). */
+  turns?: number;
 }
 
 /** ¿Resuelve el intérprete local el caso como dice su `local`? */
@@ -509,14 +584,26 @@ export function checkLocal(benchCase: BenchCase): DryResult {
 export async function simulateServer(
   benchCase: BenchCase,
   mode: CopilotMode,
-): Promise<{ body: Record<string, unknown>; mode: CopilotMode; tokens?: PromptTokens }> {
+  options: { stepwise?: boolean } = {},
+): Promise<{ body: Record<string, unknown>; mode: CopilotMode; tokens?: PromptTokens; turns: number }> {
   const setup = setupCase(benchCase);
   // La respuesta se prepara antes: un caso mal escrito falla aquí, con su motivo, y no como «fallo del proveedor».
-  const answer =
-    mode === 'tools'
-      ? { text: benchCase.note ? NOTE_FOR_PERSON : '', tool_calls: toolCallsFor(setup) }
-      : jsonAnswerFor(setup);
-  const { service, provider } = offlineService({ respond: () => answer });
+  const calls = mode === 'tools' ? toolCallsFor(setup) : [];
+  const json = mode === 'json' ? jsonAnswerFor(setup) : '';
+  // Por herramientas, el modelo cierra con `done` y su nota para la persona.
+  const closing: AiToolCall = { name: DONE_TOOL, arguments: { note: benchCase.note ? NOTE_FOR_PERSON : NOTE_DONE } };
+  const { service, provider } = offlineService(
+    mode === 'json'
+      ? { respond: () => json }
+      : options.stepwise
+        ? {
+            // De una en una: en cada vuelta, la siguiente llamada; cuando no quedan, el cierre.
+            toolTurns: true,
+            respond: (request) => ({ text: '', tool_calls: [calls[request.input.toolTurns?.length ?? 0] ?? closing] }),
+          }
+        : // Lo normal: todas las llamadas y el cierre en una sola respuesta.
+          { respond: () => ({ text: '', tool_calls: [...calls, closing] }) },
+  );
   const result = await runEditorCopilot(
     service,
     { userId: randomUUID(), brandId: randomUUID() },
@@ -533,12 +620,28 @@ export async function simulateServer(
     },
     mode: result.mode,
     tokens: provider.calls[0] ? countPromptTokens(provider.calls[0].input) : undefined,
+    turns: provider.calls.length,
   };
 }
 
+/**
+ * ¿Cabe el caso con un modelo que llama de una en una? El servidor hace como
+ * mucho `MAX_TOOL_TURNS` vueltas: caben esas operaciones (y, si se espera una
+ * frase para la persona, una menos: el cierre va en su propia vuelta).
+ */
+export function fitsStepwise(benchCase: BenchCase): boolean {
+  const room = benchCase.note ? MAX_TOOL_TURNS - 1 : MAX_TOOL_TURNS;
+  return benchCase.expected.length >= 2 && benchCase.expected.length <= room;
+}
+
 /** Un caso por una ruta, de principio a fin y sin red: tarea del servidor → editor. */
-export async function dryRunCase(benchCase: BenchCase, mode: CopilotMode): Promise<DryResult> {
-  const base = { caseId: benchCase.id, group: benchCase.group, mode };
+export async function dryRunCase(
+  benchCase: BenchCase,
+  mode: CopilotMode,
+  options: { stepwise?: boolean } = {},
+): Promise<DryResult> {
+  const stepwise = mode === 'tools' && options.stepwise === true;
+  const base = { caseId: benchCase.id, group: benchCase.group, mode: stepwise ? ('turns' as const) : mode };
   if (mode === 'json' && !benchCase.json) {
     // Si el caso dice que la ruta JSON no puede, no se intenta (y si cupiese, da igual: puede depender de lo elegido).
     return { ...base, ok: true, notExpressible: true, problems: [] };
@@ -547,9 +650,12 @@ export async function dryRunCase(benchCase: BenchCase, mode: CopilotMode): Promi
     return { ...base, ok: false, problems: ['El caso dice `json: true`, pero usa operaciones o campos que la ruta JSON no tiene.'] };
   }
   try {
-    const simulated = await simulateServer(benchCase, mode);
+    const simulated = await simulateServer(benchCase, mode, { stepwise });
     const problems: string[] = [];
     if (simulated.mode !== mode) problems.push(`Se pidió la ruta «${mode}» y se ha usado «${simulated.mode}».`);
+    // Una vuelta si el modelo lo llama todo junto; de una en una, una por operación y otra para cerrar (con tope).
+    const turns = mode === 'json' || !stepwise ? 1 : Math.min(MAX_TOOL_TURNS, benchCase.expected.length + 1);
+    if (simulated.turns !== turns) problems.push(`Se esperaban ${turns} vueltas y ha habido ${simulated.turns}.`);
     for (const item of simulated.body.discarded as { op: string; reason: string }[]) {
       problems.push(`El servidor ha descartado «${item.op}»: ${item.reason}`);
     }
@@ -557,7 +663,7 @@ export async function dryRunCase(benchCase: BenchCase, mode: CopilotMode): Promi
     problems.push(...evaluation.problems);
     // Un plan no se aplica tal cual: ya se ha evaluado, compuesto y aplicado en `planProblemsFor`.
     if (evaluation.problems.length === 0 && !benchCase.plan) problems.push(...applyProblems(benchCase, evaluation.operations));
-    return { ...base, ok: problems.length === 0, problems, tokens: simulated.tokens };
+    return { ...base, ok: problems.length === 0, problems, tokens: simulated.tokens, turns: simulated.turns };
   } catch (error) {
     return { ...base, ok: false, problems: [`Error al ejecutar el caso: ${error instanceof Error ? error.message : 'desconocido'}`] };
   }
@@ -580,6 +686,8 @@ export async function dryRun(cases: BenchCase[] = BENCH_CASES, modes: readonly C
     seen.add(benchCase.id);
     results.push(checkLocal(benchCase));
     for (const mode of modes) results.push(await dryRunCase(benchCase, mode));
+    // Variante de una en una (el bucle de vueltas del servidor), en lo que cabe en sus vueltas.
+    if (modes.includes('tools') && fitsStepwise(benchCase)) results.push(await dryRunCase(benchCase, 'tools', { stepwise: true }));
   }
   return { results, ok: results.every((result) => result.ok) };
 }
@@ -638,10 +746,23 @@ export function formatDryReport(report: DryReport, cases: BenchCase[] = BENCH_CA
         ...report.results.map((result) => [
           result.caseId,
           result.mode,
-          result.notExpressible ? 'no expresable' : result.ok ? 'bien' : 'FALLO',
+          result.notExpressible ? 'no expresable' : result.ok ? (result.mode === 'turns' ? `bien (${result.turns} vueltas)` : 'bien') : 'FALLO',
           result.tokens ? `${result.tokens.total}/${result.tokens.stable}/${result.tokens.volatile}` : '',
         ]),
       ]),
+    );
+  }
+  const stepwise = byMode('turns');
+  if (stepwise.length > 0) {
+    const several = cases.filter((item) => item.expected.length >= 2);
+    const tooMany = several.filter((item) => !fitsStepwise(item)).map((item) => item.id);
+    lines.push('');
+    lines.push(
+      `Varias acciones en una orden: ${several.length} casos piden dos o más. Lo normal es que el modelo las llame todas en una respuesta y cierre con «done» (una vuelta). ` +
+        `Si las llama de una en una (espera el resultado de cada una), el servidor le deja seguir hasta ${MAX_TOOL_TURNS} vueltas: así se han probado ${stepwise.length} casos de entre 2 y ${MAX_TOOL_TURNS} acciones.` +
+        (tooMany.length > 0
+          ? ` Con un modelo así NO cabrían enteros ${tooMany.length} casos (más acciones que vueltas): ${tooMany.join(', ')}.`
+          : ''),
     );
   }
   const plans = cases.filter((item) => item.plan).length;
@@ -723,6 +844,8 @@ export interface BenchResult {
   repetition: number;
   ok: boolean;
   problems: string[];
+  /** Si no acierta, por qué: a medias, equivocada o sin respuesta válida. */
+  failure?: FailureKind;
   /** Código HTTP de `ai-generate` (0 = sin respuesta). */
   status: number;
   /** De extremo a extremo, medido aquí. */
@@ -738,6 +861,13 @@ export interface BenchResult {
   cacheWriteTokens: number | null;
   /** Millonésimas de la moneda de cuenta de la plataforma. */
   costMicros: number | null;
+  /**
+   * Por herramientas: ¿llamó el modelo al cierre (`done`) en su PRIMERA respuesta?
+   * Sale de la primera generación (la del `generationId`). `false` = se quedó
+   * esperando y, si el adaptador lo admite, hubo más vueltas (cada una, otra
+   * generación que el banco no ve). null = no se sabe (ruta JSON, o no se pudo leer).
+   */
+  closedFirstTurn?: boolean | null;
   expected: ExpectedOperation[];
   /** Operaciones recibidas (solo `op` y los campos con valor). */
   received: Record<string, unknown>[];
@@ -763,6 +893,15 @@ export interface Aggregate {
   hits: number;
   /** Aciertos, en tanto por ciento (0-100). */
   hitRate: number;
+  /** Faltó alguna operación esperada. */
+  incomplete: number;
+  /** Otra capa, otro valor, una operación de más o la frase que faltaba. */
+  wrong: number;
+  /** Sin respuesta que el editor pudiera usar. */
+  errors: number;
+  /** Órdenes de las que se sabe si el modelo cerró en la primera respuesta, y cuántas lo hicieron. */
+  closedKnown: number;
+  closedFirst: number;
   serverP50: number | null;
   serverP95: number | null;
   e2eP50: number | null;
@@ -777,6 +916,14 @@ export interface Aggregate {
 
 const numbers = (values: (number | null)[]) => values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
+/** Por qué falla un resultado (también los guardados antes de que se anotase). */
+export function failureOf(result: Pick<BenchResult, 'ok' | 'failure' | 'status' | 'expected' | 'received'>): FailureKind | null {
+  if (result.ok) return null;
+  if (result.failure) return result.failure;
+  if (result.status !== 200) return 'error';
+  return isIncomplete(result.expected, result.received) ? 'incomplete' : 'wrong';
+}
+
 /** Agrupa los resultados por ruta y modelo: aciertos, latencias, tokens y coste. */
 export function aggregateResults(results: BenchResult[]): Aggregate[] {
   const groups = new Map<string, BenchResult[]>();
@@ -790,12 +937,19 @@ export function aggregateResults(results: BenchResult[]): Aggregate[] {
       const [mode, model] = key.split('\u0000') as [CopilotMode, string];
       const hits = items.filter((item) => item.ok).length;
       const costs = numbers(items.map((item) => item.costMicros));
+      const kinds = items.map((item) => failureOf(item));
+      const closed = items.filter((item) => typeof item.closedFirstTurn === 'boolean');
       return {
         mode,
         model,
         total: items.length,
         hits,
         hitRate: items.length > 0 ? (hits / items.length) * 100 : 0,
+        incomplete: kinds.filter((kind) => kind === 'incomplete').length,
+        wrong: kinds.filter((kind) => kind === 'wrong').length,
+        errors: kinds.filter((kind) => kind === 'error').length,
+        closedKnown: closed.length,
+        closedFirst: closed.filter((item) => item.closedFirstTurn === true).length,
         serverP50: percentile(numbers(items.map((item) => item.latencyMs)), 50),
         serverP95: percentile(numbers(items.map((item) => item.latencyMs)), 95),
         e2eP50: percentile(items.map((item) => item.e2eMs), 50),
@@ -822,6 +976,10 @@ export function formatAggregates(aggregates: Aggregate[], options: { failures?: 
         'ruta',
         'aciertos',
         '%',
+        'órdenes incompletas',
+        'equivocadas',
+        'errores',
+        'cerradas en la 1.ª vuelta',
         'lat. servidor p50/p95 (ms)',
         'extremo a extremo p50/p95 (ms)',
         'entrada sin caché',
@@ -835,6 +993,10 @@ export function formatAggregates(aggregates: Aggregate[], options: { failures?: 
         item.mode,
         `${item.hits}/${item.total}`,
         item.hitRate.toFixed(1),
+        String(item.incomplete),
+        String(item.wrong),
+        String(item.errors),
+        item.closedKnown > 0 ? `${item.closedFirst}/${item.closedKnown}` : '—',
         `${round(item.serverP50)}/${round(item.serverP95)}`,
         `${round(item.e2eP50)}/${round(item.e2eP95)}`,
         round(item.meanInputTokens),
@@ -845,6 +1007,8 @@ export function formatAggregates(aggregates: Aggregate[], options: { failures?: 
       ]),
     ]),
     'Tokens: medias por llamada. Coste: en la moneda de cuenta de la plataforma, según `ai_generations` («—» = no se ha podido leer).',
+    'Órdenes incompletas: faltó alguna operación esperada (lo recibido era correcto, pero no todo). Equivocadas: otra capa, otro valor, una operación de más, un texto no dictado o la frase que faltaba. Errores: sin respuesta que el editor pudiera usar.',
+    `Coste, tokens y latencia del servidor son los de la PRIMERA generación de cada orden (la del \`generationId\`). Por herramientas, una orden puede ser de varias generaciones (una por vuelta, hasta ${MAX_TOOL_TURNS}) y el banco solo ve la primera: el coste real de las órdenes que no cerraron a la primera es mayor. «Cerradas en la 1.ª vuelta» sale de esa primera generación (¿llamó a «done»?); cuántas vueltas más hubo no se puede saber desde fuera. La latencia de extremo a extremo sí las incluye todas.`,
   ];
   if (options.failures !== false) {
     for (const item of aggregates) {
@@ -852,7 +1016,9 @@ export function formatAggregates(aggregates: Aggregate[], options: { failures?: 
       lines.push('');
       lines.push(`Fallos de ${item.model} por «${item.mode}» (${item.failures.length}):`);
       for (const failure of item.failures) {
-        lines.push(`  - ${failure.caseId}${failure.file ? ` (${failure.file})` : ''}${failure.status !== 200 ? ` [HTTP ${failure.status}]` : ''}`);
+        const kind = failureOf(failure);
+        const label = kind === 'incomplete' ? ' [incompleta]' : kind === 'wrong' ? ' [equivocada]' : '';
+        lines.push(`  - ${failure.caseId}${failure.file ? ` (${failure.file})` : ''}${failure.status !== 200 ? ` [HTTP ${failure.status}]` : ''}${label}`);
         for (const problem of failure.problems) lines.push(`      ${problem}`);
         lines.push(`      esperado: ${JSON.stringify(failure.expected)}`);
         lines.push(`      recibido: ${JSON.stringify(failure.received)}${failure.note ? ` · nota: «${failure.note}»` : ''}`);
@@ -911,6 +1077,7 @@ interface GenerationRow {
   cacheReadTokens: number | null;
   cacheWriteTokens: number | null;
   costMicros: number | null;
+  closedFirstTurn: boolean | null;
 }
 const NO_GENERATION: GenerationRow = {
   provider: null,
@@ -921,6 +1088,7 @@ const NO_GENERATION: GenerationRow = {
   cacheReadTokens: null,
   cacheWriteTokens: null,
   costMicros: null,
+  closedFirstTurn: null,
 };
 
 const numberOrNull = (value: unknown) => {
@@ -928,11 +1096,15 @@ const numberOrNull = (value: unknown) => {
   return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;
 };
 
-/** Lee de `ai_generations` el modelo real, el consumo, el coste y la latencia (la RLS deja a quien edita la marca). */
+/**
+ * Lee de `ai_generations` el modelo real, el consumo, el coste y la latencia de UNA generación (la
+ * RLS deja a quien edita la marca), y si el modelo cerró con `done` en esa respuesta. Es la primera
+ * vuelta de la orden: las siguientes, si las hubo, son otras generaciones que no se conocen desde fuera.
+ */
 async function readGeneration(config: RealConfig, deps: RealDeps, generationId: string): Promise<GenerationRow> {
   try {
     const response = await deps.fetch(
-      `${config.url}/rest/v1/ai_generations?id=eq.${encodeURIComponent(generationId)}&select=provider,model,usage,cost_micros,latency_ms`,
+      `${config.url}/rest/v1/ai_generations?id=eq.${encodeURIComponent(generationId)}&select=provider,model,usage,cost_micros,latency_ms,output`,
       { headers: { authorization: `Bearer ${config.token}`, apikey: config.anonKey, accept: 'application/json' } },
     );
     if (!response.ok) return NO_GENERATION;
@@ -940,6 +1112,7 @@ async function readGeneration(config: RealConfig, deps: RealDeps, generationId: 
     const row = Array.isArray(rows) && isObject(rows[0]) ? rows[0] : null;
     if (!row) return NO_GENERATION;
     const usage = isObject(row.usage) ? row.usage : {};
+    const toolCalls = isObject(row.output) && Array.isArray(row.output.tool_calls) ? row.output.tool_calls : null;
     return {
       provider: typeof row.provider === 'string' ? row.provider : null,
       model: typeof row.model === 'string' ? row.model : null,
@@ -949,6 +1122,7 @@ async function readGeneration(config: RealConfig, deps: RealDeps, generationId: 
       cacheReadTokens: numberOrNull(usage.cache_read_input_tokens),
       cacheWriteTokens: numberOrNull(usage.cache_write_input_tokens),
       costMicros: numberOrNull(row.cost_micros),
+      closedFirstTurn: toolCalls ? toolCalls.some((call) => isObject(call) && call.name === DONE_TOOL) : null,
     };
   } catch {
     return NO_GENERATION;
@@ -1011,7 +1185,10 @@ async function callCopilot(
     });
   } catch (error) {
     const reason = error instanceof Error ? `${error.name}: ${clean(error.message)}` : 'error desconocido';
-    return { result: { ...base, e2eMs: deps.now() - started, problems: [`No se ha podido llamar a ai-generate (${reason}).`] }, stop: false };
+    return {
+      result: { ...base, failure: 'error', e2eMs: deps.now() - started, problems: [`No se ha podido llamar a ai-generate (${reason}).`] },
+      stop: false,
+    };
   }
   const e2eMs = deps.now() - started;
   let body: unknown = null;
@@ -1031,7 +1208,15 @@ async function callCopilot(
     const error = isObject(body) && isObject(body.error) ? body.error : {};
     const detail = clean(`${String(error.code ?? 'sin código')}: ${String(error.message ?? 'sin mensaje')}`);
     return {
-      result: { ...base, ...generation, status: response.status, e2eMs, generationId, problems: [`ai-generate ha respondido ${response.status} (${detail}).`] },
+      result: {
+        ...base,
+        ...generation,
+        failure: 'error',
+        status: response.status,
+        e2eMs,
+        generationId,
+        problems: [`ai-generate ha respondido ${response.status} (${detail}).`],
+      },
       stop: STOP_STATUS.has(response.status),
     };
   }
@@ -1045,6 +1230,7 @@ async function callCopilot(
       generationId,
       ok: evaluation.ok,
       problems: evaluation.problems,
+      ...(evaluation.failure ? { failure: evaluation.failure } : {}),
       received: evaluation.operations.map((operation) => compactOperation(operation as unknown as Record<string, unknown>)),
       note: evaluation.note,
     },
@@ -1393,6 +1579,11 @@ export async function runReal(options: RealOptions, deps: RealDeps): Promise<Rea
   if (planCases > 0) {
     log(
       `De los ${planCases} casos de plan (órdenes que montan una pieza) solo se evalúa el plan que devuelve el copiloto: el banco no ejecuta sus pasos, no genera imágenes y no recorta (su único gasto es la llamada de texto).`,
+    );
+  }
+  if (options.modes.includes('tools')) {
+    log(
+      `Por herramientas, cada orden puede ser de varias generaciones (una por vuelta, hasta ${MAX_TOOL_TURNS}, si el modelo llama a las herramientas de una en una): la estimación cuenta una por orden y el banco solo ve la primera por su generationId.`,
     );
   }
   log(

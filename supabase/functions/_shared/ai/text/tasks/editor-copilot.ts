@@ -47,6 +47,8 @@ import {
   compactDocument,
   compactPhotos,
   EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+  closingNote,
+  DONE_TOOL,
   EDITOR_COPILOT_TOOL_PROMPT,
   EDITOR_COPILOT_TOOLS,
   MAX_BACKGROUND_PROMPT_CHARS,
@@ -939,30 +941,77 @@ export async function runEditorCopilot(
     }
     const compact = compactDocument(document);
     const photos = compactPhotos(assets);
-    const result = await service.generate({
-      userId: actor.userId,
-      brandId: actor.brandId,
-      task: 'text',
-      purpose: EDITOR_COPILOT_PURPOSE,
-      input: {
-        instructions: EDITOR_COPILOT_TOOL_INSTRUCTIONS,
-        prompt: EDITOR_COPILOT_TOOL_PROMPT,
-        context: [
-          { label: 'marca', content: compactBrand(request.brandProfile, allowance), cacheable: true },
-          { label: 'documento', content: compact.text },
-          ...(assets.length > 0 ? [{ label: 'fotos', content: photos.text }] : []),
-          { label: 'orden', content: transcript },
-        ],
-        tools: EDITOR_COPILOT_TOOLS,
-        // La misma clave para todas las marcas: herramientas e instrucciones son idénticas.
-        cacheKey: `${EDITOR_COPILOT_PURPOSE}:tools`,
-        params: { max_output_tokens: TOOLS_MAX_OUTPUT_TOKENS, ...effort },
-      },
-    });
-    const calls = Array.isArray(result.output.tool_calls) ? (result.output.tool_calls as unknown as AiToolCall[]) : [];
-    if (calls.length === 0 && result.output.finish_reason === 'length') {
+    const capabilities = service.capabilities?.('text', EDITOR_COPILOT_PURPOSE) ?? null;
+    const ask = (toolTurns: { calls: AiToolCall[]; results: string[] }[]) =>
+      service.generate({
+        userId: actor.userId,
+        brandId: actor.brandId,
+        task: 'text',
+        purpose: EDITOR_COPILOT_PURPOSE,
+        input: {
+          instructions: EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+          prompt: EDITOR_COPILOT_TOOL_PROMPT,
+          context: [
+            { label: 'marca', content: compactBrand(request.brandProfile, allowance), cacheable: true },
+            { label: 'documento', content: compact.text },
+            ...(assets.length > 0 ? [{ label: 'fotos', content: photos.text }] : []),
+            { label: 'orden', content: transcript },
+          ],
+          tools: EDITOR_COPILOT_TOOLS,
+          // Siempre hay algo que llamar (como mínimo, el cierre con su nota).
+          toolChoice: 'required',
+          ...(toolTurns.length > 0 ? { toolTurns } : {}),
+          // La misma clave para todas las marcas: herramientas e instrucciones son idénticas.
+          cacheKey: `${EDITOR_COPILOT_PURPOSE}:tools`,
+          params: { max_output_tokens: TOOLS_MAX_OUTPUT_TOKENS, ...effort },
+        },
+      });
+
+    // Lo normal es UNA vuelta: todas las llamadas juntas y el cierre (`done`).
+    // Pero hay modelos que llaman a una herramienta y esperan su resultado antes
+    // de la siguiente (medido el 22/11/2026 con gpt-6-luna: de «quita la franja y
+    // sube el título» solo llegaba lo primero). Si hay llamadas y no hay cierre,
+    // se le devuelve «hecho» y se le deja seguir, con tope de vueltas.
+    const first = await ask([]);
+    let result = first;
+    const calls: AiToolCall[] = [];
+    const turns: { calls: AiToolCall[]; results: string[] }[] = [];
+    const usage: Record<string, number> = {};
+    let costMicros = 0;
+    let latencyMs = 0;
+    let note = '';
+    for (let turn = 0; ; turn += 1) {
+      for (const [unit, amount] of Object.entries(result.usage)) usage[unit] = (usage[unit] ?? 0) + amount;
+      costMicros += result.costMicros;
+      latencyMs += result.latencyMs;
+      const turnCalls = Array.isArray(result.output.tool_calls) ? (result.output.tool_calls as unknown as AiToolCall[]) : [];
+      const closed = closingNote(turnCalls);
+      calls.push(...turnCalls.filter((call) => call.name !== DONE_TOOL));
+      const text = typeof result.output.text === 'string' ? result.output.text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+      if (closed !== null) {
+        note = closed || text;
+        break;
+      }
+      if (text) note = text;
+      const more =
+        turnCalls.length > 0 &&
+        capabilities?.toolTurns === true &&
+        turn + 1 < MAX_TOOL_TURNS &&
+        calls.length < MAX_OPERATIONS &&
+        result.output.finish_reason !== 'length';
+      if (!more) break;
+      turns.push({ calls: turnCalls, results: turnCalls.map(() => 'hecho') });
+      try {
+        // Una copia: la lista sigue creciendo y la petición enviada no debe cambiar después.
+        result = await ask([...turns]);
+      } catch {
+        // La vuelta de más ha fallado (cupo, proveedor…): vale lo que ya había.
+        break;
+      }
+    }
+    if (calls.length === 0 && note === '' && first.output.finish_reason === 'length') {
       throw new AiError('invalid_output', 'La respuesta de la IA se ha cortado antes de terminar. Inténtalo de nuevo.', {
-        generationId: result.generationId,
+        generationId: first.generationId,
         retryable: true,
       });
     }
@@ -972,14 +1021,13 @@ export async function runEditorCopilot(
       emptyOperation,
     );
     const { operations, discarded } = sanitizeOperations(converted.operations, context, converted.indexes);
-    const note = typeof result.output.text === 'string' ? result.output.text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
     return {
-      generationId: result.generationId,
-      provider: result.provider,
-      model: result.model,
-      usage: result.usage,
-      costMicros: result.costMicros,
-      latencyMs: result.latencyMs,
+      generationId: first.generationId,
+      provider: first.provider,
+      model: first.model,
+      usage,
+      costMicros,
+      latencyMs,
       mode,
       operations: operations.map(toResponseOperation),
       discarded: [...converted.discarded, ...discarded].sort((a, b) => a.index - b.index).slice(0, 40),
@@ -1011,6 +1059,14 @@ export async function runEditorCopilot(
   const { operations, discarded } = sanitizeOperations(answer.operations, context);
   return { ...meta, mode, operations: operations.map(toResponseOperation), discarded, note: answer.note.trim() };
 }
+
+/**
+ * Vueltas como mucho por orden en la ruta de herramientas: la normal y cuatro
+ * más para un modelo que llama a las herramientas de una en una (una orden que
+ * monta una pieza son cuatro o cinco llamadas). Cada vuelta es una
+ * generación más (con su cupo y su coste, casi todo leído de caché).
+ */
+export const MAX_TOOL_TURNS = 5;
 
 /** Salida corta: unas pocas llamadas con pocos argumentos. */
 export const TOOLS_MAX_OUTPUT_TOKENS = 1000;

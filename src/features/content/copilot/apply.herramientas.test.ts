@@ -546,6 +546,82 @@ describe('copiloto: lienzo y páginas', () => {
     expect(apply(ten, [op({ op: 'page', action: 'add' })]).skipped).toEqual(['Este formato admite 10 páginas como mucho.']);
   });
 
+  it('«añade una página nueva y duplica esta»: «esta» es la página de la que se partía, no la recién añadida', () => {
+    const single = menu();
+    const limits = { pageLimits: { min: 1, max: 10 } };
+    const original = single.pages[0]!;
+    const kinds = (document: ContentDocument) => document.pages.map((page) => page.layers.map((layer) => layer.type).join(','));
+    const full = 'image,text,shape,image,logo';
+
+    // Añadir y duplicar: la copia es de la original (con sus cinco capas), no de la vacía. De una página se pasa a tres.
+    const added = apply(single, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], limits);
+    expect(added.document.pages).toHaveLength(3);
+    expect(kinds(added.document)).toEqual([full, full, '']);
+    expect(added.document.pages[0]).toEqual(original);
+    expect(added.skipped).toEqual([]);
+    expect(added.changes).toEqual(['Página 2 nueva', 'Página duplicada (ahora, la 2)']);
+    // Se queda en la copia, y sus capas llevan identificadores nuevos (ninguno repetido).
+    expect(added.pageIndex).toBe(1);
+    const all = added.document.pages.flatMap((page) => page.layers.map((layer) => layer.id));
+    expect(new Set(all).size).toBe(all.length);
+    expect(added.document.pages[1]!.layers.map((layer) => ({ ...layer, id: '' }))).toEqual(original.layers.map((layer) => ({ ...layer, id: '' })));
+
+    // Al revés queda lo mismo: la original, su copia y la vacía (aquí se termina en la vacía).
+    const reversed = apply(single, [op({ op: 'page', action: 'duplicate' }), op({ op: 'page', action: 'add' })], limits);
+    expect(kinds(reversed.document)).toEqual([full, full, '']);
+    expect(reversed.pageIndex).toBe(2);
+    expect(reversed.changes).toEqual(['Página duplicada (ahora, la 2)', 'Página 3 nueva']);
+
+    // Duplicar a secas, como siempre: la copia detrás y se pasa a ella.
+    const only = apply(single, [op({ op: 'page', action: 'duplicate' })], limits);
+    expect(kinds(only.document)).toEqual([full, full]);
+    expect(only.pageIndex).toBe(1);
+
+    // Lo que sigue en la misma orden nombra las capas de la original y actúa en la copia.
+    const edited = apply(
+      single,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' }), op({ op: 'update_text', target: 'titulo', text: 'Menú de la noche' })],
+      limits,
+    );
+    expect(edited.skipped).toEqual([]);
+    expect(edited.document.pages[0]).toEqual(original);
+    expect(edited.document.pages[1]!.layers[1]).toMatchObject({ type: 'text', text: 'Menú de la noche' });
+
+    // Dos páginas nuevas y «duplica esta»: sigue siendo la de partida.
+    const twice = apply(
+      single,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })],
+      limits,
+    );
+    expect(kinds(twice.document)).toEqual([full, full, '', '']);
+    // En un carrusel, desde otra página: «esta» es la activa al empezar la orden, no la primera.
+    const carousel = menu(2);
+    const second = apply(carousel, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageIndex: 1,
+      pageLimits: { min: 2, max: 10 },
+    });
+    // La segunda (vacía) es de la que se partía: su copia también está vacía, y la primera no se duplica.
+    expect(kinds(second.document)).toEqual([full, '', '', '']);
+    const first = apply(carousel, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageLimits: { min: 2, max: 10 },
+    });
+    expect(kinds(first.document)).toEqual([full, full, '', '']);
+
+    // Si se ha ido a otra página que ya existía, se duplica esa (no es una de las añadidas en la orden).
+    const moved = apply(
+      carousel,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'go', direction: 'first' }), op({ op: 'page', action: 'duplicate' })],
+      { pageIndex: 1, pageLimits: { min: 2, max: 10 } },
+    );
+    expect(kinds(moved.document)).toEqual([full, full, '', '']);
+    // Sin sitio para las dos, la segunda se dice y no se hace.
+    const tight = apply(single, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageLimits: { min: 1, max: 2 },
+    });
+    expect(kinds(tight.document)).toEqual([full, '']);
+    expect(tight.skipped).toEqual(['Este formato admite 2 páginas como mucho.']);
+  });
+
   it('borrar y mover la página activa', () => {
     const document = menu(3);
     const removed = apply(document, [op({ op: 'page', action: 'remove' })], { pageIndex: 1 });

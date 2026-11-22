@@ -29,6 +29,11 @@ export interface SimulatedProviderOptions {
   respond?: (
     request: AiProviderRequest,
   ) => string | { text: string; finish_reason?: string; tool_calls?: AiToolCall[] } | undefined;
+  /**
+   * Admite `AiInput.toolTurns` (seguir tras devolver resultados de herramientas).
+   * Por defecto no: las pruebas de una sola vuelta no cambian.
+   */
+  toolTurns?: boolean;
   /** Sustituye el consumo que se declara tras generar (por defecto, el calculado). */
   reportUsage?: (computed: AiUsage, request: AiProviderRequest) => AiUsage;
 }
@@ -51,7 +56,8 @@ function inputTokens(request: Pick<AiProviderRequest, 'input'>): number {
     tokens(prompt) +
     context.reduce((sum, part) => sum + tokens(part.content), 0) +
     // Las herramientas viajan en la petición: cuentan como entrada.
-    (tools ? tokens(JSON.stringify(tools)) : 0)
+    (tools ? tokens(JSON.stringify(tools)) : 0) +
+    (request.input.toolTurns ? tokens(JSON.stringify(request.input.toolTurns)) : 0)
   );
 }
 
@@ -71,7 +77,9 @@ export function countPromptTokens(input: AiProviderRequest['input']): { total: n
     (input.context ?? []).filter((part) => part.cacheable).reduce((sum, part) => sum + tokens(part.content), 0);
   const volatile =
     tokens(input.prompt) +
-    (input.context ?? []).filter((part) => !part.cacheable).reduce((sum, part) => sum + tokens(part.content), 0);
+    (input.context ?? []).filter((part) => !part.cacheable).reduce((sum, part) => sum + tokens(part.content), 0) +
+    // Las vueltas anteriores de herramientas también viajan (y cambian en cada vuelta).
+    (input.toolTurns ? tokens(JSON.stringify(input.toolTurns)) : 0);
   return { total: stable + volatile, stable, volatile };
 }
 
@@ -96,6 +104,7 @@ export function createSimulatedProvider(options: SimulatedProviderOptions = {}):
   return {
     id: SIMULATED_PROVIDER_ID,
     supportsTools: true,
+    supportsToolTurns: options.toolTurns === true,
     calls,
 
     estimateUsage(request): AiUsage {

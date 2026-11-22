@@ -10,20 +10,26 @@ y solo dentro de una orden que monta una pieza entera, con el plan y su coste a 
 Lo medido con un proveedor real (22/11/2026, staging, OpenAI, servidor general, **ruta JSON
 anterior**): `gpt-6-luna` hizo bien 8 de 8 órdenes, ~2,7 s de media en servidor y 0,00045
 créditos por orden; `gpt-6.1-terra`, igual de bien y 10 veces más caro. Cada orden mandaba
-~3.200 tokens de entrada (1.435 leídos de caché) y sacaba 50–120. **La ruta de herramientas
-de este documento no se ha probado todavía contra un proveedor real**: está probada con el
+~3.200 tokens de entrada (1.435 leídos de caché) y sacaba 50–120.
+
+**Ruta de herramientas, primera prueba real** (22/11/2026, staging, `gpt-6-luna`, 10 órdenes,
+hecha a mano por el coordinador): el coste bajó a unos 100 micros por orden y la latencia a
+1,25 s, pero **3 de 10 órdenes fallaron**, las tres con varias acciones o con una corrección a
+mitad de frase. La causa y el arreglo están en el apartado 10 («Varias acciones en una
+orden»). **El arreglo no se ha probado todavía contra un proveedor real**: está probado con el
 proveedor simulado, la base de datos real y respuestas HTTP simuladas de cada adaptador. El
-banco del apartado 13 es la forma de medirla.
+banco del apartado 13 (grupo `multi`) es la forma de medirlo.
 
 | Pieza | Estado |
 |---|---|
-| Ruta de **herramientas** (function calling): 26 herramientas (23 operaciones del editor y 3 pasos de plan); adaptadores de OpenAI y de Claude (API directa, Vertex, Bedrock) | Implementada; probada con simulados y base de datos real. **Sin probar con proveedor real** |
+| Ruta de **herramientas** (function calling): 27 herramientas (23 operaciones del editor, 3 pasos de plan y el cierre `done`); adaptadores de OpenAI y de Claude (API directa, Vertex, Bedrock) | Implementada. Probada a mano con `gpt-6-luna` el 22/11/2026 (10 órdenes: 7 bien, 3 mal) |
+| **Varias acciones en una orden**: cierre `done`, `tool_choice: required` y hasta 5 vueltas en OpenAI (apartado 10) | Implementado tras esa prueba; probado con simulados y base de datos real. **Sin probar con proveedor real** |
 | **Órdenes que montan una pieza** (plan por pasos: fondo con IA, fotos de la biblioteca recortadas y colocadas, titular; apartado 15) | Implementado; unitarias, componentes y base de datos con todo SIMULADO (IA de texto, generador de imágenes, biblioteca y recorte). **Sin probar con nada real**; e2e escrita y sin ejecutar en local |
 | Ruta **JSON** (la anterior, 8 operaciones) detrás de `AI_TEXT_EDITOR_COPILOT_MODE=json` | Sin cambios; es la medida con `gpt-6-luna` |
 | **Intérprete local** de órdenes frecuentes (sin IA, coste cero) | Implementado; 236 pruebas |
 | **Órdenes por teclado** (campo junto al micrófono; sirve sin micrófono) | Implementado; componentes y e2e 19 (la e2e, sin ejecutar en local) |
 | **Motor de voz**: dictado del navegador o transcriptor (`ai-transcribe`) | Implementado con micrófono y transcriptor SIMULADOS. **Sin probar con micrófono ni transcriptor reales** |
-| Banco de pruebas `scripts/copiloto-banco.ts` (82 órdenes, 7 de ellas de plan) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
+| Banco de pruebas `scripts/copiloto-banco.ts` (95 órdenes: 13 de varias acciones o corregidas, `multi`, y 7 de plan) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
 | Desenfoque de imágenes, color legible de los textos, aviso previo al dictado | Como estaban (apartados 6, 7 y 9 bis) |
 
 ## 1. Cómo funciona
@@ -510,15 +516,18 @@ recomendados es de unos 20 USD al mes): decide la calidad medida y la UE.
 Antes del primer dictado, el copiloto muestra un aviso: el audio lo procesa el servicio de voz del
 navegador (Google o Microsoft, según el navegador), no la aplicación, que solo recibe el texto. Con
 «No volver a mostrar» (`localStorage`, `rrss.voiceNoticeHidden`) no vuelve a salir. Hasta pulsar
-«Entendido, empezar a dictar» no se escucha nada. Probado en componentes y en la e2e 19 (sin
-ejecutar en local).
+«Entendido, dictar» no se escucha nada. Desde el 22/11/2026 es una franja de una línea (texto más
+corto, casilla y botón), para no quitarle sitio al lienzo; el campo para escribir la orden sigue
+debajo y funciona sin aceptar el aviso. Probado en componentes y en la e2e 19 (sin ejecutar en
+local).
 
 ## 10. Ruta de herramientas: prompt, caché y razonamiento
 
 **Qué viaja** (`editor-copilot-tools.ts`), en este orden:
 
-1. Herramientas (26: 23 operaciones y 3 pasos de plan) e instrucciones cortas, sin ejemplos:
-   **idénticas para todas las marcas y personas**. Es lo que el proveedor puede leer de caché.
+1. Herramientas (27: 23 operaciones, 3 pasos de plan y el cierre `done`) e instrucciones
+   cortas, sin ejemplos: **idénticas para todas las marcas y personas**. Es lo que el proveedor
+   puede leer de caché.
 2. La marca en tres líneas (colores con su uso, tipografías, si hay logotipo): estable por
    marca. Ya no viaja el perfil entero.
 3. El documento en una línea por capa, con identificadores cortos (`c1`, `c2`…; el servidor
@@ -532,32 +541,102 @@ de ningún proveedor), perfil de marca completo y documento de 6 capas
 |---|---|---|---|---|
 | JSON (antes) | 2.455 | 1.390 (instrucciones 1.090 + esquema 300) | 835 | 230 |
 | Herramientas, 23 (antes de los pasos de plan) | 3.122 | 2.973 (herramientas 2.441 + instrucciones 532) | 33 | 116 |
-| Herramientas, 26 (ahora, con los pasos de plan) | 3.473 | 3.324 (herramientas 2.715 + instrucciones 609) | 33 | 116 |
+| Herramientas, 26 (con los pasos de plan) | 3.473 | 3.324 (herramientas 2.715 + instrucciones 609) | 33 | 116 |
+| Herramientas, 27 (ahora, con el cierre `done`) | 3.631 | 3.482 (herramientas 2.785 + instrucciones 697) | 33 | 116 |
 
-- **El total sube un 41 % frente a JSON**: las 26 herramientas pesan. Los tres pasos de plan
-  y su regla añaden 351 tokens al prefijo común (+12 %: 274 de herramientas y 77 de
-  instrucciones); la parte variable no cambia. Lo que baja frente a JSON es lo que no se puede
+- **El total sube un 48 % frente a JSON**: las 27 herramientas pesan. Los tres pasos de plan
+  y su regla añadieron 351 tokens al prefijo común; el cierre `done` y las reglas nuevas
+  («llámalas todas», «vale lo último que dijo»), otros 158 (70 de herramientas y 88 de
+  instrucciones). La parte variable no cambia. Lo que baja frente a JSON es lo que no se puede
   compartir entre marcas (marca + variable): de 1.065 a 149 tokens.
+- En una vuelta de más (ver «Varias acciones en una orden») vuelve a viajar todo, más las
+  llamadas anteriores con su «hecho» (unas decenas de tokens): el prefijo es el mismo, así que
+  se lee de caché.
 - El objetivo «menos de 1.500 tokens de entrada sin caché por orden» se cumple **cuando el
   prefijo común se lee de caché** (quedarían unos 150–250 reales sin caché); en la primera
   orden tras un rato sin uso, no: se paga todo (del orden de 4.500 tokens reales, si la
-  proporción real/estimado es la medida en la ruta JSON, 1,3).
+  proporción real/estimado es la medida en la ruta JSON, 1,3; unos 4.700 con las 27).
 - OpenAI (guía de caché, 22/11/2026): desde GPT-5.6 el mínimo cacheable son 1.024 tokens, la
   caché dura 30 minutos por defecto y **escribirla cuesta 1,25 veces la entrada**. El prefijo
-  común (unos 3.300 tokens) supera el mínimo y es el mismo para todo el mundo, así que
+  común (unos 3.500 tokens) supera el mínimo y es el mismo para todo el mundo, así que
   basta con que alguien use el copiloto cada media hora. **El adaptador cuenta hoy las
   escrituras de caché de OpenAI como entrada normal** (pendiente: leer
   `cache_write_tokens` y ponerle precio).
 - Claude: `cache_control` en las instrucciones (herramientas + instrucciones) y en la marca.
   El mínimo cacheable depende del modelo (de 512 a 4.096 tokens): comprobar el de Haiku 5.5.
-- Latencia objetivo (< 1,5 s en servidor con `gpt-6-luna`): **sin medir**. Lo que debería
-  bajarla: razonamiento a `none`, salida de 30–80 tokens (llamadas en vez de un JSON con doce
-  claves por operación) y prefijo en caché.
+- Latencia objetivo (< 1,5 s en servidor con `gpt-6-luna`): 1,25 s en la prueba a mano del
+  22/11/2026 (10 órdenes, una vuelta cada una; con el banco, sin medir). Lo que la baja:
+  razonamiento a `none`, salida de 30–80 tokens (llamadas en vez de un JSON con doce claves
+  por operación) y prefijo en caché. Una orden que necesite varias vueltas tarda eso por
+  cada vuelta.
+
+### Varias acciones en una orden
+
+Prueba real del 22/11/2026 (`gpt-6-luna`, herramientas): de 10 órdenes fallaron 3.
+
+| Orden | Llegó | Faltó |
+|---|---|---|
+| «quita la franja y sube el título al centro de la foto» | `remove_layer` de la franja | mover el título |
+| «eh... pon el... el título, no, el subtítulo, más grande... y súbelo un poquito» | `resize_layer` del **título** | era el subtítulo, y subirlo |
+| «añade una página nueva y duplica esta» | `page add` | duplicar |
+
+Además, no llegaba la nota para la persona.
+
+- **Antes:** una sola vuelta y sin cierre. El código recogía todas las llamadas de la respuesta,
+  pero el modelo emitía **una** por respuesta: llamaba a una herramienta y se quedaba esperando
+  su resultado, como en un bucle de herramientas normal. Como no se le devolvía nada, lo demás
+  no se hacía. La nota era el texto suelto de la respuesta, que con llamadas viene vacío.
+- **Ahora:**
+  - Herramienta de cierre **`done { note }`**: no es una operación. Las instrucciones piden
+    llamar a TODAS las herramientas de la orden en la misma respuesta y terminar siempre con
+    `done`, cuya nota es la frase para la persona (lo hecho, lo que no se puede o la pregunta).
+  - **`tool_choice: "required"`** en OpenAI (siempre hay algo que llamar: como mínimo, el
+    cierre). Claude sigue con `auto` (forzar la elección da 400 en sus modelos actuales).
+  - **Hasta 5 vueltas** (`MAX_TOOL_TURNS`; eran 3 hasta el 23/11/2026, y una orden que
+    monta una pieza son 4 o 5 llamadas), solo en adaptadores que lo admiten
+    (`supportsToolTurns`: hoy, OpenAI): si la respuesta trae llamadas pero no `done`, se le
+    devuelve «hecho» por cada una (mensajes `assistant` con `tool_calls` y `tool` con su
+    `tool_call_id`) y se vuelve a preguntar. Se acumulan las operaciones, el consumo, el coste
+    y la latencia. Si una vuelta de más falla (cupo, proveedor), vale lo que ya había. Claude
+    no: sus llamadas en paralelo son fiables y reproducir su turno exige los bloques de
+    razonamiento.
+  - Regla de corrección explícita: «si la persona se corrige, vale lo último que dijo», con el
+    ejemplo del título y el subtítulo.
+- **Coste:** cada vuelta es una generación más en `ai_generations`, con su cupo y su coste
+  (casi todo leído de caché). La respuesta lleva el `generationId` de la primera; las demás
+  quedan también en `ai_generations`.
+- **Por qué se perdía la corrección:** con `gpt-6-luna` en Chat Completions las herramientas
+  exigen `reasoning_effort: "none"`; la ruta JSON iba con el razonamiento por defecto
+  (`medium`) y por eso acertaba esa misma frase. Sin razonar, «el título, no, el subtítulo» se
+  queda en lo primero que oye. La regla nueva lo dice con todas las letras, pero **no está
+  medido que baste**.
+- **Límite conocido:** un modelo que llame de una en una hace como mucho 5 operaciones por
+  orden (o 4 y el cierre con su nota). Un plan del apartado 15 son 4 llamadas: cabe, con el
+  cierre. Los 39 casos de varias acciones del banco caben todos de una en una; una orden de
+  6 acciones o más se quedaría a medias, y el banco lo diría en seco («NO cabrían enteros…»).
+  Cinco vueltas son cinco generaciones: lo normal sigue siendo una.
+- **«Añade una página nueva y duplica esta»** (resuelto el 23/11/2026).
+  - Antes: si el modelo llamaba primero a `page add`, el editor pasaba a la página nueva y
+    `page duplicate` duplicaba esa (vacía), no la que la persona tenía delante.
+  - Ahora: si la página activa se ha añadido en esa misma orden, `duplicate` duplica la página
+    de la que partía la orden («esta»). Llegue `[add, duplicate]` o `[duplicate, add]`, queda
+    la original, su copia y una vacía. Probado en `apply.herramientas.test.ts`; el caso
+    `multi-pagina-nueva-duplica` del banco lo comprueba en el documento final (una copia de la
+    página original con sus capas y una página vacía).
+- **Pendiente:** medirlo con el banco (`--grupo multi --apply`). Si con `none` la corrección
+  sigue fallando, pasar el adaptador de OpenAI a la **API Responses**, que admite herramientas
+  con razonamiento `low`.
+- Probado (`tests/db/ia-copiloto-herramientas.test.ts`, con el proveedor simulado y la base de
+  datos real): varias llamadas y `done` en una vuelta; de una en una con una generación por vuelta
+  y la suma del consumo; el tope de vueltas; sin `supportsToolTurns`, una sola vuelta; la
+  vuelta de más que falla; solo `done` con una pregunta; y el cuerpo de OpenAI con las vueltas
+  anteriores. **Sin probar con proveedor real.**
 
 **Formato por proveedor** (consultado el 22/11/2026):
 
 - **OpenAI, Chat Completions**: `tools: [{ type: "function", function: { name, description,
-  parameters, strict: true } }]`, `tool_choice: "auto"`, `parallel_tool_calls: true`; las
+  parameters, strict: true } }]`, `tool_choice: "auto"` (`"required"` en el copiloto),
+  `parallel_tool_calls: true`; las
   llamadas llegan en `choices[0].message.tool_calls[]` con `function.arguments` como texto
   JSON y `finish_reason: "tool_calls"`. En modo estricto todas las propiedades van en
   `required`, `additionalProperties: false` y lo opcional admite `null`.
@@ -632,10 +711,22 @@ privacidad, que todavía no recoge este motor (sí el registro de tratamientos, 
 
 ## 13. Banco de pruebas
 
-`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 82 órdenes en
+`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 95 órdenes en
 español con sus operaciones esperadas: 58 base (simples, compuestas, ambiguas, imposibles,
-hostelería y gimnasio), 17 de habla titubeante y 7 de **plan** (órdenes que montan una pieza).
-11 las resuelve el intérprete local; 40 no se pueden expresar por la ruta JSON.
+hostelería y gimnasio), 17 de habla titubeante, 13 de **varias acciones o corregidas**
+(`multi`) y 7 de **plan** (órdenes que montan una pieza). 11 las resuelve el intérprete local;
+49 no se pueden expresar por la ruta JSON.
+
+- **Grupo `multi`** (`--grupo multi`): las tres órdenes que fallaron en la prueba real del
+  22/11/2026 (apartado 10) y diez más de dos o tres acciones, con correcciones de objetivo
+  («borra el título, no, no, la franja»), de valor («en el color de acento… no, mejor en el
+  principal»), de acción («duplica el título… bueno, no, mejor bórralo») y de cuánto, sobre
+  un documento como el de la prueba (foto «Chuletón» de fondo, franja, subtítulo y título).
+  Aciertan solo si llegan **todas** las operaciones esperadas y sobre la capa que se dijo al
+  final: una operación de menos, de más o sobre otra capa es un fallo. En seco se prueban de
+  dos formas: todas las llamadas y `done` en una respuesta (una vuelta) y de una en una, con
+  el bucle de vueltas del servidor (los 39 casos de dos o más acciones de todo el banco,
+  planes incluidos).
 
 - **Grupo `plan`** (`--grupo plan`): 7 órdenes compuestas (hostelería, gimnasio y una
   genérica; una titubeante con corrección; una con la biblioteca vacía; y «genera con IA un
@@ -662,11 +753,21 @@ hostelería y gimnasio), 17 de habla titubeante y 7 de **plan** (órdenes que mo
   npx vite-node scripts/copiloto-banco.ts --apply --salida banco-resultados.json
   ```
 
-  Antes de empezar dice cuántas llamadas hará (por defecto 113: 71 por herramientas y 42 por
-  JSON) y una estimación, y pregunta (o `--si`). Tabla por ruta y modelo: aciertos, latencia
-  p50/p95, tokens de entrada, salida y caché, y coste (los lee de `ai_generations`). Para
-  comparar modelos: cambiar el modelo en Plataforma → Integraciones y relanzar con el mismo
-  `--salida`. El token solo se lee de la variable de entorno; no se imprime ni se guarda.
+  Antes de empezar dice cuántas llamadas hará (por defecto 130: 84 por herramientas y 46 por
+  JSON) y una estimación, y pregunta (o `--si`). Tabla por ruta y modelo: aciertos, **órdenes
+  incompletas** (faltó alguna operación esperada; lo recibido estaba bien) aparte de las
+  **equivocadas** (otra capa, otro valor, una de más) y de los errores, latencia p50/p95,
+  tokens de entrada, salida y caché, y coste (los lee de `ai_generations`). Para comparar
+  modelos: cambiar el modelo en Plataforma → Integraciones y relanzar con el mismo `--salida`.
+  El token solo se lee de la variable de entorno; no se imprime ni se guarda.
+
+  **El coste de una orden por herramientas puede ser de varias generaciones** (una por vuelta,
+  hasta 5) y la respuesta solo trae el `generationId` de la primera: el banco solo ve esa. El
+  coste, los tokens y la latencia del servidor de la tabla son los de la primera generación de
+  cada orden (la latencia de extremo a extremo sí incluye todas las vueltas). La columna
+  «cerradas en la 1.ª vuelta» dice en cuántas llamó el modelo a `done` en su primera respuesta;
+  cuántas vueltas más hubo en las demás no se puede saber desde fuera (son otras filas de
+  `ai_generations`, sin nada que las una a la primera).
 - **Audio (`--audio scripts/copiloto-banco/audio`, solo con `--apply`):** grabaciones (`.wav`;
   `.m4a` y `.webm` si hay `ffmpeg`) con su `casos.json` → `ai-transcribe` → copiloto, con su
   tabla. Sin grabaciones, se salta. Cómo grabarlas: `scripts/copiloto-banco/audio/LEEME.md`.
@@ -676,6 +777,10 @@ hostelería y gimnasio), 17 de habla titubeante y 7 de **plan** (órdenes que mo
 - **Medir la ruta de herramientas con un proveedor real** (banco con `--apply`): aciertos,
   latencia, tokens y coste frente a JSON, con `gpt-6-luna` y con Haiku 5.5. Incluye el grupo
   `plan`: si el modelo real devuelve los pasos de plan como se espera (apartado 15).
+- **Medir el arreglo de «varias acciones en una orden»** (`--grupo multi --apply`): cuántas
+  órdenes cierra el modelo en la primera vuelta, cuántas quedan incompletas y si la corrección
+  a mitad de frase se respeta con `reasoning_effort: "none"`. Si no, API Responses con
+  razonamiento `low` (apartado 10).
 - **Probar un plan de verdad** en staging: una imagen de fondo real (calidad, que respete «sin
   comida»), el recorte de fotos reales y cómo queda la composición. Nada de eso está probado.
 - Desplegar: la aplicación, después `ai-generate`, `ai-transcribe` y `platform-integrations`;

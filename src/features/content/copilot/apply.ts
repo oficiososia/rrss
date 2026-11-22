@@ -291,6 +291,9 @@ export function applyCopilotOperations(
     };
   };
   load();
+  /** Página de la que parte la orden («esta») y páginas vacías añadidas en la propia orden. */
+  const originPageId = working.pages[pageIndex]!.id;
+  const addedPages = new Set<string>();
   const taken = () => [...otherLayers, ...document.layers];
   const changes: string[] = [];
   const skipped: string[] = [];
@@ -920,10 +923,16 @@ export function applyCopilotOperations(
             break;
           }
           flush();
-          const change = op.action === 'add' ? addPage(working, pageIndex) : duplicatePage(working, pageIndex);
+          // «Añade una página y duplica esta»: «esta» es la página de la que se partía, no la
+          // recién añadida (vacía). Si la activa se ha creado en esta misma orden, se duplica la de origen.
+          const origin = working.pages.findIndex((page) => page.id === originPageId);
+          const source =
+            op.action === 'duplicate' && addedPages.has(working.pages[pageIndex]!.id) && origin >= 0 ? origin : pageIndex;
+          const change = op.action === 'add' ? addPage(working, pageIndex) : duplicatePage(working, source);
           if (!change) break;
+          if (op.action === 'add') addedPages.add(change.document.pages[change.index]!.id);
           // La copia conserva el orden de las capas: la primera de una es la primera de la otra.
-          const originals = working.pages[pageIndex]!.layers;
+          const originals = working.pages[source]!.layers;
           const copied = change.document.pages[change.index]!.layers;
           const copies =
             op.action === 'duplicate'
