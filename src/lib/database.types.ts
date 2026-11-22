@@ -990,7 +990,19 @@ export type BrandReelTemplateRow = {
   updated_at: string;
 };
 
+/** Borrador automático del editor de reels: el montaje a medio hacer de una pieza (una fila por pieza). */
+export type ReelDraftRow = {
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  data: Json;
+  base_version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 type ImportTables = {
+  reel_drafts: Table<ReelDraftRow>;
   social_import_runs: Table<SocialImportRunRow>;
   social_imported_media: Table<SocialImportedMediaRow>;
   brand_design_templates: Table<BrandDesignTemplateRow>;
@@ -1007,6 +1019,8 @@ type ImportFunctions = {
     Returns: BrandReelTemplateRow[];
   };
   delete_reel_template: { Args: { p_template_id: string }; Returns: undefined };
+  save_reel_draft: { Args: { p_content_id: string; p_data: Json; p_base_version: number }; Returns: string };
+  discard_reel_draft: { Args: { p_content_id: string }; Returns: undefined };
 };
 
 type PublicationFunctions = {

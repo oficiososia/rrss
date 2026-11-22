@@ -226,6 +226,8 @@ const TENANT_TABLES = [
   'platform_alerts',
   // «Hacer un reel como este»: análisis de vídeos de referencia.
   'reel_references',
+  // Borrador automático del editor de reels.
+  'reel_drafts',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -3231,5 +3233,57 @@ describe('plantillas de reel por marca (20261224010000)', () => {
   it('las plantillas de reel de otra organización siguen ahí y se van con su marca', async () => {
     expect(await db.query(`select 1 from public.brand_reel_templates where brand_id = $1`, [marcaB1])).toHaveLength(1);
     await db.query(`delete from public.brand_reel_templates where brand_id = $1`, [marcaB1]);
+  });
+});
+
+describe('borrador automático del reel (20261228010000)', () => {
+  const borrador = JSON.stringify({ kind: 'reel', template: { id: 'fundido-suave' }, plan: { version: 2, clips: [], texts: [] } });
+  const guardar = `select public.save_reel_draft($1, $2::jsonb, 0)`;
+  let reelA1: string, reelB1: string;
+  const pieza = async (user: TestUser, org: string, marca: string) =>
+    (
+      await as<{ id: string }>(
+        db,
+        user,
+        `insert into public.content_items (brand_id, organization_id, title, network, format)
+         values ($1, $2, 'Reel nuevo', 'instagram', 'reel') returning id`,
+        [marca, org],
+      )
+    )[0]!.id;
+
+  it('una organización no ve los borradores de otra, y dentro, solo quien edita la marca', async () => {
+    reelA1 = await pieza(editorA, orgA, marcaA1);
+    reelB1 = await pieza(berta, orgB, marcaB1);
+    await as(db, editorA, guardar, [reelA1, borrador]);
+    await as(db, berta, guardar, [reelB1, borrador]);
+    const deA = await as(db, ana, `select distinct organization_id::text as org from public.reel_drafts`);
+    expect(deA).toEqual([{ org: orgA }]);
+    const deB = await as(db, berta, `select distinct organization_id::text as org from public.reel_drafts`);
+    expect(deB).toEqual([{ org: orgB }]);
+    expect(await as(db, editorA, `select 1 from public.reel_drafts`)).toHaveLength(1);
+    // Es trabajo a medias: no lo ve el cliente de la marca (solo revisa), ni quien no tiene la marca, ni nadie de fuera.
+    expect(await as(db, clienteA, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, sinMarcaA, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, superadmin, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, ajeno, `select 1 from public.reel_drafts`)).toEqual([]);
+  });
+
+  it('nadie escribe ni borra el borrador de otra organización, ni directamente en la tabla', async () => {
+    await denied(db, berta, guardar, [reelA1, borrador], /Solo quien edita la marca/);
+    await denied(db, clienteA, guardar, [reelA1, borrador], /Solo quien edita la marca/);
+    await denied(db, berta, `select public.discard_reel_draft($1)`, [reelA1], /Solo quien edita la marca/);
+    await denied(db, ana, `delete from public.reel_drafts`, [], /permission denied/);
+    await denied(
+      db,
+      ana,
+      `insert into public.reel_drafts (content_id, brand_id, organization_id, data, base_version)
+       values ($1, $2, $3, $4::jsonb, 0)`,
+      [reelB1, marcaB1, orgB, borrador],
+      /permission denied/,
+    );
+    await as(db, editorA, `select public.discard_reel_draft($1)`, [reelA1]);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelA1])).toEqual([]);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelB1])).toHaveLength(1);
+    await db.query(`delete from public.content_items where id in ($1, $2)`, [reelA1, reelB1]);
   });
 });
