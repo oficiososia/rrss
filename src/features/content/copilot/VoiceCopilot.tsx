@@ -1,6 +1,8 @@
 import { CheckCircle2, ImagePlus, Loader2, Mic, MicOff, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
+import { legalPath } from '@/features/legal/legal';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { requestEditorCopilot, toAiError } from '@/features/ai/api';
 import { useAssetsByIds } from '@/features/library/api';
@@ -14,7 +16,11 @@ import {
   type CopilotBrandStyle,
 } from './apply';
 import { keepDictated, parseCopilotResponse, summarizeDocument } from './operations';
+import { readLocal, writeLocal } from '@/lib/localStore';
 import { useDictation } from './speech';
+
+/** Clave del «No volver a mostrar» del aviso previo al dictado. */
+export const VOICE_NOTICE_KEY = 'rrss.voiceNoticeHidden';
 
 // Copiloto por voz del editor (docs/copiloto-voz.md). La persona dicta; cada
 // frase terminada es una ORDEN que se manda a la IA (`editor.copilot`), y sus
@@ -81,9 +87,29 @@ export function VoiceCopilot({
   const logos = useAssetsByIds(brandId, logoIds);
 
   // Lo último de cada cosa, para las órdenes que se procesan en cola (fuera del ciclo de React).
-  const latest = useRef({ document, pageIndex, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply });
+  const latest = useRef({
+    document,
+    pageIndex,
+    photos,
+    selectedImage,
+    brand,
+    logoIds,
+    imageTones,
+    logos: logos.data ?? [],
+    onApply,
+  });
   useEffect(() => {
-    latest.current = { document, pageIndex, photos, selectedImage, brand, logoIds, imageTones, logos: logos.data ?? [], onApply };
+    latest.current = {
+      document,
+      pageIndex,
+      photos,
+      selectedImage,
+      brand,
+      logoIds,
+      imageTones,
+      logos: logos.data ?? [],
+      onApply,
+    };
   });
   const queue = useRef<Promise<void>>(Promise.resolve());
   /** Quien espera a que la persona elija una foto («esta foto» sin ninguna elegida). */
@@ -177,11 +203,16 @@ export function VoiceCopilot({
   const dictation = useDictation(onPhrase);
   const { start, stop } = dictation;
 
-  // Al abrir el copiloto se empieza a escuchar; al cerrarlo, se para.
+  // Antes del primer dictado se avisa de adónde va el audio; sin avisar no se escucha.
+  const [noticeDone, setNoticeDone] = useState(() => readLocal<boolean>(VOICE_NOTICE_KEY, false));
+  const [dontShowAgain, setDontShowAgain] = useState(false);
+
+  // Al abrir el copiloto se empieza a escuchar (una vez leído el aviso); al cerrarlo, se para.
   useEffect(() => {
+    if (!noticeDone) return;
     start();
     return () => stop();
-  }, [start, stop]);
+  }, [noticeDone, start, stop]);
 
   const lastOrders = useMemo(() => orders.slice(-6).reverse(), [orders]);
 
@@ -191,6 +222,59 @@ export function VoiceCopilot({
     waitingPhoto.current = null;
     if (resolve) resolve(asset);
     else if (asset) setPhotos((list) => (list.some((p) => p.id === asset.id) ? list : [...list, asset]));
+  }
+
+  if (!noticeDone) {
+    return (
+      <section
+        className="w-full basis-full space-y-3 rounded-xl border border-border bg-surface p-3"
+        aria-label="Copiloto por voz"
+        data-testid="copilot-panel"
+      >
+        <div className="flex items-start gap-2">
+          <h2 className="text-sm font-semibold">Antes de dictar</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto"
+            aria-label="Cerrar el copiloto"
+            onClick={onClose}
+            data-testid="copilot-close"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+        <p className="text-sm" data-testid="copilot-voice-notice">
+          El dictado lo hace el servicio de voz de tu navegador, no esta aplicación: el audio sale de tu dispositivo y
+          lo procesa Google (en Chrome y Edge, según el navegador, Google o Microsoft). Aquí solo recibimos el texto de
+          lo que dices. No dictes datos personales de terceros.{' '}
+          <Link to={legalPath('privacy')} target="_blank" className="text-primary underline">
+            Política de privacidad
+          </Link>
+        </p>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={dontShowAgain}
+            onChange={(e) => setDontShowAgain(e.target.checked)}
+            data-testid="copilot-voice-notice-hide"
+          />
+          No volver a mostrar este aviso
+        </label>
+        <Button
+          size="sm"
+          onClick={() => {
+            if (dontShowAgain) writeLocal(VOICE_NOTICE_KEY, true);
+            setNoticeDone(true);
+          }}
+          data-testid="copilot-voice-notice-ok"
+        >
+          <Mic className="h-4 w-4" aria-hidden />
+          Entendido, empezar a dictar
+        </Button>
+      </section>
+    );
   }
 
   return (
@@ -307,7 +391,9 @@ export function VoiceCopilot({
         onOpenChange={(open) => {
           if (!open) closePicker(null);
         }}
-        onPick={(asset) => closePicker({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height })}
+        onPick={(asset) =>
+          closePicker({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height })
+        }
       />
     </section>
   );

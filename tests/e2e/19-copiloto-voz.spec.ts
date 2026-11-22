@@ -102,6 +102,9 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
 
   // «Dictar» abre el copiloto y empieza a escuchar.
   await page.getByTestId('copilot-open').click();
+  // Aviso previo al dictado: hasta aceptarlo no se escucha.
+  await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
+  await page.getByTestId('copilot-voice-notice-ok').click();
   await expect(page.getByTestId('copilot-panel')).toBeVisible();
   await page.waitForFunction(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true);
 
@@ -192,6 +195,9 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   await page.getByTestId('create-content-format').selectOption('post');
   await page.getByTestId('create-content-submit').click();
   await page.getByTestId('copilot-open').click();
+  // Aviso previo al dictado: hasta aceptarlo no se escucha.
+  await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
+  await page.getByTestId('copilot-voice-notice-ok').click();
   await page.waitForFunction(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true);
 
   // El simulado imita a un modelo comprometido ante «ignora lo anterior»: añade un texto no dictado.
