@@ -11,17 +11,17 @@ procedencia en `media_assets.provenance`, igual que «Exportar imagen».
 
 ## 1. Qué hace cada acción y con qué
 
-| Acción | Con IA | Dónde se hace | Procedencia del resultado |
-|---|---|---|---|
-| Mejorar: luz, contraste, color, temperatura, nitidez («Mejorar automáticamente» o a mano) | No | Navegador (`src/features/photo-edit/pixels.ts`) | `photo_edit`, paso `adjust` con los valores |
-| Mejorar: encuadre a 1:1, 4:5 o 9:16 | No | Navegador (`framing.ts`) | `photo_edit`, paso `crop` con la caja |
-| Recortes por red 1:1, 4:5 y 9:16 con encuadre inteligente (uno por formato) | No | Navegador (`framing.ts`) | `photo_edit`, paso `crop` |
-| Poner fondo liso, de un color de la marca o una imagen de la biblioteca, con sombra suave opcional (a una foto que ya tiene transparencia o recién recortada) | No | Navegador (`cutout/composition.ts`) | `photo_edit`, paso `background` (con `shadow: true` si lleva sombra) |
-| Quitar el fondo, **en el navegador** (por defecto) | No (modelo propio en el navegador, gratis) | Navegador (`cutout/`, §7) | `photo_edit`, paso `remove_background` (`engine: browser`) |
-| Quitar el fondo, con IA (si el servidor tiene proveedor) | **Sí** | `ai-media` (`photo.edit`) → adaptador de IA de medios | `ai_edit`, `operation: remove_background` |
-| Ampliar la resolución ×2 o ×4 (hasta 4096 px por lado) | **Sí** | `ai-media` (`photo.edit`) → adaptador | `ai_edit`, `operation: upscale`, `scale` |
-| Cambiar el fondo con IA (texto libre; máscara del plato si la hay) | **Sí** | `ai-media` (`photo.edit`) → OpenAI (§7) | `ai_edit`, `operation: replace_background`, `prompt` |
-| Mejorar luz y color con IA | **Sí** | `ai-media` (`photo.edit`) → OpenAI (§7) | `ai_edit`, `operation: enhance` |
+| Acción                                                                                                                                                        | Con IA                                     | Dónde se hace                                         | Procedencia del resultado                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------- |
+| Mejorar: luz, contraste, color, temperatura, nitidez, sombras, luces, claridad, viveza («Mejorar automáticamente» o a mano)                                   | No                                         | Navegador (`src/features/photo-edit/pixels.ts`)       | `photo_edit`, paso `adjust` con los valores                          |
+| Mejorar: encuadre a 1:1, 4:5 o 9:16                                                                                                                           | No                                         | Navegador (`framing.ts`)                              | `photo_edit`, paso `crop` con la caja                                |
+| Recortes por red 1:1, 4:5 y 9:16 con encuadre inteligente (uno por formato)                                                                                   | No                                         | Navegador (`framing.ts`)                              | `photo_edit`, paso `crop`                                            |
+| Poner fondo liso, de un color de la marca o una imagen de la biblioteca, con sombra suave opcional (a una foto que ya tiene transparencia o recién recortada) | No                                         | Navegador (`cutout/composition.ts`)                   | `photo_edit`, paso `background` (con `shadow: true` si lleva sombra) |
+| Quitar el fondo, **en el navegador** (por defecto)                                                                                                            | No (modelo propio en el navegador, gratis) | Navegador (`cutout/`, §7)                             | `photo_edit`, paso `remove_background` (`engine: browser`)           |
+| Quitar el fondo, con IA (si el servidor tiene proveedor)                                                                                                      | **Sí**                                     | `ai-media` (`photo.edit`) → adaptador de IA de medios | `ai_edit`, `operation: remove_background`                            |
+| Ampliar la resolución ×2 o ×4 (hasta 4096 px por lado)                                                                                                        | **Sí**                                     | `ai-media` (`photo.edit`) → adaptador                 | `ai_edit`, `operation: upscale`, `scale`                             |
+| Cambiar el fondo con IA (texto libre; máscara del plato si la hay)                                                                                            | **Sí**                                     | `ai-media` (`photo.edit`) → OpenAI (§7)               | `ai_edit`, `operation: replace_background`, `prompt`                 |
+| Mejorar luz y color con IA                                                                                                                                    | **Sí**                                     | `ai-media` (`photo.edit`) → OpenAI (§7)               | `ai_edit`, `operation: enhance`                                      |
 
 «Cambiar el fondo» de una foto normal son dos pasos: quitarlo (en el navegador
 o con IA) y poner otro (sin IA). Con el navegador, el recorte se queda en el
@@ -38,11 +38,37 @@ mayor se reduce y se avisa.
 
 ### Sin IA: cómo funciona y sus límites
 
-- **Mejorar automáticamente** mira el histograma: estira negros y blancos si
-  la foto no llega, corrige la mitad de la dominante de color (mundo gris),
-  aclara las oscuras, aviva un poco las apagadas y da algo de nitidez
-  (máscara de enfoque sobre la luminancia). Es moderado a propósito y se
-  puede retocar con los deslizadores antes de guardar.
+- **Mejorar automáticamente** (rehecho el 22/11/2026 para fotos de comida y
+  producto; antes apenas se notaba) analiza la foto y rellena los deslizadores
+  (Luz, Contraste, Color, Temperatura, Nitidez, Sombras, Luces, Claridad y
+  Viveza) para que se puedan retocar. Pasos, todos moderados y con una zona
+  «correcta» donde no tocan nada (una foto ya buena apenas cambia):
+  1. _Niveles_ por percentiles (0,5 % y 99,5 %) con recorte suave: se deja
+     margen arriba para no quemar y no se estira más de ×1,7. Se aplica sobre
+     la luminancia, no por canal, para no saturar los fondos de color.
+  2. _Balance de blancos_ medido en lo casi gris de la foto (plato, mantel,
+     servilleta; si no hay, en lo poco saturado). Se corrige gran parte, menos
+     hacia el frío para no quitar el calor a la comida, y va al deslizador de
+     Temperatura; el resto (verde–magenta) es un tinte fino sin deslizador. La
+     carne y las salsas, muy saturadas, no cuentan como referencia, así que no
+     se tiñen.
+  3. _Luz_ por la «clave» de la foto (mediana y, menos, tonos altos): un fondo
+     oscuro o un plato blanco no la engañan. Es un gamma sobre la luminancia
+     (no quema blancos).
+  4. _Sombras_ (levanta lo hundido sin mover el negro) y _Luces_ (recupera lo
+     quemado sin mover el blanco).
+  5. _Contraste_ solo si la foto está plana; _Claridad_ (contraste local de radio
+     grande, proporcional a la foto) siempre, algo menos si ya tiene mucho detalle.
+  6. _Viveza_ (satura más lo poco saturado y la mitad en rojos y naranjas, para
+     no pasarse con la carne), un toque de _Color_ si está apagada y _Nitidez_
+     según lo blanda que sea.
+     Vista previa, lienzo y archivo guardado usan la misma función
+     (`applyAdjustments`); `Luz` es ahora un gamma y `Temperatura` una ganancia
+     rojo/azul (antes, multiplicar y desplazar), lo que también afecta a los
+     deslizadores y filtros de las capas de imagen del editor (mismos nombres,
+     cambio de aspecto muy leve). Se quita en un clic. Resultados con fotos
+     reales: `rrss-recursos-comparativa/mejora-automatica.jpg` (original | antes |
+     ahora).
 - **Encuadre inteligente** no reconoce objetos: busca dónde se concentran los
   bordes, el detalle y el color, con algo de preferencia por el centro, y
   coloca ahí el recorte más grande que cabe en cada formato. Funciona bien con
@@ -108,7 +134,7 @@ con el original vive en la procedencia del recurso.
    registro).
 2. Dos filas de ComfyUI propio **inactivas** y con el precio **sin verificar**:
    `comfyui · birefnet-general` (quitar el fondo) y `comfyui ·
-   realesrgan-x4plus` (ampliar).
+realesrgan-x4plus` (ampliar).
 3. Guarda de la procedencia (`private.media_assets_edit_provenance_guard`):
    - `type: 'ai_edit'` solo lo escribe el servidor (como `ai_generation`);
    - en `ai_edit` y `photo_edit`, `source_asset_id` tiene que ser un recurso de
@@ -120,19 +146,44 @@ con el original vive en la procedencia del recurso.
 Procedencia de una edición del navegador:
 
 ```json
-{ "type": "photo_edit", "source_asset_id": "…", "width": 1080, "height": 1350,
+{
+  "type": "photo_edit",
+  "source_asset_id": "…",
+  "width": 1080,
+  "height": 1350,
   "edited_at": "2026-11-20T10:00:00.000Z",
-  "steps": [ { "kind": "adjust", "auto": true, "exposure": 12, "contrast": 0, "saturation": 8,
-               "warmth": 0, "sharpness": 20, "levels": { "black": 14, "white": 231 }, "balance": [1.04, 1, 0.95] },
-             { "kind": "crop", "aspect": "4:5", "smart": true, "box": { "x": 310, "y": 0, "width": 2400, "height": 3000 } } ] }
+  "steps": [
+    {
+      "kind": "adjust",
+      "auto": true,
+      "exposure": 12,
+      "contrast": 0,
+      "saturation": 8,
+      "warmth": 0,
+      "sharpness": 20,
+      "levels": { "black": 14, "white": 231 },
+      "balance": [1.04, 1, 0.95]
+    },
+    { "kind": "crop", "aspect": "4:5", "smart": true, "box": { "x": 310, "y": 0, "width": 2400, "height": 3000 } }
+  ]
+}
 ```
 
 Con IA:
 
 ```json
-{ "type": "ai_edit", "operation": "remove_background", "source_asset_id": "…", "generation_id": "…",
-  "provider": "comfyui", "model": "birefnet-general", "purpose": "photo.remove_background",
-  "data_region": "unknown", "trains_on_inputs": "no", "untested_adapter": true }
+{
+  "type": "ai_edit",
+  "operation": "remove_background",
+  "source_asset_id": "…",
+  "generation_id": "…",
+  "provider": "comfyui",
+  "model": "birefnet-general",
+  "purpose": "photo.remove_background",
+  "data_region": "unknown",
+  "trains_on_inputs": "no",
+  "untested_adapter": true
+}
 ```
 
 ## 4. ComfyUI propio: flujos de trabajo (opción principal)
@@ -197,13 +248,13 @@ Pregunta: ¿se puede quitar el fondo en el trabajador de medios (Node + FFmpeg,
 sin GPU) con calidad aceptable? **Sí, con condiciones**, pero no se ha hecho:
 habría que descargar pesos (100–200 MB) y eso queda a la espera del «sí».
 
-| Opción | Licencia (a contrastar en la ficha del modelo antes de usar) | Calidad esperada en fotos de producto o plato | CPU (orden de magnitud, sin medir) |
-|---|---|---|---|
-| BiRefNet (general o *lite*) en ONNX con `onnxruntime-node` | MIT (modelo), MIT (onnxruntime) | La mejor de las abiertas, bordes finos | Varios segundos por foto a 1024 px con 2–4 vCPU; 1,5–2 GB de RAM |
-| IS-Net (DIS, `isnet-general-use`) en ONNX | Apache-2.0 | Buena; algo peor en pelo y bordes finos | 1–3 s por foto; ~1 GB de RAM |
-| U²-Net / U²-Netp | Apache-2.0 | Aceptable en objetos con fondo liso; flojo en bordes (máscara a 320 px) | < 1 s; U²-Netp pesa 4,7 MB |
-| `@imgly/background-removal-node` | **AGPL-3.0**: obligaría a publicar el código del servicio. Descartada | — | — |
-| RMBG-1.4 / RMBG-2.0 de BRIA | **No comercial** sin contrato. Descartada | — | — |
+| Opción                                                     | Licencia (a contrastar en la ficha del modelo antes de usar)          | Calidad esperada en fotos de producto o plato                           | CPU (orden de magnitud, sin medir)                               |
+| ---------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| BiRefNet (general o _lite_) en ONNX con `onnxruntime-node` | MIT (modelo), MIT (onnxruntime)                                       | La mejor de las abiertas, bordes finos                                  | Varios segundos por foto a 1024 px con 2–4 vCPU; 1,5–2 GB de RAM |
+| IS-Net (DIS, `isnet-general-use`) en ONNX                  | Apache-2.0                                                            | Buena; algo peor en pelo y bordes finos                                 | 1–3 s por foto; ~1 GB de RAM                                     |
+| U²-Net / U²-Netp                                           | Apache-2.0                                                            | Aceptable en objetos con fondo liso; flojo en bordes (máscara a 320 px) | < 1 s; U²-Netp pesa 4,7 MB                                       |
+| `@imgly/background-removal-node`                           | **AGPL-3.0**: obligaría a publicar el código del servicio. Descartada | —                                                                       | —                                                                |
+| RMBG-1.4 / RMBG-2.0 de BRIA                                | **No comercial** sin contrato. Descartada                             | —                                                                       | —                                                                |
 
 Recomendación si el dueño lo quiere: trabajo nuevo `media.image.remove_background`
 en el trabajador con `onnxruntime-node` y **BiRefNet lite** (o IS-Net si la
@@ -225,15 +276,15 @@ ningún cliente. Código en `src/features/photo-edit/cutout/`.
 Decisión del dueño tras comparar 12 fotos reales (botellas, cócteles, platos):
 el recorte pasa a **BEN2 base fp16**, con el IS-Net de antes como respaldo.
 
-| | BEN2 (principal) | IS-Net (respaldo) |
-| --- | --- | --- |
-| Modelo | `onnx-community/BEN2-ONNX`, `onnx/model_fp16.onnx` | `imgly/isnet-general-onnx`, `onnx/model_fp16.onnx` |
-| Peso | 219 121 675 bytes (**219 MB**) | 88 152 708 bytes (84 MB) |
-| Licencia | **MIT** (ficha del modelo); `onnxruntime-web` MIT | MIT (ficha) / Apache-2.0 (DIS) |
-| Entrada y salida | `pixel_values` 1×3×1024×1024, normalización ImageNet · `alphas` 1×1×1024×1024 ya entre 0 y 1 | `input` 1×3×1024×1024 (÷ máximo − 0,5) · salida en cualquier rango (se normaliza) |
-| Dónde corre | **Solo WebGPU** | WebGPU o, si no, WASM (CPU) |
-| Calidad que se dice | Alta | «Calidad básica» |
-| Dirección | `VITE_CUTOUT_BEN2_URL` o Hugging Face | `VITE_CUTOUT_MODEL_URL` o Hugging Face |
+|                     | BEN2 (principal)                                                                             | IS-Net (respaldo)                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Modelo              | `onnx-community/BEN2-ONNX`, `onnx/model_fp16.onnx`                                           | `imgly/isnet-general-onnx`, `onnx/model_fp16.onnx`                                |
+| Peso                | 219 121 675 bytes (**219 MB**)                                                               | 88 152 708 bytes (84 MB)                                                          |
+| Licencia            | **MIT** (ficha del modelo); `onnxruntime-web` MIT                                            | MIT (ficha) / Apache-2.0 (DIS)                                                    |
+| Entrada y salida    | `pixel_values` 1×3×1024×1024, normalización ImageNet · `alphas` 1×1×1024×1024 ya entre 0 y 1 | `input` 1×3×1024×1024 (÷ máximo − 0,5) · salida en cualquier rango (se normaliza) |
+| Dónde corre         | **Solo WebGPU**                                                                              | WebGPU o, si no, WASM (CPU)                                                       |
+| Calidad que se dice | Alta                                                                                         | «Calidad básica»                                                                  |
+| Dirección           | `VITE_CUTOUT_BEN2_URL` o Hugging Face                                                        | `VITE_CUTOUT_MODEL_URL` o Hugging Face                                            |
 
 - **Por qué solo WebGPU.** En CPU nativa BEN2 pide ~4,6 GB de memoria; en WASM de
   32 bits (el de los navegadores, máximo 4 GB) no cabe. Con WebGPU los pesos van a
@@ -382,6 +433,7 @@ navegador (lectura de píxeles, codificación PNG/JPEG, CORS de R2 y de Drive) y
 la prueba e2e.
 
 Quitar el fondo en el navegador (§7):
+
 - Unitarias (`cutout/engine.test.ts`, motores): preprocesado de BEN2 (ImageNet,
   transparencia sobre blanco, promedio de área), postprocesado (alfa tal cual,
   sin sujeto), elección de motor (WebGPU, adaptador, memoria, fallo previo),
@@ -494,20 +546,20 @@ lienzo y al exportar.
 
 ### Qué hay y dónde
 
-| Edición | Dónde | Se guarda como | Con IA |
-|---|---|---|---|
-| Brillo, contraste, saturación, temperatura, nitidez | Panel «Diseño» de una capa de imagen → «Luz y color» | `adjust` de la capa | No |
-| Filtros rápidos (blanco y negro, sepia, vivo, cálido, frío, desvaído, dramático) | «Luz y color» → «Filtros rápidos» | `adjust.filter` | No |
-| Girar 90°, voltear ↔ ↕, enderezar (±45°) | «Girar y recortar» | `turn`, `flipX`, `flipY`, `straighten` | No |
-| Recorte libre o por proporción (como la capa, 1:1, 4:5, 9:16, 16:9, 3:2) | «Recortar…» (ventana con marco arrastrable) | `crop` (fracciones de la foto ya girada) y la caja de la capa toma la proporción del recorte sin crecer | No |
-| Fondo detrás de la foto: color, degradado o la misma foto desenfocada | «Fondo» → «Poner detrás de la foto» | `backdrop` | No |
-| Sombra bajo la foto o el plato (sigue la silueta si hay transparencia) | «Fondo» → «Sombra» | `shadow` | No |
-| Quitar el fondo | «Fondo» → «Quitar el fondo» | **foto nueva** (carpeta «Ediciones») y la capa pasa a usarla | No (navegador) |
-| Desenfocar el fondo y dejar el plato nítido | «Fondo» → «Desenfocar el fondo…» | **foto nueva**; la capa pasa a usarla | No (navegador) |
-| Cambiar el fondo con IA | «Fondo» → «Cambiar el fondo con IA…» (abre «Editar foto» en su pestaña de IA) | foto nueva | **Sí**, OpenAI |
-| Contorno, sombra y fondo del texto | Panel de un texto → «Efectos del texto» | `outline`, `shadow`, `background` | No |
-| Sombra de las formas | Panel de una forma | `shadow` | No |
-| Figuras y pegatinas: triángulo, estrella, corazón, flecha, destello, globo de texto y línea | Barra «Añadir» → «Figuras…» | capa de forma con `shape` nuevo | No |
+| Edición                                                                                     | Dónde                                                                         | Se guarda como                                                                                          | Con IA         |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------- |
+| Brillo, contraste, saturación, temperatura, nitidez                                         | Panel «Diseño» de una capa de imagen → «Luz y color»                          | `adjust` de la capa                                                                                     | No             |
+| Filtros rápidos (blanco y negro, sepia, vivo, cálido, frío, desvaído, dramático)            | «Luz y color» → «Filtros rápidos»                                             | `adjust.filter`                                                                                         | No             |
+| Girar 90°, voltear ↔ ↕, enderezar (±45°)                                                    | «Girar y recortar»                                                            | `turn`, `flipX`, `flipY`, `straighten`                                                                  | No             |
+| Recorte libre o por proporción (como la capa, 1:1, 4:5, 9:16, 16:9, 3:2)                    | «Recortar…» (ventana con marco arrastrable)                                   | `crop` (fracciones de la foto ya girada) y la caja de la capa toma la proporción del recorte sin crecer | No             |
+| Fondo detrás de la foto: color, degradado o la misma foto desenfocada                       | «Fondo» → «Poner detrás de la foto»                                           | `backdrop`                                                                                              | No             |
+| Sombra bajo la foto o el plato (sigue la silueta si hay transparencia)                      | «Fondo» → «Sombra»                                                            | `shadow`                                                                                                | No             |
+| Quitar el fondo                                                                             | «Fondo» → «Quitar el fondo»                                                   | **foto nueva** (carpeta «Ediciones») y la capa pasa a usarla                                            | No (navegador) |
+| Desenfocar el fondo y dejar el plato nítido                                                 | «Fondo» → «Desenfocar el fondo…»                                              | **foto nueva**; la capa pasa a usarla                                                                   | No (navegador) |
+| Cambiar el fondo con IA                                                                     | «Fondo» → «Cambiar el fondo con IA…» (abre «Editar foto» en su pestaña de IA) | foto nueva                                                                                              | **Sí**, OpenAI |
+| Contorno, sombra y fondo del texto                                                          | Panel de un texto → «Efectos del texto»                                       | `outline`, `shadow`, `background`                                                                       | No             |
+| Sombra de las formas                                                                        | Panel de una forma                                                            | `shadow`                                                                                                | No             |
+| Figuras y pegatinas: triángulo, estrella, corazón, flecha, destello, globo de texto y línea | Barra «Añadir» → «Figuras…»                                                   | capa de forma con `shape` nuevo                                                                         | No             |
 
 ### Qué usa IA y qué no
 

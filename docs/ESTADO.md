@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 21/11/2026 (tanda 2 del editor de piezas en `f16/editor-tanda2`; editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
+Última actualización: 22/11/2026 (mejora automática de fotos rehecha en `f19/mejora-automatica`: niveles por percentiles, balance de blancos por grises, luz, sombras/luces, claridad, viveza y nitidez en deslizadores; comparativa en `rrss-recursos-comparativa/mejora-automatica.jpg`; 1047 pruebas unitarias pasan; tanda 2 del editor de piezas en `f16/editor-tanda2`; editor de reels más intuitivo en `f14/reels-intuitivo`; «Editar foto» a pantalla completa en `f15/editar-foto-pantalla`; ediciones sencillas en `f13/edicion-sencilla`; antes, editor de reels en `f11/editor-reels`). Rama de trabajo: `claude/focused-noether-hk502p`
 (PR abierto a `staging`; `main` y `staging` existen desde el 16/11/2026).
 
 **En staging** (desplegado y publicado en https://rrss-omega.vercel.app): las Fases 1
@@ -20,15 +20,15 @@ y las funciones desplegadas sin proveedores.
 
 ## Pruebas
 
-| Tanda              | Resultado                                                                                                                                                                                                                                                                                  | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm test`         | 1041 pasan (21/11/2026, rama `f17/recorte-ben2`; incluye motores de recorte BEN2 e IS-Net, plantillas del editor, atajos y menú lateral) | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes) |
-| `npm run test:db`  | 910 pasan, 2 omitidas (21/11/2026, rama `f16/editor-tanda2`; incluye plantillas guardadas desde el editor) | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026) |
-| `npm run test:layout` | 23 pasan (21/11/2026, rama `f16/editor-tanda2`) | Navegador real (Chromium de Playwright) **sin Supabase**: la aplicación con el cliente simulado de `src/test`. Editor sin scroll de página en 1920×1080, 1366×768, 1024×768 y 375×812 (lienzos 4:5, 9:16 y 16:9), lienzo entero, hoja inferior en móvil, zoom, menú lateral, y exportación PNG/JPEG comparada píxel a píxel con el lienzo (texto, fotos, filtros, recorte, giro, fondos, sombras) |
-| `worker/`          | 90 pasan (21/11/2026, rama `f11/editor-reels`) | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2 |
-| `agency/`          | 54 pasan (21/11/2026; incluye entregas con páginas) | Herramienta de la agencia contra un Supabase simulado |
-| `npm run test:e2e` | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos |
-| CI de GitHub       | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                               | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Tanda                 | Resultado                                                                                                                                                                                                                                                                                                       | Qué cubre                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm test`            | 1041 pasan (21/11/2026, rama `f17/recorte-ben2`; incluye motores de recorte BEN2 e IS-Net, plantillas del editor, atajos y menú lateral)                                                                                                                                                                        | Lógica (unitarias) e interfaz contra un Supabase simulado (componentes)                                                                                                                                                                                                                                                                                                                           |
+| `npm run test:db`     | 910 pasan, 2 omitidas (21/11/2026, rama `f16/editor-tanda2`; incluye plantillas guardadas desde el editor)                                                                                                                                                                                                      | Esquema, aislamiento entre organizaciones, permisos, planes, cupos, cola, publicación (con «Publicar ahora»), campañas, analítica, RGPD, integraciones, copiloto, biblioteca con Drive, R2, edición de fotos y huérfanos de R2, contra las migraciones reales (PGlite). Las 2 omitidas son de simultaneidad con dos conexiones (pasaron contra Postgres 16 el 16/11/2026)                         |
+| `npm run test:layout` | 23 pasan (21/11/2026, rama `f16/editor-tanda2`)                                                                                                                                                                                                                                                                 | Navegador real (Chromium de Playwright) **sin Supabase**: la aplicación con el cliente simulado de `src/test`. Editor sin scroll de página en 1920×1080, 1366×768, 1024×768 y 375×812 (lienzos 4:5, 9:16 y 16:9), lienzo entero, hoja inferior en móvil, zoom, menú lateral, y exportación PNG/JPEG comparada píxel a píxel con el lienzo (texto, fotos, filtros, recorte, giro, fondos, sombras) |
+| `worker/`             | 90 pasan (21/11/2026, rama `f11/editor-reels`)                                                                                                                                                                                                                                                                  | Trabajador de medios con FFmpeg real: reels v1 y v2 del editor (recortes, textos con estilo, subtítulos quemados, mezcla de sonido, transiciones mixtas; con desenfoque), recortes, extracción de texto, informe PDF, imágenes de Drive y R2                                                                                                                                                      |
+| `agency/`             | 54 pasan (21/11/2026; incluye entregas con páginas)                                                                                                                                                                                                                                                             | Herramienta de la agencia contra un Supabase simulado                                                                                                                                                                                                                                                                                                                                             |
+| `npm run test:e2e`    | 88 de 88 (20/11/2026, rama `f7/importar-publicaciones`): tanda completa desde cero con `supabase db reset`; 11 y 15 fallaron la primera vez por no tener instaladas las dependencias del trabajador en el worktree y pasaron al instalarlas; la nueva `24-importar-publicaciones` (3 pruebas) pasó a la primera | Navegador (Playwright) contra un Supabase local (`supabase db reset` antes) con las funciones servidas en local, el trabajador real y proveedores simulados (IA, Graph API, Drive, dictado, MinIO como R2): Fases 1 a 6, integraciones, copiloto, Drive, R2, edición de fotos (22) y «Publicar ahora» (23), en 23 archivos                                                                        |
+| CI de GitHub          | `comprobar`, `trabajador`, `agencia` y `e2e`                                                                                                                                                                                                                                                                    | El trabajo `e2e` levanta su propio Supabase y ejecuta la prueba completa; no bloquea el PR hasta verse estable                                                                                                                                                                                                                                                                                    |
 
 ## Hecho
 
@@ -81,6 +81,7 @@ plantillas y `agency/` leen las páginas. Detalle y cómo convertir un carrusel
 hecho con varias versiones (la demo de EnerGym) en `docs/publicacion.md`
 («Carruseles»; script `scripts/unir-versiones-en-carrusel.sql`, probado en PGlite,
 **sin ejecutar** en staging).
+
 - Pruebas: unitarias (esquema, migración, páginas, verificador, exportación),
   componentes (`editorPaginas.test.tsx`, programar y «Publicar ahora» un
   carrusel), base de datos (regla con varias exportaciones en orden, publicador
@@ -107,6 +108,7 @@ trozo de voz = un subtítulo) con cupo y coste por organización, interruptor
 salida suaves y confirmación de licencia (queda en la procedencia). Se guarda como
 **versión de la pieza**, se aprueba y se monta la versión guardada; programar y
 «Publicar ahora» proponen su montaje.
+
 - Plan del reel **v2** (`worker/src/reel/schema.ts`, `src/features/reels/editor/project.ts`); el v1 se migra al leerlo.
 - Migración `20261207010000_reel_editor` (sin tablas: carga v2, enlace con la pieza, tipografías y licencia comprobadas, procedencia), con vuelta atrás. Función nueva `ai-transcribe`.
 - Precio de los subtítulos: 0,0045 $/min (OpenAI, 21/11/2026) + 10 % de cota por la UE = 82,5 micros/s.
@@ -237,11 +239,13 @@ datos, función y e2e); las fotos HEIC del iPhone no se pueden usar todavía.
 Detalle en `docs/biblioteca-drive.md`.
 
 ### Edición de fotos bajo demanda (rama `f6/edicion-fotos`, en `f6/integracion`)
+
 «Editar foto» desde la ficha de la biblioteca y desde una capa de imagen del
 editor (la capa pasa a usar la editada; Ctrl+Z la devuelve). **El original no se
 toca nunca**: cada resultado es un recurso nuevo en «Ediciones» con su
 procedencia (`photo_edit` del navegador, `ai_edit` del servidor, que solo puede
 escribir él; el original tiene que ser de la misma marca).
+
 - **Sin IA, en el navegador:** mejorar (automático o a mano: luz, contraste,
   color, temperatura, nitidez), recortes 1:1, 4:5 y 9:16 con encuadre
   inteligente (heurística de detalle y color, no reconoce objetos) y poner un
@@ -292,6 +296,7 @@ detener y reanudar sin perder ni duplicar nada. En modo agencia, `agency/` saca 
 plantillas (`importadas`, `comprobar-plantillas`, `entregar-plantillas`) y se guardan
 como plantillas de la marca (`brand_design_templates`: documento v3 + análisis con
 ejemplos). Detalle, decisiones y lo no probado en `docs/importar-publicaciones.md`.
+
 - Pruebas: base de datos (`importar-publicaciones.test.ts` y casos en `aislamiento.test.ts`), `agency/` (`plantillas.test.ts`) y e2e `24-importar-publicaciones.spec.ts`.
 - Para llevarla a staging: migración `20261201010000_social_import.sql` y desplegar la función nueva `social-import`.
 - Pendiente: interfaz para usar las plantillas (crear una pieza desde una), exportación RGPD de lo importado, probar contra Meta y R2 reales.
@@ -305,6 +310,7 @@ el fondo (PNG transparente). Pestaña «Fondo con IA» en «Editar foto» (bibli
 y editor); resultado = recurso nuevo con procedencia `ai_edit` y el encargo. «Probar
 conexión» comprueba también que la clave vea un modelo `gpt-image…`. Detalle,
 fuentes, precio y límites en `docs/ia-medios.md` §13 y `docs/edicion-fotos.md` §7.
+
 - Precio: OpenAI cobra por tokens; el registro lleva una **cota por megapíxel** (70.000 micros de salida, 14.000 de entrada). Los modelos nacen inactivos y sin precio verificado: hay que activarlos en Plataforma.
 - Fuera de la UE: `AI_MEDIA_ALLOW_NON_EU=true` (o proyecto europeo con `OPENAI_BASE_URL=https://eu.api.openai.com`).
 - Interfaz para el integrador: `PhotoEditScreen` acepta `getSubjectMask` (PNG con las medidas de la foto, plato opaco). Nadie la pasa todavía: sin ella se avisa de que la IA puede retocar el plato. La máscara de OpenAI es orientativa: no garantiza el plato intacto.
@@ -355,6 +361,7 @@ Respuesta a los problemas 1, 2 y 4 y al cambio transversal 5 de la auditoría de
   que la pestaña no pinta nada aunque el JS ya ha llegado (primer pintado a 8,5 s con el
   JS descargado a los 0,04 s): son de la pestaña, no de la app; el cliente de Supabase
   2.119 ya no usa el cerrojo entre pestañas que señalaba la auditoría.
+
 ### Acciones claras y avisos que se resuelven (rama `f11/acciones-claras`, 21/11/2026)
 
 Problemas 6, 7 y 9 y cambios transversales 1 y 2 de la auditoría de UX
@@ -448,20 +455,20 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 
 ## Sin probar contra el servicio real
 
-| Servicio | Estado | Detalle |
-|---|---|---|
-| IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo) | Adaptadores escritos, sin claves | `docs/ia-texto.md` |
-| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai) | Adaptadores escritos, sin claves; vídeo apagado | `docs/ia-medios.md` |
-| Meta (OAuth, publicación, métricas) | Adaptador escrito; sin aplicación de Meta | `docs/publicacion.md`, `docs/analitica.md` |
-| Stripe | Funciones escritas; sin cuenta | `docs/facturacion.md` |
-| Google Drive (OAuth, listar, servir imágenes) | Adaptador escrito; sin cliente OAuth de Google | `docs/biblioteca-drive.md` |
-| Dictado del navegador (Web Speech API de Chrome) | Probado con una simulada | `docs/copiloto-voz.md` |
-| Cloudflare R2 (firmas, subidas, «Probar conexión», migración) | Probado con MinIO en local; sin cuenta de Cloudflare | `docs/almacenamiento-r2.md` |
-| Quitar el fondo en el navegador (BEN2 con WebGPU; IS-Net de respaldo; onnxruntime-web) | Lógica, elección de motor y caída probadas con dobles; BEN2 en CPU de Node con paridad IoU ≥ 0,9998 frente a la referencia; IS-Net y la caída probados en Chromium real (WASM); **BEN2 con WebGPU real sin probar** | `docs/edicion-fotos.md` §7 |
-| Subtítulos automáticos con OpenAI (`gpt-transcribe`) | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave | `docs/editor-reels.md` |
-| IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar | `docs/ia-medios.md` §13 |
-| Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar) | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar | `docs/edicion-fotos.md` |
-| «Probar conexión» de Integraciones | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI | `docs/05-puesta-en-marcha.md` |
+| Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo)                 | Adaptadores escritos, sin claves                                                                                                                                                                                    | `docs/ia-texto.md`                         |
+| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
+| Meta (OAuth, publicación, métricas)                                                        | Adaptador escrito; sin aplicación de Meta                                                                                                                                                                           | `docs/publicacion.md`, `docs/analitica.md` |
+| Stripe                                                                                     | Funciones escritas; sin cuenta                                                                                                                                                                                      | `docs/facturacion.md`                      |
+| Google Drive (OAuth, listar, servir imágenes)                                              | Adaptador escrito; sin cliente OAuth de Google                                                                                                                                                                      | `docs/biblioteca-drive.md`                 |
+| Dictado del navegador (Web Speech API de Chrome)                                           | Probado con una simulada                                                                                                                                                                                            | `docs/copiloto-voz.md`                     |
+| Cloudflare R2 (firmas, subidas, «Probar conexión», migración)                              | Probado con MinIO en local; sin cuenta de Cloudflare                                                                                                                                                                | `docs/almacenamiento-r2.md`                |
+| Quitar el fondo en el navegador (BEN2 con WebGPU; IS-Net de respaldo; onnxruntime-web)     | Lógica, elección de motor y caída probadas con dobles; BEN2 en CPU de Node con paridad IoU ≥ 0,9998 frente a la referencia; IS-Net y la caída probados en Chromium real (WASM); **BEN2 con WebGPU real sin probar** | `docs/edicion-fotos.md` §7                 |
+| Subtítulos automáticos con OpenAI (`gpt-transcribe`)                                       | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave                                                                                                                                    | `docs/editor-reels.md`                     |
+| IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar                                                                                                                         | `docs/ia-medios.md` §13                    |
+| Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar)                               | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar                                                                                                                  | `docs/edicion-fotos.md`                    |
+| «Probar conexión» de Integraciones                                                         | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI                                                                                                                                 | `docs/05-puesta-en-marcha.md`              |
 
 ## En staging
 
@@ -515,26 +522,25 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 | IA por API                                                    | Cuenta de Google Cloud con Vertex AI en la UE (o la alternativa elegida) y precios confirmados                                                                                |
 | Cobrar                                                        | Cuenta de Stripe, moneda, precios por plan y portal configurado                                                                                                               |
 | Correo para cualquiera (registro, recuperación, invitaciones) | SMTP propio (Resend u otro); hoy solo llega al equipo de Supabase, 2 por hora                                                                                                 |
-| Reels y recortes en staging | Trabajador ya desplegado y probado con recortes; falta tarjeta en Fly (la prueba corta a los 5 min) y probar un reel completo (`docs/alojamiento.md` §4.2) |
+| Reels y recortes en staging                                   | Trabajador ya desplegado y probado con recortes; falta tarjeta en Fly (la prueba corta a los 5 min) y probar un reel completo (`docs/alojamiento.md` §4.2)                    |
 | Fotos de Drive en staging                                     | Cliente OAuth de Google (Drive API, pantalla de consentimiento en producción sin verificar)                                                                                   |
 | Archivos en Cloudflare R2                                     | Cuenta de Cloudflare, cubo en la UE, regla CORS, token del cubo y DPA firmado (`docs/almacenamiento-r2.md` §5)                                                                |
 | Clientes reales                                               | Supabase de producción en Pro (copias de seguridad, sin pausas), dominio propio, páginas legales completadas y revisadas por un abogado, contrato de encargo con cada cliente |
 
 ## Decisiones del dueño pendientes
 
-
 1. Moneda de cuenta, precios y límites de los planes (propuesta en `docs/facturacion.md`) y plan por defecto.
 2. Proveedor de IA (por defecto, Google Cloud en la UE) y cupo mensual.
 3. Activar el vídeo con IA (por defecto, apagado).
 4. Alojamiento del trabajador de medios: recomendado Fly.io en Fráncfort; código preparado (`docs/alojamiento.md`), falta la cuenta.
 5. Música para los reels y su licencia.
-4. Alojamiento del trabajador de medios.
-5. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
-6. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
-7. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
-8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
-9. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
-10. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
+6. Alojamiento del trabajador de medios.
+7. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
+8. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
+9. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
+10. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
+11. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
+12. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
 
 ## Pendientes conocidos
 
