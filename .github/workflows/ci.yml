@@ -73,7 +73,36 @@ jobs:
       - run: npm test
         working-directory: agency
 
-  # Prueba de extremo a extremo (Playwright, 57 escenarios) contra el stack de
+  # Maquetación del editor y exportación píxel a píxel en un Chromium real, SIN
+  # Supabase ni Docker (la aplicación con el cliente simulado de src/test; ver
+  # playwright.layout.config.ts). Antes solo se ejecutaba a mano en local.
+  # `continue-on-error` hasta verlo estable en Linux (tipografías del runner).
+  maquetacion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Instalar Chromium (con dependencias) y una tipografía
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-dejavu-core
+          npx playwright install --with-deps chromium
+      - run: npm run test:layout
+      - name: Subir capturas (si falla)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maquetacion-informe
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Prueba de extremo a extremo (Playwright, los 29 archivos de tests/e2e) contra el stack de
   # Supabase LOCAL levantado dentro del propio trabajo (Docker de ubuntu-latest).
   # Sin secretos: la URL y la clave anónima del stack local son públicas y las
   # lee playwright.config.ts de `supabase status`; la función de IA corre con el
