@@ -13,6 +13,13 @@
 //   test                superadministrador: «Probar conexión» (probes.ts).
 //   worker_check        superadministrador: estado de la máquina de Fly; si lleva
 //                       encendida más de WORKER_MAX_UPTIME_HOURS levanta un aviso de plataforma.
+//   ai_overview         superadministrador: qué modelo se sugiere para cada tarea de
+//                       OpenAI y Claude, con los precios al día frente a los cargados
+//                       (fuente de precios en _shared/integrations/pricing.ts, con caché).
+//   ai_apply            superadministrador: aplica la configuración recomendada de IA
+//                       (`defaults` al guardar la clave, `all` o solo `prices`);
+//                       devuelve lo anterior para poder deshacerlo.
+//   openai_region       superadministrador: pasa OpenAI al servidor europeo o al general.
 //   generate_token_key  superadministrador: añade una clave nueva de cifrado de los
 //                       tokens de las redes y la deja como la que cifra lo nuevo.
 //   generate_worker_token  superadministrador: token nuevo del trabajador de medios
@@ -34,7 +41,19 @@ import {
   WORKER_GATEWAY_TOKEN_PATTERN,
   type IntegrationId,
 } from '../_shared/integrations/catalog.ts';
+import {
+  buildAiOverview,
+  buildApplyPlan,
+  OPENAI_EU_BASE,
+  OPENAI_GLOBAL_BASE,
+  openAiRegion,
+  wantedModels,
+  type AiContext,
+  type ApplyScope,
+} from '../_shared/integrations/ai-setup.ts';
+import { fetchPriceSource, loadPrices, parseSnapshot } from '../_shared/integrations/pricing.ts';
 import { WORKER_MAX_UPTIME_HOURS, type ProbeResult } from '../_shared/integrations/probes.ts';
+import type { RecProvider } from '../_shared/integrations/recommendations.ts';
 import type { Env, SettingsLoader } from '../_shared/integrations/settings.ts';
 
 export interface PlatformIntegrationsDeps {
@@ -52,6 +71,12 @@ export interface PlatformIntegrationsDeps {
   probe(id: IntegrationId, env: Env): Promise<ProbeResult>;
   /** Estado de la máquina de Fly (solo lectura); sin esto, `worker_check` dice que no se sabe. */
   workerMachine?(env: Env): Promise<{ state: string; startedAt: string | null } | { problem: string }>;
+  /** Lee la fuente de precios (JSON ya leído). Lanza si falla. Por defecto, la real. */
+  readPriceSource?: () => Promise<unknown>;
+  /** Modelos que lista la cuenta de OpenAI (gratis); sin esto no se sabe cuáles tiene. */
+  listOpenAiModels?: (env: Env) => Promise<{ models: string[] } | { problem: string }>;
+  /** Activa en el registro de modelos de imagen los de OpenAI indicados; devuelve los que estaban apagados. */
+  activateImageModels?: (models: string[]) => Promise<string[]>;
   /** 32 bytes aleatorios en base64 (clave nueva de cifrado de los tokens). */
   randomKey?: () => string;
   /** Token nuevo del trabajador («rrss_wgt_» + 32 bytes en base64url). */
@@ -113,6 +138,102 @@ export function createPlatformIntegrationsHandler(
       deps.log?.('availability_failed', {});
       return NOTHING_AVAILABLE;
     }
+  }
+
+  /** Ajustes guardados que no son secretos (para comparar y para poder deshacer). */
+  async function storedPlain(): Promise<Record<string, string>> {
+    const r = await deps.rpc('integration_settings_for_service', {});
+    if (r.error) throw new Error('No se pudieron leer los ajustes');
+    const all = (r.data && typeof r.data === 'object' && !Array.isArray(r.data) ? r.data : {}) as Record<
+      string,
+      unknown
+    >;
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(all)) {
+      if (settingSpec(key)?.secret === false && typeof value === 'string') out[key] = value;
+    }
+    return out;
+  }
+
+  /** Configuración efectiva, precios al día (con caché) y modelos de la cuenta. */
+  async function aiContext(asUser: RpcClient, refresh: boolean) {
+    deps.settings.invalidate();
+    const env = await deps.settings.get();
+    const stored = await storedPlain();
+    const now = (deps.now ?? (() => new Date()))();
+    const loaded = await loadPrices({
+      stored: parseSnapshot(stored.AI_PRICE_SNAPSHOT),
+      wanted: wantedModels(env),
+      now,
+      readSource: deps.readPriceSource ?? (() => fetchPriceSource()),
+      force: refresh,
+    });
+    if (loaded.fresh && loaded.snapshot) {
+      const saved = await asUser('admin_set_integration_setting', {
+        p_key: 'AI_PRICE_SNAPSHOT',
+        p_value: JSON.stringify(loaded.snapshot),
+      });
+      if (saved.error) deps.log?.('price_snapshot_not_saved', { code: saved.error.code ?? null });
+      deps.settings.invalidate();
+    }
+    let available: Set<string> | null = null;
+    let modelsProblem: string | null = null;
+    if (!env.OPENAI_API_KEY?.trim()) modelsProblem = 'Falta la clave de OpenAI.';
+    else if (deps.listOpenAiModels) {
+      try {
+        const listed = await deps.listOpenAiModels(env);
+        if ('models' in listed) available = new Set(listed.models);
+        else modelsProblem = listed.problem;
+      } catch {
+        modelsProblem = 'No se pudo mirar qué modelos tiene la cuenta de OpenAI.';
+      }
+    }
+    const ctx: AiContext = { env, snapshot: loaded.snapshot, available };
+    return {
+      ctx,
+      stored,
+      info: {
+        fetchedAt: loaded.snapshot?.fetchedAt ?? null,
+        stale: loaded.problem !== undefined,
+        problem: loaded.problem ?? null,
+        modelsProblem,
+      },
+    };
+  }
+
+  /** Escribe los cambios (validados antes), con la sesión del superadministrador. */
+  async function writeChanges(
+    asUser: RpcClient,
+    changes: Record<string, string | null>,
+    stored: Record<string, string>,
+  ): Promise<
+    | Response
+    | { previous: Record<string, string | null>; applied: Array<{ key: string; from: string | null; to: string | null }> }
+  > {
+    for (const [key, value] of Object.entries(changes)) {
+      if (!settingSpec(key)) return fail(400, 'invalid', `«${key.slice(0, 64)}» no es un ajuste.`);
+      if (value !== null) {
+        const problem = validateSetting(key, value);
+        if (problem) return fail(400, 'invalid', `${key}: ${problem}`);
+      }
+    }
+    const previous: Record<string, string | null> = {};
+    const applied: Array<{ key: string; from: string | null; to: string | null }> = [];
+    for (const [key, value] of Object.entries(changes)) {
+      previous[key] = stored[key] ?? null;
+      const r =
+        value === null
+          ? await asUser('admin_delete_integration_setting', { p_key: key })
+          : await asUser('admin_set_integration_setting', { p_key: key, p_value: value });
+      if (r.error) {
+        deps.settings.invalidate();
+        deps.log?.('apply_failed', { key, code: r.error.code ?? null });
+        return rpcFailure(r.error);
+      }
+      applied.push({ key, from: stored[key] ?? null, to: value });
+    }
+    deps.settings.invalidate();
+    return { previous, applied };
   }
 
   /** ¿Es superadministrador? Se pregunta a la base de datos con su sesión. */
@@ -224,6 +345,68 @@ export function createPlatformIntegrationsHandler(
       if (recorded.error) deps.log?.('record_test_failed', { code: recorded.error.code ?? null });
       deps.log?.('tested', { integration: body.integration, ok: result.ok });
       return json(200, result);
+    }
+
+    if (body.action === 'ai_overview') {
+      const { ctx, info } = await aiContext(asUser, body.refresh === true);
+      return json(200, buildAiOverview(ctx, info));
+    }
+
+    if (body.action === 'ai_apply') {
+      const provider = body.provider as RecProvider;
+      const scope = body.scope as ApplyScope;
+      if (provider !== 'openai' && provider !== 'claude') return fail(400, 'bad_request', 'Falta el proveedor.');
+      if (scope !== 'defaults' && scope !== 'all' && scope !== 'prices') {
+        return fail(400, 'bad_request', 'Falta qué aplicar.');
+      }
+      if (provider === 'claude' && scope !== 'prices') {
+        return fail(400, 'bad_request', 'Claude solo tiene precios que aplicar: no hace falta configurarlo.');
+      }
+      const { ctx, stored } = await aiContext(asUser, false);
+      if (provider === 'openai' && scope !== 'prices' && !ctx.env.OPENAI_API_KEY?.trim()) {
+        return fail(400, 'invalid', 'Primero guarda la clave de OpenAI.');
+      }
+      if (!ctx.snapshot) {
+        return fail(502, 'prices_unavailable', 'No se han podido leer los precios al día. Inténtalo de nuevo en un rato.');
+      }
+      const plan = buildApplyPlan(ctx, provider, scope);
+      const written = await writeChanges(asUser, plan.changes, stored);
+      if (written instanceof Response) return written;
+      let activated: string[] = [];
+      if (plan.activateImageModels.length > 0 && deps.activateImageModels) {
+        try {
+          activated = await deps.activateImageModels(plan.activateImageModels);
+        } catch {
+          deps.log?.('activate_image_models_failed', {});
+          plan.notes.push('No se pudieron activar los modelos de imagen; actívalos en el registro de modelos.');
+        }
+      }
+      deps.log?.('ai_applied', { provider, scope, keys: Object.keys(plan.changes) });
+      return json(200, { ...written, notes: plan.notes, activatedImageModels: activated });
+    }
+
+    if (body.action === 'openai_region') {
+      const region = body.region;
+      if (region !== 'global' && region !== 'eu') return fail(400, 'bad_request', 'Falta la región.');
+      const { ctx, stored } = await aiContext(asUser, false);
+      const before = openAiRegion(ctx.env);
+      const changes: Record<string, string | null> =
+        region === 'global'
+          ? { OPENAI_BASE_URL: OPENAI_GLOBAL_BASE, AI_ALLOW_NON_EU_PROCESSING: 'true', AI_MEDIA_ALLOW_NON_EU: 'true' }
+          : { OPENAI_BASE_URL: OPENAI_EU_BASE };
+      // Los precios que coincidían con la fuente siguen coincidiendo con el recargo nuevo.
+      if (ctx.snapshot && before !== region) {
+        const overview = buildAiOverview(ctx, { fetchedAt: null, stale: false, problem: null, modelsProblem: null });
+        const onlyModels = new Set(overview.providers.openai.prices.filter((r) => r.status === 'same').map((r) => r.model));
+        if (onlyModels.size > 0) {
+          const plan = buildApplyPlan(ctx, 'openai', 'prices', { regionAfter: region, onlyModels });
+          if (plan.changes.AI_PRICES) changes.AI_PRICES = plan.changes.AI_PRICES;
+        }
+      }
+      const written = await writeChanges(asUser, changes, stored);
+      if (written instanceof Response) return written;
+      deps.log?.('openai_region', { region });
+      return json(200, { ...written, notes: [] });
     }
 
     if (body.action === 'worker_check') {

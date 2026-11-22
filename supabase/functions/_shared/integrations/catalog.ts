@@ -6,7 +6,8 @@
 // 20261120010000, ampliada en 20261123010000 con Google Drive y el copiloto
 // y en 20261124010000 con Cloudflare R2 (y en 20261126010000 con OpenAI y en
 // 20261208010000 con el trabajador de medios en Fly.io, y en 20261210010000
-// con el token de su intermediario `worker-gateway`)
+// con el token de su intermediario `worker-gateway`, y en 20261222010000 con la
+// última lectura de precios)
 // (`private.integration_setting_keys`, que es la que manda: no
 // se guarda nada fuera de él) y en la pantalla
 // (src/features/platform/integrations/catalog.ts); una prueba comprueba que los
@@ -200,6 +201,18 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     validate: pattern(/^[a-z0-9][a-z0-9._-]{1,60}$/, 'Nombre de modelo no válido (por ejemplo, gpt-transcribe).'),
   },
   { key: 'AI_PRICES', integration: 'ai_text', secret: false, validate: prices },
+  // Última lectura de precios de OpenAI y Claude (20261222010000): la guarda el servidor.
+  {
+    key: 'AI_PRICE_SNAPSHOT',
+    integration: 'ai_text',
+    secret: false,
+    validate: json((parsed) => {
+      const p = parsed as { models?: unknown; fetchedAt?: unknown } | null;
+      return p && typeof p === 'object' && p.models && typeof p.models === 'object' && typeof p.fetchedAt === 'string'
+        ? null
+        : 'Debe ser { "fetchedAt": …, "models": { … } }.';
+    }),
+  },
   { key: 'AI_ALLOW_NON_EU_PROCESSING', integration: 'ai_text', secret: false, validate: flag },
   {
     key: 'AI_TIMEOUT_MS',
@@ -345,7 +358,7 @@ export function validateSetting(key: string, value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return 'El valor está vacío.';
   if (trimmed.length > 20_000) return 'El valor es demasiado largo.';
-  if (key !== 'AI_VERTEX_SERVICE_ACCOUNT_JSON' && key !== 'GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON' && key !== 'AI_PRICES') {
+  if (key !== 'AI_VERTEX_SERVICE_ACCOUNT_JSON' && key !== 'GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON' && key !== 'AI_PRICES' && key !== 'AI_PRICE_SNAPSHOT') {
     if (/[\r\n]/.test(trimmed)) return 'El valor no puede tener saltos de línea.';
   }
   return spec.validate ? spec.validate(trimmed) : null;
