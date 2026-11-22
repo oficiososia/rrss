@@ -175,6 +175,44 @@ reordenar con el dedo con agarre largo, asas de 24 px y recorte con teclado. Pro
 con FFmpeg real (posición del texto en fotogramas), base de datos. Sin probar: análisis de música real y agarre largo en un
 móvil real, FFmpeg 6 de Alpine (`fontsize` como expresión), migración en staging. Detalle y despliegue en `docs/editor-reels.md` §8.
 
+### Catálogo de plantillas y plantillas de reel por marca (rama `f35/catalogo-plantillas`, 22/11/2026)
+
+Hasta ahora una marca tenía las plantillas de publicación que alguien le entregara a mano y, para los reels,
+solo los tres estilos del trabajador. Detalle: `docs/plantillas-competencia.md` (estudio y por qué cada
+plantilla), `docs/editor-reels.md` §9 (formato de la plantilla de reel) y `agency/README.md` (cómo se carga).
+
+- **Estudio de la competencia** (restaurantes y asadores, bares de cócteles, gimnasios), con fuentes
+  enlazadas y cada afirmación marcada como dato, consejo, inferencia o sin verificar. Límite importante:
+  Instagram y TikTok no se dejan leer sin sesión, así que **no se ha visto por dentro ningún reel real**; las
+  duraciones de plano son una propuesta razonada, no una medición.
+- **Plantillas de reel con estructura** (`src/features/reels/reelTemplate.ts`): planos con duración,
+  movimiento y transición, textos de muestra con su animación, música sugerida (solo escrita) y portada.
+  Tabla `brand_reel_templates` con RLS, `deliver_reel_templates` y `delete_reel_template` (**migración
+  `20261224010000_reel_templates.sql`**, con vuelta atrás y casos en `tests/db/aislamiento.test.ts`).
+  **No aplicada en staging ni en producción.** Al usar una plantilla sale un proyecto de reel normal (plan
+  v2): el trabajador, `request_media_job` y la publicación no cambian.
+- **«Empieza tu reel»** ofrece las plantillas de la marca encima de los tres pasos: se elige una, el selector
+  enseña los planos en orden y, al confirmar, el reel queda montado con sus textos de muestra. Sin
+  plantillas, la pantalla es la de antes.
+- **Catálogo** en `agency/catalogo/`: cuatro juegos (`restaurante`, `cocteleria`, `gimnasio`, `generico`)
+  con 10 plantillas de reel y 10 de publicación o carrusel cada uno (80 en total). Sin nada de ningún
+  cliente: nombres neutros, textos de muestra y colores y tipografías por papeles, que se llenan con el
+  perfil de la marca al cargar. Órdenes nuevas `catalogo` y `cargar-catalogo` (**en seco por defecto**;
+  `--cargar` guarda). El archivo de entrega de plantillas de publicación admite ya documentos v5.
+- **Probado:** unitarias y componentes del formato y de la pantalla de salida; base de datos (aislamiento,
+  permisos, rechazos, tope, vuelta atrás); `agency/tests/catalogo.test.ts` recorre las 80 plantillas con
+  tres temas y las pasa por los validadores de la aplicación (documento v5 y análisis; plantilla de reel y
+  plan v2 con el mínimo y con todo el material), y prueba la carga en seco y la de verdad contra el
+  Supabase simulado. Las publicaciones del juego de restaurante y del de gimnasio se miraron dibujadas en
+  un navegador (una hoja de contactos hecha para la ocasión, no el editor).
+- **Sin probar:** nada cargado en staging; **ningún reel de plantilla montado con el trabajador ni visto en
+  la vista previa real**; las publicaciones dentro del editor de verdad (tipografías de la marca, textos
+  largos); el reparto automático de colores con perfiles distintos de los tres de prueba y los dos reales
+  que se usaron en seco.
+- **Pendiente:** pantalla para borrar o renombrar plantillas de reel; «Guardar como plantilla» desde el
+  editor de reels (el origen `editor` ya existe); que «un reel como este» (rama `f36`) guarde en este
+  formato; medir con la analítica qué plantillas funcionan y ajustar duraciones.
+
 ### Fase 4 · Campañas (primera parte)
 
 «Prepara la semana que viene» → plan explicado (observado / datos / hipótesis) →

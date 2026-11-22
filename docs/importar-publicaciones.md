@@ -137,6 +137,14 @@ Quien edita la marca puede guardar el diseño que tiene abierto con **«⋯» �
 
 **Usar una plantilla en otra proporción o con otro número de páginas** (`src/features/content/templates/fit.ts`): ya no se rechaza. Si la red no admite la proporción, se pasa a la de la pieza (si la admite) o a la primera que admite, recolocando cada capa según su anclaje (`document/adapt.ts`); si sobran páginas se usan las primeras y si faltan (un carrusel pide 2) se copia la última. El diálogo lo dice antes de aplicar y la aplicación es un solo paso de Ctrl+Z.
 
+#### Catálogo de la agencia (22/11/2026)
+
+`agency/catalogo/` trae cuatro juegos (restaurante, bar de cócteles, gimnasio y genérico) con 10 plantillas
+de publicación o carrusel cada uno, que se cargan como manuales con los colores y tipografías del perfil de
+la marca (`cargar-catalogo`, en seco por defecto: `agency/README.md`). Para eso el archivo de entrega admite
+ya documentos de la **versión 5** (antes solo 3 y 4; la base de datos ya la aceptaba). Los reels del
+catálogo van aparte, en `brand_reel_templates` (`docs/editor-reels.md`, sección 9).
+
 ### Cómo se sacan (modo agencia, sin API de IA)
 
 La sesión de Claude Code de la agencia (cuenta normal, ver `agency/README.md`)
