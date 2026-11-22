@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { REEL_TEMPLATES } from '../templates';
 import { Inspector, type InspectorProps } from './Inspector';
@@ -65,7 +65,8 @@ describe('panel: animación del texto', () => {
 describe('panel: movimiento de cámara', () => {
   it('ofrece los movimientos con su vista previa, elige uno y la intensidad', () => {
     const { p, applied } = setup({ kind: 'clip', id: 'c1' });
-    expect(screen.getAllByRole('radio')).toHaveLength(8); // el de la plantilla + 7
+    // El de la plantilla + 7 (los filtros de color son otro grupo).
+    expect(within(screen.getByTestId('reel-motion')).getAllByRole('radio')).toHaveLength(8);
     expect(screen.getByRole('radio', { name: 'Subir la cámara' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'Bajar la cámara' }));
     expect(applied[0]!(p).plan.clips[0]).toMatchObject({ motion: 'pan-down' });

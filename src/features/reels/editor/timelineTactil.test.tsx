@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { REEL_TEMPLATES } from '../templates';
+import { createClock } from './clock';
 import { addClip, addText } from './ops';
 import { emptyProject, planTimeline, templateTextStyle } from './project';
-import { LONG_PRESS_MS, Timeline, type TimelineProps } from './Timeline';
+import { LONG_PRESS_MS, textRows, Timeline, type TimelineProps } from './Timeline';
 import { CoverPicker } from './CoverPicker';
 
 const fundido = REEL_TEMPLATES.find((t) => t.id === 'fundido-suave')!;
@@ -41,7 +42,7 @@ function setup(overrides: Partial<TimelineProps> = {}) {
     plan: project.plan,
     timeline,
     pxPerSecond: 60,
-    playhead: 0,
+    clock: createClock(0),
     selection: null,
     readOnly: false,
     labelOf: (p) => p.split('/').pop()!,
@@ -60,8 +61,13 @@ function setup(overrides: Partial<TimelineProps> = {}) {
 }
 
 describe('línea de tiempo con teclado', () => {
-  it('las asas de recorte se alcanzan con el tabulador y se mueven con las flechas (Mayús = 1 s)', () => {
-    const props = setup();
+  it('las asas de recorte salen en lo elegido, se alcanzan con el tabulador y se mueven con las flechas (Mayús = 1 s)', () => {
+    // Sin nada elegido no hay asas: no estorban al desplazar ni a los botones de transición.
+    const none = setup();
+    expect(screen.queryAllByRole('slider')).toHaveLength(0);
+    expect(none.onTrimClip).not.toHaveBeenCalled();
+    cleanup();
+    const props = setup({ selection: { kind: 'clip', id: 'c2' } });
     const handle = screen.getByRole('slider', { name: 'Recortar el final del clip 2' });
     expect(handle).toHaveAttribute('tabindex', '0');
     expect(handle).toHaveAttribute('aria-valuenow', '4');
@@ -74,15 +80,19 @@ describe('línea de tiempo con teclado', () => {
     // Principio del clip y duración de una foto.
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Recortar el principio del clip 2' }), { key: 'ArrowRight' });
     expect(props.onTrimClip).toHaveBeenLastCalledWith('c2', 'start', 0.1, 'kbd:c2:start');
+    cleanup();
+    const photo = setup({ selection: { kind: 'clip', id: 'c1' } });
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Duración de la foto 1' }), { key: 'ArrowRight' });
-    expect(props.onTrimClip).toHaveBeenLastCalledWith('c1', 'end', 2.6, 'kbd:c1:end');
+    expect(photo.onTrimClip).toHaveBeenLastCalledWith('c1', 'end', 2.6, 'kbd:c1:end');
     // Los textos también.
+    cleanup();
+    const text = setup({ selection: { kind: 'text', id: 't1' } });
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Cuándo sale el texto 1' }), { key: 'ArrowLeft' });
-    expect(props.onTrimText).toHaveBeenLastCalledWith('t1', 'end', 1.9, 'kbd:t1:end');
+    expect(text.onTrimText).toHaveBeenLastCalledWith('t1', 'end', 2.4, 'kbd:t1:end');
   });
 
   it('en solo lectura las flechas no cambian nada', () => {
-    const props = setup({ readOnly: true });
+    const props = setup({ readOnly: true, selection: { kind: 'clip', id: 'c2' } });
     expect(screen.queryByRole('slider', { name: 'Recortar el final del clip 2' })).toBeNull();
     expect(props.onTrimClip).not.toHaveBeenCalled();
   });
@@ -137,6 +147,104 @@ describe('arrastrar con el dedo', () => {
     fireEvent.pointerMove(window, { clientX: 330 });
     fireEvent.pointerUp(window, { clientX: 330 });
     expect(props.onMoveClip).toHaveBeenCalledWith(0, 1);
+  });
+});
+
+describe('la línea de tiempo como en los editores de móvil', () => {
+  it('el cabezal está fijo en el centro: desplazar la línea mueve el cabezal, y el cabezal desplaza la línea', () => {
+    const clock = createClock(0);
+    const props = setup({ clock });
+    const scroller = screen.getByTestId('reel-timeline');
+    // El usuario desplaza 120 px a 60 px por segundo: el cabezal va al segundo 2.
+    scroller.scrollLeft = 120;
+    fireEvent.scroll(scroller);
+    expect(props.onSeek).toHaveBeenLastCalledWith(2);
+    // Al reproducir, el reloj avanza y la línea se desliza sola (sin volver a pedir el salto).
+    (props.onSeek as ReturnType<typeof vi.fn>).mockClear();
+    act(() => clock.set(3));
+    expect(scroller.scrollLeft).toBe(180);
+    fireEvent.scroll(scroller);
+    expect(props.onSeek).not.toHaveBeenCalled();
+  });
+
+  it('un toque en la regla lleva el cabezal a ese segundo', () => {
+    const props = setup();
+    fireEvent.click(screen.getByTestId('reel-ruler'), { clientX: 150 });
+    expect(props.onSeek).toHaveBeenLastCalledWith(2.5);
+  });
+
+  it('amplía con Ctrl + rueda y con el pellizco de dos dedos; la rueda sola desplaza', () => {
+    const onZoom = vi.fn();
+    setup({ onZoom });
+    const scroller = screen.getByTestId('reel-timeline');
+    fireEvent.wheel(scroller, { deltaY: -200, ctrlKey: true });
+    expect(onZoom.mock.calls[0]![0]).toBeGreaterThan(60);
+    fireEvent.wheel(scroller, { deltaY: 200, ctrlKey: true });
+    expect(onZoom.mock.calls[1]![0]).toBeLessThan(60);
+    onZoom.mockClear();
+    fireEvent.wheel(scroller, { deltaY: 90 });
+    expect(onZoom).not.toHaveBeenCalled();
+    expect(scroller.scrollLeft).toBe(90);
+    // Pellizco: los dedos pasan de 100 px a 200 px de separación → el doble de zoom.
+    const touch = (x: number) => ({ clientX: x, clientY: 10 });
+    fireEvent.touchStart(scroller, { touches: [touch(100), touch(200)] });
+    fireEvent.touchMove(scroller, { touches: [touch(50), touch(250)] });
+    expect(onZoom).toHaveBeenLastCalledWith(120);
+    fireEvent.touchEnd(scroller, { touches: [] });
+  });
+
+  it('tocar el fondo de una pista suelta lo elegido; entre dos clips hay un botón para su transición', () => {
+    const props = setup({ selection: { kind: 'clip', id: 'c1' } });
+    fireEvent.click(screen.getByRole('group', { name: 'Vídeo y fotos' }));
+    expect(props.onSelect).toHaveBeenLastCalledWith(null);
+    const transitions = screen.getAllByTestId('reel-transition');
+    expect(transitions).toHaveLength(2);
+    expect(transitions[0]).toHaveAccessibleName('Transición entre 1 y 2: fundido');
+    fireEvent.click(transitions[1]!);
+    expect(props.onSelect).toHaveBeenLastCalledWith({ kind: 'transition', id: 'c3' });
+  });
+
+  it('cada elemento lleva su tira de miniaturas, y los textos que se solapan van en filas distintas', () => {
+    setup({ thumbOf: () => 'https://ejemplo.test/mini.jpg', urlOf: () => 'https://ejemplo.test/archivo' });
+    expect(screen.getAllByTestId('reel-strip')).toHaveLength(3);
+    expect(textRows([{ start: 0, end: 2 }, { start: 1, end: 3 }, { start: 2.5, end: 4 }])).toEqual({
+      rows: [0, 1, 0],
+      count: 2,
+    });
+    // Nunca más de tres filas: el cuarto solapado comparte la que antes queda libre.
+    const many = textRows([0, 0, 0, 0].map((_, i) => ({ start: 0, end: 2 + i })));
+    expect(many.count).toBe(3);
+    expect(many.rows).toEqual([0, 1, 2, 0]);
+  });
+
+  it('las pistas vacías ofrecen lo que se puede añadir, y al final de la principal hay un «+»', () => {
+    let project = addClip(emptyProject(fundido), asset('a.jpg', 'image'), fundido);
+    project = { ...project };
+    const onAddText = vi.fn();
+    const onAddMusic = vi.fn();
+    const onAddMedia = vi.fn();
+    setup({ plan: project.plan, timeline: planTimeline(project.plan.clips, fundido), onAddText, onAddMusic, onAddMedia });
+    fireEvent.click(screen.getByRole('button', { name: 'Añadir texto' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Añadir música' }));
+    fireEvent.click(screen.getByTestId('reel-add-end'));
+    expect([onAddText, onAddMusic, onAddMedia].map((f) => f.mock.calls.length)).toEqual([1, 1, 1]);
+  });
+
+  it('un clip a otra velocidad lo dice en su etiqueta y se recorta en segundos del archivo', () => {
+    let project = addClip(emptyProject(fundido), asset('b.mp4', 'video', 10_000), fundido);
+    project = { ...project, plan: { ...project.plan, clips: [{ ...project.plan.clips[0]!, speed: 2 } as never] } };
+    const props = setup({
+      plan: project.plan,
+      timeline: planTimeline(project.plan.clips, fundido, () => 10),
+      selection: { kind: 'clip', id: 'c1' },
+    });
+    expect(screen.getByTestId('reel-clip-speed-badge')).toHaveTextContent('2×');
+    // 60 px a 60 px/s = 1 s de pantalla = 2 s de archivo.
+    const handle = screen.getByTestId('reel-handle-end');
+    fireEvent.pointerDown(handle, { clientX: 100, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 40 });
+    fireEvent.pointerUp(window, { clientX: 40 });
+    expect(props.onTrimClip).toHaveBeenLastCalledWith('c1', 'end', 2, expect.any(String));
   });
 });
 
