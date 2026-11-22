@@ -842,7 +842,7 @@ describe('fal.ai · vídeo (HTTP simulado)', () => {
 
   it('sondea: en cola, en curso, terminado (pide el resultado) y terminado con error', async () => {
     const queue = create(() => ({ json: { status: 'IN_QUEUE', queue_position: 3 } }));
-    expect(await queue.provider.poll!(job, falModel, signal())).toEqual({ status: 'pending' });
+    expect(await queue.provider.poll!(job, falModel, signal())).toEqual({ status: 'pending', progress: 'queued' });
     expect(queue.calls[0]).toMatchObject({
       url: job.statusUrl,
       method: 'GET',
@@ -850,6 +850,7 @@ describe('fal.ai · vídeo (HTTP simulado)', () => {
     });
     expect(await create(() => ({ json: { status: 'IN_PROGRESS' } })).provider.poll!(job, falModel, signal())).toEqual({
       status: 'pending',
+      progress: 'running',
     });
 
     const done = create((call) =>
