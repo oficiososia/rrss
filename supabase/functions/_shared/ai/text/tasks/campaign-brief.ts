@@ -1,0 +1,391 @@
+// Tarea: la IA rellena contigo el formulario de «Preparar un plan» de Campañas
+// (acción `campaign.brief` de `ai-generate`; el registro y el cupo son los de
+// `campaign.plan`: es la misma tarea de planificación, más barata porque no
+// escribe piezas).
+//
+// A partir de lo que la persona cuenta («prepárame la campaña del menú de
+// otoño, que dure hasta navidades, sobre todo reels») PROPONE los datos del
+// formulario: redes, fechas (con la duración razonada), ritmo (publicaciones por
+// semana y reparto por formato), nombre y objetivo. No crea ninguna campaña ni
+// ninguna pieza: la persona ve la propuesta, la corrige y solo entonces pide el
+// plan. Si falta un dato imprescindible, devuelve UNA pregunta corta en lugar
+// de una propuesta.
+//
+// Lo que sale del modelo se sanea aquí, sin IA: redes y formatos solo de la
+// lista que mandó el producto (las de la marca), fechas reales y dentro de lo
+// que admite un plan, ritmo acotado y una semana por fase como mucho.
+import { AiError, type AiOutputSchema, type AiService, type JsonSchema, type Json } from '../../contract.ts';
+import { CAMPAIGN_PLAN_PURPOSE, dayNumber, MAX_CAMPAIGN_DAYS, type CampaignTarget } from './campaign-plan.ts';
+import {
+  AiTaskInputError,
+  brandProfileContext,
+  DATA_RULE,
+  requireText,
+  runStructuredTask,
+  type TaskActor,
+  type TaskMeta,
+} from './shared.ts';
+
+export const CAMPAIGN_BRIEF_PURPOSE = CAMPAIGN_PLAN_PURPOSE;
+export const MAX_BRIEF_CHARS = 2000;
+export const MAX_BRIEF_TARGETS = 20;
+export const MAX_BRIEF_WEEKS = Math.ceil(MAX_CAMPAIGN_DAYS / 7);
+export const MAX_PER_WEEK_PER_TARGET = 7;
+export const MAX_PER_WEEK_TOTAL = 14;
+
+const ID = /^[a-z][a-z0-9_]{0,31}$/;
+
+/** Lo que la persona pide cambiar de una propuesta que ya tiene. */
+export type BriefAdjustment = 'shorter' | 'longer';
+
+/** Propuesta que ya se enseñó (para ajustarla: «más corta», «más larga»). */
+export interface BriefProposal {
+  title: string;
+  objective: string;
+  networks: string[];
+  startDate: string;
+  endDate: string;
+  perWeek: number;
+  mix: BriefMixItem[];
+  weeks: BriefWeek[];
+}
+
+export interface BriefMixItem {
+  network: string;
+  format: string;
+  /** Publicaciones por semana en ese formato. */
+  perWeek: number;
+}
+
+export interface BriefWeek {
+  /** «Anuncio», «Platos», «Cierre»… */
+  title: string;
+  /** Qué se cuenta esa semana, en una frase. */
+  focus: string;
+}
+
+export interface CampaignBriefRequest {
+  brandProfile: Json;
+  /** Lo que cuenta la persona, con sus palabras (dictado o escrito). Es dato, no instrucciones. */
+  instruction: string;
+  /** Hoy, AAAA-MM-DD, en la hora de la persona. */
+  today: string;
+  /** Redes y formatos que se pueden ofrecer: los de la marca. Nada fuera de esta lista. */
+  targets: CampaignTarget[];
+  /** Propuesta anterior y ajuste pedido. */
+  current?: BriefProposal;
+  adjust?: BriefAdjustment;
+  /** Respuesta a la pregunta que hizo la IA antes. */
+  answer?: { question: string; text: string };
+}
+
+export interface CampaignBriefProposal extends BriefProposal {
+  /** Por qué esta duración y este ritmo, en una o dos frases («Te propongo 3 semanas porque…»). */
+  why: string;
+}
+
+export interface CampaignBriefResult extends TaskMeta {
+  /** `question`: falta un dato imprescindible; `proposal`: datos del formulario por revisar. */
+  status: 'question' | 'proposal';
+  question: string | null;
+  proposal: CampaignBriefProposal | null;
+  /** Retoques que el producto ha hecho a lo que dijo el modelo (fechas, redes, ritmo). */
+  notes: string[];
+}
+
+export const CAMPAIGN_BRIEF_INSTRUCTIONS = [
+  'Eres estratega de redes sociales. Una persona te cuenta con sus palabras (material «lo que quiere») qué campaña quiere preparar para la marca del material «perfil de marca». Tu trabajo es proponer cómo rellenar el formulario de la campaña: redes, fechas, ritmo, nombre y objetivo. No escribes las publicaciones ni creas nada: es una propuesta que la persona revisará y corregirá.',
+  'Tuteas y hablas en español llano. En «why» explica en una o dos frases por qué esa duración y ese ritmo, empezando por «Te propongo …».',
+  'Redes: elige solo entre las de la lista «Destinos». Si la persona nombra una red que no está en la lista, no la pongas. Si no dice nada de redes, elige las que mejor encajen con el tema (normalmente una o dos).',
+  'Fechas: el material «hoy» da la fecha de hoy. La campaña empieza como pronto mañana. «Hasta Navidad» acaba el 24 de diciembre; «esta semana» o «la semana que viene» son semanas naturales (de lunes a domingo). Si la persona no dice cuánto debe durar, propón la duración que mejor encaje con el tema y razónala (por ejemplo, 3 semanas: una de anuncio, una de platos y una de cierre); una campaña normal dura de 1 a 4 semanas y nunca más de 9.',
+  'Ritmo: «perWeek» es el total de publicaciones por semana y «mix» lo reparte por red y formato de la lista «Destinos» (la suma de «mix» es «perWeek»). Sé realista para un negocio pequeño: de 2 a 5 por semana en total, y nunca más de 7 por semana en un mismo formato. Si la persona prefiere un formato («sobre todo reels»), dale más peso en el reparto.',
+  'Semanas: una entrada de «weeks» por semana de la campaña, en orden, con un título corto y qué se cuenta esa semana.',
+  'Nombre y objetivo: «title» es un nombre corto para la campaña; «objective» es lo que se quiere conseguir, en una frase.',
+  'Pregunta: si falta un dato imprescindible para proponer algo útil (casi siempre, de qué trata la campaña o qué se quiere dar a conocer), pon en «question» UNA pregunta corta y deja el resto vacío. Nunca preguntes por lo que puedes decidir tú (redes, duración, ritmo, nombre). Si el material «respuesta» ya contesta una pregunta anterior, no vuelvas a preguntar: propón.',
+  'Si llega el material «propuesta actual» y el encargo pide acortarla o alargarla, devuelve la misma propuesta con una semana menos o una más (y su ritmo y su «why» coherentes), sin cambiar el tema.',
+  'No inventes datos (precios, fechas de eventos, promociones) que no estén en el perfil o en lo que cuenta la persona.',
+  DATA_RULE,
+].join('\n');
+
+const text = (maxLength: number): JsonSchema => ({ type: 'string', maxLength });
+
+export const CAMPAIGN_BRIEF_SCHEMA: AiOutputSchema = {
+  name: 'campaign_brief',
+  schema: {
+    type: 'object',
+    properties: {
+      question: text(200),
+      title: text(120),
+      objective: text(600),
+      networks: { type: 'array', maxItems: 8, items: text(32) },
+      startDate: text(10),
+      endDate: text(10),
+      perWeek: { type: 'integer' },
+      mix: {
+        type: 'array',
+        maxItems: MAX_BRIEF_TARGETS,
+        items: {
+          type: 'object',
+          properties: { network: text(32), format: text(32), perWeek: { type: 'integer' } },
+          required: ['network', 'format', 'perWeek'],
+          additionalProperties: false,
+        },
+      },
+      weeks: {
+        type: 'array',
+        maxItems: MAX_BRIEF_WEEKS,
+        items: {
+          type: 'object',
+          properties: { title: text(80), focus: text(240) },
+          required: ['title', 'focus'],
+          additionalProperties: false,
+        },
+      },
+      why: text(500),
+    },
+    required: ['question', 'title', 'objective', 'networks', 'startDate', 'endDate', 'perWeek', 'mix', 'weeks', 'why'],
+    additionalProperties: false,
+  } as JsonSchema,
+};
+
+// ── Fechas ───────────────────────────────────────────────────────────────
+
+export function dayFromNumber(day: number): string {
+  return new Date(day * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** El lunes siguiente a `today` (si hoy es lunes, el de la semana que viene). */
+export function nextMonday(today: number): number {
+  const weekday = new Date(today * 86_400_000).getUTCDay(); // 0 = domingo
+  return today + (((8 - weekday) % 7) || 7);
+}
+
+/** Semanas (de siete días, la última puede ser más corta) que caben entre dos días, ambos incluidos. */
+export const weeksBetween = (start: number, end: number): number => Math.ceil((end - start + 1) / 7);
+
+// ── Saneado ──────────────────────────────────────────────────────────────
+
+interface RawBrief {
+  question: string;
+  title: string;
+  objective: string;
+  networks: string[];
+  startDate: string;
+  endDate: string;
+  perWeek: number;
+  mix: BriefMixItem[];
+  weeks: BriefWeek[];
+  why: string;
+}
+
+const clean = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+const whole = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : 0);
+
+/**
+ * Deja en la propuesta solo lo que se puede usar. Determinista y sin añadir
+ * contenido del modelo que no estuviera: lo que falta se rellena con valores
+ * neutros (la semana que viene, el ritmo repartido entre las redes elegidas).
+ */
+export function sanitizeBrief(
+  raw: RawBrief,
+  ctx: { today: string; targets: CampaignTarget[] },
+): { proposal: CampaignBriefProposal; notes: string[] } {
+  const notes: string[] = [];
+  const today = dayNumber(ctx.today)!;
+  const networks = [...new Set(raw.networks.filter((n) => ctx.targets.some((t) => t.network === n)))];
+  if (networks.length === 0) {
+    const first = ctx.targets[0]!.network;
+    networks.push(first);
+    notes.push('La IA no eligió ninguna red de las de la marca: he dejado la primera.');
+  }
+  const targetsOf = (network: string) => ctx.targets.filter((t) => t.network === network);
+
+  // Fechas: reales, desde mañana, y de 1 a MAX_CAMPAIGN_DAYS días.
+  let start = dayNumber(raw.startDate);
+  if (start === null || start <= today) {
+    start = start === null ? nextMonday(today) : today + 1;
+    notes.push('He ajustado el comienzo: una campaña no puede empezar antes de mañana.');
+  }
+  let end = dayNumber(raw.endDate);
+  if (end === null || end < start) {
+    end = start + 6;
+    notes.push('La fecha final no era válida: he puesto una semana.');
+  }
+  if (end - start + 1 > MAX_CAMPAIGN_DAYS) {
+    end = start + MAX_CAMPAIGN_DAYS - 1;
+    notes.push(`Un plan dura como mucho ${MAX_CAMPAIGN_DAYS} días: he acortado la campaña.`);
+  }
+  const weekCount = weeksBetween(start, end);
+
+  // Ritmo: solo formatos de la marca y de las redes elegidas, acotado.
+  const mix: BriefMixItem[] = [];
+  for (const item of raw.mix) {
+    if (!networks.includes(item.network)) continue;
+    if (!ctx.targets.some((t) => t.network === item.network && t.format === item.format)) continue;
+    const perWeek = Math.min(MAX_PER_WEEK_PER_TARGET, whole(item.perWeek));
+    if (perWeek < 1 || mix.some((m) => m.network === item.network && m.format === item.format)) continue;
+    mix.push({ network: item.network, format: item.format, perWeek });
+  }
+  if (mix.length === 0) {
+    // Sin reparto utilizable: el total que dijo (o 3) entre las redes elegidas, en su primer formato.
+    const total = Math.min(MAX_PER_WEEK_TOTAL, Math.max(networks.length, whole(raw.perWeek) || 3));
+    networks.forEach((network, i) => {
+      const share = Math.floor(total / networks.length) + (i < total % networks.length ? 1 : 0);
+      const target = targetsOf(network)[0]!;
+      if (share >= 1) mix.push({ network, format: target.format, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, share) });
+    });
+    notes.push('El reparto por formato no era utilizable: lo he repartido a partes iguales.');
+  }
+  // Tope total: se quita de los de más peso, de uno en uno.
+  let total = mix.reduce((sum, m) => sum + m.perWeek, 0);
+  while (total > MAX_PER_WEEK_TOTAL) {
+    const heaviest = mix.reduce((a, b) => (b.perWeek > a.perWeek ? b : a));
+    heaviest.perWeek -= 1;
+    total -= 1;
+  }
+
+  const weeks = raw.weeks
+    .map((week) => ({ title: clean(week.title, 80), focus: clean(week.focus, 240) }))
+    .filter((week) => week.title)
+    .slice(0, weekCount);
+
+  const title = clean(raw.title, 120);
+  const objective = clean(raw.objective, 600);
+  const why =
+    clean(raw.why, 500) ||
+    `Te propongo ${weekCount} ${weekCount === 1 ? 'semana' : 'semanas'} con ${total} publicaciones por semana.`;
+  return {
+    proposal: {
+      title,
+      objective,
+      networks,
+      startDate: dayFromNumber(start),
+      endDate: dayFromNumber(end),
+      perWeek: total,
+      mix,
+      weeks,
+      why,
+    },
+    notes,
+  };
+}
+
+function validTargets(targets: unknown): CampaignTarget[] {
+  if (!Array.isArray(targets) || targets.length === 0) throw new AiTaskInputError('No hay redes que ofrecer.');
+  if (targets.length > MAX_BRIEF_TARGETS) throw new AiTaskInputError(`Como mucho ${MAX_BRIEF_TARGETS} destinos.`);
+  const out: CampaignTarget[] = [];
+  for (const target of targets as unknown[]) {
+    const { network, format } = (typeof target === 'object' && target !== null ? target : {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof network !== 'string' || !ID.test(network) || typeof format !== 'string' || !ID.test(format)) {
+      throw new AiTaskInputError('Algún destino (red y formato) no es válido.');
+    }
+    if (!out.some((t) => t.network === network && t.format === format)) out.push({ network, format });
+  }
+  return out;
+}
+
+function validProposal(value: unknown, targets: CampaignTarget[]): BriefProposal {
+  const p = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const start = typeof p.startDate === 'string' ? p.startDate : '';
+  const end = typeof p.endDate === 'string' ? p.endDate : '';
+  if (dayNumber(start) === null || dayNumber(end) === null) throw new AiTaskInputError('La propuesta anterior no es válida.');
+  const mix = (Array.isArray(p.mix) ? p.mix : [])
+    .map((m): BriefMixItem => {
+      const item = (typeof m === 'object' && m !== null ? m : {}) as Record<string, unknown>;
+      return {
+        network: typeof item.network === 'string' ? item.network : '',
+        format: typeof item.format === 'string' ? item.format : '',
+        perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, Math.max(0, whole(item.perWeek))),
+      };
+    })
+    .filter((m) => targets.some((t) => t.network === m.network && t.format === m.format) && m.perWeek > 0);
+  const networks = (Array.isArray(p.networks) ? p.networks : []).filter(
+    (n): n is string => typeof n === 'string' && targets.some((t) => t.network === n),
+  );
+  const weeks = (Array.isArray(p.weeks) ? p.weeks : []).slice(0, MAX_BRIEF_WEEKS).map((w): BriefWeek => {
+    const week = (typeof w === 'object' && w !== null ? w : {}) as Record<string, unknown>;
+    return { title: clean(week.title, 80), focus: clean(week.focus, 240) };
+  });
+  return {
+    title: clean(p.title, 120),
+    objective: clean(p.objective, 600),
+    networks,
+    startDate: start,
+    endDate: end,
+    perWeek: Math.min(MAX_PER_WEEK_TOTAL, Math.max(0, whole(p.perWeek))),
+    mix,
+    weeks,
+  };
+}
+
+// ── Tarea ────────────────────────────────────────────────────────────────
+
+export async function proposeCampaignBrief(
+  service: AiService,
+  actor: TaskActor,
+  request: CampaignBriefRequest,
+): Promise<CampaignBriefResult> {
+  const instruction = requireText(request.instruction, 'lo que quieres preparar', MAX_BRIEF_CHARS);
+  const today = dayNumber(request.today);
+  if (today === null) throw new AiTaskInputError('La fecha de hoy no es válida (AAAA-MM-DD).');
+  const targets = validTargets(request.targets);
+  if (request.adjust !== undefined && request.adjust !== 'shorter' && request.adjust !== 'longer') {
+    throw new AiTaskInputError('El ajuste pedido no es válido.');
+  }
+  const current = request.current === undefined ? undefined : validProposal(request.current, targets);
+  if (request.adjust && !current) throw new AiTaskInputError('Para ajustar hace falta la propuesta anterior.');
+  const answer =
+    request.answer === undefined
+      ? undefined
+      : {
+          question: requireText(request.answer.question, 'la pregunta', 200),
+          text: requireText(request.answer.text, 'la respuesta', 500),
+        };
+
+  const context = [
+    brandProfileContext(request.brandProfile),
+    { label: 'lo que quiere', content: instruction },
+    { label: 'hoy', content: request.today },
+    ...(answer ? [{ label: 'respuesta', content: JSON.stringify(answer) }] : []),
+    ...(current ? [{ label: 'propuesta actual', content: JSON.stringify(current) }] : []),
+  ];
+  const adjustLine =
+    request.adjust === 'shorter'
+      ? 'Encargo: acorta la propuesta actual una semana.'
+      : request.adjust === 'longer'
+        ? 'Encargo: alarga la propuesta actual una semana.'
+        : 'Propón los datos del formulario.';
+  const prompt = [
+    'Destinos (red/formato):',
+    ...targets.map((t) => `- Destino: ${t.network}/${t.format}`),
+    `Duración máxima: ${MAX_CAMPAIGN_DAYS} días.`,
+    adjustLine,
+  ].join('\n');
+
+  const { data, meta } = await runStructuredTask(service, {
+    actor,
+    purpose: CAMPAIGN_BRIEF_PURPOSE,
+    instructions: CAMPAIGN_BRIEF_INSTRUCTIONS,
+    context,
+    prompt,
+    schema: CAMPAIGN_BRIEF_SCHEMA,
+    maxOutputTokens: 1500,
+  });
+
+  const raw = data as unknown as RawBrief;
+  const question = clean(raw.question, 200);
+  // Una pregunta solo vale si es la primera: tras una respuesta, o al ajustar, hay que proponer.
+  if (question && !answer && !request.adjust) {
+    return { ...meta, status: 'question', question, proposal: null, notes: [] };
+  }
+  if (question && (answer || request.adjust) && !clean(raw.startDate, 10) && !clean(raw.title, 120)) {
+    throw new AiError('invalid_output', 'La IA no ha podido proponer los datos de la campaña. Cuéntalo con otras palabras.', {
+      generationId: meta.generationId,
+    });
+  }
+  const { proposal, notes } = sanitizeBrief(raw, { today: request.today, targets });
+  return { ...meta, status: 'proposal', question: null, proposal, notes };
+}
