@@ -39,36 +39,36 @@ mayor se reduce y se avisa.
 ### Sin IA: cómo funciona y sus límites
 
 - **Mejorar automáticamente** (rehecho el 22/11/2026 para fotos de comida y
-  producto; antes apenas se notaba) analiza la foto y rellena los deslizadores
-  (Luz, Contraste, Color, Temperatura, Nitidez, Sombras, Luces, Claridad y
-  Viveza) para que se puedan retocar. Pasos, todos moderados y con una zona
-  «correcta» donde no tocan nada (una foto ya buena apenas cambia):
-  1. _Niveles_ por percentiles (0,5 % y 99,5 %) con recorte suave: se deja
-     margen arriba para no quemar y no se estira más de ×1,7. Se aplica sobre
-     la luminancia, no por canal, para no saturar los fondos de color.
-  2. _Balance de blancos_ medido en lo casi gris de la foto (plato, mantel,
-     servilleta; si no hay, en lo poco saturado). Se corrige gran parte, menos
-     hacia el frío para no quitar el calor a la comida, y va al deslizador de
-     Temperatura; el resto (verde–magenta) es un tinte fino sin deslizador. La
-     carne y las salsas, muy saturadas, no cuentan como referencia, así que no
-     se tiñen.
-  3. _Luz_ por la «clave» de la foto (mediana y, menos, tonos altos): un fondo
-     oscuro o un plato blanco no la engañan. Es un gamma sobre la luminancia
-     (no quema blancos).
-  4. _Sombras_ (levanta lo hundido sin mover el negro) y _Luces_ (recupera lo
-     quemado sin mover el blanco).
-  5. _Contraste_ solo si la foto está plana; _Claridad_ (contraste local de radio
-     grande, proporcional a la foto) siempre, algo menos si ya tiene mucho detalle.
-  6. _Viveza_ (satura más lo poco saturado y la mitad en rojos y naranjas, para
-     no pasarse con la carne), un toque de _Color_ si está apagada y _Nitidez_
-     según lo blanda que sea.
-     Vista previa, lienzo y archivo guardado usan la misma función
-     (`applyAdjustments`); `Luz` es ahora un gamma y `Temperatura` una ganancia
-     rojo/azul (antes, multiplicar y desplazar), lo que también afecta a los
-     deslizadores y filtros de las capas de imagen del editor (mismos nombres,
-     cambio de aspecto muy leve). Se quita en un clic. Resultados con fotos
-     reales: `rrss-recursos-comparativa/mejora-automatica.jpg` (original | antes |
-     ahora).
+  producto; segunda ronda el mismo día, más visible) analiza la foto y rellena
+  los deslizadores (Luz, Contraste, Color, Temperatura, Nitidez, Sombras, Luces,
+  Claridad y Viveza) para que se puedan retocar. Pasos: 0. _Sujeto, no fondo._ La luz, el balance de blancos y el color se miden sobre
+  el plato y la comida: la foto se divide en una cuadrícula de 12×12 y cada
+  zona pesa según su detalle (bordes, textura), restando el «ruido de fondo»
+  (el grano de un cartón o un mantel) y con algo más de peso al centro. Si la
+  foto ya tiene el fondo quitado (transparencia), el sujeto es lo opaco. Lo
+  que protege de quemar (negro, blanco, p99) se mide en toda la foto.
+  1. _Niveles_ por percentiles con recorte suave; como mucho ×1,45 para que un
+     fondo liso no se queme. Sobre la luminancia, no por canal.
+  2. _Balance de blancos_ sobre lo casi gris del sujeto (plato, mantel,
+     servilleta; si no, lo poco saturado). Se corrige casi todo, menos hacia el
+     frío, y va a Temperatura; el tinte verde–magenta es fino y sin deslizador.
+     La carne y las salsas, saturadas, no cuentan como referencia.
+  3. _Luz_ por la «clave» del sujeto (mediana y, menos, tonos altos), en un
+     gamma sobre la luminancia.
+  4. _Sombras_ y _Luces_: siempre un poco (relieve y blancos contenidos), más si
+     hace falta.
+  5. _Contraste_ y _Claridad_ (contraste local de radio proporcional a la foto).
+  6. _Viveza_ (satura lo poco saturado, la mitad en rojos y naranjas, y frena el
+     color si un canal fuera a quemarse), un toque de _Color_ y _Nitidez_ de
+     detalle para costra, carne y salsas.
+     **Intensidad:** Suave (×0,6), Normal (×1, ya bien visible) y Fuerte (×1,5)
+     escalan todos los valores automáticos; cambiarla con la mejora puesta la
+     recalcula. Vista previa, lienzo y archivo guardado usan la misma función
+     (`applyAdjustments`); `Luz` es un gamma y `Temperatura` una ganancia
+     rojo/azul, lo que también afecta, muy levemente, a las capas de imagen del
+     editor. Se quita en un clic. Comparativas con fotos reales:
+     `rrss-recursos-comparativa/mejora-automatica.jpg` (ronda 1) y
+     `mejora-automatica-2.jpg` (original | ronda 1 | ronda 2 normal | fuerte).
 - **Encuadre inteligente** no reconoce objetos: busca dónde se concentran los
   bordes, el detalle y el color, con algo de preferencia por el centro, y
   coloca ahí el recorte más grande que cabe en cada formato. Funciona bien con

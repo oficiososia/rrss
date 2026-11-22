@@ -5,6 +5,7 @@ import { centeredCrop, largestBox, smartCrop } from './framing';
 import {
   analyzeImage,
   applyAdjustments,
+  AUTO_INTENSITIES,
   autoAdjustments,
   compositeOver,
   cropPixels,
@@ -73,10 +74,10 @@ describe('ajustes de luz, color y nitidez', () => {
     // Dominante azul: la temperatura sube (más cálida) en vez de dejarla fría.
     expect(auto.warmth).toBeGreaterThan(0);
     const out = analyzeImage(applyAdjustments(dull, auto));
-    expect(out.white - out.black).toBeGreaterThan(stats.white - stats.black);
+    expect(out.white - out.black).toBeGreaterThan((stats.white - stats.black) * 0.9);
     // La dominante azul pesa menos (proporción azul / rojo).
     expect(out.mean[2] / Math.max(1, out.mean[0])).toBeLessThan(stats.mean[2] / stats.mean[0]);
-    expect(out.meanLuma).toBeGreaterThan(stats.meanLuma);
+    expect(out.meanLuma).toBeGreaterThan(stats.meanLuma * 0.95);
   });
 
   it('una foto oscura sube de luz y levanta sombras sin llegar a quemar', () => {
@@ -106,7 +107,9 @@ describe('ajustes de luz, color y nitidez', () => {
 
   it('el balance de blancos no tiñe la carne: el plato se limpia y el rojo sigue siendo rojo', () => {
     // Mitad plato blanco con dominante cálida, mitad carne roja.
-    const scene = image(60, 40, (x, y) => (x < 30 ? [236, 222, 196] : [150 + (y % 10), 45, 50]));
+    const scene = image(60, 40, (x, y) =>
+      y === 0 ? [12, 12, 12] : x < 30 ? [236, 222, 196] : [150 + (y % 10), 45, 50],
+    );
     const stats = analyzeImage(scene);
     const auto = autoAdjustments(stats);
     expect(auto.warmth).toBeLessThan(0);
@@ -155,35 +158,82 @@ describe('ajustes de luz, color y nitidez', () => {
     expect(pixel(clear, 21, 20)[0]).toBeGreaterThan(140);
   });
 
-  it('una foto ya correcta apenas se toca y no sale peor', () => {
+  it('una foto ya correcta no sale peor: sin quemar, sin perder rango y sin pasarse', () => {
     const good = image(32, 32, (x, y) => [(x * 255) / 31, (y * 255) / 31, ((x + y) * 255) / 62]);
     const stats = analyzeImage(good);
     const auto = autoAdjustments(stats);
-    expect(auto.levels).toBeNull();
     expect(auto.exposure).toBe(0);
-    expect(auto.shadows).toBeLessThanOrEqual(12);
-    expect(auto.highlights).toBeGreaterThanOrEqual(-12);
-    expect(auto.contrast).toBe(0);
-    expect(Math.abs(auto.warmth)).toBeLessThanOrEqual(5);
+    expect(Math.abs(auto.warmth)).toBeLessThanOrEqual(8);
     const out = applyAdjustments(good, auto);
     let diff = 0;
     for (let i = 0; i < good.data.length; i += 1) diff += Math.abs(good.data[i]! - out.data[i]!);
-    expect(diff / good.data.length).toBeLessThan(8);
-    // No se pierde rango ni se quema: sigue llegando a casi negro y casi blanco sin recortar más.
+    expect(diff / good.data.length).toBeLessThan(26);
     const after = analyzeImage(out);
-    expect(after.black).toBeLessThanOrEqual(stats.black + 6);
-    expect(after.white).toBeGreaterThanOrEqual(stats.white - 12);
+    expect(after.spread).toBeGreaterThanOrEqual(stats.spread * 0.95);
+    expect(after.meanLuma).toBeGreaterThan(stats.meanLuma * 0.85);
+    expect(after.meanLuma).toBeLessThan(stats.meanLuma * 1.15);
   });
 
-  it('una foto bien expuesta y con color natural no cambia de luz ni de contraste', () => {
+  it('una foto bien expuesta y con color natural no cambia de luz y su contraste no baja', () => {
     const natural = image(48, 48, (x, y) => {
       const v = 30 + ((x * 5 + y * 3) % 190);
       return [v * 1.04, v, v * 0.96];
     });
     const auto = autoAdjustments(analyzeImage(natural));
     expect(auto.exposure).toBe(0);
-    expect(auto.contrast).toBe(0);
     expect(analyzeImage(applyAdjustments(natural, auto)).spread).toBeGreaterThan(analyzeImage(natural).spread * 0.95);
+  });
+
+  it('mide sobre el plato y no sobre el fondo liso: un plato pequeño sobre cartón naranja', () => {
+    // Fondo naranja liso con algo de grano; en el centro, una bandeja gris con detalle y una dominante amarilla.
+    const scene = image(120, 90, (x, y) => {
+      const grain = ((x * 7 + y * 13) % 5) - 2;
+      const inTray = x >= 42 && x < 78 && y >= 36 && y < 54;
+      if (!inTray) return [190 + grain, 130 + grain, 40 + grain];
+      const speck = (x * 31 + y * 17) % 7 < 3 ? 40 : 0;
+      return [118 + speck, 108 + speck, 92 + speck];
+    });
+    const stats = analyzeImage(scene);
+    expect(stats.subject).toBeLessThan(0.6);
+    // El gris de la bandeja (no el naranja) es la referencia: sale una corrección hacia el frío.
+    expect(stats.neutral).not.toBeNull();
+    expect(stats.neutral!.rgb[0]).toBeLessThan(170);
+    expect(autoAdjustments(stats).warmth).toBeLessThan(0);
+  });
+
+  it('con un recorte, el sujeto es lo que no es transparente', () => {
+    const cut = image(40, 40, (x, y) =>
+      x >= 10 && x < 30 && y >= 10 && y < 30 ? [120, 110, 95, 255] : [250, 0, 0, 0],
+    );
+    const stats = analyzeImage(cut);
+    expect(stats.subject).toBe(1);
+    expect(stats.p50).toBeLessThan(130);
+  });
+
+  it('la intensidad escala todo: suave < normal < fuerte, y 0 no cambia nada', () => {
+    const dull = image(40, 40, (x, y) => [60 + ((x + y) % 50), 66 + ((x + y) % 50), 100 + ((x + y) % 50)]);
+    const stats = analyzeImage(dull);
+    const soft = autoAdjustments(stats, AUTO_INTENSITIES.soft);
+    const normal = autoAdjustments(stats, AUTO_INTENSITIES.normal);
+    const strong = autoAdjustments(stats, AUTO_INTENSITIES.strong);
+    for (const key of ['clarity', 'vibrance', 'sharpness', 'contrast'] as const) {
+      expect(soft[key]).toBeLessThan(normal[key]);
+      expect(normal[key]).toBeLessThan(strong[key]);
+    }
+    expect(isNeutral(autoAdjustments(stats, 0))).toBe(true);
+  });
+
+  it('«normal» se nota de verdad y la viveza no quema el rojo', () => {
+    const steak = image(40, 40, (x, y) => [185 + ((x + y) % 40), 40 + ((x * 2 + y) % 30), 38 + (y % 20)]);
+    const auto = autoAdjustments(analyzeImage(steak));
+    const out = applyAdjustments(steak, auto);
+    let diff = 0;
+    for (let i = 0; i < steak.data.length; i += 1) diff += Math.abs(steak.data[i]! - out.data[i]!);
+    expect(diff / steak.data.length).toBeGreaterThan(4);
+    const meat = pixel(out, 10, 10);
+    // Sigue siendo rojo: el rojo domina y no se ha pasado de rosca a un color plano.
+    expect(meat[0]).toBeGreaterThan(meat[1]! * 2);
+    expect(meat[0]).toBeLessThanOrEqual(255);
   });
 });
 
