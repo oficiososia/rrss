@@ -14,6 +14,7 @@ import type { Pixels } from '../pixels';
 import { NoSubjectError } from './mask';
 import { sameAspect } from './plate';
 import { resizeAreaChannel } from './resample';
+import type { ServerJobPhase } from './engine';
 import { CutoutServerError } from './server';
 
 export const CUTOUT_JOB_KIND = 'media.cutout';
@@ -57,7 +58,7 @@ export interface JobOptions {
   /** `storage_path` de la foto en la biblioteca. */
   sourcePath: string;
   signal?: AbortSignal;
-  onProgress?: (state: 'queued' | 'running') => void;
+  onProgress?: (state: ServerJobPhase) => void;
   pollMs?: number;
   timeoutMs?: number;
   deps?: JobDeps;
@@ -173,6 +174,7 @@ export async function removeBackgroundByJob(image: Pixels, options: JobOptions):
   if (signal?.aborted) throw abortError();
 
   let job: { id: string };
+  options.onProgress?.('sending');
   try {
     job = await deps.request(options.brandId, options.sourcePath, crypto.randomUUID());
   } catch (error) {
@@ -238,6 +240,7 @@ export async function removeBackgroundByJob(image: Pixels, options: JobOptions):
   if (typeof output !== 'string')
     throw new CutoutServerError('El servidor no ha devuelto la foto sin fondo.', 'server');
   let mask: AlphaImage;
+  options.onProgress?.('receiving');
   try {
     mask = await deps.loadAlpha(output);
   } finally {

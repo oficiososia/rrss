@@ -237,7 +237,7 @@ describe('trabajo media.cutout del servidor (serverJob)', () => {
     const seen: string[] = [];
     const out = await run(d, { onProgress: (s) => seen.push(s) });
     expect(d.request).toHaveBeenCalledWith(BRAND, SOURCE.storage_path, expect.any(String));
-    expect(seen).toEqual(['queued', 'running']);
+    expect(seen).toEqual(['sending', 'queued', 'running', 'receiving']);
     expect(out.data[3]).toBe(100); // 200 × 128/255
     expect([out.width, out.height]).toEqual([8, 6]);
   });
