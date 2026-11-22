@@ -26,6 +26,7 @@ import {
 } from '../../supabase/functions/_shared/ai/media/supabase-storage.ts';
 import { animateAspectFor, createAiMediaHandler } from '../../supabase/functions/ai-media/handler.ts';
 import {
+  aiBrandAccess,
   as,
   asService,
   assetPath,
@@ -247,8 +248,7 @@ function mediaHandler(env: Record<string, string | undefined> = FAL_ENV) {
       const user = sessions.get(token);
       return user ? { userId: user.id } : null;
     },
-    brandVisible: async (token, brandId) =>
-      (await as(db, sessions.get(token)!, `select id from public.brands where id = $1`, [brandId])).length > 0,
+    brandAccess: async (token, brandId) => aiBrandAccess(db, sessions.get(token)!, brandId),
     loadReferences: async () => null,
     loadPhoto,
     async allowance(userId, brandId, task) {
@@ -278,10 +278,10 @@ async function call(
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-async function setup(options: { quota?: number | null } = {}) {
+async function setup(options: { quota?: number | null; kind?: string } = {}) {
   n += 1;
   const owner = await createUser(db, `propietaria${n}@animar${n}.test`);
-  const org = await createOrg(db, owner, `Organización ${n}`);
+  const org = await createOrg(db, owner, `Organización ${n}`, options.kind);
   const brand = await createBrand(db, owner, org, `Marca ${n}`);
   if (options.quota !== null) await setAiQuota(db, root, org, options.quota ?? 10_000_000);
   return { owner, org, brand, token: login(owner) };
@@ -643,19 +643,40 @@ describe('cupo, permisos, aislamiento y modo agencia', () => {
     expect(falCalls.filter((c) => c.method === 'POST')).toHaveLength(0);
   });
 
-  it('en modo agencia funciona igual que el resto de la IA de medios (el cupo sigue mandando)', async () => {
+  it('en modo agencia, como la imagen: quien no es personal de la agencia recibe 409 antes de tocar el cupo; el personal sí puede', async () => {
     await activate([H3]);
-    const t = await setup();
-    await as(db, t.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [t.brand]);
-    const photo = await addPhoto(t.owner, t.org, t.brand);
-    const options = await call(mediaHandler(), t.token, { action: 'video.options', brandId: t.brand });
-    expect(options.body.animate).toMatchObject({ available: true });
-    const r = await animate(t, photo);
-    expect(r.status).toBe(202);
-    const poor = await setup({ quota: 1000 });
+    // Marca de una organización de empresa en modo agencia: su propietaria NO es personal de la agencia.
+    const client = await setup();
+    await as(db, client.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [client.brand]);
+    const photo = await addPhoto(client.owner, client.org, client.brand);
+    falCalls = [];
+    const options = await call(mediaHandler(), client.token, { action: 'video.options', brandId: client.brand });
+    expect(options.body.animate).toMatchObject({ available: false, reason: 'agency_mode', agencyMode: true, models: [] });
+    for (const action of ['video.estimate', 'video.animate']) {
+      const r = await call(mediaHandler(), client.token, {
+        action,
+        brandId: client.brand,
+        input: { assetId: photo, motion: 'vapor suave' },
+      });
+      expect(r.status).toBe(409);
+      expect(errorOf(r.body).code).toBe('agency_mode');
+    }
+    expect(falCalls).toHaveLength(0);
+    const reserved = await asService(db, `select id from public.ai_generations where brand_id = $1`, [client.brand]);
+    expect(reserved).toHaveLength(0);
+
+    // El personal de la agencia (propietaria de una organización de tipo agencia) sí anima, con su cupo.
+    const staff = await setup({ kind: 'agency' });
+    await as(db, staff.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [staff.brand]);
+    const photo2 = await addPhoto(staff.owner, staff.org, staff.brand);
+    const staffOptions = await call(mediaHandler(), staff.token, { action: 'video.options', brandId: staff.brand });
+    expect(staffOptions.body.animate).toMatchObject({ available: true });
+    expect((await animate(staff, photo2)).status).toBe(202);
+    // Y el cupo sigue mandando.
+    const poor = await setup({ quota: 1000, kind: 'agency' });
     await as(db, poor.owner, `update public.brands set ai_mode = 'agency' where id = $1`, [poor.brand]);
-    const photo2 = await addPhoto(poor.owner, poor.org, poor.brand);
-    expect((await animate(poor, photo2)).status).toBe(402);
+    const photo3 = await addPhoto(poor.owner, poor.org, poor.brand);
+    expect((await animate(poor, photo3)).status).toBe(402);
   });
 
   it('ai_media_allowance solo la llama el servidor', async () => {

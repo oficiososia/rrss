@@ -101,7 +101,9 @@ function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: 
   if (!data?.available || choices.length === 0) {
     return (
       <Notice tone="warning">
-        {data?.reason === 'quota_exhausted' || data?.reason === 'no_quota'
+        {data?.reason === 'agency_mode' || data?.agencyMode
+          ? 'Esta marca trabaja en modo agencia: el vídeo con IA lo usa solo el personal de la agencia. Pídelo desde «Encargos».'
+          : data?.reason === 'quota_exhausted' || data?.reason === 'no_quota'
           ? 'No queda cupo de IA este mes para animar fotos.'
           : data?.reason === 'plan'
             ? 'Tu plan no incluye el vídeo con IA.'

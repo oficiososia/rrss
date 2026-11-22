@@ -80,6 +80,9 @@ export interface BrandAiAccess {
 export const AGENCY_IMAGE_MESSAGE =
   'Esta marca trabaja en modo agencia: la imagen con IA la usa solo el personal de la agencia. Pide la imagen desde «Encargos».';
 
+export const AGENCY_VIDEO_MESSAGE =
+  'Esta marca trabaja en modo agencia: el vídeo con IA lo usa solo el personal de la agencia. Pide el vídeo desde «Encargos».';
+
 export interface AiMediaDeps {
   /** Valida el token de sesión y devuelve el usuario, o `null` si no vale. */
   authenticate(accessToken: string): Promise<{ userId: string } | null>;
@@ -389,6 +392,21 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
       }
 
       if (action === 'video.options') {
+        // Misma regla que la imagen: en modo agencia, solo el personal de la agencia o de la plataforma.
+        if (agencyBlocked) {
+          return json(200, {
+            action,
+            animate: {
+              available: false,
+              reason: 'agency_mode',
+              agencyMode: true,
+              remainingMicros: 0,
+              maxSeconds: ANIMATE_MAX_SECONDS,
+              defaultSeconds: ANIMATE_DEFAULT_SECONDS,
+              models: [],
+            },
+          });
+        }
         const choices = runtime.animateChoices;
         const allowance =
           deps.loadPhoto && deps.allowance && choices.length > 0
@@ -410,6 +428,8 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
       }
 
       if (action === 'video.estimate' || action === 'video.animate') {
+        // Se impone aquí y antes de reservar cupo, como en la imagen.
+        if (agencyBlocked) return fail(409, 'agency_mode', AGENCY_VIDEO_MESSAGE);
         const animate = parseAnimateInput(data, action === 'video.animate');
         if (!deps.loadPhoto || runtime.animateChoices.length === 0) {
           throw new AiError('not_configured', 'No hay ningún modelo para animar fotos disponible.');

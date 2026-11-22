@@ -49,6 +49,8 @@ export interface AnimateOptions {
   available: boolean;
   /** Por qué no está disponible: `not_configured`, `plan`, `no_quota`, `quota_exhausted`, `no_permission`… */
   reason: string | null;
+  /** La marca está en modo agencia y quien pregunta no es personal de la agencia. */
+  agencyMode?: boolean;
   remainingMicros: number;
   maxSeconds: number;
   defaultSeconds: number;

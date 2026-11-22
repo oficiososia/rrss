@@ -674,10 +674,13 @@ Fuente: las fichas oficiales `https://fal.ai/models/<id>/llms.txt` y
   apartado «fal.ai» de Integraciones, el diálogo de animar («no garantizan tratar
   los datos en la UE; no uses fotos con personas reconocibles») y el campo
   `data_region` de la procedencia.
-- **Modo agencia (`brands.ai_mode = 'agency'`):** misma regla que el resto de la
-  IA de imagen y edición de fotos: ese modo solo afecta a la redacción con IA de
-  texto; la imagen y el vídeo con IA siguen disponibles, con el mismo cupo y el
-  mismo permiso (hay un caso en `tests/db/ia-animar-foto.test.ts`).
+- **Modo agencia (`brands.ai_mode = 'agency'`):** la misma regla que la imagen y la
+  edición de fotos (`public.ai_brand_access`): quien no es personal de la agencia
+  o de la plataforma recibe 409 `agency_mode` en `video.estimate` y `video.animate`
+  antes de tocar el cupo, y `video.options` sale con `available: false`,
+  `reason: 'agency_mode'` y `agencyMode: true` (la interfaz no ofrece «Animar con
+  IA…»). El personal sí puede, con su cupo y su permiso de siempre (casos en
+  `tests/db/ia-animar-foto.test.ts`).
 - Solo se animan fotos guardadas en nuestro almacenamiento (no Google Drive), con
   medidas y en JPEG, PNG o WebP, que la persona ve con su identidad (RLS).
 
