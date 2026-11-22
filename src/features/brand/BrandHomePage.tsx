@@ -153,7 +153,7 @@ export function BrandHomePage() {
             <span className="font-semibold tabular-nums" data-testid="completeness-percent">
               {completeness.percent}%
             </span>
-            <span className="flex-1">del perfil de marca hecho: cuanto más completo, mejor escribe la IA.</span>
+            <span className="flex-1">del perfil de marca. Completarlo mejora los textos de la IA.</span>
             <ArrowRight className="h-4 w-4 text-muted" aria-hidden />
           </Link>
         )}

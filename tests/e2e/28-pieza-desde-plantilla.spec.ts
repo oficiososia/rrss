@@ -87,7 +87,7 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
   await expect(opcion).toContainText('Titular grande sobre una foto a sangre.');
   await expect(opcion).toContainText('en 9 de 30 publicaciones');
   await opcion.click();
-  await expect(dialogo.getByTestId('create-content-network')).toBeDisabled();
+  await expect(dialogo.getByTestId('create-content-format-post').locator('input')).toBeDisabled();
   await dialogo.getByTestId('create-content-submit').click();
 
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);

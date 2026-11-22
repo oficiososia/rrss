@@ -1,5 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BrandDesignTemplateRow, ContentItemRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
@@ -149,6 +149,86 @@ describe('Lista de contenidos vacía', () => {
     const dialog = within(await screen.findByRole('dialog'));
     // Con la plantilla ya elegida: el formato es el suyo y no se puede cambiar.
     expect(await dialog.findByTestId('create-content-templates')).toBeInTheDocument();
-    expect(dialog.getByTestId('create-content-network')).toBeDisabled();
+    expect(dialog.getByTestId('create-content-format-post').querySelector('input')).toBeDisabled();
+  });
+});
+
+describe('Nueva idea con formato Reel', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const reelTemplateRow = {
+    id: 'rt-1',
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    template_key: 'asi-se-hace',
+    name: 'Así se hace',
+    source: 'catalog',
+    document: {
+      kind: 'rrss.reel-template',
+      schemaVersion: 1,
+      purpose: 'Enseñar un producto con el resultado como gancho.',
+      whenToUse: 'Para el producto estrella.',
+      material: '2 fotos o clips: resultado y cierre.',
+      style: { id: 'corte-ritmico' },
+      slots: [
+        { id: 'resultado', label: 'Resultado', kind: 'any', seconds: 1.8 },
+        { id: 'final', label: 'Cierre', kind: 'any', seconds: 3 },
+      ],
+      texts: [],
+    },
+  };
+
+  it('ya no dice que el vídeo llegará más adelante y ofrece las plantillas de reel de la marca', async () => {
+    seed([]);
+    fake.tables.brand_reel_templates = [reelTemplateRow];
+    const { user } = renderApp(CONTENT);
+    await user.click(await screen.findByTestId('content-empty-new'));
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByTestId('create-content-format-reel'));
+    expect(dialog.queryByText(/llegará más adelante/)).toBeNull();
+    await user.click(await dialog.findByTestId('create-content-from-template'));
+    const card = await dialog.findByTestId('create-content-reel-template');
+    expect(card).toHaveTextContent('Así se hace');
+    expect(dialog.getByTestId('reel-template-sample')).toBeInTheDocument();
+    // Sin elegir ninguna, no se crea.
+    await user.click(dialog.getByTestId('create-content-submit'));
+    expect(await dialog.findByText(/Elige una plantilla/)).toBeInTheDocument();
+    await user.click(card);
+    await user.click(dialog.getByTestId('create-content-submit'));
+    await waitFor(() => expect(fake.callsTo('content_items', 'insert')).toHaveLength(1));
+    expect(fake.callsTo('content_items', 'insert')[0]!.payload).toMatchObject({ format: 'reel' });
+    await waitFor(() => expect(window.location.search).toContain('plantilla=asi-se-hace'));
+  });
+
+  it('ofrece «Hacer un reel como este» con su coste como parte del cupo si el servidor puede', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    vi.stubEnv('VITE_REEL_LIKE_ENABLED', 'true');
+    seed([]);
+    // El cupo solo lo leen los administradores de la organización.
+    seedWorkspace({ orgRole: 'owner' });
+    fake.tables.brand_reel_templates = [];
+    fake.tables.usage_quotas = [
+      { organization_id: ORG_ID, metric: 'ai_cost_micros', limit_value: 5_200_000, period: 'month' },
+    ];
+    fake.fn('ai-reel-like', () => ({
+      status: 200,
+      body: {
+        available: true,
+        speechAvailable: false,
+        estimate: { textMicros: 40_000, speechMicros: 12_000, speechMicrosPerSecond: 100, maxMicros: 52_000 },
+        limits: { maxSeconds: 180, maxUploadBytes: 50 * 1024 * 1024, maxSpeechSeconds: 120, maxFrames: 12 },
+      },
+    }));
+    const { user } = renderApp(CONTENT);
+    await user.click(await screen.findByTestId('content-empty-new'));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.queryByTestId('create-content-reel-like')).toBeNull();
+    await user.click(dialog.getByTestId('create-content-format-reel'));
+    const like = await dialog.findByTestId('create-content-reel-like');
+    expect(like).toHaveAttribute('href', `${BRAND_BASE}/biblioteca/reels/como-este`);
+    await waitFor(() => expect(like).toHaveTextContent('1 % del cupo de este mes'));
+    expect(like).not.toHaveTextContent('créditos');
   });
 });

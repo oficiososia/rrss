@@ -94,6 +94,26 @@ for (const size of SIZES) {
       await expect(page.getByTestId('create-content-format-reel').locator('input')).toBeChecked();
       expect((await page.getByTestId('create-content-submit').boundingBox())!.height).toBeGreaterThanOrEqual(40);
     });
+
+    test('«Nueva idea → Reel»: plantillas de la marca con muestra grande y el botón de crear siempre a la vista', async ({
+      page,
+    }) => {
+      await open(page, 'vista=contenidos');
+      await page.getByTestId('content-new').click();
+      await page.getByTestId('create-content-format-reel').click();
+      await page.getByTestId('create-content-from-template').check();
+      await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);
+      await expect(page.getByText(/llegará más adelante/)).toHaveCount(0);
+      // La muestra del montaje no es una miniatura de 96 px.
+      const sample = (await page.getByTestId('reel-template-sample').first().boundingBox())!;
+      expect(sample.width).toBeGreaterThanOrEqual(size.width < 500 ? 100 : 120);
+      // Aunque la lista sea larga, «Crear y abrir» se ve sin bajar.
+      const submit = (await page.getByTestId('create-content-submit').boundingBox())!;
+      expect(submit.y + submit.height).toBeLessThanOrEqual(size.height);
+      expect(submit.height).toBeGreaterThanOrEqual(40);
+      const box = (await page.getByRole('dialog').boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
+    });
   });
 }
 

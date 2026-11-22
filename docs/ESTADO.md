@@ -932,3 +932,12 @@ ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs
   desplegable) y corren en CI.
 - **Sin probar**: con una marca real y muchas piezas (la lista trae hasta 600 y enseña de 24 en 24);
   miniaturas de reels con vídeo real (en el banco no hay recursos firmados); el aspecto en un móvil real.
+- **Añadido tras la auditoría de usabilidad (tanda D)**: «Nueva idea → Reel» ya no dice que el vídeo
+  «llegará más adelante»; ofrece las plantillas de reel de la marca (`brand_reel_templates`) con su muestra
+  en movimiento y «Hacer un reel como este» (si el servidor puede), con el botón «Crear y abrir» fijo abajo.
+  Con una plantilla de reel, la pieza se abre en el editor con `?plantilla=<clave>`; **el editor de reels
+  todavía no lee ese parámetro** (cambio pendiente de unas tres líneas en `ReelEditor.tsx`, fuera de esta
+  rama): hasta entonces abre su propia lista de plantillas. Las plantillas de pieza salen en una rejilla de
+  miniaturas grandes y filtradas por el formato. La red ya no se pregunta (solo Instagram se publica) y los
+  formatos que no se publican solos lo dicen. El coste de «Hacer un reel como este» se dice como «≈ N % del
+  cupo de este mes» (lo ven los administradores; el resto, en créditos).

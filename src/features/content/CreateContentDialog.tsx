@@ -1,7 +1,20 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Button, Dialog, Field, Input, Select } from '@/components/ui';
+import { Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Button, Dialog, Field, Input } from '@/components/ui';
+import { reelLikeEnabled } from '@/config/app';
+import { quotaShareText } from '@/features/ai/cupo';
+import { useAiQuota } from '@/features/ai/api';
+import { formatMicros } from '@/features/ai/money';
+import { useOrg } from '@/features/orgs/context';
+import { describeNeeds } from '@/features/reels/reelTemplate';
+import { TemplateSample } from '@/features/reels/editor/TemplateCards';
+import { useBrandReelTemplates, type BrandReelTemplate } from '@/features/reels/editor/api';
+import { useReelLikeOptions } from '@/features/reels/like/api';
+import { REEL_TEMPLATES } from '@/features/reels/templates';
+import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { useContentMutations } from './api';
@@ -87,40 +100,52 @@ function CreateForm({
   const { create, saveVersion } = useContentMutations(organizationId, brandId);
   const [fromTemplate, setFromTemplate] = useState(Boolean(initialTemplate));
   const [template, setTemplate] = useState<BrandTemplate | null>(initialTemplate);
+  const [reelTemplate, setReelTemplate] = useState<BrandReelTemplate | null>(null);
   const [title, setTitle] = useState('');
-  const [network, setNetwork] = useState<string>(initialTemplate?.network ?? NETWORKS[0]!.id);
+  // Solo Instagram se publica hoy: la red no se pregunta.
+  const network = initialTemplate?.network ?? NETWORKS[0]!.id;
   const [format, setFormat] = useState<string>(
     initialTemplate?.format ??
       (cardsFor(NETWORKS[0]!.id).some((c) => c.format === initialFormat) ? initialFormat! : cardsFor(NETWORKS[0]!.id)[0]!.format),
   );
   const [error, setError] = useState<string | null>(null);
+  const isReel = format === 'reel';
+  const { isAdmin } = useOrg();
+  const reelTemplates = useBrandReelTemplates(brandId);
+  const like = useReelLikeOptions(brandId, reelLikeEnabled());
+  const quota = useAiQuota(organizationId, isAdmin && Boolean(like.data?.available));
+  const brandReelTemplates = reelTemplates.data ?? [];
   const cards = cardsFor(network);
   const current = cards.find((c) => c.format === format);
-  const spec = formatsOf(network).find((f) => f.format === format);
   const suggested = defaultTitle(current?.label ?? 'Pieza');
 
-  function changeNetwork(next: string) {
-    setNetwork(next);
-    setFormat(cardsFor(next)[0]?.format ?? '');
+  function changeFormat(next: string) {
+    setFormat(next);
+    // Las plantillas de una pieza y las de un reel son distintas: al cambiar de formato se vuelve a «En blanco».
+    setFromTemplate(false);
+    setTemplate(null);
+    setReelTemplate(null);
   }
 
   function chooseTemplate(next: BrandTemplate) {
     setTemplate(next);
-    // La plantilla manda en la red y el formato: su documento solo vale para ellos.
-    setNetwork(next.network);
+    // La plantilla manda en el formato: su documento solo vale para él.
     setFormat(next.format);
   }
 
   function toggleTemplate(on: boolean) {
     setFromTemplate(on);
-    if (!on) setTemplate(null);
+    if (!on) {
+      setTemplate(null);
+      setReelTemplate(null);
+    }
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    if (fromTemplate && !template) {
-      setError('Elige una plantilla o desmarca «Empezar desde una plantilla».');
+    if (fromTemplate && !template && !(isReel && reelTemplate)) {
+      setError('Elige una plantilla o marca «En blanco».');
       return;
     }
     const target = template ? { network: template.network, format: template.format } : { network, format };
@@ -142,7 +167,9 @@ function CreateForm({
         toast.success('Idea creada');
       }
       onClose();
-      navigate(contentPaths(organizationId, brandId).item(item.id));
+      // Un reel con plantilla de la marca se abre en el editor de reels con ella elegida.
+      const path = contentPaths(organizationId, brandId).item(item.id);
+      navigate(reelTemplate ? `${path}?plantilla=${encodeURIComponent(reelTemplate.key)}` : path);
     } catch (e) {
       setError(translateError(e));
     }
@@ -171,7 +198,7 @@ function CreateForm({
                   name="create-content-format"
                   value={card.format}
                   checked={on}
-                  onChange={() => setFormat(card.format)}
+                  onChange={() => changeFormat(card.format)}
                   className="sr-only"
                 />
                 <span
@@ -189,7 +216,11 @@ function CreateForm({
             );
           })}
         </div>
-        {current?.hint && <p className="text-xs text-muted">{current.hint}.</p>}
+        {current?.hint && (
+          <p className="text-xs text-muted">
+            {current.hint}.{PUBLISHABLE_TARGETS.has(`${network}:${format}`) ? '' : ' Todavía no se publica sola: se prepara aquí y se sube a mano.'}
+          </p>
+        )}
       </fieldset>
 
       <Field label="Nombre" hint={`Opcional, solo lo ve el equipo. Si lo dejas vacío: «${suggested}».`} error={error}>
@@ -210,8 +241,17 @@ function CreateForm({
         <div className="grid gap-2 sm:grid-cols-2">
           {(
             [
-              [false, 'En blanco', 'Diseñas desde cero.', 'create-content-blank'],
-              [true, 'Desde una plantilla', 'Un diseño de la marca ya montado.', 'create-content-from-template'],
+              [false, 'En blanco', isReel ? 'Montas el vídeo desde cero.' : 'Diseñas desde cero.', 'create-content-blank'],
+              ...(!isReel || brandReelTemplates.length > 0
+                ? ([
+                    [
+                      true,
+                      'Desde una plantilla',
+                      isReel ? 'Un montaje de la marca: tú pones las fotos.' : 'Un diseño de la marca ya montado.',
+                      'create-content-from-template',
+                    ],
+                  ] as const)
+                : []),
             ] as const
           ).map(([on, label, help, testId]) => (
             <label
@@ -237,13 +277,70 @@ function CreateForm({
           ))}
         </div>
       </fieldset>
-      {fromTemplate && (
+      {isReel && like.data?.available && (
+        <Link
+          to={`/o/${organizationId}/m/${brandId}/biblioteca/reels/como-este`}
+          onClick={onClose}
+          className="flex min-h-14 items-center gap-3 rounded-xl border-2 border-border p-3 text-sm hover:border-primary/50"
+          data-testid="create-content-reel-like"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+            <Sparkles className="h-5 w-5" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">Hacer un reel como este</span>
+            <span className="block text-xs text-muted">
+              Sube un vídeo que te guste y lo rehacemos con tu material.
+              {like.data.estimate && (
+                <>
+                  {' '}
+                  Gasta como mucho{' '}
+                  {quotaShareText(like.data.estimate.maxMicros, quota.data?.limit_value) ??
+                    formatMicros(like.data.estimate.maxMicros)}
+                  .
+                </>
+              )}
+            </span>
+          </span>
+        </Link>
+      )}
+      {fromTemplate && isReel && (
+        <div className="space-y-2" data-testid="create-content-reel-templates">
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Plantillas de reel de la marca">
+            {brandReelTemplates.map((entry) => {
+              const style = REEL_TEMPLATES.find((t) => t.id === entry.template.style.id);
+              const selected = reelTemplate?.id === entry.id;
+              return (
+                <li key={entry.id} className="min-w-0">
+                  <button
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setReelTemplate(entry)}
+                    className={cn(
+                      'flex h-full w-full flex-col gap-2 rounded-xl border-2 p-2 text-left transition-colors',
+                      selected ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary/50',
+                    )}
+                    data-testid="create-content-reel-template"
+                    data-template={entry.key}
+                  >
+                    {style && <TemplateSample template={style} className="mx-auto w-full max-w-[9rem]" />}
+                    <span className="block text-sm font-medium">{entry.name}</span>
+                    <span className="block text-xs text-muted">{describeNeeds(entry.template)}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+      {fromTemplate && !isReel && (
         <div className="space-y-2" data-testid="create-content-templates">
           <TemplatePicker
             orgId={organizationId}
             brandId={brandId}
             selectedId={template?.id ?? null}
             onSelect={chooseTemplate}
+            defaultFormat={format}
           />
           {template && (
             <p className="text-xs text-muted">
@@ -254,36 +351,8 @@ function CreateForm({
         </div>
       )}
 
-      <details className="text-sm">
-        <summary className="min-h-8 cursor-pointer text-muted hover:text-fg">Publicar en otra red</summary>
-        <div className="mt-2 max-w-xs">
-          <Field label="Red">
-            {(props) => (
-              <Select
-                {...props}
-                value={network}
-                disabled={Boolean(template)}
-                onChange={(e) => changeNetwork(e.target.value)}
-                data-testid="create-content-network"
-              >
-                {NETWORKS.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.label}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-        </div>
-      </details>
-
-      {spec && !spec.media.includes('image') && (
-        <p className="text-xs text-muted">
-          Es un formato de vídeo. Por ahora el editor prepara la imagen (portada o fotograma); el montaje de vídeo
-          llegará más adelante.
-        </p>
-      )}
-      <div className="flex justify-end gap-2 pt-2">
+      {/* Los botones se quedan a la vista aunque la lista de plantillas sea larga. */}
+      <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
         <Button variant="secondary" onClick={onClose} disabled={create.isPending}>
           Cancelar
         </Button>

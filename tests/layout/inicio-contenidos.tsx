@@ -136,6 +136,29 @@ fake.tables.media_assets = [];
 fake.tables.campaigns = [];
 fake.tables.campaign_contents = [];
 fake.tables.brand_design_templates = [];
+fake.tables.brand_reel_templates = ['asi-se-hace', 'corte-ritmico-marca', 'antes-y-despues', 'tres-pasos', 'el-plato-estrella', 'ambiente'].map(
+  (key, i) => ({
+    id: `rt-${i}`,
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    template_key: key,
+    name: `Plantilla de reel número ${i + 1} con un nombre largo`,
+    source: 'catalog',
+    document: {
+      kind: 'rrss.reel-template',
+      schemaVersion: 1,
+      purpose: 'Enseñar un producto con el resultado como gancho.',
+      whenToUse: 'Para el producto estrella.',
+      material: '2 fotos o clips: resultado y cierre.',
+      style: { id: 'corte-ritmico' },
+      slots: [
+        { id: 'resultado', label: 'Resultado', kind: 'any', seconds: 1.8 },
+        { id: 'final', label: 'Cierre', kind: 'any', seconds: 3 },
+      ],
+      texts: [],
+    },
+  }),
+);
 fake.rpc('analytics_media_summary', () => [
   {
     publication_id: 'p6',

@@ -313,7 +313,7 @@ describe('Crear una idea', () => {
     const dialog = within(await screen.findByRole('dialog'));
     await user.type(dialog.getByTestId('create-content-title'), 'Reel del vermut');
     await user.click(dialog.getByTestId('create-content-format-reel'));
-    expect(dialog.getByText(/Es un formato de vídeo/)).toBeInTheDocument();
+    expect(dialog.queryByText(/llegará más adelante/)).not.toBeInTheDocument();
     await user.click(dialog.getByTestId('create-content-submit'));
 
     // Un reel se abre en el editor de reels (línea de tiempo y vista previa), no en el de imagen.
