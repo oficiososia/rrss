@@ -18,7 +18,14 @@ const baseAlpha = (() => {
   return a;
 })();
 const strokes: BrushStroke[] = [
-  { mode: 'add', radius: 0.1, points: [[0.1, 0.1], [0.2, 0.15]] },
+  {
+    mode: 'add',
+    radius: 0.1,
+    points: [
+      [0.1, 0.1],
+      [0.2, 0.15],
+    ],
+  },
   { mode: 'remove', radius: 0.08, points: [[0.5, 0.5]] },
 ];
 const portraitJob = (): RetouchJob => ({
@@ -78,7 +85,9 @@ describe('renderRetouch', () => {
       onmessage: ((event: MessageEvent) => void) | null = null;
       onerror: (() => void) | null = null;
       postMessage(message: RetouchMessage) {
-        queueMicrotask(() => this.onmessage?.({ data: { id: message.id, ok: false, message: 'sin memoria' } } as MessageEvent));
+        queueMicrotask(() =>
+          this.onmessage?.({ data: { id: message.id, ok: false, message: 'sin memoria' } } as MessageEvent),
+        );
       }
       terminate() {}
     }

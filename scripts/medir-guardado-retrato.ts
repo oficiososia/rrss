@@ -17,11 +17,15 @@ const data = new Uint8ClampedArray(width * height * 4);
 for (let i = 0; i < width * height; i += 1) data.set([(i * 7) & 255, (i * 3) & 255, (i * 11) & 255, 255], i * 4);
 const image = { data, width, height };
 const base = new Uint8Array(width * height);
-for (let y = height * 0.25; y < height * 0.75; y += 1) base.fill(255, Math.floor(y) * width + width * 0.25, Math.floor(y) * width + width * 0.75);
+for (let y = height * 0.25; y < height * 0.75; y += 1)
+  base.fill(255, Math.floor(y) * width + width * 0.25, Math.floor(y) * width + width * 0.75);
 const strokes: BrushStroke[] = Array.from({ length: strokesN }, (_, k) => ({
   mode: k % 2 ? 'remove' : 'add',
   radius: 0.03,
-  points: Array.from({ length: 30 }, (_, j) => [0.2 + ((k * 0.013 + j * 0.02) % 0.6), 0.2 + ((k * 0.021 + j * 0.01) % 0.6)] as [number, number]),
+  points: Array.from(
+    { length: 30 },
+    (_, j) => [0.2 + ((k * 0.013 + j * 0.02) % 0.6), 0.2 + ((k * 0.021 + j * 0.01) % 0.6)] as [number, number],
+  ),
 }));
 
 const time = <T>(label: string, fn: () => T): T => {
@@ -33,7 +37,11 @@ const time = <T>(label: string, fn: () => T): T => {
 console.log(`${width}×${height} (${((width * height) / 1e6).toFixed(1)} MP), ${strokesN} trazos de 30 puntos`);
 const alpha = time('aplicar los trazos a la máscara completa', () => applyStrokes(base, width, height, strokes));
 time('withAlpha (foto con la selección retocada)', () => withAlpha(image, alpha));
-time('modo retrato completo (desenfoque + pegado)', () => portraitBlur(image, alpha, { amount: 60, progressive: true, dim: 30 }));
+time('modo retrato completo (desenfoque + pegado)', () =>
+  portraitBlur(image, alpha, { amount: 60, progressive: true, dim: 30 }),
+);
 const subject = withAlpha(image, alpha);
-time('fondo de color con sombra (composeCutout)', () => composeCutout(subject, { kind: 'color', hex: '#FFFFFF' }, { shadow: true }));
+time('fondo de color con sombra (composeCutout)', () =>
+  composeCutout(subject, { kind: 'color', hex: '#FFFFFF' }, { shadow: true }),
+);
 time('fondo de color sin sombra', () => composeCutout(subject, { kind: 'color', hex: '#FFFFFF' }, { shadow: false }));

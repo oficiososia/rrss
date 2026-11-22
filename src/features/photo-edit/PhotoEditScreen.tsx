@@ -1057,10 +1057,7 @@ function BackgroundTab({
   // La selección del plato se puede retocar y usar en modo retrato solo con un recorte hecho aquí
   // (necesita los colores de la foto original y un recorte con sus mismas medidas).
   const selectable =
-    !transparent &&
-    cutout !== null &&
-    cutout.pixels.width === pixels.width &&
-    cutout.pixels.height === pixels.height;
+    !transparent && cutout !== null && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height;
   const strokes = cutout?.strokes ?? NO_STROKES;
   const effectiveChoice = useMemo<BackgroundChoice>(
     () => (choice.type === 'portrait' && !selectable ? { type: 'color', hex: '#FFFFFF' } : choice),
@@ -1098,7 +1095,9 @@ function BackgroundTab({
   const small = useMemo(() => {
     if (!hasSubject) return null;
     if (transparent) return downscale(pixels, PREVIEW_SIDE);
-    return retouched && previewAlpha ? withAlpha(previewOriginal, previewAlpha) : downscale(cutoutPixels!, PREVIEW_SIDE);
+    return retouched && previewAlpha
+      ? withAlpha(previewOriginal, previewAlpha)
+      : downscale(cutoutPixels!, PREVIEW_SIDE);
   }, [hasSubject, transparent, pixels, retouched, previewAlpha, previewOriginal, cutoutPixels]);
   // La vista previa enseña lo ELEGIDO (color, imagen, retrato o transparente), no un fondo fijo.
   const shown = useMemo(() => {
@@ -1202,7 +1201,12 @@ function BackgroundTab({
         return;
       }
       const subject = retouched
-        ? await renderRetouch({ kind: 'subject', image: pixels, baseAlpha: alphaOf(cutout!.pixels), strokes: [...strokes] })
+        ? await renderRetouch({
+            kind: 'subject',
+            image: pixels,
+            baseAlpha: alphaOf(cutout!.pixels),
+            strokes: [...strokes],
+          })
         : fullSubject();
       if (effectiveChoice.type === 'none') {
         await onSave(
@@ -1343,15 +1347,11 @@ function BackgroundTab({
               onShortcut={retouchShortcut}
             />
           ) : (
-            <Stage
-              pixels={shown}
-              testId="photo-edit-cutout-preview"
-              checker={effectiveChoice.type === 'none'}
-            />
+            <Stage pixels={shown} testId="photo-edit-cutout-preview" checker={effectiveChoice.type === 'none'} />
           )}
           <p className="text-sm">
-            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o
-            usa el modo retrato:
+            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o usa
+            el modo retrato:
           </p>
           {cutout?.quality === 'basic' && !transparent && (
             <p className="text-xs text-muted" data-testid="photo-edit-cutout-basic">
@@ -1366,7 +1366,9 @@ function BackgroundTab({
                 size="sm"
                 variant={effectiveChoice.type === 'portrait' ? 'primary' : 'secondary'}
                 aria-pressed={effectiveChoice.type === 'portrait'}
-                onClick={() => setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })}
+                onClick={() =>
+                  setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })
+                }
                 disabled={busy}
                 data-testid="photo-edit-portrait-toggle"
               >
@@ -1717,10 +1719,12 @@ function RetouchStage({
       return;
     }
     const at = (cursor.current ??= { x: width / 2, y: height / 2 });
-    const arrow = ({ ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<
-      string,
-      [number, number] | undefined
-    >)[event.key];
+    const arrow = (
+      { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] } as Record<
+        string,
+        [number, number] | undefined
+      >
+    )[event.key];
     if (arrow) {
       event.preventDefault();
       const step = Math.max(1, Math.min(width, height) * 0.01) * (event.shiftKey ? 5 : 1);

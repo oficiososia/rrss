@@ -91,6 +91,28 @@ export function useDeleteTemplate(brandId: string) {
   });
 }
 
+/** Cambia el nombre de una plantilla (`rename_design_template`: quien edita la marca). */
+export function useRenameTemplate(brandId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; name: string }) => {
+      unwrap(await supabase.rpc('rename_design_template', { p_template_id: input.id, p_name: input.name }));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: templateKeys.list(brandId) }),
+  });
+}
+
+/** Hace una copia de una plantilla (`duplicate_design_template`): nace como «guardada desde el editor». */
+export function useDuplicateTemplate(brandId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (templateId: string) => {
+      unwrap(await supabase.rpc('duplicate_design_template', { p_template_id: templateId }));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: templateKeys.list(brandId) }),
+  });
+}
+
 /** ¿El documento de la plantilla vale para esa red y formato (proporción del lienzo y número de páginas)? */
 export function templateFits(template: BrandTemplate, network: string, format: string): boolean {
   const document = template.document;

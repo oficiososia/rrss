@@ -54,6 +54,7 @@ import {
 } from './profile';
 import { ProfileProposalFromSources } from './ProfileProposalFromSources';
 import { BrandFontsCard } from './BrandFontsCard';
+import { BrandTemplatesCard } from './BrandTemplatesCard';
 import { SourcesCard } from './SourcesCard';
 import { useTextTask } from '@/features/platform/integrations/useFeature';
 
@@ -353,6 +354,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
               </CardBody>
             </Card>
             <BrandFontsCard organizationId={org.id} brandId={brand.id} canManage={canManage} />
+            <BrandTemplatesCard brandId={brand.id} canManage={canManage} />
           </TabsContent>
           <TabsContent value="fuentes" className="space-y-6">
             {/* En modo agencia el servidor rechaza la IA de texto (`agency_mode`): no se ofrece. */}

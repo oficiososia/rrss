@@ -244,7 +244,14 @@ describe('Editar foto desde la biblioteca', () => {
       onProgress?.({ phase: 'downloading', received: 42_000_000, total: 84_000_000 });
       await gate;
       onProgress?.({ phase: 'running' });
-      return { pixels: pixels(120, 90, 0), model: 'isnet-general-use', provider: 'wasm', engine: 'isnet', quality: 'basic', fromCache: false };
+      return {
+        pixels: pixels(120, 90, 0),
+        model: 'isnet-general-use',
+        provider: 'wasm',
+        engine: 'isnet',
+        quality: 'basic',
+        fromCache: false,
+      };
     });
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
@@ -490,7 +497,9 @@ describe('Editar foto desde la biblioteca', () => {
       return {
         pixels: { data: out, width: image.width, height: image.height },
         model: 'isnet-test',
-        provider: 'wasm', engine: 'isnet', quality: 'basic',
+        provider: 'wasm',
+        engine: 'isnet',
+        quality: 'basic',
         fromCache: true,
       };
     });
@@ -543,7 +552,9 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm', engine: 'isnet', quality: 'basic',
+      provider: 'wasm',
+      engine: 'isnet',
+      quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
@@ -568,7 +579,9 @@ describe('Editar foto desde la biblioteca', () => {
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => ({
       pixels: image,
       model: 'isnet-test',
-      provider: 'wasm', engine: 'isnet', quality: 'basic',
+      provider: 'wasm',
+      engine: 'isnet',
+      quality: 'basic',
       fromCache: true,
     }));
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
@@ -619,25 +632,31 @@ function documentWithPhoto(): ContentDocument {
   const doc = createEmptyDocument({ aspectRatio: '4:5' });
   return {
     ...doc,
-    pages: [{ id: 'p1', name: '', layers: [
+    pages: [
       {
-        id: 'foto',
-        type: 'image',
-        name: 'Foto',
-        x: 0,
-        y: 0,
-        width: 1080,
-        height: 1350,
-        rotation: 0,
-        opacity: 1,
-        visible: true,
-        locked: false,
-        anchor: { x: 'stretch', y: 'stretch' },
-        source: { kind: 'asset', assetId: '11111111-1111-4111-8111-111111111111' },
-        fit: 'cover',
-        focus: { x: 0.5, y: 0.5 },
+        id: 'p1',
+        name: '',
+        layers: [
+          {
+            id: 'foto',
+            type: 'image',
+            name: 'Foto',
+            x: 0,
+            y: 0,
+            width: 1080,
+            height: 1350,
+            rotation: 0,
+            opacity: 1,
+            visible: true,
+            locked: false,
+            anchor: { x: 'stretch', y: 'stretch' },
+            source: { kind: 'asset', assetId: '11111111-1111-4111-8111-111111111111' },
+            fit: 'cover',
+            focus: { x: 0.5, y: 0.5 },
+          },
+        ],
       },
-    ] }],
+    ],
   };
 }
 

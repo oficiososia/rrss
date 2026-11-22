@@ -38,7 +38,9 @@ function deps(over: Partial<RemovalDeps> = {}): RemovalDeps & { calls: string[] 
     ben2Capable: async () => true,
     browser: vi.fn(async (_image, engine) => {
       calls.push(`browser-${engine}`);
-      return engine === 'ben2' ? browserResult() : { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
+      return engine === 'ben2'
+        ? browserResult()
+        : { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
     }),
     jobEnabled: () => true,
     job: vi.fn(async () => {
