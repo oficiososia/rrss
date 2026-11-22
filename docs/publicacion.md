@@ -199,6 +199,27 @@ marca) puede verse desplazada una hora; la hora guardada es siempre un instante
 real correcto. No hay selector de zona en el calendario: se cambia en Marca →
 Datos de la marca.
 
+### Calendario para planificar
+
+- **Vistas.** Semana (siete columnas con tarjetas; en móvil, un día debajo de otro), Mes compacto (semanas
+  pasadas plegadas, la actual destacada, miniaturas y contador por día; al elegir un día salen sus tarjetas
+  debajo) y Lista (semana a semana, con los días sin nada). La vista elegida se recuerda en el dispositivo;
+  sin preferencia, Semana en pantallas anchas y Lista en las estrechas.
+- **Tarjeta y vista rápida.** Pulsar una pieza abre la vista rápida: imagen, pie de foto, estado, cuándo y
+  las acciones (Abrir la ficha, Mover a…, Publicar ahora, Cancelar la publicación con confirmación). Una
+  «Detenida» enseña su motivo y el mismo botón de arreglo que el aviso del calendario.
+- **Mover.** Arrastrar a otro día conserva la hora; «Mover a…» (campo de fecha y hora, accesible por teclado y
+  en móvil) cambia día y hora. Ambos dan «Deshacer». No se mueve lo ya publicado ni al pasado.
+- **Crear.** El «+» de un día (solo al pasar el ratón, al enfocarlo o al tocar el día) abre «Programar» con la
+  fecha puesta. «Por programar» lista las piezas aprobadas y los borradores con versión que no están en el
+  calendario: se arrastran a un día, o «Programar…» hace lo mismo sin arrastrar.
+- **Planificar.** Los días de hoy en adelante sin nada se resaltan («Sin nada el jueves y el sábado»); el
+  contador compara la semana con un objetivo editable (3 por defecto, guardado en el dispositivo) y las
+  campañas aceptadas salen como franja sobre sus días. Los filtros no cambian los huecos ni el contador.
+  Es aritmética: no usa IA.
+- **Pantalla de trabajo.** Como el editor: la página mide la ventana y solo se desplaza el calendario por
+  dentro (sin pie legal en esta pantalla).
+
 ### Si el plan deja de incluir la publicación
 
 Migración `20261218030000_plan_stops_publishing.sql`. Antes, bajar a un plan sin

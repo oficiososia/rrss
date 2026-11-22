@@ -978,3 +978,22 @@ tiene que ayudar a hacer la duración y todo». Detalle: `docs/ia-texto.md` («R
 - **Decisiones:** `campaign.brief` se registra como `campaign.plan` (sin variable ni migración nuevas); si se quiere
   un modelo más barato solo para esto habrá que separar el propósito (migración del catálogo de Integraciones).
 - **Para llevarlo a staging:** redesplegar `ai-generate`; la aplicación. Sin migraciones.
+## Calendario para planificar (rama `f41/calendario`, 22/11/2026)
+
+Detalle en `docs/publicacion.md` («Calendario para planificar»). Sin migración.
+
+- **Hecho**: vistas Semana (por defecto en pantallas anchas), Mes compacto y Lista (por defecto en móvil;
+  se recuerda la elegida en el dispositivo); tarjetas con miniatura, hora de la marca, red y formato con
+  icono y estado con color y texto; vista rápida (pie de foto, «Abrir», «Mover a…», «Publicar ahora»,
+  «Cancelar») con el motivo y el botón de arreglo de las «Detenidas»; arrastrar para mover (conserva la hora)
+  con «Deshacer»; «+» solo al pasar el ratón o enfocar; bandeja «Por programar» arrastrable; huecos de la
+  semana, contador frente al objetivo y franja de campañas (solo lectura); filtros de estado, red, formato
+  y campaña en una fila; página sin scroll (el calendario se desplaza por dentro).
+- **Probado**: `calendarPlan.test.ts`, `calendarioVistas.test.tsx` (tres vistas, mover, huecos, bandeja,
+  permisos), el resto de pruebas del calendario adaptadas a la vista rápida; maquetación en Chromium a
+  1440 y 375 px (`tests/layout/calendario.spec.ts`).
+- **Sin probar**: e2e 13 y 23 adaptadas a la vista rápida, **sin ejecutar** (solo CI); arrastrar con el
+  ratón real (las pruebas simulan los eventos de arrastrar); pantallas táctiles reales.
+- **Límites**: la hora no se cambia arrastrando (solo el día; la hora, con «Mover a…»); el objetivo semanal
+  se guarda en el dispositivo, no en la marca (compartirlo entre personas pide una migración); sin vista
+  de día ni «Por red» (las sustituyen la semana y el filtro de red).

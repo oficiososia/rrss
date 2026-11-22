@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ContentItemRow, MediaAssetRow, ScheduledPublicationRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
+import { openFicha as openEntry } from '@/test/calendario';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { approvedVersionPlan, reelRenderOf } from './api';
 
@@ -96,7 +97,7 @@ const tresPaginas = [
 
 async function openFicha() {
   const view = renderApp(`${BRAND_BASE}/calendario`);
-  await view.user.click((await screen.findAllByTestId('calendar-entry'))[0]!);
+  await openEntry(view.user, (await screen.findAllByTestId('calendar-entry'))[0]!);
   return view;
 }
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
 import { ALL_AVAILABLE, fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { openFicha } from '@/test/calendario';
 import { chooseMoreAction } from '@/test/moreMenu';
 
 // Avisos que se pueden resolver: «Detenida» con su motivo en una frase y el
@@ -163,7 +164,7 @@ describe('Calendario: «Detenida» con su motivo y el botón que lo arregla', ()
       [account()],
     );
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
-    await user.click(await screen.findByTestId('calendar-entry'));
+    await openFicha(user, await screen.findByTestId('calendar-entry'));
     const notice = await screen.findByTestId('publication-hold-notice');
     expect(within(notice).getByTestId('publication-hold-notice-text')).toHaveTextContent('Falta la imagen exportada');
     expect(within(notice).getByTestId('publication-hold-fix')).toHaveAttribute(
@@ -271,7 +272,7 @@ describe('Calendario: bajar a un plan sin publicación', () => {
     expect(chip).toHaveTextContent('Detenida');
 
     // La ficha dice lo mismo y ofrece el mismo botón.
-    await user.click(chip);
+    await openFicha(user, chip);
     const dialog = await screen.findByTestId('publication-dialog');
     expect(within(dialog).getByTestId('publication-hold-fix')).toHaveAttribute('href', `/o/${ORG_ID}/ajustes/plan`);
   });

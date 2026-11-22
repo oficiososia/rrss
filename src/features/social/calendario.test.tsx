@@ -9,6 +9,7 @@ import type {
 } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { openFicha } from '@/test/calendario';
 import { chooseMoreAction } from '@/test/moreMenu';
 
 // Calendario y cuentas conectadas (Fase 3): lo que se ve según el estado real
@@ -150,7 +151,7 @@ describe('Calendario', () => {
     expect(await entry('Pieza c-rev')).toHaveAttribute('data-state', 'in_review');
     expect(await entry('Pieza c-prog')).toHaveTextContent('Programada');
 
-    await user.click(await entry('Pieza c-pub'));
+    await openFicha(user, await entry('Pieza c-pub'));
     const dialog = await screen.findByTestId('publication-dialog');
     expect(within(dialog).getByTestId('publication-external-id')).toHaveTextContent('17900000000001');
     expect(within(dialog).getByTestId('publication-link')).toHaveAttribute(
@@ -227,7 +228,7 @@ describe('Calendario', () => {
     const failed = (await screen.findAllByTestId('calendar-entry')).find(
       (e) => e.getAttribute('data-state') === 'failed',
     )!;
-    await user.click(failed);
+    await openFicha(user, failed);
     expect(await screen.findByTestId('publication-error')).toHaveTextContent('Instagram lo rechazó');
     await user.click(screen.getByTestId('publication-retry'));
     await waitFor(() => expect(fake.callsTo('retry_publication', 'rpc')).toHaveLength(1));
@@ -280,7 +281,7 @@ describe('Calendario', () => {
         }),
       }) as never;
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
-    await user.click(await entry('Pieza c-prog'));
+    await openFicha(user, await entry('Pieza c-prog'));
     const dialog = await screen.findByTestId('publication-dialog');
     const text = await within(dialog).findByTestId('publication-text');
     // Largo: recortado, con «Ver más».
