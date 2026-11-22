@@ -193,3 +193,51 @@ export async function reportDownloadUrl(storagePath: string): Promise<string> {
   if (!url) throw new Error('No se pudo preparar la descarga. Inténtalo de nuevo.');
   return url;
 }
+
+// ── Miniaturas de las mejores publicaciones ──────────────────────────────
+
+export interface PostMedia {
+  /** Ruta que se firma para pintarla (la miniatura si existe). */
+  path: string;
+  video: boolean;
+  fileName: string;
+}
+
+/**
+ * Primer archivo de cada publicación (el que se ve en la red), para enseñar una
+ * miniatura de lo que mejor funcionó. Sin archivo (publicaciones importadas, por
+ * ejemplo) no hay miniatura y la pantalla pone un icono: nada se inventa.
+ */
+export function usePostMedia(brandId: string, publicationIds: string[]) {
+  return useQuery({
+    queryKey: ['brand', brandId, 'analytics', 'post-media', publicationIds] as const,
+    enabled: publicationIds.length > 0,
+    queryFn: async (): Promise<Map<string, PostMedia>> => {
+      const pubs = unwrap(
+        await supabase.from('scheduled_publications').select('id, media_asset_ids').in('id', publicationIds),
+      ) as Array<{ id: string; media_asset_ids: string[] | null }>;
+      const firstOf = new Map(pubs.flatMap((p) => (p.media_asset_ids?.[0] ? [[p.id, p.media_asset_ids[0]] as const] : [])));
+      const ids = [...new Set(firstOf.values())];
+      if (ids.length === 0) return new Map();
+      const assets = unwrap(
+        await supabase
+          .from('media_assets')
+          .select('id, storage_path, thumb_path, mime_type, file_name')
+          .in('id', ids),
+      ) as Array<{ id: string; storage_path: string; thumb_path: string | null; mime_type: string; file_name: string }>;
+      const byId = new Map(assets.map((a) => [a.id, a]));
+      const out = new Map<string, PostMedia>();
+      for (const [publicationId, assetId] of firstOf) {
+        const a = byId.get(assetId);
+        if (!a) continue;
+        const video = a.mime_type.startsWith('video/');
+        out.set(publicationId, {
+          path: a.thumb_path || a.storage_path,
+          video,
+          fileName: a.file_name,
+        });
+      }
+      return out;
+    },
+  });
+}

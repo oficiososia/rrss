@@ -312,7 +312,7 @@ describe('Biblioteca: selección y acciones por lotes', () => {
     fireEvent.dragOver(destino, { dataTransfer });
     fireEvent.drop(destino, { dataTransfer });
     await waitFor(() =>
-      expect(fake.tables.media_assets!.filter((a) => a.folder === 'Vinos / Tintos').map((a) => a.id).sort()).toEqual(['a4', 's1' === 'x' ? '' : 'v1', 'a5'].sort()),
+      expect(fake.tables.media_assets!.filter((a) => a.folder === 'Vinos / Tintos').map((a) => a.id).sort()).toEqual(['a4', 'a5', 'v1']),
     );
   });
 
