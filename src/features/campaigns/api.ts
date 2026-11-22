@@ -15,6 +15,7 @@ import type {
 } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import type { PlanAgreement } from './brief';
 import { planToDrafts, type EngineAsset } from './engine';
 import {
   MAX_CAMPAIGN_NETWORKS,
@@ -224,6 +225,8 @@ export interface PlanRequestInput {
   endsOn: string;
   /** Enviar a la IA las fuentes de texto de la marca. */
   useSources?: boolean;
+  /** Lo acordado con la IA al rellenar el formulario (duración, ritmo, formatos): el plan lo respeta. */
+  agreement?: PlanAgreement;
 }
 
 export function validatePlanRequest(input: PlanRequestInput): string | null {
@@ -310,6 +313,7 @@ export async function generateCampaignPlan(input: PlanRequestInput): Promise<Gen
           targets: targetsFor(input.networks),
           assets,
           sources,
+          ...(input.agreement ? { agreement: input.agreement } : {}),
         },
       },
       timeout: 120_000,
