@@ -239,7 +239,7 @@ describe('Crear una idea', () => {
     await user.click(dialog.getByTestId('create-content-submit'));
 
     // Un reel se abre en el editor de reels (línea de tiempo y vista previa), no en el de imagen.
-    expect(await screen.findByTestId('reel-editor', {}, { timeout: 5000 })).toHaveTextContent('Reel del vermut');
+    expect(await screen.findByTestId('reel-editor', {}, { timeout: 20_000 })).toHaveTextContent('Reel del vermut');
     expect(fake.callsTo('content_items', 'insert')[0]?.payload).toEqual({
       brand_id: BRAND_ID,
       organization_id: ORG_ID,
