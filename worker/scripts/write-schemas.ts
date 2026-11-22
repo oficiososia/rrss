@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { reelAnalyzePayloadSchema } from '../src/handlers/reel-analyze.ts';
 import {
   reelPayloadSchema,
   reelPayloadV1Schema,
@@ -23,6 +24,7 @@ export function renderSchemas(): Record<string, string> {
     'reel-payload.v1.schema.json': render(reelPayloadV1Schema),
     'reel-plan.v2.schema.json': render(reelPlanV2Schema),
     'reel-payload.v2.schema.json': render(reelPayloadSchema),
+    'reel-analyze-payload.v1.schema.json': render(reelAnalyzePayloadSchema),
   };
 }
 

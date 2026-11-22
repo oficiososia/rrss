@@ -410,10 +410,11 @@ describe('bucle del trabajador', () => {
 });
 
 describe('registro de manejadores', () => {
-  it('reclama los cinco tipos implementados; el de documentos por capas no está registrado ni simulado', async () => {
+  it('reclama los seis tipos implementados; el de documentos por capas no está registrado ni simulado', async () => {
     const kinds = createMediaHandlers(deps).map((h) => h.kind);
     expect(kinds.sort()).toEqual([
       'media.image.process',
+      'media.reel.analyze',
       'media.reel.template',
       'media.report.pdf',
       'media.video.derivatives',
