@@ -203,3 +203,111 @@ export async function checkAccountTokens(
   }
   return checked;
 }
+
+/** Cuentas que toca renovar (lo que devuelve `social_accounts_to_renew`). */
+export interface RenewableAccount {
+  id: string;
+  brand_id: string;
+  network: string;
+  external_id: string;
+  /** Caducidad conocida antes de renovar (lo que se compara para dar la renovación por buena). */
+  token_expires_at?: string | null;
+}
+
+/** Cuánto tiene que ganar la caducidad para dar por buena una renovación. */
+const MIN_RENEWAL_GAIN_MS = 86_400_000;
+
+/**
+ * Renueva el acceso de las cuentas conectadas por OAuth ANTES de que caduque,
+ * sin que nadie tenga que volver a conectar: cambia el token largo del usuario
+ * (guardado cifrado) por uno nuevo (`fb_exchange_token`), vuelve a pedir los
+ * tokens de página con él y guarda lo nuevo con su caducidad.
+ *
+ * ⚠ SIN PROBAR CONTRA META REAL. La documentación de Meta describe el cambio
+ * de un token corto por uno largo, pero no promete que repetirlo sobre uno
+ * largo vigente amplíe su caducidad. Por eso una renovación solo se da por
+ * buena si Meta dice que la caducidad nueva es posterior a la anterior; si no,
+ * o si algo falla, se anota el motivo (`renewal_error`) y la interfaz avisa a la
+ * marca y a la agencia de que hay que volver a conectar antes de la fecha.
+ * Nunca se registra un token. Devuelve cuántas se renovaron.
+ */
+export async function renewAccountTokens(
+  config: SocialConfig,
+  rpc: RpcClient,
+  accounts: RenewableAccount[],
+  log: (event: string, data: Record<string, unknown>) => void = () => undefined,
+): Promise<number> {
+  if (!config.keyRing || !config.meta) return 0;
+  const { appId, appSecret } = config.meta;
+  let renewed = 0;
+  for (const account of accounts) {
+    const fail = async (message: string) => {
+      log('renewal_failed', { accountId: account.id, reason: message });
+      await rpc('social_account_renewal_failed', { p_account_id: account.id, p_error: message });
+    };
+    try {
+      const secret = (await rpc('social_account_token', { p_account_id: account.id })).data as {
+        key_id: string;
+        access_token_ciphertext: string;
+        refresh_token_ciphertext: string | null;
+      } | null;
+      if (!secret?.refresh_token_ciphertext) {
+        await fail('No hay un acceso largo guardado para renovar: vuelve a conectar la cuenta.');
+        continue;
+      }
+      const binding = tokenBinding({
+        brandId: account.brand_id,
+        network: account.network,
+        externalId: account.external_id,
+      });
+      const userToken = await decryptToken(config.keyRing, secret.key_id, secret.refresh_token_ciphertext, binding);
+      const before = account.token_expires_at ? Date.parse(account.token_expires_at) : null;
+
+      const long = await config.graph.exchangeLongLived({ appId, appSecret, token: userToken });
+      const page = (await config.graph.pagesWithInstagram(long.accessToken)).find(
+        (p) => p.instagram?.id === account.external_id,
+      );
+      if (!page) {
+        await fail('Meta ya no da acceso a esta cuenta de Instagram: vuelve a conectarla.');
+        continue;
+      }
+      const info = await config.graph.debugToken({ appId, appSecret, token: page.pageAccessToken });
+      if (!info.isValid) {
+        await fail('Meta no ha dado un acceso válido al renovar: vuelve a conectar la cuenta.');
+        continue;
+      }
+      const after = info.expiresAt ?? info.dataAccessExpiresAt;
+      if (after !== null && before !== null && after < before + MIN_RENEWAL_GAIN_MS) {
+        await fail('Meta no ha ampliado la caducidad del acceso: vuelve a conectar la cuenta antes de esa fecha.');
+        continue;
+      }
+      const access = await encryptToken(config.keyRing, page.pageAccessToken, binding);
+      const refresh = await encryptToken(config.keyRing, long.accessToken, binding);
+      const saved = await rpc('social_account_renew', {
+        p_account_id: account.id,
+        p_key_id: access.keyId,
+        p_access_token_ciphertext: access.ciphertext,
+        p_refresh_token_ciphertext: refresh.ciphertext,
+        p_token_expires_at: after ? new Date(after).toISOString() : null,
+      });
+      if (saved.error) {
+        log('renewal_save_failed', { accountId: account.id, code: saved.error.code });
+        continue;
+      }
+      renewed++;
+      log('renewed', { accountId: account.id });
+    } catch (e) {
+      // El motivo que ve la gente no lleva detalle de la red; en el registro, solo el nombre del error.
+      log('renewal_error', { accountId: account.id, name: (e as Error)?.name });
+      try {
+        await rpc('social_account_renewal_failed', {
+          p_account_id: account.id,
+          p_error: 'No se pudo renovar el acceso con Meta: vuelve a conectar la cuenta antes de que caduque.',
+        });
+      } catch {
+        // Si ni siquiera se puede anotar, se volverá a intentar en la siguiente pasada.
+      }
+    }
+  }
+  return renewed;
+}

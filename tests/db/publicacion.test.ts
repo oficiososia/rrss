@@ -6,11 +6,18 @@
 // está en aislamiento.test.ts.
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { validateDocumentFromAnyVersion } from '../../src/features/content/document/index.ts';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import type { ClaimedSocialJob } from '../../supabase/functions/_shared/social/contract.ts';
-import { encryptToken, parseKeyRing, tokenBinding } from '../../supabase/functions/_shared/social/crypto.ts';
+import type { SocialConfig } from '../../supabase/functions/_shared/social/config.ts';
+import {
+  decryptToken,
+  encryptToken,
+  parseKeyRing,
+  tokenBinding,
+} from '../../supabase/functions/_shared/social/crypto.ts';
+import { renewAccountTokens, type RenewableAccount } from '../../supabase/functions/_shared/social/oauth.ts';
 import { createMetaGraph } from '../../supabase/functions/_shared/social/meta-graph.ts';
 import { processPublishJob, type PublisherDeps } from '../../supabase/functions/_shared/social/publisher.ts';
 import {
@@ -1339,5 +1346,255 @@ describe('portada del reel', () => {
     });
     expect(graph.containers.get(a)).toMatchObject({ thumbOffset: '2500', coverUrl: null });
     expect(graph.containers.get(b)).toMatchObject({ coverUrl: 'https://x/c.jpg', thumbOffset: null });
+  });
+});
+
+describe('renovar el acceso sin volver a conectar', () => {
+  let marca3: string;
+  let cuenta3: string;
+  const config = (g: SimulatedGraph) =>
+    ({
+      keyRing: KEYS,
+      meta: { appId: '123', appSecret: 'secreto' },
+      graph: createMetaGraph({ fetch: g.fetch }),
+    }) as unknown as SocialConfig;
+  const accountOf = async (id: string) =>
+    (await db.query<Row>(`select * from public.social_accounts where id = $1`, [id]))[0]!;
+  const target = async () => ({
+    id: cuenta3,
+    brand_id: marca3,
+    network: 'instagram',
+    external_id: SIMULATED_IG_USER_ID,
+    token_expires_at: new Date(String((await accountOf(cuenta3)).token_expires_at)).toISOString(),
+  });
+
+  async function connectWithRefresh(brand: string, expiresInDays: number) {
+    const binding = tokenBinding({ brandId: brand, network: 'instagram', externalId: SIMULATED_IG_USER_ID });
+    const access = await encryptToken(KEYS, 'sim-page-pruebas-3', binding);
+    const refresh = await encryptToken(KEYS, 'sim-long-pruebas-3', binding);
+    const account = (await serviceCall('social_account_connect', {
+      p_user_id: ana.id,
+      p_brand_id: brand,
+      p_network: 'instagram',
+      p_external_id: SIMULATED_IG_USER_ID,
+      p_username: 'renovable',
+      p_display_name: 'Renovable',
+      p_page_id: '1',
+      p_scopes: ['instagram_basic'],
+      p_token_expires_at: new Date(Date.now() + expiresInDays * 86_400_000).toISOString(),
+      p_key_id: access.keyId,
+      p_access_token_ciphertext: access.ciphertext,
+      p_refresh_token_ciphertext: refresh.ciphertext,
+    })) as { id: string };
+    return account.id;
+  }
+
+  beforeAll(async () => {
+    marca3 = await createBrand(db, ana, org, 'Marca renovable');
+    cuenta3 = await connectWithRefresh(marca3, 5);
+  });
+
+  const toRenew = async () =>
+    ((await serviceCall('social_accounts_to_renew', { p_days: 14, p_limit: 10 })) as Array<{ id: string }>).map(
+      (a) => a.id,
+    );
+
+  it('una cuenta que caduca pronto toca renovarla; una lejana o la de un token pegado, no', async () => {
+    expect(await toRenew()).toContain(cuenta3);
+    expect(await toRenew()).not.toContain(cuenta); // sin caducidad conocida
+    await db.query(`update public.social_accounts set token_expires_at = now() + interval '40 days' where id = $1`, [
+      cuenta3,
+    ]);
+    expect(await toRenew()).not.toContain(cuenta3);
+    await db.query(
+      `update public.social_accounts set token_expires_at = now() + interval '5 days', connection_method = 'token' where id = $1`,
+      [cuenta3],
+    );
+    expect(await toRenew()).not.toContain(cuenta3);
+    await db.query(`update public.social_accounts set connection_method = 'oauth' where id = $1`, [cuenta3]);
+    expect(await toRenew()).toContain(cuenta3);
+  });
+
+  it('solo la clave de servicio renueva', async () => {
+    await denied(db, ana, `select * from public.social_accounts_to_renew(14, 10)`, [], /permission denied/);
+    await denied(db, ana, `select public.social_account_renewal_failed($1, 'x')`, [cuenta3], /permission denied/);
+    await denied(db, ana, `select public.social_account_renew($1, 'k1', 'x', 'y', null)`, [cuenta3], /permission denied/);
+  });
+
+  it('si Meta amplía la caducidad, guarda los tokens nuevos y la cuenta queda renovada', async () => {
+    const hoy = Date.now();
+    const adelantada = createSimulatedGraph({ now: () => hoy + 50 * 86_400_000 });
+    const [antes] = await db.query<{ access_token_ciphertext: string }>(
+      `select access_token_ciphertext from private.social_account_secrets where account_id = $1`,
+      [cuenta3],
+    );
+    const n = await renewAccountTokens(config(adelantada), rpc, [await target()]);
+    expect(n).toBe(1);
+    const a = await accountOf(cuenta3);
+    expect(a.renewal_error).toBeNull();
+    expect(a.token_renewed_at).not.toBeNull();
+    expect(Date.parse(String(a.token_expires_at))).toBeGreaterThan(hoy + 130 * 86_400_000);
+    const [despues] = await db.query<{ access_token_ciphertext: string }>(
+      `select access_token_ciphertext from private.social_account_secrets where account_id = $1`,
+      [cuenta3],
+    );
+    expect(despues!.access_token_ciphertext).not.toBe(antes!.access_token_ciphertext);
+    const binding = tokenBinding({ brandId: marca3, network: 'instagram', externalId: SIMULATED_IG_USER_ID });
+    const secret = (await serviceCall('social_account_token', { p_account_id: cuenta3 })) as {
+      key_id: string;
+      access_token_ciphertext: string;
+    };
+    expect(await decryptToken(KEYS, secret.key_id, secret.access_token_ciphertext, binding)).toMatch(/^sim-page-/);
+    expect(await toRenew()).not.toContain(cuenta3);
+  });
+
+  it('si Meta no amplía la caducidad, no se da por renovada y se anota para avisar; no se insiste en 24 h', async () => {
+    await db.query(
+      `update public.social_accounts set token_expires_at = now() + interval '3 days', renewal_attempted_at = null, renewal_error = null where id = $1`,
+      [cuenta3],
+    );
+    const igual = createSimulatedGraph({ now: () => Date.now() - 88 * 86_400_000 });
+    const n = await renewAccountTokens(config(igual), rpc, [await target()]);
+    expect(n).toBe(0);
+    const a = await accountOf(cuenta3);
+    expect(String(a.renewal_error)).toMatch(/vuelve a conectar/);
+    expect(a.renewal_attempted_at).not.toBeNull();
+    expect(a.status).toBe('active');
+    expect(await toRenew()).not.toContain(cuenta3);
+    await db.query(`update public.social_accounts set renewal_attempted_at = now() - interval '25 hours' where id = $1`, [
+      cuenta3,
+    ]);
+    expect(await toRenew()).toContain(cuenta3);
+  });
+
+  it('si Meta rechaza el token largo, queda anotado sin filtrar nada del token', async () => {
+    await connectWithRefresh(marca3, 3); // vuelve a dejar el token largo de partida
+    const g = createSimulatedGraph();
+    g.expireToken('sim-long-pruebas-3');
+    const logs: Array<Record<string, unknown>> = [];
+    const n = await renewAccountTokens(config(g), rpc, [await target()], (_e, d) => logs.push(d));
+    expect(n).toBe(0);
+    const a = await accountOf(cuenta3);
+    expect(String(a.renewal_error)).toMatch(/vuelve a conectar/);
+    expect(JSON.stringify(logs)).not.toContain('sim-long');
+    expect(JSON.stringify(a)).not.toContain('sim-');
+  });
+
+  it('volver a conectar limpia el aviso de renovación', async () => {
+    await connectWithRefresh(marca3, 60);
+    const a = await accountOf(cuenta3);
+    expect(a.renewal_error).toBeNull();
+    expect(a.renewal_attempted_at).toBeNull();
+  });
+
+  it('la función social-publish renueva en su pasada (y sin los dos ganchos, no renueva)', async () => {
+    await db.query(
+      `update public.social_accounts set token_expires_at = now() + interval '2 days', renewal_attempted_at = null where id = $1`,
+      [cuenta3],
+    );
+    const g = createSimulatedGraph({ now: () => Date.now() + 60 * 86_400_000 });
+    type Target = RenewableAccount;
+    const mk = (withRenew: boolean) =>
+      createSocialPublishHandler({
+        serviceKeys: ['clave-de-servicio-de-pruebas-larga'],
+        rpc,
+        publisher: () => null,
+        accountsToCheck: async () => [],
+        checkTokens: async () => 0,
+        ...(withRenew
+          ? {
+              accountsToRenew: async () =>
+                (await serviceCall('social_accounts_to_renew', { p_days: 14, p_limit: 10 })) as Target[],
+              renewTokens: (accounts: Target[]) => renewAccountTokens(config(g), rpc, accounts),
+            }
+          : {}),
+        workerName: WORKER,
+      });
+    const req = () =>
+      new Request('http://x/social-publish', {
+        method: 'POST',
+        headers: { authorization: 'Bearer clave-de-servicio-de-pruebas-larga' },
+      });
+    expect(((await (await mk(false)(req())).json()) as { tokensRenewed?: number }).tokensRenewed).toBe(0);
+    const body = (await (await mk(true)(req())).json()) as { tokensRenewed: number };
+    expect(body.tokensRenewed).toBeGreaterThanOrEqual(1);
+    expect((await accountOf(cuenta3)).token_renewed_at).not.toBeNull();
+  });
+});
+
+describe('bajar a un plan sin publicación', () => {
+  let root: TestUser;
+  let basic: string;
+  const assign = (planId: string | null) =>
+    as(db, root, `select public.admin_set_organization_plan($1, $2, null, 'prueba')`, [org, planId]);
+
+  beforeAll(async () => {
+    root = await createUser(db, 'root@pub.test', 'Root');
+    await db.query(`insert into public.platform_admins (user_id) values ($1)`, [root.id]);
+    basic = (await db.query<{ id: string }>(`select id from public.plans where code = 'basic'`))[0]!.id;
+  });
+  afterEach(async () => {
+    await assign(null);
+  });
+
+  it('lo programado se detiene con su motivo, no se publica y al volver el plan se rearma solo', async () => {
+    const p = await piece();
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    const q = await piece();
+    const other = await schedule(q.contentId, q.assets);
+
+    await assign(basic);
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'planned', hold_reason: 'plan_no_publishing' });
+    expect(await pubOf(other.id)).toMatchObject({ status: 'planned', hold_reason: 'plan_no_publishing' });
+
+    // Aunque llegue su hora, el reloj no la publica.
+    graph = createSimulatedGraph();
+    await makeDue(pub.id);
+    await tick();
+    expect(graph.published).toHaveLength(0);
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'planned', hold_reason: 'plan_no_publishing' });
+
+    await assign(null);
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'scheduled', hold_reason: null });
+  });
+
+  it('«publicar ahora» se niega sin plan y no deja nada guardado', async () => {
+    const p = await piece();
+    await assign(basic);
+    await expect(
+      as(db, editor, `select public.publish_publication_now($1, $2, $3, null, null)`, [p.contentId, cuenta, p.assets]),
+    ).rejects.toMatchObject({ code: 'PL002' });
+    expect(await db.query(`select 1 from public.scheduled_publications where content_id = $1`, [p.contentId])).toEqual(
+      [],
+    );
+  });
+
+  it('quitar «publishing» a un plan detiene a quien lo tenga, y devolverlo lo rearma', async () => {
+    const [pro] = await db.query<{ id: string; features: string[] }>(
+      `select id, features from public.plans where code = 'professional'`,
+    );
+    await assign(pro!.id);
+    const p = await piece();
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    try {
+      await as(db, root, `update public.plans set features = array['ai_text'] where id = $1`, [pro!.id]);
+      expect(await pubOf(pub.id)).toMatchObject({ status: 'planned', hold_reason: 'plan_no_publishing' });
+    } finally {
+      await db.query(`update public.plans set features = $2::text[] where id = $1`, [pro!.id, pro!.features]);
+    }
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'scheduled' });
+  });
+
+  it('lo que ya se publicó no cambia', async () => {
+    graph = createSimulatedGraph();
+    const p = await piece();
+    const pub = await schedule(p.contentId, p.assets);
+    await makeDue(pub.id);
+    await tick();
+    expect((await pubOf(pub.id)).status).toBe('published');
+    await assign(basic);
+    expect((await pubOf(pub.id)).status).toBe('published');
   });
 });
