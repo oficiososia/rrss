@@ -53,6 +53,10 @@ function stepJson(step: PhotoEditStep): Json {
       saturation: a.saturation,
       warmth: a.warmth,
       sharpness: a.sharpness,
+      shadows: a.shadows,
+      highlights: a.highlights,
+      clarity: a.clarity,
+      vibrance: a.vibrance,
       levels: a.levels,
       balance: a.balance.map((g) => round(g)),
     };
