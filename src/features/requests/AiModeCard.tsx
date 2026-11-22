@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 import { Card, CardBody, CardHeader, Field, Select } from '@/components/ui';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { BrandAiMode } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { useSetAiMode } from './api';
@@ -17,6 +18,8 @@ export function AiModeCard() {
   const { brand, can } = useBrand();
   const canManage = can('manage');
   const setMode = useSetAiMode(org.id, brand.id);
+  // En autogestión no hay a quién encargar: todas las marcas redactan con IA y el ajuste no se ofrece.
+  if (useWorkMode().selfManaged) return null;
 
   return (
     <Card>

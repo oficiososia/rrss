@@ -305,8 +305,8 @@ describe('configuración y adaptador de OpenAI (HTTP simulado)', () => {
     expect(transcriptionReady({ OPENAI_API_KEY: 'sk-x', AI_ALLOW_NON_EU_PROCESSING: 'true' })).toBe(true);
     const config = loadTranscriptionConfig({ OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'https://eu.api.openai.com' });
     expect(config.models[0]).toMatchObject({ provider: 'openai', model: 'gpt-transcribe', task: 'transcription' });
-    // El mismo modelo sirve a los subtítulos de los reels y al dictado del copiloto.
-    expect(config.models[0]!.purposes).toEqual(['reel.subtitles', 'editor.dictation']);
+    // El mismo modelo sirve a los subtítulos de los reels, al dictado del copiloto y al vídeo de referencia.
+    expect(config.models[0]!.purposes).toEqual(['reel.subtitles', 'editor.dictation', 'reel.like.transcript']);
     expect(transcriptionPrice(config)).toBe(DEFAULT_TRANSCRIPTION_PRICES['gpt-transcribe']);
     // Otro modelo y otro precio, sin tocar código.
     const custom = loadTranscriptionConfig({

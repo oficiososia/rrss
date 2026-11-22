@@ -68,7 +68,8 @@ test('subir un archivo, verlo en la rejilla y abrir el original', async ({ brows
   expect(original.status()).toBe(200);
   expect(original.headers()['content-type']).toBe('image/png');
   expect((await original.body()).equals(FOTO)).toBe(true);
-  await ficha.getByRole('button', { name: 'Cancelar' }).click();
+  await page.getByTestId('asset-close').click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   guardarEstado({ rutaArchivoA: await rutaEnStorage('escaparate.png') });
   sinErrores(s);
@@ -157,7 +158,8 @@ test('los filtros de etiqueta y carpeta salen de asset_facets', async ({ browser
   // Sin etiquetas ni carpetas, la función devuelve listas vacías y los filtros están apagados.
   expect(await (await primeras).json()).toEqual([{ tags: [], folders: [] }]);
   await expect(page.getByLabel('Filtrar por etiqueta')).toBeDisabled();
-  await expect(page.getByLabel('Filtrar por carpeta')).toBeDisabled();
+  // Sin carpetas, el árbol solo tiene «Toda la biblioteca».
+  await expect(page.getByTestId('library-folders').getByRole('treeitem')).toHaveCount(1);
 
   await tarjeta(page, 'escaparate.png').click();
   const ficha = page.getByRole('dialog');
@@ -177,11 +179,13 @@ test('los filtros de etiqueta y carpeta salen de asset_facets', async ({ browser
   await expect(tarjeta(page, 'escaparate.png')).toBeVisible();
   await porEtiqueta.selectOption('');
 
-  const porCarpeta = page.getByLabel('Filtrar por carpeta');
-  await expect(porCarpeta.locator('option')).toHaveText(['Todas las carpetas', 'Campaña otoño']);
-  await porCarpeta.selectOption('Campaña otoño');
+  // La carpeta nueva sale en el árbol, con su contador, y filtra la rejilla.
+  const carpeta = page.getByTestId('library-folder-Campaña otoño');
+  await expect(carpeta).toContainText('1');
+  await carpeta.click();
   await expect(page.getByTestId('library-asset')).toHaveCount(1);
-  await porCarpeta.selectOption('');
+  await expect(page.getByTestId('library-breadcrumbs')).toContainText('Campaña otoño');
+  await page.getByTestId('library-folder-all').click();
 
   await page.getByTestId('library-search').fill('grande');
   await expect(page.getByTestId('library-asset')).toHaveCount(1);
@@ -245,5 +249,46 @@ test('si el archivo no se puede borrar, queda anotado y se limpia en la siguient
   await expect.poll(() => rastro(ruta, 'temporal.png')).toEqual({ fila: 0, objeto: 0, cola: 0 });
 
   sinErrores(s, [/net::ERR_FAILED/]);
+  await s.context.close();
+});
+
+test('elegir varios archivos, moverlos a una carpeta nueva y pasar de uno a otro con las flechas', async ({ browser }) => {
+  const s = await abrir(browser, 'ana');
+  const { page } = s;
+  await page.goto(rutaBiblioteca());
+  await expect(tarjeta(page, 'escaparate.png')).toBeVisible();
+
+  // Casilla de «escaparate.png» y barra de acciones.
+  await page.getByRole('checkbox', { name: 'Elegir escaparate.png' }).click();
+  await expect(page.getByTestId('library-selection-bar')).toContainText('1 elegido');
+  await page.getByTestId('bulk-move').click();
+  await page.getByTestId('move-target').selectOption({ label: 'Una carpeta nueva…' });
+  await page.getByTestId('move-new-name').fill('Archivo / Escaparates');
+  await page.getByTestId('move-confirm').click();
+  await aviso(page, /movido/);
+  const [fila] = await sql<{ folder: string }>(
+    'select folder from public.media_assets where brand_id = $1 and file_name = $2',
+    [dato('marcaA'), 'escaparate.png'],
+  );
+  expect(fila!.folder).toBe('Archivo / Escaparates');
+  // El árbol muestra los dos niveles con su contador.
+  await expect(page.getByTestId('library-folder-Archivo')).toContainText('1');
+  await page.getByTestId('library-folder-Archivo / Escaparates').click();
+  await expect(page.getByTestId('library-asset')).toHaveCount(1);
+  await page.getByTestId('library-folder-all').click();
+
+  // La ficha es un panel al lado de la rejilla; ← y → pasan al archivo vecino.
+  await tarjeta(page, 'escaparate.png').click();
+  const panel = page.getByTestId('asset-panel');
+  await expect(panel).toContainText('escaparate.png');
+  await expect(tarjeta(page, 'logo-espiga.png')).toBeVisible();
+  await page.getByTestId('asset-next').click();
+  await expect(panel).not.toContainText('escaparate.png');
+  await page.keyboard.press('ArrowLeft');
+  await expect(panel.getByRole('heading', { name: 'escaparate.png' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+
+  sinErrores(s);
   await s.context.close();
 });

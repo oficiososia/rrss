@@ -75,8 +75,7 @@ async function nuevaPieza(page: Page, lado: 'A' | 'B', titulo: string): Promise<
   await page.goto(`${marca(lado)}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];

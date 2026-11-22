@@ -15,8 +15,7 @@ import {
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { buildThumbPath, createThumbnail } from '@/lib/thumbnail';
 import { DRIVE_URL_REUSE_MS, signWithCache, STORAGE_URL_REUSE_MS } from '@/features/storage/signedUrlCache';
-import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';
-import {
+import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive/api';import {
   deleteStoredMedia,
   discardUploadedMedia,
   mediaStorageEnabled,
@@ -38,6 +37,8 @@ export const assetKeys = {
   list: (brandId: string, filters: AssetFilters) => ['brand', brandId, 'assets', 'list', filters] as const,
   facets: (brandId: string) => ['brand', brandId, 'assets', 'facets'] as const,
   count: (brandId: string) => ['brand', brandId, 'assets', 'count'] as const,
+  everything: (brandId: string) => ['brand', brandId, 'assets', 'everything'] as const,
+  usage: (brandId: string) => ['brand', brandId, 'assets', 'usage'] as const,
   byIds: (brandId: string, ids: string[]) => ['brand', brandId, 'assets', 'ids', ids] as const,
   signed: (paths: string[], variant: DriveVariant = 'full') => ['signed-urls', paths, variant] as const,
 };

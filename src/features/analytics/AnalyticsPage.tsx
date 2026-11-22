@@ -1,5 +1,18 @@
 import { cleanText } from '@/lib/texts';
-import { BarChart3, Download, FileText, Lightbulb, Link2, Ruler, Sparkles } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  ChevronDown,
+  Download,
+  FileText,
+  Film,
+  Lightbulb,
+  Link2,
+  Minus,
+  Ruler,
+  Sparkles,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
@@ -18,10 +31,13 @@ import {
 } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { summarizeAnalytics, type AnalyticsSummaryResult } from '@/features/ai/api';
+import { useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { connectedAccountsPath } from '@/features/social/links';
+import { useWorkspaceMode } from '@/layout/workspace';
 import type { AnalyticsReportStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
+import { cn } from '@/lib/utils';
 import {
   analyze,
   dailySeries,
@@ -31,7 +47,6 @@ import {
   monthPeriod,
   previousPeriod,
   type Analysis,
-  type MetricTotal,
   type Period,
   type RankedPost,
 } from '../../../supabase/functions/_shared/analytics/analyst';
@@ -43,19 +58,22 @@ import {
   useCaptureRuns,
   useMediaSummary,
   useMetricDefinitions,
+  usePostMedia,
   useReports,
   useRequestReport,
 } from './api';
-import { BarChart } from './BarChart';
+import {
+  dayLabel,
+  headlineSentence,
+  periodText,
+  pickHeadlines,
+  RANGES,
+  tileNotes,
+  type Headline,
+  type RangeKey,
+} from './summary';
+import { TrendChart } from './TrendChart';
 import { useTextTask } from '@/features/platform/integrations/useFeature';
-
-type RangeKey = 'last7' | 'last28' | 'thisMonth' | 'lastMonth';
-const RANGES: Record<RangeKey, string> = {
-  last7: 'Últimos 7 días',
-  last28: 'Últimos 28 días',
-  thisMonth: 'Este mes',
-  lastMonth: 'Mes anterior',
-};
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
@@ -67,10 +85,6 @@ function periodFor(key: RangeKey): Period {
 }
 
 const shortDate = (day: string) => day.split('-').reverse().join('/');
-const periodText = (p: Period) => {
-  const last = new Date(Date.parse(`${p.to}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-  return `${shortDate(p.from)} – ${shortDate(last)}`;
-};
 const monthLabel = (day: string) =>
   new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(
     new Date(`${day}T00:00:00Z`),
@@ -86,8 +100,13 @@ const REPORT_STATUS: Record<
   failed: { label: 'Falló', tone: 'danger' },
 };
 
-/** Panel de analítica de la marca (Fase 5): cifras medidas, comparación, publicaciones, dato frente a hipótesis. */
+/**
+ * Analítica de la marca. De un vistazo: la frase del periodo, de tres a cuatro cifras con su
+ * cambio, un gráfico y lo que mejor funcionó. Todo lo demás (comparación, resumen del analista,
+ * lo que no se puede medir, informes) queda plegado en «Más detalle».
+ */
 export function AnalyticsPage() {
+  useWorkspaceMode();
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const aiText = useTextTask('analytics.summary');
@@ -121,11 +140,13 @@ export function AnalyticsPage() {
   const failed = queries.find((q) => q.error);
   // Sin cuenta no hay nada que medir: ni periodo ni informes, solo el botón para conectarla.
   const hasAccount = Boolean(accounts.data?.length);
+  const needsReconnect = (accounts.data ?? []).some((a) => a.status !== 'active');
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       <PageHeader
+        compact
         title="Analítica"
-        description="Cifras medidas en las redes de la marca. Lo que es interpretación se marca como tal, y lo que no se puede medir se dice."
+        meta={hasAccount && analysis ? <span>{`Del ${periodText(period)}`}</span> : undefined}
         action={
           hasAccount && (
             <Select
@@ -143,127 +164,236 @@ export function AnalyticsPage() {
           )
         }
       />
-      {failed ? (
-        <ErrorState error={failed.error} onRetry={() => queries.forEach((q) => void q.refetch())} />
-      ) : !analysis ? (
-        <Skeleton className="h-64" />
-      ) : !accounts.data?.length ? (
-        <Card>
-          <EmptyState
-            icon={BarChart3}
-            title="Todavía no hay nada que medir"
-            description={
-              can('manage')
-                ? 'Conecta la cuenta de Instagram de la marca. Las cifras se recogen una vez al día: las primeras llegan al día siguiente.'
-                : 'Cuando quien gestiona la marca conecte su cuenta de Instagram, las cifras llegarán al día siguiente.'
-            }
-            action={
-              can('manage') && (
-                <LinkButton to={connectedAccountsPath(org.id, brand.id)} size="md" data-testid="analytics-connect">
-                  <Link2 className="h-4 w-4" aria-hidden />
-                  Conectar Instagram
-                </LinkButton>
-              )
-            }
-          />
-        </Card>
-      ) : (
-        <>
-          <p className="text-sm text-muted">
-            Periodo: <strong className="text-fg">{periodText(period)}</strong> · comparado con {periodText(previous)} ·
-            días contados con la hora universal (una o dos horas menos que en España).
-          </p>
-          <Kpis totals={analysis.totals} />
-          <Evolution analysis={analysis} points={points.data ?? []} />
-          <Comparison analysis={analysis} />
-          <Posts analysis={analysis} />
-          <Summary
-            analysis={analysis}
-            brandId={brand.id}
-            period={period}
-            aiAvailable={aiText && brand.ai_mode !== 'agency' && can('edit')}
-          />
-          <Unmeasurable analysis={analysis} />
-          <Captures runs={runs.data ?? []} />
-        </>
-      )}
-      {hasAccount && <Reports brandId={brand.id} canEdit={can('edit')} />}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-2 pr-1" data-testid="analytics-scroll">
+        {failed ? (
+          <ErrorState error={failed.error} onRetry={() => queries.forEach((q) => void q.refetch())} />
+        ) : !analysis ? (
+          <Skeleton className="h-64" />
+        ) : !accounts.data?.length ? (
+          <Card>
+            <EmptyState
+              icon={BarChart3}
+              title="Todavía no hay nada que medir"
+              description={
+                can('manage')
+                  ? 'Conecta la cuenta de Instagram de la marca. Las cifras se recogen una vez al día: las primeras llegan al día siguiente.'
+                  : 'Cuando quien gestiona la marca conecte su cuenta de Instagram, las cifras llegarán al día siguiente.'
+              }
+              action={
+                can('manage') && (
+                  <LinkButton to={connectedAccountsPath(org.id, brand.id)} size="md" data-testid="analytics-connect">
+                    <Link2 className="h-4 w-4" aria-hidden />
+                    Conectar Instagram
+                  </LinkButton>
+                )
+              }
+            />
+          </Card>
+        ) : (
+          <>
+            {needsReconnect && (
+              <Notice tone="warning">
+                Hay que volver a conectar la cuenta de Instagram para que lleguen cifras nuevas.{' '}
+                {can('manage') ? (
+                  <a className="font-medium underline" href={connectedAccountsPath(org.id, brand.id)}>
+                    Volver a conectarla
+                  </a>
+                ) : (
+                  'Pídeselo a quien gestiona la marca.'
+                )}
+              </Notice>
+            )}
+            <Overview analysis={analysis} points={points.data ?? []} range={range} brandId={brand.id} />
+            <details className="group rounded-xl border border-border bg-surface shadow-card" data-testid="analytics-more">
+              <summary className="flex min-h-[2.75rem] cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+                <span>Más detalle</span>
+                <span className="flex items-center gap-1 text-xs font-normal text-muted">
+                  <span className="hidden sm:inline">Comparación, análisis, lo que no se puede medir e informes</span>
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden />
+                </span>
+              </summary>
+              <div className="space-y-6 border-t border-border p-4">
+                <p className="text-sm text-muted">
+                  Comparado con {periodText(previous)}. Los días se cuentan con la hora universal (una o dos horas menos
+                  que en España).
+                </p>
+                <Comparison analysis={analysis} />
+                <Posts analysis={analysis} />
+                <Summary
+                  analysis={analysis}
+                  brandId={brand.id}
+                  period={period}
+                  aiAvailable={aiText && brand.ai_mode !== 'agency' && can('edit')}
+                />
+                <Unmeasurable analysis={analysis} />
+                <Captures runs={runs.data ?? []} />
+                <Reports brandId={brand.id} canEdit={can('edit')} />
+              </div>
+            </details>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function Change({ total }: { total: MetricTotal }) {
+/** Variación frente al periodo anterior: con flecha y signo, nunca solo con el color. */
+function Change({ total }: { total: Headline }) {
   if (total.changePct === null) {
     return (
       <span className="text-xs text-muted">{total.previous === null ? 'sin periodo anterior' : 'sin comparación'}</span>
     );
   }
-  const tone = total.changePct > 0 ? 'success' : total.changePct < 0 ? 'danger' : 'neutral';
-  return <Badge tone={tone}>{formatPct(total.changePct)}</Badge>;
+  const up = total.changePct > 0;
+  const down = total.changePct < 0;
+  const Icon = up ? ArrowUp : down ? ArrowDown : Minus;
+  return (
+    <Badge tone={up ? 'success' : down ? 'danger' : 'neutral'}>
+      <Icon className="h-3 w-3" aria-hidden />
+      {formatPct(total.changePct)}
+    </Badge>
+  );
 }
 
-function Kpis({ totals }: { totals: MetricTotal[] }) {
-  const measured = totals.filter((t) => t.value !== null);
-  if (!measured.length) {
+function Overview({
+  analysis,
+  points,
+  range,
+  brandId,
+}: {
+  analysis: Analysis;
+  points: Parameters<typeof dailySeries>[0];
+  range: RangeKey;
+  brandId: string;
+}) {
+  const headlines = useMemo(() => pickHeadlines(analysis.totals), [analysis.totals]);
+  const sentence = headlineSentence(analysis.totals, range);
+  const [metric, setMetric] = useState('');
+  const selected = headlines.find((h) => h.metricId === metric) ?? headlines[0];
+  if (!headlines.length || !selected) {
     return (
-      <Notice>
-        Todavía no hay cifras de este periodo. Las capturas son diarias y Meta tarda hasta 48 horas en dar algunas.
-      </Notice>
+      <div className="space-y-4">
+        <Notice>
+          Todavía no hay cifras de la cuenta en este periodo. Se recogen una vez al día y Meta tarda hasta 48 horas en
+          dar algunas: prueba con otro periodo o vuelve mañana. Si la cuenta se conectó hoy, las primeras llegan al día
+          siguiente.
+        </Notice>
+        <BestPosts analysis={analysis} brandId={brandId} />
+      </div>
     );
   }
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="analytics-kpis">
-      {measured.map((t) => (
-        <Card key={t.metricId} className="p-4" data-testid={`kpi-${t.metricId}`}>
-          <p className="text-xs text-muted">{t.label}</p>
-          <p className="mt-1 text-2xl font-semibold tabular-nums">{formatNumber(t.value!)}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Change total={t} />
-            {t.estimated && <Badge>Estimación de Meta</Badge>}
-            {t.provisional && <Badge tone="warning">Provisional</Badge>}
-            {t.aggregation === 'daily' && t.daysWithData < t.days && (
-              <span className="text-xs text-muted">
-                {t.daysWithData} de {t.days} días
+    <div className="space-y-4">
+      {sentence && (
+        <p className="text-lg font-medium leading-snug sm:text-xl" data-testid="analytics-sentence">
+          {sentence}
+        </p>
+      )}
+      <div
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        role="group"
+        aria-label="Cifras del periodo: elige una para verla en el gráfico"
+        data-testid="analytics-kpis"
+      >
+        {headlines.map((t) => {
+          const on = t.metricId === selected.metricId;
+          const notes = tileNotes(t);
+          return (
+            <button
+              key={t.metricId}
+              type="button"
+              aria-pressed={on}
+              onClick={() => setMetric(t.metricId)}
+              data-testid={`kpi-${t.metricId}`}
+              className={cn(
+                'rounded-xl border bg-surface p-3 text-left shadow-card transition-colors sm:p-4',
+                'focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+                on ? 'border-primary ring-1 ring-primary' : 'border-border hover:bg-subtle',
+              )}
+            >
+              <span className="block text-sm text-muted">{t.plainLabel}</span>
+              <span className="mt-0.5 block text-3xl font-semibold tabular-nums">{formatNumber(t.value!)}</span>
+              <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Change total={t} />
+                {t.changePct !== null && <span className="text-xs text-muted">frente al periodo anterior</span>}
               </span>
-            )}
-          </div>
+              {notes.length > 0 && <span className="mt-1 block text-xs text-muted">{notes.join(' · ')}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Card className="min-w-0 p-4">
+          <TrendChart
+            title={selected.plainLabel}
+            points={dailySeries(points, selected.metricId, analysis.period)}
+            testId="analytics-chart"
+          />
         </Card>
-      ))}
+        <BestPosts analysis={analysis} brandId={brandId} />
+      </div>
     </div>
   );
 }
 
-function Evolution({ analysis, points }: { analysis: Analysis; points: Parameters<typeof dailySeries>[0] }) {
-  const options = analysis.totals.filter((t) => t.value !== null);
-  const [metric, setMetric] = useState(
-    options.find((t) => t.metricId === 'instagram.account.reach')?.metricId ?? options[0]?.metricId ?? '',
+const scoreText = (p: RankedPost) =>
+  p.scoreMetric.endsWith('total_interactions')
+    ? `${formatNumber(p.score)} ${p.score === 1 ? 'interacción' : 'interacciones'}`
+    : `Llegó a ${formatNumber(p.score)} ${p.score === 1 ? 'persona' : 'personas'}`;
+
+/** Las publicaciones que mejor han ido, con su miniatura. Sin publicaciones, dice cómo conseguirlas. */
+function BestPosts({ analysis, brandId }: { analysis: Analysis; brandId: string }) {
+  const best = analysis.posts.best.slice(0, 3);
+  const ids = best.flatMap((p) => (p.publication_id ? [p.publication_id] : []));
+  const postMedia = usePostMedia(brandId, ids);
+  const paths = useMemo(
+    () => [...(postMedia.data?.values() ?? [])].filter((m) => !m.video).map((m) => m.path),
+    [postMedia.data],
   );
-  const selected = options.find((t) => t.metricId === metric) ?? options[0];
-  if (!selected) return null;
+  const urls = useSignedUrls(paths, { variant: 'thumb' });
   return (
-    <Card>
-      <CardHeader
-        title="Evolución"
-        description={
-          selected.aggregation === 'snapshot' ? 'Valor de cada día en que se capturó.' : 'Cifra de cada día.'
-        }
-        action={
-          <Select aria-label="Métrica" value={selected.metricId} onChange={(e) => setMetric(e.target.value)}>
-            {options.map((t) => (
-              <option key={t.metricId} value={t.metricId}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
-        }
-      />
-      <CardBody>
-        <BarChart
-          title={selected.label}
-          points={dailySeries(points, selected.metricId, analysis.period)}
-          testId="analytics-chart"
-        />
-      </CardBody>
+    <Card className="p-4">
+      <h2 className="text-base font-semibold">Lo que mejor funcionó</h2>
+      {best.length === 0 ? (
+        <p className="mt-2 text-sm text-muted" data-testid="analytics-no-posts">
+          {analysis.posts.count === 0
+            ? 'Todavía no hay publicaciones hechas desde aquí en este periodo. Cuando publiques desde la plataforma, verás cuáles funcionan mejor.'
+            : 'Hay pocas publicaciones con cifras para compararlas. Las cifras de cada una tardan en llegar.'}
+        </p>
+      ) : (
+        <ol className="mt-3 space-y-3" data-testid="analytics-top-posts">
+          {best.map((p) => {
+            const media = p.publication_id ? postMedia.data?.get(p.publication_id) : undefined;
+            const url = media && !media.video ? urls.data?.get(media.path) : undefined;
+            return (
+              <li key={`${p.publication_id}-${p.title}`} className="flex items-center gap-3">
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-subtle text-muted">
+                  {url ? (
+                    <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                  ) : (
+                    <Film className="h-5 w-5" aria-hidden />
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{p.title}</p>
+                  <p className="text-xs text-muted">
+                    {p.media_product_type === 'REELS' ? 'Reel' : 'Publicación'} · {dayLabel(p.published_at.slice(0, 10))}
+                    {p.external_url && (
+                      <>
+                        {' · '}
+                        <a href={p.external_url} target="_blank" rel="noreferrer" className="underline">
+                          Verla en la red
+                        </a>
+                      </>
+                    )}
+                  </p>
+                  <p className="text-sm tabular-nums">{scoreText(p)}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </Card>
   );
 }

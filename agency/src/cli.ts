@@ -17,6 +17,7 @@ import {
   type CheckOutcome,
 } from './commands.ts';
 import { checkTemplatesFile, deliverTemplates, importedBrands, importedContext, TemplatesError } from './templates.ts';
+import { CatalogError, describeCatalog, describeLoad, loadCatalog, type CatalogPart } from './catalog.ts';
 import { ConfigError, loadCredentials, resolveConfig } from './config.ts';
 import { ApiError, createClient, type SupabaseClient } from './supabase.ts';
 import type { BrandCheckResult } from '../../src/features/brandcheck/types.ts';
@@ -45,6 +46,13 @@ const HELP = `Herramienta de la agencia (rrss)
   entregar-plantillas <marca> <plantillas.json> [--manual]
                                       Las guarda como plantillas de la marca. --manual: para una marca
                                       sin cuenta conectada; llevan «references» en vez de «examples»
+  catalogo [<juego>]                  Lista los juegos del catálogo de plantillas (restaurante, cocteleria,
+                                      gimnasio, generico) y lo que lleva cada uno, sin red
+  cargar-catalogo <marca> <juego> [--cargar] [--solo reels|publicaciones] [--tema <tema.json>]
+                                      EN SECO por defecto: arma el juego con los colores y tipografías
+                                      del perfil de la marca, lo valida y lo deja en la carpeta de trabajo.
+                                      Con --cargar lo guarda en la marca (reels y publicaciones).
+                                      Sin red: «cargar-catalogo - <juego> --perfil <perfil.json>»
   comentar <id> <texto>               Añade un comentario al encargo
   soltar <id>                         Devuelve un encargo tomado a la cola
 
@@ -59,13 +67,16 @@ interface Output {
   error(text: string): void;
 }
 
+/** Opciones que llevan un valor detrás (las demás son interruptores). */
+const VALUE_FLAGS = new Set(['--contexto', '--limite', '--tema', '--perfil', '--solo']);
+
 function parseArgs(argv: string[]): { positional: string[]; flags: Map<string, string | true> } {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === '--contexto') {
-      flags.set('contexto', argv[++i] ?? '');
+    if (VALUE_FLAGS.has(arg)) {
+      flags.set(arg.slice(2), argv[++i] ?? '');
     } else if (arg.startsWith('--')) {
       flags.set(arg.slice(2), true);
     } else {
@@ -241,6 +252,35 @@ export async function run(
         );
         return 0;
       }
+      case 'catalogo': {
+        out.log(describeCatalog(positional[0]));
+        return 0;
+      }
+      case 'cargar-catalogo': {
+        const setId = positional[1];
+        if (!positional[0] || !setId) {
+          throw new CommandError('Indica la marca y el juego: «cargar-catalogo <marca> <juego>».');
+        }
+        const only = flags.get('solo');
+        if (only !== undefined && only !== 'reels' && only !== 'publicaciones') {
+          throw new CommandError('--solo admite «reels» o «publicaciones».');
+        }
+        const profileFile = flags.get('perfil');
+        const themeFile = flags.get('tema');
+        const offline = positional[0] === '-';
+        if (offline && typeof profileFile !== 'string') {
+          throw new CommandError('Sin marca hace falta un perfil: «cargar-catalogo - <juego> --perfil <perfil.json>».');
+        }
+        const brandId = offline ? null : checkId(positional[0]);
+        const result = await loadCatalog(offline ? null : await signedInClient(env), config.workDir, brandId, setId, {
+          deliver: flags.has('cargar'),
+          ...(typeof profileFile === 'string' ? { profileFile: path.resolve(profileFile) } : {}),
+          ...(typeof themeFile === 'string' ? { themeFile: path.resolve(themeFile) } : {}),
+          ...(only ? { only: only as CatalogPart } : {}),
+        });
+        out.log(describeLoad(result, only as CatalogPart | undefined));
+        return 0;
+      }
       case 'comentar': {
         const id = checkId(positional[0]);
         await comment(await signedInClient(env), id, positional.slice(1).join(' '));
@@ -263,7 +303,12 @@ export async function run(
         return 2;
     }
   } catch (error) {
-    if (error instanceof CommandError || error instanceof ConfigError || error instanceof TemplatesError) {
+    if (
+      error instanceof CommandError ||
+      error instanceof ConfigError ||
+      error instanceof TemplatesError ||
+      error instanceof CatalogError
+    ) {
       out.error(error.message);
       return 2;
     }

@@ -1,6 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as storageApi from '@/features/storage/api';
 import type { AnalyticsMetricDefinitionRow } from '@/lib/database.types';
+import { fireEvent } from '@testing-library/react';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
 
@@ -263,5 +265,128 @@ describe('Analítica', () => {
       `${BRAND_BASE}/marca?seccion=datos#cuentas-conectadas`,
     );
     expect(screen.queryByTestId('analytics-range')).not.toBeInTheDocument();
+  });
+});
+
+describe('Analítica de un vistazo', () => {
+  beforeEach(() => {
+    vi.spyOn(storageApi, 'signStoragePaths').mockImplementation(
+      async (paths) => new Map(paths.map((path) => [path, `https://example.test/${path}`])),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('arriba va la frase del periodo con la variación en palabras y las cifras grandes', async () => {
+    seed();
+    renderApp(`${BRAND_BASE}/analitica`);
+    const sentence = await screen.findByTestId('analytics-sentence');
+    // 28 días a 150 frente a 28 días a 100: 4.200 contra 2.800.
+    expect(sentence).toHaveTextContent(
+      'En los últimos 28 días llegaste a 4200 personas, un 50 % más que en los 28 días anteriores.',
+    );
+    const kpis = screen.getByTestId('analytics-kpis');
+    expect(within(kpis).getByTestId('kpi-instagram.account.reach')).toHaveTextContent('Personas alcanzadas');
+    expect(within(kpis).getByTestId('kpi-instagram.account.reach')).toHaveTextContent('frente al periodo anterior');
+    expect(within(kpis).getByTestId('kpi-instagram.account.followers')).toHaveTextContent('Seguidores');
+    // Lo demás está plegado.
+    expect(screen.getByTestId('analytics-more')).not.toHaveAttribute('open');
+  });
+
+  it('elegir una cifra cambia el gráfico y la guía muestra el valor de un día con el teclado', async () => {
+    seed();
+    const { user } = renderApp(`${BRAND_BASE}/analitica`);
+    const chart = await screen.findByTestId('analytics-chart');
+    expect(within(chart).getByText('Personas alcanzadas')).toBeInTheDocument();
+    await user.click(screen.getByTestId('kpi-instagram.account.followers'));
+    expect(within(screen.getByTestId('analytics-chart')).getByText('Seguidores')).toBeInTheDocument();
+    await user.click(screen.getByTestId('kpi-instagram.account.reach'));
+    const area = within(screen.getByTestId('analytics-chart')).getByTestId('chart-area');
+    area.focus();
+    fireEvent.keyDown(area, { key: 'End' });
+    expect(screen.getByTestId('chart-readout')).toHaveTextContent(/^\d\d\/\d\d: 150$/);
+    fireEvent.keyDown(area, { key: 'ArrowLeft' });
+    expect(screen.getByTestId('chart-readout')).toHaveTextContent(/: 150$/);
+    // Y la misma información como tabla.
+    expect(within(screen.getByTestId('analytics-chart')).getAllByRole('row').length).toBeGreaterThan(20);
+  });
+
+  it('lo que mejor funcionó enseña la miniatura de la publicación, y un icono si no la tiene', async () => {
+    seed();
+    // Seis publicaciones: salen las tres mejores. Solo la primera tiene archivo.
+    fake.rpc('analytics_media_summary', () =>
+      [80, 70, 60, 30, 20, 10].map((n, i) => ({
+        publication_id: `p${i + 1}`,
+        title: i === 0 ? 'Pan de otoño' : `Otra ${i + 1}`,
+        format: 'post',
+        network: 'instagram',
+        media_product_type: 'FEED',
+        published_at: `${day(-5 + i)}T10:00:00Z`,
+        external_url: null,
+        provisional: false,
+        metrics: { 'instagram.media.total_interactions': n },
+      })),
+    );
+    fake.tables.scheduled_publications = [{ id: 'p1', media_asset_ids: ['img-1'] }];
+    fake.tables.media_assets = [
+      ...(fake.tables.media_assets ?? []),
+      {
+        id: 'img-1',
+        brand_id: BRAND_ID,
+        storage_path: `${ORG_ID}/${BRAND_ID}/media/pan.jpg`,
+        thumb_path: `${ORG_ID}/${BRAND_ID}/thumbs/pan.jpg`,
+        mime_type: 'image/jpeg',
+        file_name: 'pan.jpg',
+      },
+    ];
+    renderApp(`${BRAND_BASE}/analitica`);
+    const top = await screen.findByTestId('analytics-top-posts');
+    const items = within(top).getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('Pan de otoño');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent('80 interacciones');
+    await waitFor(() =>
+      expect(items[0]!.querySelector('img')).toHaveAttribute(
+        'src',
+        `https://example.test/${ORG_ID}/${BRAND_ID}/thumbs/pan.jpg`,
+      ),
+    );
+    // La segunda publicación no tiene archivo: icono, no una imagen inventada.
+    expect(items[1]!.querySelector('img')).toBeNull();
+  });
+
+  it('con la cuenta conectada pero sin cifras, lo dice y explica cuándo llegan', async () => {
+    seed();
+    fake.tables.account_metrics_daily = [];
+    fake.rpc('analytics_media_summary', () => []);
+    renderApp(`${BRAND_BASE}/analitica`);
+    expect(await screen.findByText(/Todavía no hay cifras de la cuenta en este periodo/)).toBeInTheDocument();
+    expect(screen.queryByTestId('analytics-kpis')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('analytics-chart')).not.toBeInTheDocument();
+    expect(screen.getByTestId('analytics-no-posts')).toBeInTheDocument();
+  });
+
+  it('sin publicaciones hechas desde la plataforma, dice cómo conseguir que salgan', async () => {
+    seed();
+    fake.rpc('analytics_media_summary', () => []);
+    renderApp(`${BRAND_BASE}/analitica`);
+    expect(await screen.findByTestId('analytics-no-posts')).toHaveTextContent(
+      'Cuando publiques desde la plataforma, verás cuáles funcionan mejor.',
+    );
+  });
+
+  it('si la cuenta hay que volver a conectarla, se avisa arriba', async () => {
+    seed();
+    fake.tables.social_accounts![0]!.status = 'needs_reauth';
+    renderApp(`${BRAND_BASE}/analitica`);
+    expect(await screen.findByText(/Hay que volver a conectar la cuenta de Instagram/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Volver a conectarla' })).toBeInTheDocument();
+  });
+
+  it('el botón de IA está dentro de «Más detalle» y solo si la tarea está disponible', async () => {
+    vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
+    seed();
+    renderApp(`${BRAND_BASE}/analitica`);
+    const more = await screen.findByTestId('analytics-more');
+    expect(within(more).getByTestId('analytics-ai')).toBeInTheDocument();
   });
 });

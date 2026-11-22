@@ -220,8 +220,14 @@ const TENANT_TABLES = [
   'social_import_runs',
   'social_imported_media',
   'brand_design_templates',
+  // Plantillas de reel por marca.
+  'brand_reel_templates',
   // Operación y control de gasto (avisos solo para superadministradores).
   'platform_alerts',
+  // «Hacer un reel como este»: análisis de vídeos de referencia.
+  'reel_references',
+  // Borrador automático del editor de reels.
+  'reel_drafts',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -899,6 +905,47 @@ describe('filtros de la biblioteca', () => {
     );
     expect(vacio(sinAcceso)).toEqual([[], []]);
     await denied(db, null, `select * from public.asset_facets($1)`, [marcaA1]);
+  });
+});
+
+describe('en qué piezas se usa un archivo (asset_usage)', () => {
+  const insertAsset = `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+     values ($1::uuid, $2::uuid, 'image', $2::text || '/' || $1::text || '/media/' || gen_random_uuid() || '.jpg', 'uso.jpg', 'image/jpeg', 1)
+     returning id::text as id`;
+  type Uso = { asset_id: string; content_id: string; title: string; archived: boolean };
+  const usos = (user: TestUser, brand: string) =>
+    as<Uso>(db, user, `select asset_id::text, content_id::text, title, archived from public.asset_usage($1)`, [brand]);
+
+  it('devuelve las piezas vigentes que citan el archivo, y nada de los que no se usan', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca de usos');
+    const [usado] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [libre] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [pieza] = await as<{ id: string }>(
+      db,
+      ana,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Chuletón', 'instagram', 'post') returning id::text as id`,
+      [marca, orgA],
+    );
+    // Versión 1 cita el archivo; la vigente (2) ya no: no cuenta como uso.
+    await as(db, ana, `select public.save_content_version($1, $2::jsonb, 1)`, [
+      pieza!.id,
+      JSON.stringify({ schemaVersion: 1, layers: [{ assetId: usado!.id }] }),
+    ]);
+    expect(await usos(ana, marca)).toEqual([
+      { asset_id: usado!.id, content_id: pieza!.id, title: 'Chuletón', archived: false },
+    ]);
+    await as(db, ana, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 2, '')`, [pieza!.id]);
+    expect(await usos(ana, marca)).toEqual([]);
+    expect(libre!.id).toBeTruthy();
+    // La pieza no debe quedar: otras pruebas cuentan las piezas que ve Ana.
+    await db.query(`delete from public.content_items where id = $1`, [pieza!.id]);
+  });
+
+  it('una marca ajena o sin acceso devuelve cero filas, y sin sesión se deniega', async () => {
+    expect(await usos(ana, marcaB1)).toEqual([]);
+    expect(await usos(sinMarcaA, marcaA1)).toEqual([]);
+    await denied(db, null, `select * from public.asset_usage($1)`, [marcaA1]);
   });
 });
 
@@ -2978,5 +3025,414 @@ describe('importar publicaciones y plantillas de diseño (20261201010000)', () =
       await denied(db, user, `select private.platform_alerts_scan()`, [], /permission denied/);
       await denied(db, user, `select private.ai_global_cap_micros()`, [], /permission denied/);
     }
+  });
+});
+
+describe('«Hacer un reel como este» (20261223010000)', () => {
+  const analizar = (user: TestUser, brand: string, org: string, key: string) =>
+    as<{ data: { id: string; payload: { reference: { id: string }; output: { dir: string } } } }>(
+      db,
+      user,
+      `select to_jsonb(j) as data from public.request_media_job($1, 'media.reel.analyze', $2::jsonb, $3) j`,
+      [brand, JSON.stringify({ source: { path: `${org}/${brand}/referencias/${randomUUID()}.mp4` } }), key],
+    ).then((rows) => rows[0]!.data);
+  let refA1: string;
+  let refB1: string;
+  let jobRefA1: string;
+
+  it('una organización no ve los análisis de vídeos de referencia de otra', async () => {
+    const a = await analizar(editorA, marcaA1, orgA, 'aislamiento-reel-como-este-a1');
+    const b = await analizar(berta, marcaB1, orgB, 'aislamiento-reel-como-este-b1');
+    refA1 = a.payload.reference.id;
+    refB1 = b.payload.reference.id;
+    jobRefA1 = a.id;
+    for (const table of ['reel_references']) {
+      const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deB.map((r) => r.org),
+        table,
+      ).toEqual([orgB]);
+      const deA = await as(db, ana, `select distinct organization_id::text as org from public.${table}`);
+      expect(
+        deA.map((r) => r.org),
+        table,
+      ).toEqual([orgA]);
+      expect(await as(db, superadmin, `select 1 from public.${table}`), table).toEqual([]);
+      expect(await as(db, ajeno, `select 1 from public.${table}`), table).toEqual([]);
+      // Dentro de la organización: quien no ve la marca no ve nada; quien la ve (cliente), sí.
+      expect(await as(db, sinMarcaA, `select 1 from public.${table}`), table).toEqual([]);
+      expect((await as(db, clienteA, `select 1 from public.${table}`)).length, table).toBeGreaterThan(0);
+    }
+  });
+
+  it('no se encarga el análisis en la marca de otro ni con un archivo de otra marca', async () => {
+    const permiso = /No tienes permiso para crear medios/;
+    await denied(
+      db,
+      berta,
+      `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, 'aislamiento-reel-como-este-x1')`,
+      [marcaA1, JSON.stringify({ source: { path: `${orgA}/${marcaA1}/referencias/${randomUUID()}.mp4` } })],
+      permiso,
+    );
+    await denied(
+      db,
+      clienteA,
+      `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, 'aislamiento-reel-como-este-x2')`,
+      [marcaA1, JSON.stringify({ source: { url: 'https://videos.example/v.mp4' } })],
+      permiso,
+    );
+    // Con permiso en su marca, pero apuntando a la carpeta de otra (también de su misma organización).
+    for (const [org, brand] of [
+      [orgB, marcaB1],
+      [orgA, marcaA2],
+    ]) {
+      await denied(
+        db,
+        editorA,
+        `select public.request_media_job($1, 'media.reel.analyze', $2::jsonb, $3)`,
+        [
+          marcaA1,
+          JSON.stringify({ source: { path: `${org}/${brand}/referencias/${randomUUID()}.mp4` } }),
+          `aislamiento-reel-como-este-${brand}`,
+        ],
+        /carpeta de referencias de esta marca/,
+      );
+    }
+  });
+
+  it('nadie escribe la tabla desde la API, ni descarta o enlaza lo de otro', async () => {
+    await denied(db, ana, `delete from public.reel_references`, [], /permission denied/);
+    await denied(db, ana, `update public.reel_references set id = id`, [], /permission denied/);
+    await denied(
+      db,
+      ana,
+      `insert into public.reel_references (id, brand_id, organization_id, source_kind) values ($1, $2, $3, 'link')`,
+      [randomUUID(), marcaA1, orgA],
+      /permission denied/,
+    );
+    for (const user of [berta, clienteA, sinMarcaA, ajeno]) {
+      await denied(db, user, `select public.discard_reel_reference($1)`, [refA1], /No tienes permiso/);
+      await denied(
+        db,
+        user,
+        `select public.set_reel_reference_content($1, $2)`,
+        [refA1, contentA1],
+        /No tienes permiso/,
+      );
+      await denied(db, user, `select public.cancel_media_job($1)`, [jobRefA1], /No tienes permiso/);
+    }
+    // Ni se enlaza el análisis propio con la pieza de otra organización.
+    await denied(
+      db,
+      editorA,
+      `select public.set_reel_reference_content($1, $2)`,
+      [refA1, contentB1],
+      /no es un reel de esta marca/,
+    );
+    await denied(db, null, `select public.discard_reel_reference($1)`, [refA1], /permission denied/);
+  });
+
+  it('las funciones del servidor y las internas no se llaman con una sesión', async () => {
+    for (const user of [ana, superadmin, ajeno]) {
+      await denied(db, user, `select public.reel_reference_claim($1, true)`, [refA1], /permission denied/);
+      await denied(
+        db,
+        user,
+        `select public.reel_reference_finish($1, '{}'::jsonb, 0, '{}'::uuid[])`,
+        [refA1],
+        /permission denied/,
+      );
+      await denied(db, user, `select public.reel_references_expire($1)`, [marcaA1], /permission denied/);
+      await denied(db, user, `select private.reel_reference_release_files($1, true)`, [refA1], /permission denied/);
+      await denied(db, user, `select private.reel_references_expire(null)`, [], /permission denied/);
+    }
+    // El trabajo del análisis de A no lo ve la otra organización.
+    expect(await as(db, berta, `select 1 from public.jobs where id = $1`, [jobRefA1])).toEqual([]);
+    // Limpieza: solo lo descarta quien edita su marca, y no toca el de la otra organización.
+    await as(db, editorA, `select public.discard_reel_reference($1)`, [refA1]);
+    expect(await db.query(`select 1 from public.reel_references where id = $1`, [refA1])).toEqual([]);
+    expect(await db.query(`select 1 from public.reel_references where id = $1`, [refB1])).toHaveLength(1);
+  });
+});
+
+describe('plantillas de reel por marca (20261224010000)', () => {
+  const reelDoc = (patch: Record<string, unknown> = {}) => ({
+    kind: 'rrss.reel-template',
+    schemaVersion: 1,
+    purpose: 'Enseñar un producto',
+    whenToUse: 'Cuando hay una novedad',
+    material: '2 fotos o clips',
+    style: { id: 'corte-ritmico' },
+    slots: [
+      { id: 's1', label: 'Resultado', kind: 'any', seconds: 1.5 },
+      { id: 's2', label: 'Cierre', kind: 'any', seconds: 2 },
+    ],
+    texts: [{ id: 'x1', role: 'hook', text: 'Así se hace', from: 's1', position: 'center' }],
+    ...patch,
+  });
+  const entrega = (key = 'asi-se-hace', patch: Record<string, unknown> = {}) =>
+    JSON.stringify([{ key, name: 'Así se hace', document: reelDoc(patch) }]);
+  const deliver = `select public.deliver_reel_templates($1, $2::jsonb)`;
+
+  it('una organización no ve las plantillas de reel de otra, y dentro, solo quien ve la marca', async () => {
+    await as(db, editorA, deliver, [marcaA1, entrega()]);
+    await as(db, berta, deliver, [marcaB1, entrega()]);
+    const deA = await as(db, ana, `select distinct organization_id::text as org from public.brand_reel_templates`);
+    expect(deA.map((r) => r.org)).toEqual([orgA]);
+    const deB = await as(db, berta, `select distinct organization_id::text as org from public.brand_reel_templates`);
+    expect(deB.map((r) => r.org)).toEqual([orgB]);
+    expect(await as(db, superadmin, `select 1 from public.brand_reel_templates`)).toEqual([]);
+    expect(await as(db, ajeno, `select 1 from public.brand_reel_templates`)).toEqual([]);
+    expect(await as(db, sinMarcaA, `select 1 from public.brand_reel_templates`)).toEqual([]);
+    expect(await as(db, clienteA, `select 1 from public.brand_reel_templates`)).toHaveLength(1);
+  });
+
+  it('nadie escribe la tabla desde la API', async () => {
+    await denied(db, ana, `delete from public.brand_reel_templates`, [], /permission denied/);
+    await denied(db, ana, `update public.brand_reel_templates set name = 'x'`, [], /permission denied/);
+    await denied(
+      db,
+      ana,
+      `insert into public.brand_reel_templates (brand_id, organization_id, template_key, name, document)
+       values ($1, $2, 'x', 'x', $3::jsonb)`,
+      [marcaA1, orgA, JSON.stringify(reelDoc())],
+      /permission denied/,
+    );
+  });
+
+  it('solo quien edita la marca entrega, y nunca en la marca de otra organización', async () => {
+    await denied(db, clienteA, deliver, [marcaA1, entrega('x1')], /edita/);
+    await denied(db, sinMarcaA, deliver, [marcaA1, entrega('x2')], /edita/);
+    await denied(db, berta, deliver, [marcaA1, entrega('x3')], /edita/);
+    await denied(db, ana, deliver, [marcaB1, entrega('x4')], /edita/);
+    await denied(db, null, deliver, [marcaA1, entrega('x5')], /permission denied|sesión/);
+    // Entregar otra vez la misma clave la actualiza: no la duplica, y queda quién y de dónde.
+    const [row] = await as<{ source: string; created_by: string; name: string }>(
+      db,
+      editorA,
+      `select t.source, t.created_by, t.name from public.deliver_reel_templates($1, $2::jsonb, 'reference') t`,
+      [marcaA1, entrega()],
+    );
+    expect(row).toMatchObject({ source: 'reference', created_by: editorA.id, name: 'Así se hace' });
+    expect(await as(db, ana, `select 1 from public.brand_reel_templates where brand_id = $1`, [marcaA1])).toHaveLength(
+      1,
+    );
+  });
+
+  it('rechaza lo que no es una plantilla de reel, un origen inventado y cualquier archivo', async () => {
+    await denied(db, editorA, deliver, [marcaA1, entrega('m1', { kind: 'otra-cosa' })], /plantilla de reel/);
+    await denied(db, editorA, deliver, [marcaA1, entrega('m2', { schemaVersion: 2 })], /versión 1/);
+    await denied(db, editorA, deliver, [marcaA1, entrega('m3', { style: {} })], /estilo/);
+    await denied(db, editorA, deliver, [marcaA1, '[]'], /entre 1 y 12/);
+    await denied(db, editorA, deliver, [marcaA1, JSON.stringify([{ key: 'm4', name: 'Sin documento' }])], /documento/);
+    await denied(
+      db,
+      editorA,
+      `select public.deliver_reel_templates($1, $2::jsonb, 'nube')`,
+      [marcaA1, entrega('m5')],
+      /origen/,
+    );
+    // Ni fotos, ni clips, ni música, ni tipografías de nadie (tampoco de otra marca).
+    const ajena = assetPath(orgB, marcaB1);
+    await denied(
+      db,
+      editorA,
+      deliver,
+      [marcaA1, entrega('m6', { music: { suggestion: 'x', path: ajena } })],
+      /archivos/,
+    );
+    const conTipografia = {
+      texts: [{ id: 'x1', text: 'a', from: 's1', position: 'top', style: { fontPath: ajena } }],
+    };
+    await denied(db, editorA, deliver, [marcaA1, entrega('m7', conTipografia)], /archivos/);
+    await denied(db, editorA, deliver, [marcaA1, entrega('m8', { slots: [] })], /brand_reel_templates_document_check/);
+    await denied(db, editorA, deliver, [marcaA1, entrega('Clave Mala')], /brand_reel_templates_template_key_check/);
+  });
+
+  it('tope de 60 por marca: la 61 se rechaza y actualizar una existente sigue valiendo', async () => {
+    await db.query(
+      `insert into public.brand_reel_templates (brand_id, organization_id, template_key, name, document)
+       select $1, $2, 'relleno-' || g, 'Relleno', $3::jsonb from generate_series(1, 59) g`,
+      [marcaA1, orgA, JSON.stringify(reelDoc())],
+    );
+    await denied(db, editorA, deliver, [marcaA1, entrega('la-61')], /60 plantillas/);
+    await as(db, editorA, deliver, [marcaA1, entrega('relleno-7')]);
+    await db.query(`delete from public.brand_reel_templates where template_key like 'relleno-%'`);
+  });
+
+  it('quien edita la marca borra una plantilla de reel; quien solo la ve, no; y nadie la de otra marca', async () => {
+    const [t] = await as<{ id: string }>(db, ana, `select id from public.brand_reel_templates where brand_id = $1`, [
+      marcaA1,
+    ]);
+    await denied(db, clienteA, `select public.delete_reel_template($1)`, [t!.id], /edita/);
+    await denied(db, berta, `select public.delete_reel_template($1)`, [t!.id], /edita/);
+    await denied(db, null, `select public.delete_reel_template($1)`, [t!.id], /permission denied|sesión/);
+    await as(db, editorA, `select public.delete_reel_template($1)`, [t!.id]);
+    expect(await as(db, ana, `select 1 from public.brand_reel_templates where brand_id = $1`, [marcaA1])).toEqual([]);
+  });
+
+  it('las plantillas de reel de otra organización siguen ahí y se van con su marca', async () => {
+    expect(await db.query(`select 1 from public.brand_reel_templates where brand_id = $1`, [marcaB1])).toHaveLength(1);
+    await db.query(`delete from public.brand_reel_templates where brand_id = $1`, [marcaB1]);
+  });
+});
+
+describe('borrador automático del reel (20261228010000)', () => {
+  const borrador = JSON.stringify({ kind: 'reel', template: { id: 'fundido-suave' }, plan: { version: 2, clips: [], texts: [] } });
+  const guardar = `select public.save_reel_draft($1, $2::jsonb, 0)`;
+  let reelA1: string, reelB1: string;
+  const pieza = async (user: TestUser, org: string, marca: string) =>
+    (
+      await as<{ id: string }>(
+        db,
+        user,
+        `insert into public.content_items (brand_id, organization_id, title, network, format)
+         values ($1, $2, 'Reel nuevo', 'instagram', 'reel') returning id`,
+        [marca, org],
+      )
+    )[0]!.id;
+
+  it('una organización no ve los borradores de otra, y dentro, solo quien edita la marca', async () => {
+    reelA1 = await pieza(editorA, orgA, marcaA1);
+    reelB1 = await pieza(berta, orgB, marcaB1);
+    await as(db, editorA, guardar, [reelA1, borrador]);
+    await as(db, berta, guardar, [reelB1, borrador]);
+    const deA = await as(db, ana, `select distinct organization_id::text as org from public.reel_drafts`);
+    expect(deA).toEqual([{ org: orgA }]);
+    const deB = await as(db, berta, `select distinct organization_id::text as org from public.reel_drafts`);
+    expect(deB).toEqual([{ org: orgB }]);
+    expect(await as(db, editorA, `select 1 from public.reel_drafts`)).toHaveLength(1);
+    // Es trabajo a medias: no lo ve el cliente de la marca (solo revisa), ni quien no tiene la marca, ni nadie de fuera.
+    expect(await as(db, clienteA, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, sinMarcaA, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, superadmin, `select 1 from public.reel_drafts`)).toEqual([]);
+    expect(await as(db, ajeno, `select 1 from public.reel_drafts`)).toEqual([]);
+  });
+
+  it('nadie escribe ni borra el borrador de otra organización, ni directamente en la tabla', async () => {
+    await denied(db, berta, guardar, [reelA1, borrador], /Solo quien edita la marca/);
+    await denied(db, clienteA, guardar, [reelA1, borrador], /Solo quien edita la marca/);
+    await denied(db, berta, `select public.discard_reel_draft($1)`, [reelA1], /Solo quien edita la marca/);
+    await denied(db, ana, `delete from public.reel_drafts`, [], /permission denied/);
+    await denied(
+      db,
+      ana,
+      `insert into public.reel_drafts (content_id, brand_id, organization_id, data, base_version)
+       values ($1, $2, $3, $4::jsonb, 0)`,
+      [reelB1, marcaB1, orgB, borrador],
+      /permission denied/,
+    );
+    await as(db, editorA, `select public.discard_reel_draft($1)`, [reelA1]);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelA1])).toEqual([]);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [reelB1])).toHaveLength(1);
+    await db.query(`delete from public.content_items where id in ($1, $2)`, [reelA1, reelB1]);
+  });
+});
+
+describe('modo de trabajo de la organización (autogestión o agencia)', () => {
+  let propia: string, marcaPropia: string, ajena: string, marcaAjena: string, editorPropia: TestUser;
+
+  beforeAll(async () => {
+    editorPropia = await createUser(db, 'editor@propia.test', 'Editor propia');
+    // Como nace de verdad: en autogestión.
+    propia = await createOrg(db, ana, 'Propia', 'business', 'default');
+    marcaPropia = await createBrand(db, ana, propia, 'Marca propia');
+    await join(db, ana, editorPropia, propia, 'member', marcaPropia, 'editor');
+    ajena = await createOrg(db, berta, 'Ajena', 'business', 'default');
+    marcaAjena = await createBrand(db, berta, ajena, 'Marca ajena');
+  });
+
+  const modo = async (id: string) =>
+    (await db.query<{ work_mode: string }>(`select work_mode from public.organizations where id = $1`, [id]))[0]!
+      .work_mode;
+
+  it('una organización nueva nace en autogestión y una de tipo agencia, en modo agencia', async () => {
+    expect(await modo(propia)).toBe('self');
+    expect(await modo(await createOrg(db, ana, 'Nueva agencia', 'agency', 'default'))).toBe('agency');
+  });
+
+  it('solo administran el modo de trabajo propietarios y administradores de su organización', async () => {
+    expect(
+      await as(db, editorPropia, `update public.organizations set work_mode = 'agency' where id = $1 returning id`, [propia]),
+    ).toEqual([]);
+    expect(await as(db, berta, `update public.organizations set work_mode = 'agency' where id = $1 returning id`, [propia])).toEqual([]);
+    expect(await modo(propia)).toBe('self');
+    await denied(db, ana, `update public.organizations set work_mode = 'otro' where id = $1`, [propia], /check constraint/);
+  });
+
+  it('en autogestión no se puede poner una marca en modo agencia, ni al crearla ni después', async () => {
+    await denied(db, ana, `update public.brands set ai_mode = 'agency' where id = $1`, [marcaPropia], /por su cuenta/);
+    // Ni siquiera con privilegios de servidor (un guion SQL, por ejemplo).
+    await expect(
+      db.query(`insert into public.brands (organization_id, name, ai_mode) values ($1, 'X', 'agency')`, [propia]),
+    ).rejects.toThrow(/por su cuenta/);
+  });
+
+  it('pasar a modo agencia deja elegir el modo de cada marca, y volver a autogestión las devuelve a IA', async () => {
+    await as(db, ana, `update public.organizations set work_mode = 'agency' where id = $1`, [propia]);
+    await as(db, ana, `update public.brands set ai_mode = 'agency' where id = $1`, [marcaPropia]);
+    await as(db, ana, `update public.organizations set work_mode = 'self' where id = $1`, [propia]);
+    const [marca] = await db.query<{ ai_mode: string }>(`select ai_mode from public.brands where id = $1`, [marcaPropia]);
+    expect(marca!.ai_mode).toBe('api');
+    // No toca las marcas de otras organizaciones.
+    expect(await modo(ajena)).toBe('self');
+  });
+
+  it('el cambio de modo queda en el registro de actividad', async () => {
+    const registros = await as<{ data: { work_mode?: string } }>(
+      db,
+      ana,
+      `select data from public.audit_logs where organization_id = $1 and entity_type = 'organizations' and action = 'update'`,
+      [propia],
+    );
+    expect(registros.map((r) => r.data.work_mode)).toContain('self');
+  });
+
+  describe('gasto de la organización (org_usage_overview)', () => {
+    const mes = `${new Date().toISOString().slice(0, 7)}-01`;
+    const consulta = `select organization_id, ai_cost_micros from public.org_usage_overview($1, $2::date)`;
+
+    it('lo ve el propietario en autogestión, y solo el suyo', async () => {
+      const filas = await as<{ organization_id: string }>(db, ana, consulta, [propia, mes]);
+      expect(filas.map((f) => f.organization_id)).toEqual([propia]);
+      await denied(db, ana, consulta, [ajena, mes], /propietario/);
+      await denied(db, berta, consulta, [propia, mes], /propietario/);
+    });
+
+    it('no lo ven administradores, editores, ajenos ni quien no ha iniciado sesión', async () => {
+      await join(db, ana, adminA, propia, 'admin');
+      await denied(db, adminA, consulta, [propia, mes], /propietario/);
+      await denied(db, editorPropia, consulta, [propia, mes], /propietario/);
+      await denied(db, null, consulta, [propia, mes], /permission denied|propietario/);
+    });
+
+    it('en modo agencia no lo ve ni su propietario (el coste real es de la agencia); el superadministrador sí', async () => {
+      await denied(db, gema, consulta, [agencia, mes], /propietario/);
+      expect(await as(db, superadmin, consulta, [agencia, mes])).toHaveLength(1);
+      expect(await as(db, superadmin, consulta, [propia, mes])).toHaveLength(1);
+    });
+
+    it('pide el primer día del mes', async () => {
+      await denied(db, ana, consulta, [propia, '2026-11-15'], /primer día/);
+    });
+  });
+
+  it('las plantillas del catálogo se guardan con los mismos permisos de siempre: quien edita la marca, y nadie de fuera', async () => {
+    const entrega = JSON.stringify([
+      {
+        key: 'catalogo-prueba',
+        name: 'De catálogo',
+        document: {
+          kind: 'rrss.reel-template',
+          schemaVersion: 1,
+          style: { id: 'corte-ritmico' },
+          purpose: 'p',
+          slots: [{ id: 's', kind: 'image' }],
+        },
+      },
+    ]);
+    const deliver = `select template_key from public.deliver_reel_templates($1, $2::jsonb, 'catalog')`;
+    await denied(db, berta, deliver, [marcaPropia, entrega], /edita/);
+    await denied(db, ana, deliver, [marcaAjena, entrega], /edita/);
   });
 });

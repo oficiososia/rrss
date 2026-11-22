@@ -91,8 +91,7 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   await page.getByTestId('content-new').click();
   const alta = page.getByRole('dialog');
   await alta.getByTestId('create-content-title').fill(`Reel del editor ${vez}`);
-  await alta.getByTestId('create-content-network').selectOption('instagram');
-  await alta.getByTestId('create-content-format').selectOption('reel');
+  await alta.getByTestId('create-content-format-reel').click();
   await alta.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('reel-editor')).toBeVisible();
   const contentId = page.url().split('/contenidos/')[1]!.split('?')[0]!;
@@ -104,7 +103,7 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   }
   await page.getByTestId('reel-media-confirm').click();
   await expect(page.getByTestId('reel-clip')).toHaveCount(2);
-  await page.getByTestId('reel-add-text').click();
+  await page.getByTestId('reel-bar-text').click();
   await page.getByTestId('reel-text-content').fill('Pan recién hecho');
 
   // 4. Subtítulos automáticos del clip (transcripción simulada), con su coste antes.
@@ -148,7 +147,10 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   const { codigo, salida } = await trabajadorLocal();
   expect(codigo, salida).toBe(0);
   expect(salida).toContain('"outcome":"succeeded"');
-  await expect(page.getByTestId('reel-piece-job').first()).toContainText('Listo', { timeout: 30_000 });
+  // El estado del montaje está siempre arriba; la lista de montajes, en el panel con nada elegido.
+  await expect(page.getByTestId('reel-render-view')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('reel-bar-back').click();
+  await expect(page.getByTestId('reel-piece-job').first()).toContainText('Listo');
 
   const [trabajo] = await sql<{ id: string; result: { subtitles?: number; plan?: { version: number } } }>(
     `select id, result from public.jobs where brand_id = $1 and payload -> 'content' ->> 'id' = $2

@@ -2,6 +2,7 @@
 import type { Handler } from '../handler.ts';
 import { createCutoutHandler } from './cutout.ts';
 import { createImageProcessHandler } from './image-process.ts';
+import { createReelAnalyzeHandler } from './reel-analyze.ts';
 import { createReelTemplateHandler } from './reel-template.ts';
 import { createReportPdfHandler } from './report-pdf.ts';
 import type { MediaDeps } from './shared.ts';
@@ -18,6 +19,8 @@ export function createMediaHandlers(deps: MediaDeps): Handler[] {
     createImageProcessHandler(deps),
     createReelTemplateHandler(deps),
     createVideoDerivativesHandler(deps),
+    // «Hacer un reel como este»: mide un vídeo de referencia (cortes, planos, compás), sin IA.
+    createReelAnalyzeHandler(deps),
     // Texto de las fuentes de la marca (PDF, Word, web): no usa FFmpeg.
     createSourceExtractHandler(),
     // Informe mensual de analítica (Fase 5).

@@ -22,6 +22,9 @@ import {
 } from './model';
 import { chooseEngine, probeNavigator, type EngineProbe } from './select';
 
+/** Fases del recorte en el trabajador: encargarlo, esperar turno, recortar y bajar el resultado. */
+export type ServerJobPhase = 'sending' | 'queued' | 'running' | 'receiving';
+
 export type CutoutProgress =
   | { phase: 'downloading'; received: number; total: number; engine?: CutoutEngineId }
   | { phase: 'loading' }
@@ -29,7 +32,7 @@ export type CutoutProgress =
   /** Se está quitando el fondo en la función de Vercel (apagada por defecto). */
   | { phase: 'server' }
   /** Se está quitando el fondo en el trabajador de medios (trabajo `media.cutout`). */
-  | { phase: 'server-job'; state: 'queued' | 'running' };
+  | { phase: 'server-job'; state: ServerJobPhase };
 
 export interface CutoutResult {
   pixels: Pixels;

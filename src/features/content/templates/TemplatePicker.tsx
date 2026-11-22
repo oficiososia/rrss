@@ -2,6 +2,7 @@ import { LayoutTemplate, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, EmptyState, ErrorState, Notice, Skeleton } from '@/components/ui';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { cn } from '@/lib/utils';
 import { targetLabel } from '../labels';
 import { getFormatSpec } from '../networks';
@@ -20,6 +21,8 @@ interface TemplatePickerProps {
   target?: { network: string; format: string };
   selectedId: string | null;
   onSelect: (template: BrandTemplate) => void;
+  /** Formato con el que se abre filtrado (si hay plantillas de ese formato): el del que se está creando. */
+  defaultFormat?: string;
   /** Si se da, las plantillas guardadas desde el editor se pueden borrar (quien edita la marca). */
   onDelete?: (template: BrandTemplate) => void;
 }
@@ -28,10 +31,19 @@ interface TemplatePickerProps {
  * Plantillas de la marca con su vista previa real, nombre y una frase de para qué sirven. Sin
  * plantillas, explica cómo se consiguen (importar publicaciones y la agencia).
  */
-export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, onDelete }: TemplatePickerProps) {
+export function TemplatePicker({
+  orgId,
+  brandId,
+  target,
+  selectedId,
+  onSelect,
+  onDelete,
+  defaultFormat,
+}: TemplatePickerProps) {
   const templates = useBrandTemplates(brandId);
+  const { selfManaged } = useWorkMode();
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [filter, setFilter] = useState<string | null>(null);
+  const [chosenFilter, setFilter] = useState<string | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<string | null>(null);
   const usable = useMemo(() => (templates.data ?? []).filter((t) => t.document), [templates.data]);
   const { previewOf, fallbackOf } = useTemplatePreviews(brandId, usable);
@@ -45,7 +57,11 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
         <EmptyState
           icon={LayoutTemplate}
           title="Esta marca todavía no tiene plantillas"
-          description="Las plantillas salen de las publicaciones que la marca ya tiene en Instagram: importa las publicaciones desde Marca → Datos de la marca → Cuentas conectadas y pide a la agencia que las prepare. Mientras tanto, puedes diseñar la pieza desde cero."
+          description={
+            selfManaged
+              ? 'Carga las del catálogo desde Marca → Identidad visual → Plantillas, guarda una desde el editor o importa las publicaciones que la marca ya tiene en Instagram. Mientras tanto, puedes diseñar la pieza desde cero.'
+              : 'Las plantillas salen de las publicaciones que la marca ya tiene en Instagram: importa las publicaciones desde Marca → Datos de la marca → Cuentas conectadas y pide a la agencia que las prepare. Mientras tanto, puedes diseñar la pieza desde cero.'
+          }
           action={
             <Link className="text-sm font-medium text-primary underline" to={`/o/${orgId}/m/${brandId}/marca`}>
               Ir a los datos de la marca
@@ -58,13 +74,20 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
   if (usable.length === 0) {
     return (
       <div data-testid="template-none-fit">
-        <Notice>Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.</Notice>
+        <Notice>
+          {selfManaged
+            ? 'Las plantillas de la marca no se pueden leer ahora mismo. Vuelve a intentarlo en unos minutos.'
+            : 'Las plantillas de la marca no se pueden leer ahora mismo. Avisa a la agencia.'}
+        </Notice>
       </div>
     );
   }
 
   const formatOf = (t: BrandTemplate) => getFormatSpec(t.network, t.format)?.label ?? t.format;
   const formats = [...new Set(usable.map(formatOf))];
+  // Sin elegir filtro, el del formato que se está creando, si hay plantillas de él.
+  const initial = defaultFormat ? usable.find((t) => t.format === defaultFormat) : undefined;
+  const filter = chosenFilter !== undefined ? chosenFilter : initial ? formatOf(initial) : null;
   const shown = filter ? usable.filter((t) => formatOf(t) === filter) : usable;
 
   return (
@@ -95,7 +118,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
           ))}
         </div>
       )}
-      <ul className="grid gap-3 sm:grid-cols-2" data-testid="template-list" aria-label="Plantillas de la marca">
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="template-list" aria-label="Plantillas de la marca">
         {shown.map((template) => {
           const document = template.document!;
           const selected = template.id === selectedId;
@@ -111,13 +134,13 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
                 onClick={() => onSelect(template)}
                 aria-pressed={selected}
                 className={cn(
-                  'flex h-full w-full gap-3 rounded-xl border-2 p-2 text-left transition-colors',
+                  'flex h-full w-full flex-col gap-2 rounded-xl border-2 p-2 text-left transition-colors',
                   selected ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary/50',
                 )}
                 data-testid="template-option"
                 data-template-key={template.key}
               >
-                <span className="w-24 shrink-0 self-start">
+                <span className="mx-auto w-full max-w-[11rem] shrink-0">
                   <TemplateThumb
                     canvas={document.canvas}
                     preview={previewOf(template)}
@@ -131,7 +154,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
                     </span>
                     {template.source === 'manual' && (
                       <Badge tone="neutral" className="shrink-0">
-                        De la agencia
+                        {selfManaged ? 'Nuestra' : 'De la agencia'}
                       </Badge>
                     )}
                     {template.source === 'editor' && (
@@ -176,7 +199,7 @@ export function TemplatePicker({ orgId, brandId, target, selectedId, onSelect, o
                     >
                       {detail.summary && (
                         <p>
-                          {detail.proposal ? 'Propuesta de la agencia: ' : ''}
+                          {detail.proposal ? (selfManaged ? 'Propuesta: ' : 'Propuesta de la agencia: ') : ''}
                           {detail.summary}
                         </p>
                       )}

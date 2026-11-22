@@ -30,10 +30,12 @@ import {
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { Badge, Button, Notice, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { DictableField } from '@/features/ai/DictableField';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { useGenerationProgress } from '@/features/ai/imageApi';
 import { formatMicros } from '@/features/ai/money';
 import { useActiveProfile } from '@/features/brand/api';
+import { BrandContext, OrgContext } from '@/features/orgs/context';
 import { parseProfile } from '@/features/brand/profile';
 import { ImagePickerDialog } from '@/features/content/editor/AssetPickerDialog';
 import { assetKeys, deleteAssets, useSignedUrls } from '@/features/library/api';
@@ -42,7 +44,6 @@ import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import {
   AI_OPERATION_LABEL,
-  BACKGROUND_SUGGESTIONS,
   blobToBase64,
   canEditWithAi,
   fetchAsset,
@@ -79,6 +80,22 @@ import {
   type Adjustments,
   type Pixels,
 } from './pixels';
+import {
+  EMPTY_AI_REVIEW,
+  existingSubject,
+  spentMicros,
+  type AiCandidate,
+  type AiReview,
+} from './aiBackground';
+import { CutoutProgressBar } from './CutoutProgressBar';
+import { removalPrivacyNote } from './progressText';
+import {
+  aiSubjectFor,
+  backgroundSuggestionsFor,
+  mentionsFood,
+  sectorKindOf,
+  type SectorKind,
+} from './sector';
 import { composeCutout } from './cutout/composition';
 import { alphaOf, restorePlate, sameAspect, subjectMaskPixels } from './cutout/plate';
 import {
@@ -102,6 +119,16 @@ import {
 import { renderRetouch } from './portrait/retouch';
 
 type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
+
+/** Tipo de negocio de la marca (por su sector y, si hace falta, su descripción), para no suponer siempre un restaurante. */
+function useSectorKind(brandId: string): SectorKind {
+  const org = useContext(OrgContext);
+  const current = useContext(BrandContext);
+  const profile = useActiveProfile(brandId);
+  const sector = current?.brand.id === brandId ? current.brand.sector : org?.brands.find((b) => b.id === brandId)?.sector;
+  const description = profile.data ? parseProfile(profile.data.data).business.description : '';
+  return useMemo(() => sectorKindOf(sector, description), [sector, description]);
+}
 
 export interface PhotoEditScreenProps {
   asset: MediaAssetRow;
@@ -310,6 +337,9 @@ export function PhotoEditScreen({
   const [askDiscard, setAskDiscard] = useState(false);
   // El recorte del fondo vive aquí para no perderlo al cambiar de pestaña.
   const [cutout, setCutout] = useState<CutoutState | null>(null);
+  // «Fondo con IA»: intentos hechos y el resultado que se está mirando (se conserva al cambiar de pestaña).
+  const [aiReview, setAiReview] = useState<AiReview>(EMPTY_AI_REVIEW);
+  const sector = useSectorKind(asset.brand_id);
   const save = useSaveEdit(asset.brand_id);
   const queryClient = useQueryClient();
   const aiOptions = useAiEditOptions(asset.brand_id, canEditWithAi(asset));
@@ -395,6 +425,7 @@ export function PhotoEditScreen({
   const switchTo = (row: MediaAssetRow) => {
     setAsset(row);
     setCutout(null);
+    setAiReview(EMPTY_AI_REVIEW);
     setTab('background');
   };
 
@@ -654,6 +685,7 @@ export function PhotoEditScreen({
                       setCutout={setCutout}
                       portraitFirst={Boolean(initialPortrait)}
                       ai={aiChoice('remove_background')}
+                      sector={sector}
                       onAiResult={(row) => {
                         addResult(row);
                         switchTo(row);
@@ -662,7 +694,10 @@ export function PhotoEditScreen({
                   </TabsContent>
                   {(aiChoice('replace_background') || aiChoice('enhance')) && (
                     <TabsContent value="ai" className="space-y-6 pt-4">
-                      <Stage pixels={null} />
+                      <Stage
+                        pixels={aiReview.candidate && !aiReview.candidate.showBefore ? aiReview.candidate.preview : null}
+                        testId="photo-edit-ai-preview"
+                      />
                       {aiChoice('replace_background') && (
                         <AiAction
                           asset={asset}
@@ -671,17 +706,35 @@ export function PhotoEditScreen({
                           onDone={addResult}
                           getSubjectMask={getSubjectMask}
                           pixels={loaded.pixels}
+                          transparent={stats.transparent}
+                          cutout={cutout}
+                          setCutout={setCutout}
+                          sector={sector}
+                          review={aiReview}
+                          setReview={setAiReview}
                         />
                       )}
                       {aiChoice('enhance') && (
-                        <AiAction asset={asset} operation="enhance" choice={aiChoice('enhance')!} onDone={addResult} />
+                        <AiAction
+                          asset={asset}
+                          operation="enhance"
+                          choice={aiChoice('enhance')!}
+                          onDone={addResult}
+                          sector={sector}
+                        />
                       )}
                     </TabsContent>
                   )}
                   {aiChoice('upscale') && (
                     <TabsContent value="upscale" className="pt-4">
                       <Stage pixels={null} />
-                      <AiAction asset={asset} operation="upscale" choice={aiChoice('upscale')!} onDone={addResult} />
+                      <AiAction
+                        asset={asset}
+                        operation="upscale"
+                        choice={aiChoice('upscale')!}
+                        onDone={addResult}
+                        sector={sector}
+                      />
                     </TabsContent>
                   )}
                 </div>
@@ -1011,6 +1064,7 @@ function BackgroundTab({
   setCutout,
   portraitFirst,
   ai,
+  sector,
   onAiResult,
 }: {
   asset: MediaAssetRow;
@@ -1022,6 +1076,7 @@ function BackgroundTab({
   /** Se abrió desde «Modo retrato»: es lo primero que se ofrece al tener el recorte. */
   portraitFirst: boolean;
   ai: AiEditChoice | undefined;
+  sector: SectorKind;
   onAiResult: (row: MediaAssetRow) => void;
 }) {
   const profile = useActiveProfile(asset.brand_id);
@@ -1266,8 +1321,8 @@ function BackgroundTab({
         <div className="space-y-3" data-testid="photo-edit-cutout">
           <Stage pixels={null} />
           <p className="text-sm">
-            Para cambiar el fondo o desenfocarlo (modo retrato), primero hay que separar el plato del fondo. Después
-            podrás retocar la selección a mano.
+            Para cambiar el fondo o desenfocarlo (modo retrato), primero hay que separar lo principal de la foto del
+            fondo. Después podrás retocar la selección a mano.
           </p>
           {ai && (
             <fieldset className="space-y-1 text-sm">
@@ -1298,28 +1353,17 @@ function BackgroundTab({
             <div className="space-y-2" data-testid="photo-edit-cutout-browser">
               {support.ok ? (
                 <>
-                  <p className="text-xs text-muted">
-                    Gratis y sin IA externa: la foto no sale de tu navegador. La primera vez descarga el modelo de
-                    recorte (de 45 a 220 MB según tu navegador; queda guardado); después tarda unos segundos.
+                  <p className="text-xs text-muted" data-testid="photo-edit-cutout-privacy">
+                    {removalPrivacyNote()}
                   </p>
                   {cutError && <Notice tone="warning">{cutError}</Notice>}
-                  {cutting && <CutoutProgressBar progress={progress} />}
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => void cut()} loading={cutting} data-testid="photo-edit-cutout-run">
+                  {cutting && <CutoutProgressBar progress={progress} onCancel={() => cutAbort.current?.abort()} />}
+                  {!cutting && (
+                    <Button onClick={() => void cut()} data-testid="photo-edit-cutout-run">
                       <Eraser className="h-4 w-4" aria-hidden />
                       Quitar el fondo
                     </Button>
-                    {cutting && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => cutAbort.current?.abort()}
-                        data-testid="photo-edit-cutout-cancel"
-                      >
-                        Cancelar
-                      </Button>
-                    )}
-                  </div>
+                  )}
                 </>
               ) : (
                 <Notice tone="warning">
@@ -1329,7 +1373,13 @@ function BackgroundTab({
             </div>
           )}
           {engine === 'ai' && ai && (
-            <AiAction asset={asset} operation="remove_background" choice={ai} onDone={onAiResult} />
+            <AiAction
+              asset={asset}
+              operation="remove_background"
+              choice={ai}
+              onDone={onAiResult}
+              sector={sector}
+            />
           )}
         </div>
       )}
@@ -1398,11 +1448,11 @@ function BackgroundTab({
                       onChange={(e) => setPortrait((current) => ({ ...current, progressive: e.target.checked }))}
                       data-testid="photo-edit-portrait-progressive"
                     />
-                    Más borroso cuanto más lejos del plato
+                    Más borroso cuanto más lejos de lo principal
                   </label>
                   <label className="block text-sm">
                     <span className="flex justify-between">
-                      Resaltar el plato (oscurece el fondo)
+                      Resaltar lo principal (oscurece el fondo)
                       <span className="tabular-nums text-muted">{portrait.dim}</span>
                     </span>
                     <input
@@ -1416,7 +1466,7 @@ function BackgroundTab({
                     />
                   </label>
                   <p className="text-xs text-muted">
-                    El plato queda tal cual y solo se desenfoca lo de alrededor. Si el borde no sale bien, retoca la
+                    Lo principal queda tal cual y solo se desenfoca lo de alrededor. Si el borde no sale bien, retoca la
                     selección.
                   </p>
                 </div>
@@ -1443,7 +1493,7 @@ function BackgroundTab({
                   }}
                 >
                   <p className="text-xs text-muted">
-                    Pasa el dedo o el ratón por la foto para pintar. Lo que se ve en rosa es el plato; lo demás es
+                    Pasa el dedo o el ratón por la foto para pintar. Lo que se ve en rosa es lo principal; lo demás es
                     fondo. Sirve igual para quitar el fondo, ponerle un color o el modo retrato.
                   </p>
                   <details className="text-xs text-muted" data-testid="photo-edit-retouch-keys">
@@ -1458,8 +1508,8 @@ function BackgroundTab({
                   <div role="radiogroup" aria-label="Qué hace el pincel" className="flex flex-wrap gap-1">
                     {(
                       [
-                        ['add', 'Añadir al plato'],
-                        ['remove', 'Quitar del plato'],
+                        ['add', 'Añadir a la selección'],
+                        ['remove', 'Quitar de la selección'],
                       ] as const
                     ).map(([value, label]) => (
                       <Button
@@ -1801,41 +1851,6 @@ function RetouchStage({
   );
 }
 
-const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0);
-
-/** Progreso del recorte en el navegador: descarga del modelo (la 1ª vez), preparación y recorte. */
-function CutoutProgressBar({ progress }: { progress: CutoutProgress | null }) {
-  const downloading = progress?.phase === 'downloading';
-  const pct = downloading ? Math.min(100, Math.round((progress.received / Math.max(1, progress.total)) * 100)) : null;
-  const label = downloading
-    ? `Descargando el modelo de recorte (${megabytes(progress.total)} MB, solo la primera vez): ${megabytes(progress.received)} de ${megabytes(progress.total)} MB`
-    : progress?.phase === 'server-job'
-      ? 'Quitando el fondo en el servidor… (suele tardar menos de un minuto)'
-      : progress?.phase === 'server'
-        ? 'Quitando el fondo en el servidor…'
-        : progress?.phase === 'running'
-          ? 'Quitando el fondo…'
-          : 'Preparando el modelo…';
-  return (
-    <div className="space-y-1" data-testid="photo-edit-cutout-progress">
-      <div
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={pct ?? undefined}
-        className="h-2 overflow-hidden rounded bg-subtle"
-      >
-        <div
-          className={cn('h-full bg-primary', pct === null && 'w-1/3 animate-pulse')}
-          style={pct === null ? undefined : { width: `${pct}%` }}
-        />
-      </div>
-      <p className="text-xs text-muted">{label}</p>
-    </div>
-  );
-}
-
 /** Elegir la imagen de fondo en la biblioteca y conseguir su dirección firmada. */
 function BackgroundPicker({
   brandId,
@@ -1870,7 +1885,7 @@ function BackgroundPicker({
 
 // ─────────────────────────────── Con IA ───────────────────────────────
 
-/** Lo necesario para volver a pegar el plato original sobre el resultado de la IA. */
+/** Lo necesario para volver a pegar lo principal de la foto original sobre el resultado de la IA. */
 interface PlateProtection {
   original: Pixels;
   /** Alfa del recorte (0–255) con las medidas de `original`. */
@@ -1887,30 +1902,59 @@ function AiAction({
   onDone,
   getSubjectMask,
   pixels,
+  transparent = false,
+  cutout = null,
+  setCutout,
+  sector,
+  review = EMPTY_AI_REVIEW,
+  setReview,
 }: {
   asset: MediaAssetRow;
   operation: AiPhotoOperation;
   choice: AiEditChoice;
   onDone: (row: MediaAssetRow) => void;
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
-  /** La foto original ya cargada (para sacar el recorte del plato y volver a pegarlo). */
+  /** La foto original ya cargada (para sacar el recorte y volver a pegar lo principal). */
   pixels?: Pixels;
+  /** La foto ya viene sin fondo (su propio alfa sirve de recorte). */
+  transparent?: boolean;
+  /** El recorte ya hecho en esta pantalla (de la pestaña «Fondo» o de un intento anterior). */
+  cutout?: CutoutState | null;
+  /** Guarda el recorte nuevo para no repetirlo en ninguna pestaña. */
+  setCutout?: (cutout: CutoutState | null) => void;
+  /** Tipo de negocio de la marca: ideas de fondo y qué se le dice a la IA que no toque. */
+  sector: SectorKind;
+  /** Intentos hechos y resultado en revisión (solo «Cambiar el fondo»). */
+  review?: AiReview;
+  setReview?: (update: AiReview | ((current: AiReview) => AiReview)) => void;
 }) {
   const factors = operation === 'upscale' ? upscaleFactors(asset.width, asset.height) : [];
   const [scale, setScale] = useState<2 | 4>(factors[0] ?? 2);
-  const [background, setBackground] = useState('');
   const isBackground = operation === 'replace_background';
-  // La máscara viene de quien integra el diálogo o, si no, del recorte del navegador.
+  const [background, setBackground] = useState(review.attempts[review.attempts.length - 1]?.prompt ?? '');
+  // Hay selección de lo principal: la da quien integra el diálogo, ya existe (esta sesión o foto sin fondo)
+  // o se puede recortar en este navegador / en el servidor.
+  const hasExisting = Boolean(
+    pixels &&
+      (transparent ||
+        (cutout && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height)),
+  );
   const browserCutout = useMemo(() => removalSupport().ok && Boolean(pixels), [pixels]);
-  const withMask = isBackground && (Boolean(getSubjectMask) || browserCutout) && choice.usesSubjectMask !== false;
-  // Solo se puede volver a pegar el plato con el recorte propio.
+  const withMask =
+    isBackground && (Boolean(getSubjectMask) || hasExisting || browserCutout) && choice.usesSubjectMask !== false;
+  // Solo se puede volver a pegar con el recorte propio.
   const canProtect = withMask && !getSubjectMask;
   const [protect, setProtect] = useState(true);
   const [maskProgress, setMaskProgress] = useState<CutoutProgress | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const maskAbort = useRef<AbortController | null>(null);
   const plate = useRef<PlateProtection | null>(null);
   const queryClient = useQueryClient();
   const saveEdit = useSaveEdit(asset.brand_id);
+  const suggestions = backgroundSuggestionsFor(sector);
+  const subject = aiSubjectFor(sector);
+  const food = mentionsFood(sector);
   // Para estimar basta un texto cualquiera: el coste no depende de lo que se pida.
   const input = useMemo<AiEditInput>(
     () => ({
@@ -1928,78 +1972,104 @@ function AiAction({
   const progress = useGenerationProgress(asset.brand_id, pendingId);
   const delivered = useRef<string | null>(null);
   const finished = progress.data?.status === 'completed' ? progress.data.asset : null;
-  /** Entrega el resultado; si hay plato que proteger, lo vuelve a pegar antes y guarda esa versión. */
-  const deliver = useCallback(
-    async (row: MediaAssetRow) => {
-      const protection = plate.current;
-      plate.current = null;
-      if (protection) {
-        try {
-          const url = await signedUrlFor(row.storage_path);
-          if (!url) throw new Error('sin dirección');
-          const generated = await loadPixels(url);
-          if (!sameAspect(generated.pixels, protection.original)) throw new Error('proporción');
-          const merged = restorePlate(generated.pixels, protection.original, protection.alpha);
-          const format = outputFormat(false, asset.mime_type);
-          const steps: PhotoEditStep[] = [
-            {
-              kind: 'ai_background',
-              prompt: protection.prompt,
-              model: choice.model,
-              maskModel: protection.maskModel,
-              plateProtected: true,
-            },
-          ];
-          const saved = await saveEdit.mutateAsync({
-            source: asset,
-            blob: await encodePixels(merged, format.mime),
-            fileName: editedFileName(asset.file_name, steps, format.ext),
-            width: merged.width,
-            height: merged.height,
-            provenance: photoEditProvenance({
-              sourceAssetId: asset.id,
-              steps,
-              width: merged.width,
-              height: merged.height,
-            }),
-          });
-          // La versión sin proteger ya sobra; si no se pudiera borrar, queda en la biblioteca.
-          await deleteAssets([row.id]).catch(() => undefined);
-          toast.success(
-            `${AI_OPERATION_LABEL[operation]}: listo, con el plato original intacto. La original no ha cambiado.`,
-          );
-          onDone(saved);
-          return;
-        } catch {
-          toast.warning(
-            'La IA cambió el fondo, pero no se ha podido volver a pegar el plato original. Se deja el resultado de la IA: revisa el plato.',
-          );
-          onDone(row);
-          return;
-        }
-      }
+  const finishedCost = progress.data?.status === 'completed' ? progress.data.costMicros : null;
+  const candidate = review.candidate;
+  const reviewing = isBackground && candidate !== null;
+
+  // Salir con el recorte previo en marcha lo cancela.
+  useEffect(() => () => maskAbort.current?.abort(), []);
+
+  /** Quita de la biblioteca un resultado que no se quiere (si no se pudiera borrar, se queda). */
+  const dropRow = useCallback(
+    async (rowId: string) => {
+      await deleteAssets([rowId]).catch(() => undefined);
+      void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
+    },
+    [asset.brand_id, queryClient],
+  );
+
+  /** Entrega un resultado que no se revisa (quitar el fondo, mejorar, ampliar). */
+  const deliverPlain = useCallback(
+    (row: MediaAssetRow) => {
       toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
       onDone(row);
     },
-    [asset, choice.model, onDone, operation, saveEdit],
+    [onDone, operation],
   );
+
+  /**
+   * «Cambiar el fondo»: el resultado se ENSEÑA antes de aplicarlo. Si hay selección de lo principal,
+   * se vuelve a pegar el original encima (en memoria) y se enseña eso; no se guarda nada más hasta «Usar esta».
+   */
+  const presentCandidate = useCallback(
+    async (row: MediaAssetRow, costMicros: number | null) => {
+      const protection = plate.current;
+      plate.current = null;
+      const prompt = protection?.prompt ?? background.trim();
+      try {
+        const url = await signedUrlFor(row.storage_path);
+        if (!url) throw new Error('sin dirección');
+        setFinalizing(true);
+        const generated = (await loadPixels(url)).pixels;
+        let merged: Pixels | null = null;
+        if (protection) {
+          try {
+            if (!sameAspect(generated, protection.original)) throw new Error('proporción');
+            merged = restorePlate(generated, protection.original, protection.alpha);
+          } catch {
+            toast.warning(
+              'La IA cambió el fondo, pero no se ha podido volver a pegar lo principal de tu foto. Se enseña el resultado de la IA tal cual: revisa que no haya cambiado.',
+            );
+          }
+        }
+        const next: AiCandidate = {
+          row,
+          preview: downscale(merged ?? generated, PREVIEW_SIDE),
+          merged,
+          maskModel: protection?.maskModel ?? null,
+          showBefore: false,
+          costMicros,
+          prompt,
+          protectedPlate: merged !== null,
+        };
+        setReview?.((current) => ({ attempts: [...current.attempts, { prompt, costMicros }], candidate: next }));
+      } catch {
+        toast.warning('No se ha podido preparar la vista previa. El resultado está en la biblioteca.');
+        onDone(row);
+      } finally {
+        setFinalizing(false);
+      }
+    },
+    [background, onDone, setReview],
+  );
+
+  // Lo último que se ha de hacer con un resultado que llega tarde (trabajo asíncrono).
+  const arrival = useRef<(row: MediaAssetRow, cost: number | null) => void>(() => undefined);
+  useEffect(() => {
+    arrival.current = (row, cost) => {
+      if (isBackground) void presentCandidate(row, cost);
+      else deliverPlain(row);
+    };
+  });
   useEffect(() => {
     if (!finished || delivered.current === finished.id) return;
     delivered.current = finished.id;
-    void deliver(finished);
-  }, [finished, deliver]);
+    arrival.current(finished, finishedCost);
+  }, [finished, finishedCost]);
   const running =
     preparing ||
+    finalizing ||
     saveEdit.isPending ||
     edit.isPending ||
     (pendingId !== null && progress.data?.status !== 'completed' && progress.data?.status !== 'failed');
 
-  async function run() {
+  async function run(promptOverride?: string) {
     setPendingId(null);
-    let request: AiEditInput = input;
+    const prompt = (promptOverride ?? background).trim();
+    let request: AiEditInput = { ...input, ...(operation === 'upscale' ? {} : { subject }) };
     plate.current = null;
     if (isBackground) {
-      request = { assetId: asset.id, operation, prompt: background.trim() };
+      request = { assetId: asset.id, operation, prompt, subject };
       if (withMask) {
         try {
           if (getSubjectMask) {
@@ -2008,31 +2078,52 @@ function AiAction({
           } else if (pixels) {
             setPreparing(true);
             setMaskProgress(null);
-            const cut = await removeBackground(pixels, setMaskProgress, undefined, {
-              brandId: asset.brand_id,
-              source: asset,
+            // Un solo recorte por foto: si ya hay uno (de esta sesión, o la foto ya viene sin fondo) se reutiliza.
+            let found = existingSubject({
+              pixels,
+              transparent,
+              cutout: cutout ? { pixels: cutout.pixels, model: cutout.model, strokes: cutout.strokes } : null,
+              provenance: asset.provenance,
             });
-            const alpha = alphaOf(cut.pixels);
+            if (!found) {
+              const abort = new AbortController();
+              maskAbort.current = abort;
+              const cut = await removeBackground(pixels, setMaskProgress, abort.signal, {
+                brandId: asset.brand_id,
+                source: asset,
+              });
+              setCutout?.({ pixels: cut.pixels, model: cut.model, quality: cut.quality });
+              found = {
+                alpha: alphaOf(cut.pixels),
+                width: cut.pixels.width,
+                height: cut.pixels.height,
+                model: cut.model,
+                from: 'session',
+              };
+            }
             const mask = subjectMaskPixels(
-              alpha,
-              cut.pixels.width,
-              cut.pixels.height,
+              found.alpha,
+              found.width,
+              found.height,
               asset.width ?? pixels.width,
               asset.height ?? pixels.height,
             );
             request = { ...request, subjectMask: await blobToBase64(await encodePixels(mask, 'image/png')) };
             if (protect) {
-              plate.current = { original: pixels, alpha, maskModel: cut.model, prompt: background.trim() };
+              plate.current = { original: pixels, alpha: found.alpha, maskModel: found.model, prompt };
             }
           }
         } catch (error) {
-          toast.error(
-            getSubjectMask
-              ? 'No se ha podido preparar la máscara del plato. Inténtalo de nuevo.'
-              : `No se ha podido recortar el plato para protegerlo. ${describeRemovalError(error)}`,
-          );
+          if (!isRemovalCancelled(error)) {
+            toast.error(
+              getSubjectMask
+                ? 'No se ha podido preparar la selección de lo principal. Inténtalo de nuevo.'
+                : `No se ha podido recortar la foto para protegerla. ${describeRemovalError(error)}`,
+            );
+          }
           return;
         } finally {
+          maskAbort.current = null;
           setPreparing(false);
           setMaskProgress(null);
           void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
@@ -2051,13 +2142,88 @@ function AiAction({
           toast.error('La foto se editó y está en la biblioteca, pero no se ha podido abrir aquí.');
           return;
         }
-        await deliver(row);
+        if (isBackground) await presentCandidate(row, result.costMicros);
+        else deliverPlain(row);
       },
       () => undefined,
     );
   }
 
+  /** «Usar esta»: se queda con el resultado (si se pegó lo principal original, se guarda esa versión). */
+  async function accept() {
+    if (!candidate) return;
+    const { row, merged } = candidate;
+    try {
+      if (merged) {
+        const format = outputFormat(false, asset.mime_type);
+        const steps: PhotoEditStep[] = [
+          {
+            kind: 'ai_background',
+            prompt: candidate.prompt,
+            model: choice.model,
+            maskModel: candidate.maskModel ?? 'recorte',
+            plateProtected: true,
+          },
+        ];
+        const saved = await saveEdit.mutateAsync({
+          source: asset,
+          blob: await encodePixels(merged, format.mime),
+          fileName: editedFileName(asset.file_name, steps, format.ext),
+          width: merged.width,
+          height: merged.height,
+          provenance: photoEditProvenance({
+            sourceAssetId: asset.id,
+            steps,
+            width: merged.width,
+            height: merged.height,
+          }),
+        });
+        // La versión sin proteger ya sobra; si no se pudiera borrar, queda en la biblioteca.
+        await dropRow(row.id);
+        toast.success(
+          `${AI_OPERATION_LABEL[operation]}: listo, con lo principal de tu foto intacto. La original no ha cambiado.`,
+        );
+        setReview?.(EMPTY_AI_REVIEW);
+        onDone(saved);
+        return;
+      }
+      toast.success(`${AI_OPERATION_LABEL[operation]}: listo. Está en la biblioteca; la original no ha cambiado.`);
+      setReview?.(EMPTY_AI_REVIEW);
+      onDone(row);
+    } catch (error) {
+      toast.error(translateError(error));
+    }
+  }
+
+  /** Descarta el resultado que se miraba (se borra de la biblioteca); el historial de intentos se conserva. */
+  async function discardCandidate() {
+    if (!candidate) return;
+    const { row, prompt } = candidate;
+    setBackground(prompt);
+    setReview?.((current) => ({ ...current, candidate: null }));
+    await dropRow(row.id);
+  }
+
+  async function retrySame() {
+    if (!candidate) return;
+    const prompt = candidate.prompt;
+    await discardCandidate();
+    await run(prompt);
+  }
+
+  async function changePrompt() {
+    await discardCandidate();
+    setTimeout(() => document.getElementById(`photo-edit-ai-bg-${asset.id}`)?.focus(), 50);
+  }
+
+  const setShowBefore = (showBefore: boolean) =>
+    setReview?.((current) =>
+      current.candidate ? { ...current, candidate: { ...current.candidate, showBefore } } : current,
+    );
+
   const Icon = operation === 'upscale' ? Maximize2 : isBackground || operation === 'enhance' ? Sparkles : Eraser;
+  const spent = spentMicros(review.attempts);
+  const maxCost = estimate.data ? formatMicros(estimate.data.costMicros) : null;
   return (
     <div className="space-y-3" data-testid={`photo-edit-ai-${operation}`}>
       {operation === 'upscale' && (
@@ -2074,23 +2240,95 @@ function AiAction({
           )}
         </div>
       )}
-      {isBackground && (
+      {reviewing && candidate && (
+        <section
+          className="space-y-3 rounded-md border border-border p-3"
+          aria-label="Resultado de la IA"
+          data-testid="photo-edit-ai-review"
+        >
+          <h3 className="text-sm font-semibold">Intento {review.attempts.length}: mira el resultado</h3>
+          <div role="group" aria-label="Comparar" className="flex gap-1">
+            <Button
+              size="sm"
+              variant={candidate.showBefore ? 'secondary' : 'primary'}
+              aria-pressed={!candidate.showBefore}
+              onClick={() => setShowBefore(false)}
+              data-testid="photo-edit-ai-after"
+            >
+              Después
+            </Button>
+            <Button
+              size="sm"
+              variant={candidate.showBefore ? 'primary' : 'secondary'}
+              aria-pressed={candidate.showBefore}
+              onClick={() => setShowBefore(true)}
+              data-testid="photo-edit-ai-before"
+            >
+              Antes
+            </Button>
+          </div>
+          <p className="text-xs text-muted" role="status" data-testid="photo-edit-ai-attempt-cost">
+            {candidate.costMicros === null
+              ? 'Este intento: el coste no está disponible todavía.'
+              : `Este intento ha costado ${formatMicros(candidate.costMicros)}.`}
+            {review.attempts.length > 1 &&
+              ` En total llevas ${formatMicros(spent)} en ${review.attempts.length} intentos.`}
+          </p>
+          {candidate.protectedPlate ? (
+            <p className="text-xs text-muted">
+              Lo principal de tu foto se ha vuelto a pegar tal cual sobre el nuevo fondo.
+            </p>
+          ) : (
+            <Notice tone="warning">
+              Es el resultado de la IA sin retocar: puede haber cambiado detalles de lo principal. Compáralo con el
+              «Antes».
+            </Notice>
+          )}
+          <p className="text-xs text-muted">
+            Todavía no está aplicado. Si sales sin elegir, el resultado se queda en la biblioteca.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => void accept()} loading={saveEdit.isPending} data-testid="photo-edit-ai-use">
+              Usar esta
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void retrySame()}
+              disabled={running}
+              data-testid="photo-edit-ai-retry"
+            >
+              Probar otra vez{maxCost ? ` (como máximo ${maxCost})` : ''}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => void changePrompt()}
+              disabled={running}
+              data-testid="photo-edit-ai-change"
+            >
+              Cambiar la indicación
+            </Button>
+          </div>
+        </section>
+      )}
+      {isBackground && !reviewing && (
         <div className="space-y-2">
           <label className="block text-sm font-medium" htmlFor={`photo-edit-ai-bg-${asset.id}`}>
             ¿Qué fondo quieres?
           </label>
-          <input
+          <DictableField
+            as="input"
+            brandId={asset.brand_id}
             id={`photo-edit-ai-bg-${asset.id}`}
             type="text"
             maxLength={500}
             value={background}
-            onChange={(e) => setBackground(e.target.value)}
-            placeholder="Por ejemplo: mesa de mármol blanco con luz cálida"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+            onValueChange={setBackground}
+            placeholder={`Por ejemplo: ${suggestions[0]}`}
+            className="h-auto rounded-md py-2"
             data-testid="photo-edit-ai-background-text"
           />
-          <div className="flex flex-wrap gap-2" aria-label="Sugerencias de fondo">
-            {BACKGROUND_SUGGESTIONS.map((idea) => (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Sugerencias de fondo">
+            {suggestions.map((idea) => (
               <button
                 key={idea}
                 type="button"
@@ -2102,12 +2340,17 @@ function AiAction({
               </button>
             ))}
           </div>
+          {review.attempts.length > 0 && (
+            <p className="text-xs text-muted" data-testid="photo-edit-ai-attempts">
+              Intentos hechos: {review.attempts.length}. Llevas gastado {formatMicros(spent)}.
+            </p>
+          )}
           {withMask ? (
             <div className="space-y-2">
               <Notice tone="info">
-                {canProtect && protect
-                  ? 'Se recorta el plato en tu navegador y se le dice a la IA que no lo toque. Como la IA lo trata solo como orientación, al terminar se vuelve a pegar encima el plato original.'
-                  : 'Se protege el plato con su recorte. La IA lo trata como orientación: revisa el resultado antes de usarlo.'}
+                {hasExisting
+                  ? 'Se usa el recorte que ya tiene esta foto (no se vuelve a recortar). Se le dice a la IA que no toque lo principal y, al terminar, se vuelve a pegar encima el original.'
+                  : `Primero se recorta lo principal de la foto, una sola vez (después se reutiliza en la pestaña «Fondo»). ${removalPrivacyNote()} Para pintar el fondo, la foto sí se envía al proveedor de IA, y al terminar se vuelve a pegar encima lo principal del original.`}
               </Notice>
               {canProtect && (
                 <label className="flex items-center gap-2 text-sm">
@@ -2117,23 +2360,25 @@ function AiAction({
                     onChange={(e) => setProtect(e.target.checked)}
                     data-testid="photo-edit-ai-protect"
                   />
-                  Proteger el plato original
+                  Proteger lo principal de la foto original
                 </label>
               )}
-              {preparing && <CutoutProgressBar progress={maskProgress} />}
+              {preparing && <CutoutProgressBar progress={maskProgress} onCancel={() => maskAbort.current?.abort()} />}
             </div>
           ) : (
             <Notice tone="warning">
-              No hay recorte del plato: la IA puede retocar también el plato (forma, colores, guarnición). Revisa el
-              resultado; la original no cambia.
+              No hay recorte de la foto: la IA puede retocar también lo principal
+              {food ? ' (forma, colores, guarnición)' : ' (forma, colores, detalles)'}. Revisa el resultado; la
+              original no cambia.
             </Notice>
           )}
         </div>
       )}
       {operation === 'enhance' && (
         <p className="text-sm">
-          Mejora la luz y el color con IA. Puede cambiar detalles del plato: revisa el resultado. Si solo quieres
-          ajustar luz y color, la pestaña «Mejorar» lo hace sin IA y sin tocar el plato.
+          Mejora la luz y el color con IA. Puede cambiar detalles {food ? 'del plato' : 'de lo principal de la foto'}:
+          revisa el resultado. Si solo quieres ajustar luz y color, la pestaña «Mejorar» lo hace sin IA y sin tocar
+          nada más.
         </p>
       )}
       <div className="flex flex-wrap gap-2 text-xs">
@@ -2141,36 +2386,41 @@ function AiAction({
         {!choice.euProcessing && <Badge tone="warning">Se procesa fuera de la UE o en región desconocida</Badge>}
         {choice.untestedAdapter && <Badge tone="neutral">Proveedor sin probar todavía</Badge>}
       </div>
-      {possible && (
+      {possible && !reviewing && (
         <p className="text-xs text-muted" data-testid="photo-edit-ai-cost">
           {estimate.isPending
             ? 'Calculando el coste…'
             : estimate.data
-              ? `Coste máximo: ${formatMicros(estimate.data.costMicros)} (se descuenta del cupo de IA de la organización).`
+              ? `${review.attempts.length > 0 ? 'Un intento más costará' : 'Coste'} máximo: ${formatMicros(estimate.data.costMicros)} (se descuenta del cupo de IA de la organización).`
               : null}
         </p>
       )}
       {estimate.isError && <AiErrorNotice error={estimate.error} />}
       {edit.isError && <AiErrorNotice error={edit.error} onRetry={() => void run()} />}
       {progress.data?.status === 'failed' && <Notice tone="warning">{progress.data.message}</Notice>}
-      {pendingId && running && (
+      {finalizing && <Spinner label="Preparando la vista previa del resultado…" />}
+      {pendingId && running && !finalizing && (
         <Spinner label="La IA está trabajando. Puedes cerrar: el resultado llegará igualmente a la biblioteca." />
       )}
-      <Button
-        onClick={() => void run()}
-        disabled={!possible || running || (isBackground && background.trim() === '')}
-        loading={edit.isPending}
-        data-testid={`photo-edit-ai-run-${operation}`}
-      >
-        <Icon className="h-4 w-4" aria-hidden />
-        {operation === 'upscale'
-          ? `Ampliar ×${scale}`
-          : isBackground
-            ? 'Cambiar el fondo'
-            : operation === 'enhance'
-              ? 'Mejorar con IA'
-              : 'Quitar el fondo'}
-      </Button>
+      {!reviewing && (
+        <Button
+          onClick={() => void run()}
+          disabled={!possible || running || (isBackground && background.trim() === '')}
+          loading={edit.isPending}
+          data-testid={`photo-edit-ai-run-${operation}`}
+        >
+          <Icon className="h-4 w-4" aria-hidden />
+          {operation === 'upscale'
+            ? `Ampliar ×${scale}`
+            : isBackground
+              ? review.attempts.length > 0
+                ? 'Cambiar el fondo otra vez'
+                : 'Cambiar el fondo'
+              : operation === 'enhance'
+                ? 'Mejorar con IA'
+                : 'Quitar el fondo'}
+        </Button>
+      )}
     </div>
   );
 }

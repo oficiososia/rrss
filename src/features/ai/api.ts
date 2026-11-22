@@ -11,7 +11,13 @@ import { supabase } from '@/lib/supabase';
 
 // ── Tipos del contrato ────────────────────────────────────────────────────
 
-export type AiAction = 'post.caption' | 'brand.check' | 'profile.proposal' | 'analytics.summary' | 'editor.copilot';
+export type AiAction =
+  | 'post.caption'
+  | 'brand.check'
+  | 'profile.proposal'
+  | 'analytics.summary'
+  | 'editor.copilot'
+  | 'campaign.brief';
 
 /** Interpretación de la analítica (Fase 5): solo hipótesis, cada una con los datos en que se apoya. */
 export interface AnalyticsSummaryResult {
@@ -245,7 +251,7 @@ export async function toAiError(error: unknown): Promise<AiRequestError> {
 /** Margen sobre el tiempo máximo del servidor (60 s por defecto). */
 const CLIENT_TIMEOUT_MS = 90_000;
 
-async function invokeAiGenerate<T extends { action: AiAction }>(
+export async function invokeAiGenerate<T extends { action: AiAction }>(
   action: AiAction,
   brandId: string,
   input: unknown,

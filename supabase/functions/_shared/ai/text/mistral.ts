@@ -142,6 +142,10 @@ export function createMistralProvider(options: MistralProviderOptions): AiProvid
       if (request.task !== 'text') {
         throw new AiProviderFailure('unsupported_task', `El adaptador de ${NAME} solo sirve la tarea de texto`);
       }
+      if (request.input.images?.length) {
+        // Este adaptador no manda imágenes (text/vision.ts): mejor fallar que responder sin verlas.
+        throw new AiProviderFailure('unsupported_input', `El adaptador de ${NAME} no admite imágenes`);
+      }
       const response = await postJson({
         fetch: fetchFn,
         url: `${baseUrl}/v1/chat/completions`,

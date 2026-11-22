@@ -33,6 +33,7 @@ import {
 import {
   REEL_PLAN_V2_MAX_SECONDS,
   templateTextStyle,
+  type ClipFilter,
   type ReelCue,
   type ReelTemplate,
   type ReelTextStyle,
@@ -78,6 +79,7 @@ export type ResolvedClip =
       /** Cuánto se amplía o se desplaza; por defecto, el de la plantilla. */
       motionAmount?: number;
       transition?: ReelTransition;
+      filter?: ClipFilter;
     }
   | {
       type: 'video';
@@ -87,6 +89,9 @@ export type ResolvedClip =
       in: number;
       out: number;
       volume: number;
+      /** Velocidad (0,5 a 2); sin ella, 1. */
+      speed?: number;
+      filter?: ClipFilter;
       transition?: ReelTransition;
       subtitles?: ReelCue[];
       durationSeconds: number;
@@ -156,6 +161,22 @@ export const MAX_SUBTITLE_LINES = 3;
 export const AVERAGE_GLYPH_WIDTH = 0.56;
 /** Lo mínimo que se dibuja de un texto o subtítulo. */
 const MIN_VISIBLE_SECONDS = 0.1;
+
+/**
+ * Filtros de color con FFmpeg. Llevan los nombres de los filtros rápidos de las fotos
+ * (src/features/content/editor/imageEffects/filters.ts), que se calculan píxel a píxel en
+ * el navegador: aquí son una aproximación con filtros de siempre (`eq`, `hue`,
+ * `colorbalance`, `colorchannelmixer`, `curves`, `unsharp`), no la misma cuenta.
+ */
+export const CLIP_FILTER_CHAINS: Record<ClipFilter, string[]> = {
+  bw: ['hue=s=0', 'eq=contrast=1.08'],
+  sepia: ['colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131'],
+  vivid: ['eq=saturation=1.35:contrast=1.12'],
+  warm: ['colorbalance=rs=0.10:rm=0.08:rh=0.05:bs=-0.10:bm=-0.08:bh=-0.05', 'eq=saturation=1.08'],
+  cool: ['colorbalance=rs=-0.10:rm=-0.08:rh=-0.05:bs=0.10:bm=0.08:bh=0.05', 'eq=saturation=0.96'],
+  fade: ['eq=contrast=0.82:brightness=0.03:saturation=0.78', "curves=all='0/0.1 1/0.94'"],
+  drama: ['eq=contrast=1.3:brightness=-0.03:saturation=0.88', 'unsharp=5:5:0.6:5:5:0'],
+};
 
 const hex = (color: string, opacity = 1) =>
   `0x${color.slice(1).toUpperCase()}${opacity < 1 ? `@${num(opacity, 2)}` : ''}`;
@@ -278,7 +299,14 @@ export interface PlanTimeline {
 export function planTimeline(
   clips: Array<
     | { type: 'photo'; seconds: number; transition?: ReelTransition }
-    | { type: 'video'; in: number; out: number; durationSeconds?: number; transition?: ReelTransition }
+    | {
+        type: 'video';
+        in: number;
+        out: number;
+        durationSeconds?: number;
+        speed?: number;
+        transition?: ReelTransition;
+      }
   >,
   template: ReelTemplate,
   fps: number = template.canvas.fps,
@@ -293,8 +321,8 @@ export function planTimeline(
         `El clip ${index + 1} no tiene ${MIN_SEGMENT_SECONDS} s a partir del segundo ${clip.in}`,
       );
     }
-    // Por debajo, para no pedir fotogramas que el clip no tiene.
-    return Math.floor(length * fps) / fps;
+    // Por debajo, para no pedir fotogramas que el clip no tiene. A otra velocidad el tramo dura length / speed.
+    return Math.floor((length / (clip.speed ?? 1)) * fps) / fps;
   });
   const transitions = clips.map((clip, index) => {
     if (index === 0) return 0;
@@ -321,16 +349,17 @@ export function timelineSubtitles(
   const out: Array<{ start: number; end: number; text: string; clip: number }> = [];
   clips.forEach((clip, index) => {
     if (clip.type !== 'video' || !clip.subtitles) return;
+    const speed = clip.speed ?? 1;
     const from = clip.in;
-    const to = clip.in + timeline.durations[index]!;
+    const to = clip.in + timeline.durations[index]! * speed;
     for (const cue of clip.subtitles) {
       const a = Math.max(cue.start, from);
       const b = Math.min(cue.end, to);
-      if (b - a < MIN_VISIBLE_SECONDS * 2) continue;
-      const start = timeline.starts[index]! + (a - from);
+      if ((b - a) / speed < MIN_VISIBLE_SECONDS * 2) continue;
+      const start = timeline.starts[index]! + (a - from) / speed;
       out.push({
         start: Number(start.toFixed(3)),
-        end: Number((start + (b - a)).toFixed(3)),
+        end: Number((start + (b - a) / speed).toFixed(3)),
         text: cue.text,
         clip: index,
       });
@@ -380,6 +409,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     const sigma = blurSigma(blur, w, h);
     return sigma > 0 ? [`gblur=sigma=${num(sigma, 2)}`] : [];
   };
+  const colorFilter = (filter: ClipFilter | undefined) => (filter ? CLIP_FILTER_CHAINS[filter] : []);
   let photoCount = 0;
 
   clips.forEach((item, index) => {
@@ -417,19 +447,24 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=lanczos:out_range=tv`,
           crop(sw, sh, item.focalPoint),
           ...blurFilter(item.blur, sw, sh),
+          ...colorFilter(item.filter),
           `zoompan=z='${motion.z}':x='${motion.x}':y='${motion.y}':d=${count}:s=${width}x${height}:fps=${fps}`,
           `trim=duration=${num(seconds)}`,
           finish,
         ].join(',')}[v${index}]`,
       );
     } else {
-      args.push('-ss', num(item.in), '-t', num(seconds + 1), '-i', item.file);
+      const speed = item.speed ?? 1;
+      // Se lee el tramo del archivo (seconds × speed) y se le cambia el reloj antes de igualar los fotogramas.
+      args.push('-ss', num(item.in), '-t', num(seconds * speed + 1), '-i', item.file);
       chains.push(
         `[${index}:v]${[
+          ...(speed !== 1 ? [`setpts=(PTS-STARTPTS)/${num(speed, 4)}`] : []),
           `fps=${fps}`,
           `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=bicubic:out_range=tv`,
           crop(width, height, item.focalPoint),
           ...blurFilter(item.blur, width, height),
+          ...colorFilter(item.filter),
           // Si al clip le falta algún fotograma al final, se repite el último.
           'tpad=stop_mode=clone:stop_duration=1',
           `trim=duration=${num(seconds)}`,
@@ -479,8 +514,13 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     start: number,
     end: number,
     animation?: TextAnimation,
+    offset?: { x: number; y: number },
   ) => {
     const layout = textLayout(style, position, lines.length, width, height);
+    // Colocado a mano: píxeles enteros que se suman a su sitio de siempre.
+    const ox = Math.round((offset?.x ?? 0) * width);
+    const oy = Math.round((offset?.y ?? 0) * height);
+    const plus = (n: number) => (n === 0 ? '' : n > 0 ? `+${n}` : `${n}`);
     const fontFile = fontFor(style);
     const chars = lines.reduce((n, line) => n + line.length, 0);
     const d = animationDurations(animation, style, start, end, chars);
@@ -511,12 +551,12 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     const travelX = num(SLIDE_TRAVEL * width);
     const travelY = num(RISE_TRAVEL * height);
     const x =
-      (typewriter ? `${Math.round(((1 - style.maxWidthRatio) * width) / 2)}` : '(w-text_w)/2') +
+      (typewriter ? `${Math.round(((1 - style.maxWidthRatio) * width) / 2) + ox}` : `(w-text_w)/2${plus(ox)}`) +
       (slideIn ? `-(1-${E})*${travelX}` : '') +
       (slideOut ? `+(1-${F})*${travelX}` : '');
 
     const draws1 = (name: string, enable: string, firstLine: number) => {
-      const baseY = layout.top + firstLine * layout.lineStep;
+      const baseY = layout.top + firstLine * layout.lineStep + oy;
       const y =
         `${baseY}` +
         (riseIn ? `+(1-${E})*${travelY}` : '') +
@@ -600,7 +640,7 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       lines = lines.slice(0, MAX_TEXT_LINES);
       warnings.push(`El texto ${index + 1} no cabe: se han dejado ${MAX_TEXT_LINES} líneas`);
     }
-    draw(`text-${index}`, lines, item.style, item.position, start, end, item.animation);
+    draw(`text-${index}`, lines, item.style, item.position, start, end, item.animation, item.offset);
   });
 
   const subtitles: ReelBuild['subtitles'] = [];
@@ -660,9 +700,12 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     // Fundido corto en los extremos: con la transición, o mínimo para que no chasquee.
     const around = Math.max(transitions[index]!, transitions[index + 1] ?? 0);
     const edge = Math.min(Math.max(around, 0.03), seconds / 2);
+    const speed = item.speed ?? 1;
     const filters = [
-      `atrim=duration=${num(seconds)}`,
+      `atrim=duration=${num(seconds * speed)}`,
       'asetpts=PTS-STARTPTS',
+      // Más deprisa o más despacio sin cambiar el tono (atempo admite de 0,5 a 2 en todas las versiones).
+      ...(speed !== 1 ? [`atempo=${num(speed, 4)}`] : []),
       audioFormat,
       `volume=${num(item.volume, 3)}`,
       `afade=t=in:st=0:d=${num(edge)}`,

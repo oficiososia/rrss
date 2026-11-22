@@ -7,6 +7,7 @@ import { Card, EmptyState } from '@/components/ui';
 import { APP_NAME } from '@/config/app';
 import { LegalGate } from '@/features/privacy/LegalGate';
 import { AuthProvider, RequireAuth, RequireGuest } from '@/features/auth/AuthProvider';
+import { AgencyOnly } from '@/features/orgs/AgencyOnly';
 import { BrandLayout, OrgLayout, RootRedirect } from '@/features/orgs/layouts';
 import { RouteErrorBoundary } from '@/layout/ErrorBoundary';
 import { ShellSkeleton } from '@/layout/Skeletons';
@@ -55,6 +56,7 @@ const CampaignDetailPage = lazyRoute(() =>
 const AnalyticsPage = lazyRoute(() => import('@/features/analytics/AnalyticsPage').then((m) => m.AnalyticsPage));
 const LibraryPage = lazyRoute(() => import('@/features/library/LibraryPage').then((m) => m.LibraryPage));
 const ReelsPage = lazyRoute(() => import('@/features/reels/ReelsPage').then((m) => m.ReelsPage));
+const ReelLikePage = lazyRoute(() => import('@/features/reels/like/ReelLikePage').then((m) => m.ReelLikePage));
 const PlatformPage = lazyRoute(() => import('@/features/platform/PlatformPage').then((m) => m.PlatformPage));
 const IntegrationsPage = lazyRoute(() =>
   import('@/features/platform/integrations/IntegrationsPage').then((m) => m.IntegrationsPage),
@@ -203,8 +205,22 @@ export function App() {
                           <Route path="inicio" element={<BrandHomePage />} />
                           <Route path="contenidos" element={<ContentListPage />} />
                           <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
-                          <Route path="encargos" element={<RequestListPage />} />
-                          <Route path="encargos/:requestId" element={<RequestDetailPage />} />
+                          <Route
+                            path="encargos"
+                            element={
+                              <AgencyOnly>
+                                <RequestListPage />
+                              </AgencyOnly>
+                            }
+                          />
+                          <Route
+                            path="encargos/:requestId"
+                            element={
+                              <AgencyOnly>
+                                <RequestDetailPage />
+                              </AgencyOnly>
+                            }
+                          />
                           <Route path="calendario" element={<CalendarPage />} />
                           {/* Sin IA de texto y fuera del modo agencia, la lista vuelve al inicio. */}
                           <Route path="campanas" element={<CampaignListPage />} />
@@ -213,6 +229,9 @@ export function App() {
                           <Route path="biblioteca" element={<LibraryPage />} />
                           {/* Sin trabajador de medios desplegado, la pantalla vuelve a la biblioteca. */}
                           <Route path="biblioteca/reels" element={<ReelsPage />} />
+                          {/* «Hacer un reel como este»: sin su interruptor, vuelve a Reels. */}
+                          <Route path="biblioteca/reels/como-este" element={<ReelLikePage />} />
+                          <Route path="biblioteca/reels/como-este/:referenceId" element={<ReelLikePage />} />
                           <Route path="marca" element={<BrandProfilePage />} />
                           <Route path="equipo" element={<BrandTeamPage />} />
                         </Route>

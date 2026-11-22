@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f37/copiloto-herramientas`; antes, `f33/integraciones-sencillas`).
+Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,11 +15,12 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v5, páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz | Unitarias, componentes, base de datos, `test:layout` en Chromium real y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migración `20261220010000` (renombrar y duplicar plantillas) sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
 | Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
+| Modo de trabajo de la organización | «Lo llevamos nosotros» (autogestión) o «Nos lo lleva una agencia» por organización; en autogestión toda la IA a mano, sin Encargos ni textos de agencia; «Cargar plantillas del catálogo» desde la app; gasto propio para el propietario (`docs/modo-de-trabajo.md`) | Base de datos (PGlite) y componentes; el modo agencia sigue pasando sus pruebas | Aplicar `20261227010000` en staging; verlo en un navegador real; «Tareas» internas en vez de Encargos | — |
 | Legal / RGPD | Páginas como plantillas, consentimiento, descarga, borrado, registro de tratamientos, etiqueta de IA | Base de datos y e2e 17 | Revisión de abogado, contratos de encargo, plazos | Abogado |
 
 **En staging** (https://rrss-omega.vercel.app), según el último dato verificado
@@ -174,6 +175,44 @@ Reels, `provenance.role = 'cover'`) pero **la publicación todavía no la envía
 reordenar con el dedo con agarre largo, asas de 24 px y recorte con teclado. Probado: unitarias, componentes, trabajador
 con FFmpeg real (posición del texto en fotogramas), base de datos. Sin probar: análisis de música real y agarre largo en un
 móvil real, FFmpeg 6 de Alpine (`fontsize` como expresión), migración en staging. Detalle y despliegue en `docs/editor-reels.md` §8.
+
+### Catálogo de plantillas y plantillas de reel por marca (rama `f35/catalogo-plantillas`, 22/11/2026)
+
+Hasta ahora una marca tenía las plantillas de publicación que alguien le entregara a mano y, para los reels,
+solo los tres estilos del trabajador. Detalle: `docs/plantillas-competencia.md` (estudio y por qué cada
+plantilla), `docs/editor-reels.md` §9 (formato de la plantilla de reel) y `agency/README.md` (cómo se carga).
+
+- **Estudio de la competencia** (restaurantes y asadores, bares de cócteles, gimnasios), con fuentes
+  enlazadas y cada afirmación marcada como dato, consejo, inferencia o sin verificar. Límite importante:
+  Instagram y TikTok no se dejan leer sin sesión, así que **no se ha visto por dentro ningún reel real**; las
+  duraciones de plano son una propuesta razonada, no una medición.
+- **Plantillas de reel con estructura** (`src/features/reels/reelTemplate.ts`): planos con duración,
+  movimiento y transición, textos de muestra con su animación, música sugerida (solo escrita) y portada.
+  Tabla `brand_reel_templates` con RLS, `deliver_reel_templates` y `delete_reel_template` (**migración
+  `20261224010000_reel_templates.sql`**, con vuelta atrás y casos en `tests/db/aislamiento.test.ts`).
+  **No aplicada en staging ni en producción.** Al usar una plantilla sale un proyecto de reel normal (plan
+  v2): el trabajador, `request_media_job` y la publicación no cambian.
+- **«Empieza tu reel»** ofrece las plantillas de la marca encima de los tres pasos: se elige una, el selector
+  enseña los planos en orden y, al confirmar, el reel queda montado con sus textos de muestra. Sin
+  plantillas, la pantalla es la de antes.
+- **Catálogo** en `agency/catalogo/`: cuatro juegos (`restaurante`, `cocteleria`, `gimnasio`, `generico`)
+  con 10 plantillas de reel y 10 de publicación o carrusel cada uno (80 en total). Sin nada de ningún
+  cliente: nombres neutros, textos de muestra y colores y tipografías por papeles, que se llenan con el
+  perfil de la marca al cargar. Órdenes nuevas `catalogo` y `cargar-catalogo` (**en seco por defecto**;
+  `--cargar` guarda). El archivo de entrega de plantillas de publicación admite ya documentos v5.
+- **Probado:** unitarias y componentes del formato y de la pantalla de salida; base de datos (aislamiento,
+  permisos, rechazos, tope, vuelta atrás); `agency/tests/catalogo.test.ts` recorre las 80 plantillas con
+  tres temas y las pasa por los validadores de la aplicación (documento v5 y análisis; plantilla de reel y
+  plan v2 con el mínimo y con todo el material), y prueba la carga en seco y la de verdad contra el
+  Supabase simulado. Las publicaciones del juego de restaurante y del de gimnasio se miraron dibujadas en
+  un navegador (una hoja de contactos hecha para la ocasión, no el editor).
+- **Sin probar:** nada cargado en staging; **ningún reel de plantilla montado con el trabajador ni visto en
+  la vista previa real**; las publicaciones dentro del editor de verdad (tipografías de la marca, textos
+  largos); el reparto automático de colores con perfiles distintos de los tres de prueba y los dos reales
+  que se usaron en seco.
+- **Pendiente:** pantalla para borrar o renombrar plantillas de reel; «Guardar como plantilla» desde el
+  editor de reels (el origen `editor` ya existe); que «un reel como este» (rama `f36`) guarde en este
+  formato; medir con la analítica qué plantillas funcionan y ajustar duraciones.
 
 ### Fase 4 · Campañas (primera parte)
 
@@ -500,6 +539,16 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 - **500 de `media-storage/sign`: mismo origen, no arreglado.** El editor pide las URL de las fotos por `signStoragePaths` → `media-storage/sign`, el mismo punto que el editor de reels. Causa probable (sin verificar; no se ha tocado ningún servidor): `assetsForPaths` hace también una consulta por `thumb_path` (migración `20261209010000`); si la función está desplegada con esa columna y la migración no está aplicada en ese proyecto, la consulta falla y la función contesta 500 `internal`. Comprobarlo: `select 1 from information_schema.columns where table_name='media_assets' and column_name='thumb_path'` en staging y el registro `internal` de la función. Además esa función registra solo el nombre del error, lo que dificulta el diagnóstico.
 - **Sin probar:** el pellizco táctil y los gestos en un móvil real (solo emulación y pruebas); el editor contra un Supabase real en esta rama (no hay Docker aquí): componentes, base de datos y navegador con cliente simulado.
 - **Pendiente:** e2e del editor con Supabase local para guardar plantilla y exportar de verdad; una vista de gestión de plantillas en la marca (hoy solo se borran desde «Desde una plantilla»).
+
+### «Fondo con IA» claro (rama `f45/fotos-ia`, 22/11/2026)
+
+- Implementado: un solo recorte por foto (reutiliza el de la sesión o el alfa de la foto), resultado
+  a la vista con Antes/Después, «Usar esta», «Probar otra vez» y coste de cada intento, progreso por
+  fases del recorte con tiempo y cancelar, un texto de privacidad según el motor, términos neutros
+  y fondos/avisos según el sector de la marca. Detalle en `docs/edicion-fotos.md` §14.
+- Probado: unitarias, componentes y `test:layout` (375 y 1366 px, IA simulada). **No probado**: IA
+  real, recorte real con BEN2 o con Fly, y el aviso neutro contra OpenAI (solo respuestas simuladas).
+- Pendiente: el aviso de «Animar con IA» sigue hablando de comida (zona de la biblioteca).
 
 ### Quitar el fondo en el servidor con el trabajador de Fly (rama `f21/cutout-fly`, 22/11/2026)
 
@@ -914,3 +963,179 @@ herramientas para ver si sale mejor».
   mitad de frase sigue fallando con razonamiento `none`, pasar el copiloto a la API Responses de
   OpenAI (admite herramientas con razonamiento `low`); precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
   política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.
+
+## «Hacer un reel como este» (rama `f36/reel-como-este`, 22/11/2026)
+
+Una persona sube un reel que le gusta (o pega su enlace) y el sistema lo estudia y lo rehace con las
+ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs/reel-como-este.md`.
+
+- **Implementado**: trabajo `media.reel.analyze` en el trabajador (mide sin IA: cortes, planos, compás,
+  fotogramas; enlaces sin trucos, con `robots.txt`); migración `20261223010000_reel_like.sql` (tabla
+  `reel_references`, el tipo nuevo en `request_media_job`, borrado y caducidad de los archivos del
+  análisis); visión en los adaptadores de texto (`AiInput.images`: OpenAI y Anthropic); función
+  `ai-reel-like` (coste máximo antes, cupo, registro, modo agencia como la imagen); pantalla en
+  Biblioteca → Reels con progreso por pasos y las cuatro salidas (plantilla, guion, borrador con la
+  biblioteca y textos); el editor de reels abre el borrador con sus huecos «Falta grabar: …»;
+  «Guardar como plantilla» entrega en el formato compartido de plantillas de reel (`rrss.reel-template`,
+  origen `reference`, con el tipo de plano como campo opcional nuevo); script de prueba real de un comando.
+- **Probado**: trabajador con FFmpeg real y un vídeo de 4 planos generado (cortes y duraciones a menos de
+  0,1 s); base de datos, aislamiento y función con proveedores **simulados**; de punta a punta en local
+  (vídeo → trabajador → cola → función → plantilla, sin rastro del vídeo); componentes; maquetación en
+  Chromium a 375 px.
+- **Cifras en local** (22/11/2026, PC de desarrollo, tras unir `f35/catalogo-plantillas`): `npm test` 1311,
+  `npm run test:db` 1082 (2 omitidas), `worker/` 154, `npm run test:layout` 33 y `agency/` 125, todas en
+  verde; `typecheck`, `lint` y `build` también. El CI de GitHub no se ha ejecutado con esta rama (sin subir).
+- **Sin probar**: ningún proveedor de IA real (visión ni transcripción), el trabajador en Fly con este
+  trabajo, la función desplegada, enlaces reales de redes y vídeos reales de móvil.
+- **Bloqueado**: la clave de OpenAI de staging (401: proyecto no europeo contra el endpoint de la UE).
+- **Decisión del dueño pendiente**: en marcas en modo agencia lo usa solo el personal de la agencia
+  (regla de la IA de imagen), no «cerrado para todos» como el texto.
+- **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
+  `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
+  `VITE_REEL_LIKE_ENABLED=true`.
+
+## Preparar un plan de campaña dictando y con la IA que rellena el formulario (rama `f40/campanas-voz`, 22/11/2026)
+
+Petición del dueño: «aquí hay que meter también el copiloto con IA para que puedas dictar lo que quieres, y la IA te
+tiene que ayudar a hacer la duración y todo». Detalle: `docs/ia-texto.md` («Rellenar el formulario de la campaña») y
+`docs/copiloto-voz.md` («Dictar en cualquier campo»).
+
+- **Antes:** el diálogo «Preparar un plan con IA» era un formulario con la instrucción, las ocho redes marcables, dos
+  fechas y un nombre; la duración y el ritmo se decidían a mano y el texto solo se escribía.
+- **Ahora:**
+  - Arriba, solo «¿Qué quieres preparar?», con micrófono (mismo motor y aviso que el copiloto del editor), y un botón
+    para que la IA proponga. La propuesta trae una frase de por qué («Te propongo 3 semanas porque…»), la duración,
+    el ritmo por formato, las redes, el objetivo y la semana a semana; queda **rellenada** en «Detalles» (plegados,
+    con un resumen de una línea) para corregirla. Se ajusta con «Más corta», «Más larga» (llaman a la IA) y «Solo
+    Instagram» (sin IA). Si falta un dato, UNA pregunta corta. El coste de la propuesta se ve en pequeño.
+  - Por defecto, «Detalles» enseña solo las redes de la marca (conectadas o con plantillas; Instagram si no hay);
+    «Otras redes» enseña el resto, desmarcadas.
+  - «Preparar el plan» lleva lo acordado (ritmo, reparto, fases, objetivo) a `campaign.plan`, que fija el máximo de
+    piezas con él; cada pieza del plan dice de qué plantilla de diseño o de reel de la marca encajaría
+    (**sugerencia**: el motor al aceptar todavía no aplica la plantilla; se elige al preparar la pieza).
+  - Componente reutilizable `DictableField`, en los campos de texto libre de «Editar foto» (fondo con IA), «Hacer
+    un reel como este», «Animar con IA» y «Generar imagen con IA», sin cambiar su comportamiento.
+- **Probado:** componentes (dictado y aviso, propuesta, ajustes, pregunta única, sin IA/sin cupo, modo agencia,
+  acuerdo hacia el plan, sugerencias de plantilla), base de datos (`campaign.brief`: saneado de redes/fechas/ritmo,
+  pregunta, ajustes, agencia, cupo, `agreement`), maquetación a 375 px en Chromium.
+- **Sin probar:** ningún modelo real con `campaign.brief` (la calidad de la duración y del ritmo propuestos); el
+  micrófono real en el diálogo; que «Más corta/larga» devuelva siempre una semana menos/más (el producto no lo
+  comprueba, solo sanea).
+- **Decisiones:** `campaign.brief` se registra como `campaign.plan` (sin variable ni migración nuevas); si se quiere
+  un modelo más barato solo para esto habrá que separar el propósito (migración del catálogo de Integraciones).
+- **Para llevarlo a staging:** redesplegar `ai-generate`; la aplicación. Sin migraciones.
+## Calendario para planificar (rama `f41/calendario`, 22/11/2026)
+
+Detalle en `docs/publicacion.md` («Calendario para planificar»). Sin migración.
+
+- **Hecho**: vistas Semana (por defecto en pantallas anchas), Mes compacto y Lista (por defecto en móvil;
+  se recuerda la elegida en el dispositivo); tarjetas con miniatura, hora de la marca, red y formato con
+  icono y estado con color y texto; vista rápida (pie de foto, «Abrir», «Mover a…», «Publicar ahora»,
+  «Cancelar») con el motivo y el botón de arreglo de las «Detenidas»; arrastrar para mover (conserva la hora)
+  con «Deshacer»; «+» solo al pasar el ratón o enfocar; bandeja «Por programar» arrastrable; huecos de la
+  semana, contador frente al objetivo y franja de campañas (solo lectura); filtros de estado, red, formato
+  y campaña en una fila; página sin scroll (el calendario se desplaza por dentro).
+- **Probado**: `calendarPlan.test.ts`, `calendarioVistas.test.tsx` (tres vistas, mover, huecos, bandeja,
+  permisos), el resto de pruebas del calendario adaptadas a la vista rápida; maquetación en Chromium a
+  1440 y 375 px (`tests/layout/calendario.spec.ts`).
+- **Sin probar**: e2e 13 y 23 adaptadas a la vista rápida, **sin ejecutar** (solo CI); arrastrar con el
+  ratón real (las pruebas simulan los eventos de arrastrar); pantallas táctiles reales.
+- **Límites**: la hora no se cambia arrastrando (solo el día; la hora, con «Mover a…»); el objetivo semanal
+  se guarda en el dispositivo, no en la marca (compartirlo entre personas pide una migración); sin vista
+  de día ni «Por red» (las sustituyen la semana y el filtro de red).
+
+## Inicio de la marca y Contenidos con miniaturas (rama `f42/inicio-contenidos`, 22/11/2026)
+
+- **Implementado**: Contenidos es una rejilla de tarjetas con la miniatura real de la pieza (primera
+  página dibujada con el motor de las plantillas y su caché; reels con su portada o el primer clip;
+  esquema de capas si no se puede dibujar; icono del formato si no hay diseño), vista de lista compacta
+  (se recuerda), pestañas por etapa con contador (Ideas · En preparación · Listas · Programadas ·
+  Publicadas: mezclan el estado de la pieza con el de su publicación), búsqueda, formato y campaña en
+  una fila, acciones rápidas (abrir, duplicar, programar, archivar con «Deshacer»), selección múltiple
+  para archivar, marca «Vacía» (sin ninguna versión guardada) y «Archivar las vacías» de una vez; la
+  pantalla vacía ofrece «Nueva idea» y hasta tres plantillas. «Nueva idea» elige el formato con
+  tarjetas (Publicación, Carrusel, Reel, Historia, con su proporción), el nombre es opcional («Reel · 22
+  nov») y «Crear y abrir» lleva al editor que toca. El inicio de la marca responde «qué hago hoy»:
+  accesos grandes (Nueva publicación, Nuevo reel, Hacer un reel como este si el servidor puede, Subir
+  fotos), la semana en siete columnas con miniaturas, lo parado con su botón de arreglo, lo último
+  publicado con cifras solo si existen y los avisos (Instagram sin conectar, acceso que caduca).
+- **Quitado del inicio** (a propósito): los contadores de archivos y fuentes, «Accesos rápidos» y
+  «Actividad reciente» (sigue en Configuración → Actividad). El porcentaje del perfil queda como una
+  línea para quien gestiona la marca, solo si falta algo.
+- **Sin migración.** Las piezas y las publicaciones se leen con las tablas de siempre.
+- **Probado**: unitarias (etapas, semana), componentes (lista, miniaturas, acciones, vacío, inicio),
+  maquetación en Chromium a 375, 768 y 1366 px (sin scroll lateral, miniaturas dibujadas de verdad, el
+  inicio cabe en 1366×768 y 1024×768 sin bajar la página). Las e2e se adaptaron (el formato ya no es un
+  desplegable) y corren en CI.
+- **Sin probar**: con una marca real y muchas piezas (la lista trae hasta 600 y enseña de 24 en 24);
+  miniaturas de reels con vídeo real (en el banco no hay recursos firmados); el aspecto en un móvil real.
+- **Añadido tras la auditoría de usabilidad (tanda D)**: «Nueva idea → Reel» ya no dice que el vídeo
+  «llegará más adelante»; ofrece las plantillas de reel de la marca (`brand_reel_templates`) con su muestra
+  en movimiento y «Hacer un reel como este» (si el servidor puede), con el botón «Crear y abrir» fijo abajo.
+  Con una plantilla de reel, la pieza se abre en el editor con `?plantilla=<clave>`; el editor de reels
+  lo lee desde la rama `f39/reels-editor-movil` y abre el selector de esa plantilla. Las plantillas de pieza salen en una rejilla de
+  miniaturas grandes y filtradas por el formato. La red ya no se pregunta (solo Instagram se publica) y los
+  formatos que no se publican solos lo dicen. El coste de «Hacer un reel como este» se dice como «≈ N % del
+  cupo de este mes» (lo ven los administradores; el resto, en créditos).
+
+## Biblioteca y Analítica más claras (rama `f43/biblioteca-analitica`, 22/11/2026)
+
+Petición del dueño: «un producto de calidad» con menos carga visual.
+
+- **Implementado (Biblioteca)**: barra lateral de carpetas en árbol con contadores (selector en móvil)
+  y migas de pan; mover arrastrando o con «Mover a…»; crear, renombrar y eliminar carpeta vacía; rejilla
+  con miniaturas (`thumb_path`) de tamaño ajustable, pintada por tandas; selección con casillas y Mayús
+  con barra de acciones (mover, etiquetar, descargar hasta 20, eliminar con confirmación); chips Fotos,
+  Vídeos, Logotipos, Con fondo quitado, Hechas con IA, Sin usar y Recientes; orden por fecha, nombre o uso;
+  búsqueda sin distinguir tildes por nombre, etiqueta y carpeta; ficha como panel lateral con ← y →,
+  «Dónde se usa», «Editar foto», «Usar en una publicación» (crea la idea con la foto), «Usar en un reel»
+  (`reels?con=<id>`) y «Animar con IA…» si está disponible; subir arrastrando a la página o a una
+  carpeta, con progreso, error claro y «Reintentar» por archivo; `PhotoPanel` reutilizable
+  (`docs/panel-de-fotos.md`), sin conectar a ningún editor.
+- **Implementado (Analítica)**: frase del periodo con la variación en palabras, de 3 a 4 cifras grandes
+  (elegir una la lleva al gráfico), gráfico de línea con guía por puntero y teclado y tabla día a día,
+  «Lo que mejor funcionó» con miniaturas, y el resto plegado en «Más detalle». Estados honestos sin
+  cuenta, sin cifras y con la cuenta por reconectar. Ambas pantallas son pantallas de trabajo: la página
+  no se desplaza (y no llevan el pie legal, como el editor).
+- **Migración** `20270101010000_asset_usage.sql` (función de lectura `asset_usage`, con la RLS de quien
+  pregunta; vuelta atrás en `supabase/rollbacks/`). Sin aplicar en staging. Sin ella, la pantalla no
+  inventa usos: oculta «Sin usar» y «Más usadas».
+- **Limitación conocida**: una carpeta vacía creada desde la pantalla solo existe en ese navegador hasta
+  que se mueve un archivo dentro (en la base de datos una carpeta es el texto de `media_assets.folder`).
+  La biblioteca lee de una vez hasta 5.000 archivos por marca (avisa si hay más).
+- **Probado**: componentes (`biblioteca.test.tsx`, `photoPanel.test.tsx`, `analitica.test.tsx`), unitarias
+  (`carpetas.test.ts`, `resumen.test.ts`), base de datos (`aislamiento.test.ts`, `asset_usage`) y
+  maquetación en Chromium real a 375, 768 y 1366 px (`tests/layout/biblioteca-analitica.spec.ts`).
+  e2e 04, 11, 15 y 24 adaptadas a la interfaz nueva (la 04 con un caso nuevo) **sin ejecutar**: necesitan
+  el stack local.
+- **Sin probar**: descarga de varios archivos a la vez (los navegadores pueden pedir permiso),
+  arrastrar desde el escritorio con archivos reales, miniaturas reales (el banco no firma URL) y el
+  móvil real.
+
+## Editor de reels «como los de móvil» (rama `f39/reels-editor-movil`, 22/11/2026)
+
+Petición del dueño (lo que más le importa) y hallazgos H1, H3, H4, H15 y H33 de la auditoría de usabilidad.
+Detalle, patrones adoptados y fuentes en `docs/editor-reels.md` §10.
+
+- **Implementado**: pantalla fija sin scroll de página (vista previa 9:16 grande, barra de herramientas que
+  cambia con lo elegido y línea de tiempo con el cabezal fijo en el centro; panel al lado en escritorio y
+  hoja en móvil); tira de fotogramas por clip, textos apilados, música con onda; zoom con pellizco, Ctrl +
+  rueda y botones; dividir en el cabezal, sustituir, duplicar, velocidad 0,5×–2×, volumen y silenciar,
+  filtros de color, transición por corte con vista previa; textos que se arrastran, se escalan y se editan
+  sobre el vídeo, con guías y cuatro estilos prediseñados; atajos (Espacio, S, Supr, ← →, Ctrl+Z/Y, Ctrl+D);
+  **guardado automático** del montaje como borrador (`reel_drafts`) con indicador, recuperación al volver y
+  pregunta al salir si no se pudo guardar; «Ver el vídeo» dentro del editor; subir el audio desde el diálogo
+  de la música; `?plantilla=<clave>`.
+- **Plan v2 ampliado** (compatible): `speed` y `filter` en el clip, `filter` en la foto, `offset` en el texto;
+  a la vez en la aplicación, el trabajador y la base de datos.
+- **Migración** `20261228010000_reel_editor_pro.sql` (validación del plan y tabla `reel_drafts` con sus dos
+  funciones y un disparador; vuelta atrás en `supabase/rollbacks/`). **Sin aplicar en staging.**
+- **Probado**: unitarias, componentes, base de datos (con aislamiento y deshacer/rehacer la migración),
+  trabajador con FFmpeg real y maquetación en Chromium real a 1440, 1366 y 375 px, con reproducción,
+  miniaturas y onda de verdad.
+- **Sin probar**: un móvil real (pellizco, inercia, pulsación larga), Safari/iOS, archivos reales de móvil en
+  R2, el FFmpeg de la imagen de Fly, la e2e 29 (adaptada, sin ejecutar) y la migración en staging.
+- **No hecho, a propósito**: pistas de música incluidas (hace falta que el dueño elija una fuente con licencia
+  de uso comercial); rotar textos, curvas de velocidad, pegatinas y varias pistas de vídeo (el trabajador no
+  los monta).
+- **Para staging**: migración → redesplegar el trabajador (el anterior rechaza los campos nuevos) → Vercel.

@@ -428,3 +428,135 @@ describe('animación de textos, movimiento de fotos y portada (20261215010000)',
     });
   });
 });
+
+describe('editor como los de móvil (20261228010000): velocidad, filtro y textos colocados', () => {
+  const clip = (patch: Row = {}) => ({ id: 'c1', type: 'video', path: clipA, in: 0, out: 2, volume: 1, ...patch });
+  const plan = (clips: Row[], texts: Row[] = []) => ({ version: 2, clips, texts });
+  const input = (p: Row) => ({ template: { id: 'fundido-suave' }, plan: p });
+
+  it('admite un clip dividido en dos partes con velocidad, volumen y filtro propios, y un texto colocado a mano', async () => {
+    const job = await request(
+      editor,
+      marcaA,
+      input(
+        plan(
+          [
+            clip({ out: 1.2 }),
+            clip({ id: 'c2', in: 1.2, volume: 0, speed: 2, filter: 'bw', transition: { type: 'cut', seconds: 0 } }),
+            { id: 'c3', type: 'photo', path: fotoA, seconds: 1.5, filter: 'warm' },
+          ],
+          [{ id: 't1', text: 'Oferta', start: 0, end: 1, position: 'center', style: STYLE, offset: { x: 0.1, y: -0.25 } }],
+        ),
+      ),
+    );
+    const clips = job.payload.plan.clips as Row[];
+    expect(clips[1]).toMatchObject({ speed: 2, filter: 'bw', volume: 0 });
+    expect(clips[2]).toMatchObject({ filter: 'warm' });
+    expect((job.payload.plan.texts as Row[])[0]).toMatchObject({ offset: { x: 0.1, y: -0.25 } });
+  });
+
+  it('rechaza velocidades fuera de 0,5–2, filtros inventados y posiciones exageradas o con campos de más', async () => {
+    await rejected(editor, marcaA, input(plan([clip({ speed: 3 })])), /velocidad/);
+    await rejected(editor, marcaA, input(plan([clip({ speed: 0.2 })])), /velocidad/);
+    await rejected(editor, marcaA, input(plan([clip({ speed: 'rapido' })])), /velocidad/);
+    await rejected(editor, marcaA, input(plan([clip({ filter: 'neon' })])), /filtro/);
+    // Una foto no tiene velocidad.
+    await rejected(
+      editor,
+      marcaA,
+      input(plan([{ id: 'c1', type: 'photo', path: fotoA, seconds: 2, speed: 2 }])),
+      /campos no admitidos/,
+    );
+    const text = (offset: Row) => [{ id: 't1', text: 'x', start: 0, end: 1, position: 'top', style: STYLE, offset }];
+    await rejected(editor, marcaA, input(plan([clip()], text({ x: 0.9, y: 0 }))), /posición/);
+    await rejected(editor, marcaA, input(plan([clip()], text({ x: 0.1 }))), /posición/);
+    await rejected(editor, marcaA, input(plan([clip()], text({ x: 0.1, y: 0.1, z: 1 }))), /posición/);
+  });
+
+  it('un nulo en los campos nuevos no llega al trabajador: la base de datos lo quita', async () => {
+    const job = await request(editor, marcaA, input(plan([clip({ speed: null, filter: null })])));
+    const stored = (job.payload.plan.clips as Row[])[0]!;
+    expect(stored).not.toHaveProperty('speed');
+    expect(stored).not.toHaveProperty('filter');
+  });
+});
+
+describe('borrador automático del reel (20261228010000)', () => {
+  const draft = (clips: Row[] = []) => ({ kind: 'reel', template: { id: 'fundido-suave' }, plan: { version: 2, clips, texts: [] } });
+  const save = (user: TestUser, contentId: string, data: Row, base = 0) => {
+    const { sql, params } = rpcStatement('save_reel_draft', {
+      p_content_id: contentId,
+      p_data: data,
+      p_base_version: base,
+    });
+    return as<{ data: string }>(db, user, sql, params);
+  };
+  let pieza: string;
+
+  beforeAll(async () => {
+    pieza = await piece(editor, orgA, marcaA, 'reel');
+  });
+
+  it('guarda el montaje a medio hacer (también vacío) sin crear ninguna versión, y lo sustituye al volver a guardar', async () => {
+    await save(editor, pieza, draft());
+    await save(editor, pieza, draft([{ id: 'c1', type: 'photo', path: fotoA, seconds: 2 }]));
+    const rows = await as<{ data: Row; base_version: number; updated_by: string }>(
+      db,
+      editor,
+      `select data, base_version, updated_by from public.reel_drafts where content_id = $1`,
+      [pieza],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ base_version: 0, updated_by: editor.id });
+    expect(((rows[0]!.data.plan as Row).clips as Row[])[0]).toMatchObject({ id: 'c1' });
+    const [item] = await db.query<{ current_version: number }>(
+      `select current_version from public.content_items where id = $1`,
+      [pieza],
+    );
+    expect(item!.current_version).toBe(0);
+    expect(await db.query(`select 1 from public.content_versions where content_id = $1`, [pieza])).toEqual([]);
+  });
+
+  it('rechaza lo que no es un montaje de reel, las piezas que no son reels y a quien no edita la marca', async () => {
+    const call = (contentId: string, data: Row) =>
+      rpcStatement('save_reel_draft', { p_content_id: contentId, p_data: data, p_base_version: 0 });
+    let c = call(pieza, { kind: 'otro', plan: {} });
+    await denied(db, editor, c.sql, c.params, /no es un montaje de reel/);
+    c = call(pieza, { kind: 'reel' });
+    await denied(db, editor, c.sql, c.params, /no es un montaje de reel/);
+    c = call(postA, draft());
+    await denied(db, editor, c.sql, c.params, /formato reel/);
+    // Otra marca de la misma organización (el editor no la edita) y otra organización.
+    c = call(reelA2, draft());
+    await denied(db, editor, c.sql, c.params, /Solo quien edita la marca/);
+    c = call(pieza, draft());
+    await denied(db, berta, c.sql, c.params, /Solo quien edita la marca/);
+    const d = rpcStatement('discard_reel_draft', { p_content_id: pieza });
+    await denied(db, berta, d.sql, d.params, /Solo quien edita la marca/);
+    // No se escribe directamente en la tabla.
+    await denied(db, editor, `delete from public.reel_drafts`, [], /permission denied/);
+    await denied(db, editor, `update public.reel_drafts set base_version = 9`, [], /permission denied/);
+  });
+
+  it('al guardar una versión el borrador desaparece; también se puede descartar a mano', async () => {
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [pieza])).toHaveLength(1);
+    await saveVersion(editor, pieza, project());
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [pieza])).toEqual([]);
+    await save(editor, pieza, draft(), 1);
+    const { sql, params } = rpcStatement('discard_reel_draft', { p_content_id: pieza });
+    await as(db, editor, sql, params);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [pieza])).toEqual([]);
+    // Descartar cuando no hay nada no falla.
+    await as(db, editor, sql, params);
+  });
+
+  it('una pieza archivada no admite borrador, y el borrador se va con la pieza', async () => {
+    const otra = await piece(editor, orgA, marcaA, 'reel');
+    await save(editor, otra, draft());
+    await db.query(`update public.content_items set archived_at = now() where id = $1`, [otra]);
+    const c = rpcStatement('save_reel_draft', { p_content_id: otra, p_data: draft(), p_base_version: 0 });
+    await denied(db, editor, c.sql, c.params, /archivado/);
+    await db.query(`delete from public.content_items where id = $1`, [otra]);
+    expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [otra])).toEqual([]);
+  });
+});

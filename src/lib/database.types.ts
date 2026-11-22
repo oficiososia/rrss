@@ -23,10 +23,14 @@ export type ProfileRow = {
   updated_at: string;
 };
 
+export type OrgWorkMode = 'self' | 'agency';
+
 export type OrganizationRow = {
   id: string;
   name: string;
   kind: OrgKind;
+  /** Cómo trabaja la organización: `self` (lo llevan ellos) o `agency` (migración 20261227010000). */
+  work_mode: OrgWorkMode;
   settings: Json;
   created_by: string | null;
   created_at: string;
@@ -93,6 +97,17 @@ export type KnowledgeSourceRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Una pieza (vigente) donde se usa un archivo de la biblioteca (`asset_usage`, migración 20270101010000). */
+export type AssetUsageRow = {
+  asset_id: string;
+  content_id: string;
+  title: string;
+  network: string;
+  format: string;
+  status: ContentStatus;
+  archived: boolean;
 };
 
 export type MediaAssetRow = {
@@ -557,7 +572,12 @@ export type AiMediaGenerationOutput = {
 // de alta en `media_assets` con su procedencia (columna común `provenance`,
 // `type` = 'media_job'), y `jobs.result.assets` lo apunta.
 
-export type MediaJobKind = 'media.reel.template' | 'media.image.process' | 'media.cutout';
+export type MediaJobKind =
+  | 'media.reel.template'
+  | 'media.image.process'
+  | 'media.cutout'
+  // «Hacer un reel como este» (migración 20261223010000): mide un vídeo de referencia, sin IA.
+  | 'media.reel.analyze';
 
 type MediaJobFunctions = {
   request_media_job: {
@@ -971,10 +991,37 @@ export type BrandDesignTemplateRow = {
   updated_at: string;
 };
 
+/** Plantilla de reel de una marca; `document` es la de `src/features/reels/reelTemplate.ts`. */
+export type BrandReelTemplateRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  template_key: string;
+  name: string;
+  document: Json;
+  source: 'catalog' | 'reference' | 'editor';
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Borrador automático del editor de reels: el montaje a medio hacer de una pieza (una fila por pieza). */
+export type ReelDraftRow = {
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  data: Json;
+  base_version: number;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 type ImportTables = {
+  reel_drafts: Table<ReelDraftRow>;
   social_import_runs: Table<SocialImportRunRow>;
   social_imported_media: Table<SocialImportedMediaRow>;
   brand_design_templates: Table<BrandDesignTemplateRow>;
+  brand_reel_templates: Table<BrandReelTemplateRow>;
 };
 
 type ImportFunctions = {
@@ -982,6 +1029,13 @@ type ImportFunctions = {
   rename_design_template: { Args: { p_template_id: string; p_name: string }; Returns: BrandDesignTemplateRow };
   duplicate_design_template: { Args: { p_template_id: string }; Returns: BrandDesignTemplateRow };
   deliver_design_templates: { Args: { p_brand_id: string; p_templates: Json }; Returns: BrandDesignTemplateRow[] };
+  deliver_reel_templates: {
+    Args: { p_brand_id: string; p_templates: Json; p_source?: BrandReelTemplateRow['source'] };
+    Returns: BrandReelTemplateRow[];
+  };
+  delete_reel_template: { Args: { p_template_id: string }; Returns: undefined };
+  save_reel_draft: { Args: { p_content_id: string; p_data: Json; p_base_version: number }; Returns: string };
+  discard_reel_draft: { Args: { p_content_id: string }; Returns: undefined };
 };
 
 type PublicationFunctions = {
@@ -1572,6 +1626,50 @@ type Table<Row, Insert = never, Update = never> = {
   Relationships: [];
 };
 
+// ───────────── «Hacer un reel como este» (migración 20261223010000) ─────────────
+// El cliente solo LEE estas tablas (RLS: quien ve la marca); todo se escribe por
+// funciones. `measurement` es lo que mide el trabajador sin IA y `result`, la
+// estructura, el guion y los textos (supabase/functions/_shared/reels/like.ts).
+// La plantilla reutilizable se guarda en `brand_reel_templates` (formato compartido).
+
+export type ReelReferenceStatus = 'analyzing' | 'measured' | 'ready' | 'failed' | 'expired';
+
+export type ReelReferenceRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  job_id: string | null;
+  source_kind: 'upload' | 'link';
+  /** Solo el dominio del enlace. */
+  source_host: string | null;
+  /** Ruta del vídeo subido mientras exista (se borra tras el análisis, salvo `keep_source`). */
+  source_path: string | null;
+  keep_source: boolean;
+  speech: boolean;
+  idea: string;
+  status: ReelReferenceStatus;
+  error: string | null;
+  measurement: Json | null;
+  result: Json | null;
+  cost_micros: number;
+  generation_ids: string[];
+  content_id: string | null;
+  files_released_at: string | null;
+  ai_started_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ReelLikeTables = {
+  reel_references: Table<ReelReferenceRow>;
+};
+
+type ReelLikeFunctions = {
+  discard_reel_reference: { Args: { p_reference_id: string }; Returns: string[] };
+  set_reel_reference_content: { Args: { p_reference_id: string; p_content_id: string }; Returns: ReelReferenceRow };
+};
+
 // ───────────── Operación y control de gasto (migración 20261219010000) ─────────────
 
 export type PlatformUsageRow = {
@@ -1674,6 +1772,7 @@ type OperationTables = {
 
 type OperationFunctions = {
   platform_usage_overview: { Args: { p_period_start: string }; Returns: PlatformUsageRow[] };
+  org_usage_overview: { Args: { p_organization_id: string; p_period_start: string }; Returns: PlatformUsageRow[] };
   platform_storage_by_brand: { Args: Record<string, never>; Returns: PlatformStorageRow[] };
   platform_ai_global_status: { Args: Record<string, never>; Returns: PlatformAiGlobalStatus };
   platform_price_review: { Args: { p_period_start: string }; Returns: PlatformPriceRow[] };
@@ -1687,7 +1786,7 @@ export type Database = {
     Tables: {
       profiles: Table<ProfileRow, never, { full_name?: string; locale?: string }>;
       platform_admins: Table<{ user_id: string; created_at: string }>;
-      organizations: Table<OrganizationRow, never, { name?: string; kind?: OrgKind; settings?: Json }>;
+      organizations: Table<OrganizationRow, never, { name?: string; kind?: OrgKind; work_mode?: OrgWorkMode; settings?: Json }>;
       organization_members: Table<OrganizationMemberRow>;
       brands: Table<
         BrandRow,
@@ -1767,7 +1866,8 @@ export type Database = {
       RgpdTables &
       AnalyticsTables &
       DriveTables &
-      OperationTables;
+      OperationTables &
+      ReelLikeTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1791,6 +1891,7 @@ export type Database = {
         Returns: BrandProfileRow;
       };
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
+      asset_usage: { Args: { p_brand_id: string }; Returns: AssetUsageRow[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     } & Phase2Functions &
       ContentFunctions &
@@ -1806,7 +1907,8 @@ export type Database = {
       IntegrationFunctions &
       DriveFunctions &
       ImportFunctions &
-      OperationFunctions;
+      OperationFunctions &
+      ReelLikeFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

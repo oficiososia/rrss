@@ -35,6 +35,7 @@ import {
 import { toProviderSchema } from '../schema.ts';
 import { field, postJson, tokenCount, type FetchLike } from './http.ts';
 import { estimateTextUsage, maxOutputTokens, orderedContext, renderContextPart, TEXT_UNITS } from './prompt.ts';
+import { imageDataUrl } from './vision.ts';
 
 export const OPENAI_PROVIDER_ID = 'openai';
 const NAME = 'OpenAI';
@@ -92,7 +93,18 @@ export function buildChatBody(request: Omit<AiProviderRequest, 'signal'>): Recor
 
   const messages: Record<string, unknown>[] = [];
   if (input.instructions) messages.push({ role: 'system', content: input.instructions });
-  messages.push({ role: 'user', content: user });
+  if (input.images && input.images.length > 0) {
+    // Visión: el texto y, detrás, cada imagen con su etiqueta. Detalle bajo: las
+    // imágenes ya llegan pequeñas (512 px de lado como mucho) y así el coste es fijo.
+    const parts: unknown[] = [{ type: 'text', text: user }];
+    for (const image of input.images) {
+      if (image.label) parts.push({ type: 'text', text: image.label });
+      parts.push({ type: 'image_url', image_url: { url: imageDataUrl(image), detail: 'low' } });
+    }
+    messages.push({ role: 'user', content: parts });
+  } else {
+    messages.push({ role: 'user', content: user });
+  }
   // Vueltas anteriores: las llamadas del modelo y el resultado de cada una
   // (`role: "tool"` con su `tool_call_id`), para que siga donde lo dejó.
   for (const turn of input.toolTurns ?? []) {

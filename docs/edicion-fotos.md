@@ -992,3 +992,53 @@ archivo: «Modo retrato · plato.jpg».
   pruebas de unidad); la hoja de ejemplo sí usa el desenfoque real con máscaras
   BEN2 reales. No hay prueba de diseño a 375 px de esta pestaña (necesita el
   modelo).
+
+
+## 14. «Fondo con IA» claro: un recorte, resultado a la vista y textos del sector (rama `f45/fotos-ia`, 22/11/2026)
+
+Sale de la auditoría de usabilidad (tanda C, H8 y H9). Todo en `src/features/photo-edit/`
+salvo el aviso a la IA (`supabase/functions/`).
+
+- **Un solo recorte por foto** (`aiBackground.ts`, `existingSubject`). «Fondo con IA» busca
+  primero una selección que ya exista: el recorte de esta pantalla (el de la pestaña «Fondo»,
+  con sus retoques de pincel) o, si la foto ya viene sin fondo, su propio alfa (el modelo se lee
+  de la procedencia). Solo si no hay ninguna recorta, y ese recorte se guarda en el estado de la
+  pantalla, así que «Fondo» lo reutiliza. Una foto con fondo de color que salió de un recorte no
+  tiene alfa y se vuelve a recortar (no se guarda el recorte original).
+- **El resultado se ve antes de aplicarlo.** Al terminar la IA, la vista previa enseña el resultado
+  (con lo principal de la original vuelto a pegar encima, en memoria) y el panel ofrece
+  «Antes / Después», «Usar esta», «Probar otra vez» (misma indicación) y «Cambiar la indicación».
+  Cada intento dice lo que costó (el real que da el servidor) y el total; el siguiente dice su máximo.
+  Descartar un intento borra su archivo de la biblioteca; el estado vive en la pantalla y sobrevive
+  al cambio de pestaña. Si se sale sin elegir, el resultado se queda en la biblioteca (el servidor
+  ya lo había guardado y cobrado).
+- **Progreso real del recorte** (`progressText.ts`, `CutoutProgressBar.tsx`). En el servidor:
+  encargando, en cola, recortando, descargando (`Paso n de 4`; `serverJob.ts` emite `sending` y
+  `receiving` además de `queued`/`running`). En el navegador: descargando el modelo, recortando
+  en tu equipo. Con cuánto suele tardar, los segundos transcurridos y «Cancelar». Un único texto
+  de privacidad (`removalPrivacyNote`) que depende de lo que esté encendido: solo navegador →
+  «la foto no sale de él»; con trabajador o función de servidor → «en el navegador si puede; si
+  no, en el servidor con la foto que ya está en tu biblioteca».
+- **Términos neutros y sector** (`sector.ts`). «Plato» solo sale en la ayuda cuando el sector es
+  restauración. Las ideas de fondo salen del sector de la marca (y, si no dice nada, de la
+  descripción del perfil): restaurante, coctelería, gimnasio o genérico. La acción manda a
+  `ai-media` `subject` (`food` | `drink` | `other`); el aviso a la IA ya no supone comida
+  (`editPromptFor`: sin `subject` dice «lo principal»; con `food`/`drink` conserva su frase).
+
+### Pruebas
+
+- Unitarias (`fotosIa.test.ts`): sector, recorte existente, fases y texto de privacidad;
+  `tests/db/ia-openai-imagen.test.ts` (aviso neutro y con comida/bebida).
+- Componentes (`editarFoto.test.tsx`): recorte único en los dos sentidos y con foto sin fondo,
+  resultado a la vista con comparar/usar/repetir/cambiar y costes, progreso por fases con cancelar,
+  textos de gimnasio, coctelería y restaurante.
+- Maquetación (`tests/layout/fotos-ia.spec.ts`, navegador real a 375 y 1366 px, foto sin fondo y IA
+  simulada): sin scroll lateral, botones tocables, antes/después y segundo intento.
+
+### Límites
+
+- La IA es simulada: ningún intento llamó a un proveedor real ni se gastó nada.
+- No se probó el recorte real con BEN2 ni con el trabajador de Fly desde esta rama; las fases del
+  servidor se comprueban con dobles. La frase «suele tardar» es orientativa.
+- El aviso de «Animar con IA» (`ANIMATE_GUARD` en `ai-media/handler.ts`) sigue hablando de comida:
+  pertenece a la biblioteca, que se tocó en otra rama.

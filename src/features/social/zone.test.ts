@@ -71,8 +71,8 @@ describe('zona horaria de la marca', () => {
 
   it('los límites de la vista vuelven a ser instantes reales de esa zona', () => {
     const anchor = toZoned('2026-11-22T09:00:00Z', 'Pacific/Auckland');
-    const { from, to } = viewRange('day', anchor);
-    expect(fromZoned(from, 'Pacific/Auckland').toISOString()).toBe('2026-11-21T11:00:00.000Z'); // 22/11 00:00 NZDT
+    const { from, to } = viewRange('week', anchor);
+    expect(fromZoned(from, 'Pacific/Auckland').toISOString()).toBe('2026-11-15T11:00:00.000Z'); // lunes 16/11 00:00 NZDT
     expect(fromZoned(to, 'Pacific/Auckland').toISOString()).toBe('2026-11-22T11:00:00.000Z');
   });
 

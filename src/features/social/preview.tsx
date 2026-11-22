@@ -11,23 +11,6 @@ import { usePublicationText } from './previewData';
 // verificador (publishedText): el pie y, al final, los hashtags de la lista que
 // no estén ya en el pie.
 
-/** Miniatura pequeña para la vista de calendario. No ocupa sitio si la publicación no tiene medio. */
-export function EntryThumb({ thumb }: { thumb: { url?: string; video: boolean } | undefined }) {
-  if (!thumb) return null;
-  return (
-    <span
-      className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded bg-subtle text-muted"
-      data-testid="calendar-entry-thumb"
-    >
-      {thumb.video ? (
-        <Film className="h-3.5 w-3.5" aria-label="Vídeo" />
-      ) : thumb.url ? (
-        <ThumbImage url={thumb.url} size={24} />
-      ) : null}
-    </span>
-  );
-}
-
 const CLAMP_AT = 220;
 
 /** Imagen o vídeo elegidos y texto que se publicará, con «Ver más» si es largo. */

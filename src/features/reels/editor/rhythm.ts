@@ -222,7 +222,8 @@ export function fitCutsToBeats(
   // Cuánto puede ocupar cada clip.
   const limits = clips.map((clip) => {
     if (clip.type === 'photo') return { min: PHOTO_SECONDS.min, max: PHOTO_SECONDS.max };
-    const room = Math.min(60, (fileSeconds(clip.path) ?? Infinity) - clip.in);
+    // En segundos del reel: a otra velocidad, el mismo tramo del archivo dura más o menos.
+    const room = Math.min(60, (fileSeconds(clip.path) ?? Infinity) - clip.in) / (clip.speed ?? 1);
     return { min: MIN_SEGMENT_SECONDS, max: Math.max(MIN_SEGMENT_SECONDS, room) };
   });
   // Dónde estaba cada corte (y el final): lo que se intenta conservar.
@@ -273,5 +274,5 @@ export function fitCutsToBeats(
 /** El clip con la duración pedida: foto → `seconds`; vídeo → `out` (el punto de entrada no cambia). */
 function withLength(clip: Clip, seconds: number): Clip {
   if (clip.type === 'photo') return { ...clip, seconds: Number(Math.min(PHOTO_SECONDS.max, seconds).toFixed(2)) };
-  return { ...clip, out: Number((clip.in + seconds).toFixed(2)) };
+  return { ...clip, out: Number((clip.in + seconds * (clip.speed ?? 1)).toFixed(2)) };
 }

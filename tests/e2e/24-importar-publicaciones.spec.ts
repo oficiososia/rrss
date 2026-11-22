@@ -48,7 +48,7 @@ test('Ana importa el histórico de la cuenta y copia las imágenes a la bibliote
 
   // Las fotos se ven en la biblioteca, en su carpeta.
   await page.goto(`${marca()}/biblioteca`);
-  await page.getByLabel('Filtrar por carpeta').selectOption('Instagram / Publicadas');
+  await page.getByTestId('library-folder-Instagram / Publicadas').click();
   await expect(page.getByTestId('library-asset').first()).toBeVisible();
   expect(await page.getByTestId('library-asset').count()).toBeGreaterThan(0);
   await expect(page.getByTestId('library-asset').first()).toContainText('instagram-');

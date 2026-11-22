@@ -129,8 +129,54 @@ export function frameAt(
   template: ReelTemplateSummary,
   size: { width: number; height: number },
 ): Frame {
+  return prepareFrames(plan, timeline, template, size)(t);
+}
+
+/**
+ * Lo mismo que `frameAt`, pero preparado para pedir muchos fotogramas del MISMO montaje
+ * (la reproducción): lo que no depende del instante —el movimiento de cada foto, las
+ * líneas de cada texto y los subtítulos ya pasados a segundos del reel— se calcula una
+ * vez, no en cada fotograma. Con 15 clips y varios textos es la diferencia entre ir
+ * fluido y dar saltos.
+ */
+export function prepareFrames(
+  plan: DraftPlan,
+  timeline: PlanTimeline,
+  template: ReelTemplateSummary,
+  size: { width: number; height: number },
+): (t: number) => Frame {
   const { clips } = plan;
   const motions = photoMotions(clips, template);
+  const preparedTexts = plan.texts.map((text) => {
+    const { lines } = textLines(text.text, text.style, text.position, size.width, size.height, MAX_TEXT_LINES);
+    return { text, lines, chars: lines.reduce((n, line) => n + line.length, 0) };
+  });
+  const preparedCues = plan.subtitles?.enabled
+    ? timelineSubtitles(clips, timeline).map((cue) => ({
+        cue,
+        lines: textLines(
+          cue.text,
+          plan.subtitles!.style,
+          plan.subtitles!.position,
+          size.width,
+          size.height,
+          MAX_SUBTITLE_LINES,
+        ).lines,
+      }))
+    : [];
+  return (t) => frameOf(t, plan, timeline, template, motions, preparedTexts, preparedCues);
+}
+
+function frameOf(
+  t: number,
+  plan: DraftPlan,
+  timeline: PlanTimeline,
+  template: ReelTemplateSummary,
+  motions: Array<PhotoMotion | null>,
+  preparedTexts: Array<{ text: DraftPlan['texts'][number]; lines: string[]; chars: number }>,
+  preparedCues: Array<{ cue: ReturnType<typeof timelineSubtitles>[number]; lines: string[] }>,
+): Frame {
+  const { clips } = plan;
   const layers: FrameLayer[] = [];
   let black = 0;
   const time = Math.min(Math.max(0, t), Math.max(0, timeline.total - 1e-3));
@@ -140,7 +186,8 @@ export function frameAt(
     const start = timeline.starts[index]!;
     const duration = timeline.durations[index]!;
     if (clip.type === 'video') {
-      return { clip: index, alpha, dx, dy, sourceTime: clip.in + (time - start), zoom: 1, panX: 0.5, panY: 0.5 };
+      const sourceTime = clip.in + (time - start) * (clip.speed ?? 1);
+      return { clip: index, alpha, dx, dy, sourceTime, zoom: 1, panX: 0.5, panY: 0.5 };
     }
     const progress = duration > 0 ? (time - start) / duration : 0;
     const { zoom, panX, panY } = photoTransform(
@@ -184,12 +231,10 @@ export function frameAt(
   }
 
   const texts: FrameText[] = [];
-  for (const text of plan.texts) {
+  for (const { text, lines, chars } of preparedTexts) {
     const end = Math.min(text.end, timeline.total);
     if (time < text.start || time > end) continue;
-    const { lines } = textLines(text.text, text.style, text.position, size.width, size.height, MAX_TEXT_LINES);
     if (!lines.length) continue;
-    const chars = lines.reduce((n, line) => n + line.length, 0);
     const state = textAnimState(text.animation, text.style, time, text.start, end, chars);
     if (state.alpha <= 0) continue;
     const typewriter = text.animation?.in === 'typewriter';
@@ -200,8 +245,8 @@ export function frameAt(
       style: text.style,
       position: text.position,
       alpha: state.alpha,
-      dx: state.dx,
-      dy: state.dy,
+      dx: state.dx + (text.offset?.x ?? 0),
+      dy: state.dy + (text.offset?.y ?? 0),
       scale: state.scale,
       typewriter,
     });
@@ -210,17 +255,10 @@ export function frameAt(
   const subtitles: FrameText[] = [];
   if (plan.subtitles?.enabled) {
     const settings = plan.subtitles;
-    for (const cue of timelineSubtitles(clips, timeline)) {
+    for (const { cue, lines } of preparedCues) {
+      if (time < cue.start || time > cue.end) continue;
       const alpha = fadeAlpha(time, cue.start, cue.end, settings.style.fadeSeconds);
       if (alpha <= 0) continue;
-      const { lines } = textLines(
-        cue.text,
-        settings.style,
-        settings.position,
-        size.width,
-        size.height,
-        MAX_SUBTITLE_LINES,
-      );
       if (lines.length) {
         subtitles.push({
           key: `${cue.clip}:${cue.cue}`,
@@ -257,6 +295,8 @@ export function previewWarnings(plan: DraftPlan, template: ReelTemplateSummary, 
     warnings.push('Los deslizamientos son aproximados: en el vídeo pueden ir algo más suaves.');
   if (plan.clips.some((c) => c.type === 'photo' && (c.blur ?? 0) > 0))
     warnings.push('El desenfoque del navegador y el de FFmpeg se parecen, pero no son idénticos.');
+  if (plan.clips.some((c) => c.filter))
+    warnings.push('Los filtros de color se ven aquí aproximados: en el vídeo el tono puede cambiar un poco.');
   const families = new Set(context.loadedFamilies.map((f) => f.toLowerCase()));
   const styles = [...plan.texts.map((t) => t.style), ...(plan.subtitles?.enabled ? [plan.subtitles.style] : [])];
   const missing = new Set(

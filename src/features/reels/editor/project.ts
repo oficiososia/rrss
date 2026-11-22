@@ -1,7 +1,11 @@
 // Proyecto de reel del editor: lo que se guarda como versión de una pieza de
 // formato reel (`content_versions.data`) y lo que se encarga al trabajador.
 //
-//   { kind: 'reel', template: { id }, plan: <plan v2> }
+//   { kind: 'reel', template: { id }, plan: <plan v2>, guide?: <guion> }
+//
+// `guide` es opcional y solo vive en la versión guardada (nunca se manda al
+// trabajador): el guion de un reel hecho con «Hacer un reel como este», con los
+// planos que faltan por grabar (src/features/reels/like/draft.ts).
 //
 // El plan v2 es el mismo que valida el trabajador (worker/src/reel/schema.ts,
 // zod 4); aquí se repite con zod 3 y las mismas reglas, y un ejemplo
@@ -38,6 +42,13 @@ export const PHOTO_MOTIONS = ['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-l
 export type PhotoMotion = (typeof PHOTO_MOTIONS)[number];
 export const TEXT_POSITIONS = ['top', 'center', 'bottom'] as const;
 export type TextPosition = (typeof TEXT_POSITIONS)[number];
+/** Velocidad de un clip: de la mitad al doble. Sin el campo, 1 (la del archivo). */
+export const CLIP_SPEED = { min: 0.5, max: 2 } as const;
+/** Filtros de color de un clip o una foto: los mismos nombres que los filtros rápidos de las fotos. */
+export const CLIP_FILTERS = ['bw', 'sepia', 'vivid', 'warm', 'cool', 'fade', 'drama'] as const;
+export type ClipFilter = (typeof CLIP_FILTERS)[number];
+/** Cuánto se puede apartar un texto de su sitio (fracción del ancho y del alto). */
+export const TEXT_OFFSET_LIMIT = 0.5;
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color en formato #RRGGBB');
 const storagePath = z.string().min(5).max(600);
@@ -45,6 +56,13 @@ const fontPath = storagePath.regex(/\.(ttf|otf)$/i, 'La tipografía debe ser .tt
 const elementId = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
 const focalPoint = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
 const blur = z.number().min(0).max(100).optional();
+const clipFilter = z.enum(CLIP_FILTERS).optional();
+const textOffset = z
+  .object({
+    x: z.number().min(-TEXT_OFFSET_LIMIT).max(TEXT_OFFSET_LIMIT),
+    y: z.number().min(-TEXT_OFFSET_LIMIT).max(TEXT_OFFSET_LIMIT),
+  })
+  .strict();
 
 export const transitionSchema = z
   .object({ type: z.enum(TRANSITION_TYPES), seconds: z.number().min(0).max(2) })
@@ -105,6 +123,7 @@ const photoClipSchema = z
     seconds: z.number().min(PHOTO_SECONDS.min).max(PHOTO_SECONDS.max),
     motion: z.enum(PHOTO_MOTIONS).optional(),
     motionAmount: z.number().min(0).max(0.3).optional(),
+    filter: clipFilter,
   })
   .strict();
 const videoClipSchema = z
@@ -119,6 +138,9 @@ const videoClipSchema = z
     out: z.number().positive(),
     volume: z.number().min(0).max(1),
     subtitles: z.array(cueSchema).max(REEL_MAX_CUES).optional(),
+    /** Velocidad (0,5 a 2): el tramo dura (out − in) / speed y el sonido se acelera igual, sin cambiar de tono. */
+    speed: z.number().min(CLIP_SPEED.min).max(CLIP_SPEED.max).optional(),
+    filter: clipFilter,
   })
   .strict();
 export const clipSchema = z.discriminatedUnion('type', [photoClipSchema, videoClipSchema]);
@@ -135,10 +157,15 @@ export const textSchema = z
     position: z.enum(TEXT_POSITIONS),
     style: textStyleSchema,
     animation: textAnimationSchema.optional(),
+    /** Desplazamiento desde su sitio (arriba, centro o abajo), como fracción del ancho y del alto. */
+    offset: textOffset.optional(),
   })
   .strict()
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
 export type ReelText = z.infer<typeof textSchema>;
+
+/** Velocidad de un elemento: la del clip, o 1 (fotos y clips sin el campo). */
+export const clipSpeed = (clip: Clip): number => (clip.type === 'video' ? (clip.speed ?? 1) : 1);
 
 export const musicSchema = z
   .object({
@@ -190,10 +217,56 @@ export type { TextAnimation };
 /** Plan en edición: puede no tener todavía ningún elemento. */
 export type DraftPlan = Omit<ReelPlan, 'clips'> & { clips: Clip[] };
 
+// ───────────────────────────── Guion («Hacer un reel como este») ─────────────────────────────
+
+export const GUIDE_SHOT_KINDS = ['detalle', 'general', 'persona', 'texto'] as const;
+export const GUIDE_TEXT_SIZES = ['grande', 'normal', 'pequeno'] as const;
+
+/** Un plano del guion. Sin `clipId` (o si ese clip ya no está en el reel), falta por grabar. */
+export const guideShotSchema = z
+  .object({
+    id: elementId,
+    /** Qué grabar (o qué foto usar). */
+    label: z.string().min(1).max(240),
+    tip: z.string().max(240).optional(),
+    kind: z.enum(GUIDE_SHOT_KINDS),
+    media: z.enum(['foto', 'video']),
+    seconds: z.number().min(0.1).max(180),
+    /** Cómo se entra desde el plano anterior. */
+    transition: transitionSchema.optional(),
+    clipId: elementId.optional(),
+  })
+  .strict();
+export type GuideShot = z.infer<typeof guideShotSchema>;
+
+/** Un texto en pantalla del guion: se ve durante los planos `fromShot`…`toShot`. */
+export const guideTextSchema = z
+  .object({
+    id: elementId,
+    text: z.string().min(1).max(REEL_TEXT_MAX_LENGTH),
+    position: z.enum(TEXT_POSITIONS),
+    size: z.enum(GUIDE_TEXT_SIZES),
+    fromShot: elementId,
+    toShot: elementId,
+  })
+  .strict();
+export type GuideText = z.infer<typeof guideTextSchema>;
+
+export const guideSchema = z
+  .object({
+    /** Análisis del que sale (`reel_references.id`). */
+    referenceId: z.string().uuid(),
+    shots: z.array(guideShotSchema).min(1).max(REEL_MAX_CLIPS),
+    texts: z.array(guideTextSchema).max(REEL_MAX_TEXTS).default([]),
+  })
+  .strict();
+export type ReelGuide = z.infer<typeof guideSchema>;
+
 export interface ReelProject {
   kind: typeof PROJECT_KIND;
   template: { id: string };
   plan: DraftPlan;
+  guide?: ReelGuide;
 }
 
 export const projectSchema = z
@@ -201,8 +274,58 @@ export const projectSchema = z
     kind: z.literal(PROJECT_KIND),
     template: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/) }).strict(),
     plan: planSchema,
+    guide: guideSchema.optional(),
   })
   .strict();
+
+// ───────────────────────────── Borrador automático ─────────────────────────────
+
+const draftClipSchema = z.discriminatedUnion('type', [
+  z.object({ id: elementId, type: z.literal('photo'), path: storagePath, seconds: z.number().positive() }).passthrough(),
+  z
+    .object({
+      id: elementId,
+      type: z.literal('video'),
+      path: storagePath,
+      in: z.number().min(0),
+      out: z.number().positive(),
+      volume: z.number().min(0).max(1),
+    })
+    .passthrough(),
+]);
+const draftTextSchema = z
+  .object({
+    id: elementId,
+    text: z.string().max(REEL_TEXT_MAX_LENGTH),
+    start: z.number().min(0),
+    end: z.number().min(0),
+    position: z.enum(TEXT_POSITIONS),
+    style: textStyleSchema,
+  })
+  .passthrough();
+const draftSchema = z.object({
+  kind: z.literal(PROJECT_KIND),
+  template: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/) }).strict(),
+  plan: z
+    .object({
+      version: z.literal(REEL_PLAN_VERSION),
+      clips: z.array(draftClipSchema).max(REEL_MAX_CLIPS),
+      texts: z.array(draftTextSchema).max(REEL_MAX_TEXTS).default([]),
+    })
+    .passthrough(),
+  guide: guideSchema.optional(),
+});
+
+/**
+ * Lee un borrador automático (`reel_drafts.data`). Es el montaje a medio hacer, tal cual
+ * estaba: puede no tener todavía ningún clip o tener un texto vacío, así que solo se
+ * comprueba lo que el editor necesita para abrirlo. Null si no se puede usar.
+ */
+export function parseDraftProject(data: unknown): ReelProject | null {
+  if (!isReelProject(data)) return null;
+  const parsed = draftSchema.safeParse(data);
+  return parsed.success ? (parsed.data as unknown as ReelProject) : null;
+}
 
 export class ProjectError extends Error {
   override name = 'ProjectError';
@@ -414,7 +537,8 @@ export function planTimeline(
     if (clip.type === 'photo') return frames(clip.seconds) / fps;
     const available = fileSeconds(clip);
     const end = available === null ? clip.out : Math.min(clip.out, available);
-    return Math.max(0, Math.floor((end - clip.in) * fps) / fps);
+    // A otra velocidad el tramo dura (out − in) / speed; con speed = 1 la cuenta es la de siempre.
+    return Math.max(0, Math.floor(((end - clip.in) / (clip.speed ?? 1)) * fps) / fps);
   });
   const transitions = clips.map((clip, index) => {
     if (index === 0) return 0;
@@ -447,16 +571,17 @@ export function timelineSubtitles(clips: Clip[], timeline: Pick<PlanTimeline, 'd
   const out: TimelineCue[] = [];
   clips.forEach((clip, index) => {
     if (clip.type !== 'video' || !clip.subtitles) return;
+    const speed = clip.speed ?? 1;
     const from = clip.in;
-    const to = clip.in + timeline.durations[index]!;
+    const to = clip.in + timeline.durations[index]! * speed;
     clip.subtitles.forEach((cue, cueIndex) => {
       const a = Math.max(cue.start, from);
       const b = Math.min(cue.end, to);
-      if (b - a < 0.2) return;
-      const start = timeline.starts[index]! + (a - from);
+      if ((b - a) / speed < 0.2) return;
+      const start = timeline.starts[index]! + (a - from) / speed;
       out.push({
         start: Number(start.toFixed(3)),
-        end: Number((start + (b - a)).toFixed(3)),
+        end: Number((start + (b - a) / speed).toFixed(3)),
         text: cue.text,
         clip: index,
         cue: cueIndex,

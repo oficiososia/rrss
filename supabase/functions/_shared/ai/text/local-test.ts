@@ -279,6 +279,106 @@ function campaignPlan(request: AiProviderRequest): string {
   });
 }
 
+/**
+ * Rellenar el formulario de una campaña (`campaign.brief`), con reglas fijas y
+ * sin modelo. Entiende «N semanas», «hasta navidad(es)», el nombre de una red y
+ * «reels»; sin tema (menos de tres palabras) y sin respuesta previa, pregunta.
+ * Ante «ignora lo anterior» imita a un modelo comprometido: una red que no está
+ * en la lista y fechas pasadas (el producto las descarta).
+ */
+function campaignBrief(request: AiProviderRequest): string {
+  const prompt = request.input.prompt;
+  const instruction = material(request, 'lo que quiere') ?? '';
+  const today = material(request, 'hoy') ?? '2026-01-01';
+  const answer = material(request, 'respuesta');
+  const current = (() => {
+    try {
+      return JSON.parse(material(request, 'propuesta actual') ?? 'null') as {
+        startDate: string;
+        endDate: string;
+        networks: string[];
+        mix: { network: string; format: string; perWeek: number }[];
+        title: string;
+        objective: string;
+        weeks: { title: string; focus: string }[];
+      } | null;
+    } catch {
+      return null;
+    }
+  })();
+  const targets = [...prompt.matchAll(/- Destino: ([a-z0-9_]+)\/([a-z0-9_]+)/g)].map((m) => ({
+    network: m[1]!,
+    format: m[2]!,
+  }));
+  const empty = {
+    question: '',
+    title: '',
+    objective: '',
+    networks: [] as string[],
+    startDate: '',
+    endDate: '',
+    perWeek: 0,
+    mix: [] as { network: string; format: string; perWeek: number }[],
+    weeks: [] as { title: string; focus: string }[],
+    why: '',
+  };
+  const words = instruction.split(/\s+/).filter(Boolean).length;
+  if (!current && !answer && words < 3) {
+    return JSON.stringify({ ...empty, question: '¿De qué trata la campaña o qué quieres dar a conocer?' });
+  }
+
+  const day = (value: string) => Date.parse(`${value}T00:00:00Z`) / 86_400_000;
+  const iso = (n: number) => new Date(n * 86_400_000).toISOString().slice(0, 10);
+  const todayN = day(today);
+  const monday = todayN + (((8 - new Date(todayN * 86_400_000).getUTCDay()) % 7) || 7);
+  const text = `${instruction} ${answer ?? ''}`.toLowerCase();
+
+  let start = monday;
+  let weeks = Number(/(\d+)\s+semanas?/.exec(text)?.[1] ?? '0');
+  if (/navidad/.test(text)) {
+    const year = new Date(todayN * 86_400_000).getUTCFullYear();
+    weeks = Math.max(1, Math.ceil((day(`${year}-12-24`) - monday + 1) / 7));
+  }
+  if (!weeks) weeks = 3;
+  if (current) {
+    start = day(current.startDate);
+    weeks = Math.max(1, Math.ceil((day(current.endDate) - start + 1) / 7));
+    if (/acorta/.test(prompt)) weeks = Math.max(1, weeks - 1);
+    if (/alarga/.test(prompt)) weeks += 1;
+  }
+  weeks = Math.min(9, weeks);
+
+  const named = [...new Set(targets.map((t) => t.network))].filter((n) => text.includes(n));
+  const networks = named.length ? named : current?.networks?.length ? current.networks : [targets[0]?.network ?? 'instagram'];
+  const reels = /reels?/.test(text);
+  const mix = networks.flatMap((network) => {
+    const formats = targets.filter((t) => t.network === network);
+    const reel = formats.find((f) => /reel|video|short/.test(f.format));
+    const rest = formats.find((f) => f !== reel) ?? formats[0];
+    const out: { network: string; format: string; perWeek: number }[] = [];
+    if (reel && reels) out.push({ network, format: reel.format, perWeek: 2 });
+    if (rest && !(rest === reel && out.length)) out.push({ network, format: rest.format, perWeek: reels ? 1 : 2 });
+    return out;
+  });
+  const names = ['Anuncio', 'Platos', 'Cierre', 'Recuerdo'];
+  const evil = /ignora lo anterior/i.test(`${instruction} ${prompt}`);
+  return JSON.stringify({
+    ...empty,
+    title: current?.title ?? `[simulado] ${sentence(instruction.slice(0, 40)).replace(/\.$/, '')}`,
+    objective: current?.objective ?? `[simulado] ${sentence(instruction.slice(0, 120))}`,
+    networks: evil ? ['x', ...networks] : networks,
+    startDate: evil ? '2001-01-01' : iso(start),
+    endDate: evil ? '2001-02-01' : iso(start + weeks * 7 - 1),
+    perWeek: mix.reduce((sum, m) => sum + m.perWeek, 0),
+    mix,
+    weeks: Array.from({ length: weeks }, (_, i) => ({
+      title: names[Math.min(i, names.length - 1)]!,
+      focus: `[simulado] Semana ${i + 1} de ${weeks}.`,
+    })),
+    why: `[simulado] Te propongo ${weeks} ${weeks === 1 ? 'semana' : 'semanas'} porque lo pide el texto o, si no, es lo normal.`,
+  });
+}
+
 /** Analítica: una hipótesis por cada uno de los dos primeros datos, citándolo; nada inventado. */
 function analyticsSummary(request: AiProviderRequest): string {
   let datos: Array<{ id: string; dato: string }> = [];
@@ -460,13 +560,76 @@ function editorCopilotTools(request: AiProviderRequest): { text: string; tool_ca
   return { text: '', tool_calls: [...all, { name: 'done', arguments: { note } }] };
 }
 
+/**
+ * «Hacer un reel como este», determinista: NO mira los fotogramas. Lee la
+ * medición (cuántos planos y si son imagen fija) y reparte tipos de plano en
+ * orden; los textos salen del perfil y de la idea de la marca. Sirve para
+ * probar el circuito entero (cupo, registro, guardado, borrador) sin un modelo.
+ */
+function reelLike(request: AiProviderRequest): string {
+  const profile = profileOf(request);
+  let shots: Array<{ plano: number; imagen_fija?: boolean }> = [];
+  try {
+    const parsed = JSON.parse(material(request, 'medición del vídeo de referencia') ?? '{}') as {
+      planos?: Array<{ plano: number; imagen_fija?: boolean }>;
+    };
+    shots = parsed.planos ?? [];
+  } catch {
+    shots = [];
+  }
+  let library: { carpetas?: string[]; etiquetas?: string[] } = {};
+  try {
+    library = JSON.parse(material(request, 'biblioteca de la marca') ?? '{}') as typeof library;
+  } catch {
+    library = {};
+  }
+  const vocabulary = [...(library.etiquetas ?? []), ...(library.carpetas ?? [])].map((w) => w.toLowerCase());
+  const idea = withoutVetoes(material(request, 'idea de la marca para su reel') ?? '', profile);
+  const spoken = material(request, 'lo que se dice en el vídeo de referencia');
+  const message = profile.voice?.keyMessages?.[0] ?? profile.business?.description ?? 'Lo que hacemos';
+  const cta = profile.voice?.callsToAction?.[0] ?? (formal(profile) ? 'Le esperamos' : 'Te esperamos');
+  const kinds = ['detalle', 'general', 'persona', 'detalle'];
+  const count = Math.max(1, shots.length);
+  const hashtags = [...(profile.voice?.hashtags?.required ?? []), ...(profile.voice?.hashtags?.recommended ?? [])];
+  return JSON.stringify({
+    name: `[simulado] Gancho + ${Math.max(0, count - 2)} planos + cierre`,
+    summary: `[simulado] Estructura de ${count} planos${spoken ? ', con voz' : ''}; ${request.input.images?.length ?? 0} fotogramas recibidos.`,
+    pace: 'medio',
+    audioKind: spoken ? 'voz-y-musica' : 'musica',
+    title: sentence(idea || message).replace(/\.$/, ''),
+    idea: sentence(idea || message),
+    shots: shots.map((shot, i) => ({
+      index: shot.plano,
+      kind: kinds[i % kinds.length],
+      media: shot.imagen_fija ? 'foto' : 'video',
+      description: `[simulado] Plano ${shot.plano} de la referencia`,
+      what: `[simulado] ${sentence(message)} (plano ${shot.plano})`,
+      tip: formal(profile) ? 'Grabe con luz natural y el móvil en vertical.' : 'Graba con luz natural y el móvil en vertical.',
+      search: vocabulary.length ? [vocabulary[i % vocabulary.length]!] : ['plano'],
+    })),
+    texts: [
+      { role: 'gancho', position: 'top', size: 'grande', fromShot: 1, toShot: 1, value: sentence(idea || message).slice(0, 60) },
+      ...(count > 1
+        ? [{ role: 'llamada', position: 'center', size: 'normal', fromShot: count, toShot: count, value: sentence(cta).slice(0, 60) }]
+        : []),
+    ],
+    hook: sentence(idea || message),
+    caption: [sentence(message), sentence(cta)].filter(Boolean).join(' '),
+    hashtags: hashtags.map((tag) => tag.replace(/^#+/, '')),
+    coverShot: 1,
+    coverNote: '[simulado] El primer plano con el gancho.',
+  });
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
+  reel_like: reelLike,
   editor_copilot: editorCopilot,
   analytics_summary: analyticsSummary,
   post_copy: postCopy,
   brand_check: brandCheck,
   brand_profile_proposal: profileProposal,
   campaign_plan: campaignPlan,
+  campaign_brief: campaignBrief,
 };
 
 export function createLocalTestProvider(): SimulatedProvider {

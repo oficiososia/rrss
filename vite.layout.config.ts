@@ -11,6 +11,18 @@ export default defineConfig({
   plugins: [
     react(),
     {
+      // «Editar foto → Fondo con IA» (fotos-ia.html) necesita la edición de fotos con IA encendida, pero
+      // encenderla para todos los bancos cambia el panel de fotos del editor. Solo se enciende si el banco
+      // lo pide (`window.__AI_PHOTO_EDIT__ = true` antes de pintar).
+      name: 'edicion-de-fotos-con-ia-a-peticion',
+      transform(code, id) {
+        if (!id.split('\\').join('/').endsWith('/src/config/app.ts')) return null;
+        // (El código ya llega con comillas dobles: se aceptan las dos.)
+        const reads = /import\.meta\.env\.VITE_AI_PHOTO_EDIT_ENABLED === (["'])true\1/;
+        return code.replace(reads, (found) => `(${found} || globalThis.__AI_PHOTO_EDIT__ === true)`);
+      },
+    },
+    {
       // Cualquier ruta de la aplicación (recargas incluidas) sirve el banco, no el index.html real.
       name: 'banco-de-maquetacion',
       configureServer(server) {
@@ -29,6 +41,16 @@ export default defineConfig({
       { find: '@/lib/supabase', replacement: here('./tests/layout/supabase-fake.ts') },
       { find: '@', replacement: here('./src') },
     ],
+  },
+  // «Hacer un reel como este» (reel-como-este.html) solo se ofrece con estos dos interruptores:
+  // en el banco van encendidos. El banco del editor de piezas no depende de ellos.
+  define: {
+    'import.meta.env.VITE_MEDIA_WORKER_ENABLED': JSON.stringify('true'),
+    'import.meta.env.VITE_REEL_LIKE_ENABLED': JSON.stringify('true'),
+    // «Preparar un plan con IA» (campanas-voz.html) solo se ofrece con la IA de texto encendida.
+    'import.meta.env.VITE_AI_TEXT_ENABLED': JSON.stringify('true'),
+    // El banco del calendario enseña «Programar», el «+» de los días y «Por programar».
+    'import.meta.env.VITE_SOCIAL_PUBLISHING_ENABLED': JSON.stringify('true'),
   },
   server: { port: 5391, strictPort: true },
   optimizeDeps: { exclude: ['onnxruntime-web'] },

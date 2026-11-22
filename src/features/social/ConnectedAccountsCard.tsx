@@ -22,6 +22,7 @@ import {
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
 import { useBrand } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -54,6 +55,7 @@ export function ConnectedAccountsCard() {
   const location = useLocation();
   const user = useUser();
   const platformAdmin = useIsPlatformAdmin(user.id).data === true;
+  const { selfManaged } = useWorkMode();
 
   // Desde un aviso («Conectar cuenta»): bajar hasta esta tarjeta en cuanto se pinta.
   const linked = location.hash === `#${CONNECTED_ACCOUNTS_ANCHOR}`;
@@ -89,7 +91,12 @@ export function ConnectedAccountsCard() {
   };
 
   const needsConnecting = !instagram || instagram.status === 'needs_reauth';
-  const tokenLabel = instagram?.connection_method === 'token' ? 'Renovar la conexión avanzada' : 'Conexión avanzada (agencia)';
+  const tokenLabel =
+    instagram?.connection_method === 'token'
+      ? 'Renovar la conexión avanzada'
+      : selfManaged
+        ? 'Conexión avanzada (con clave)'
+        : 'Conexión avanzada (agencia)';
   const tokenButton = (variant: 'primary' | 'secondary') => (
     <Button variant={variant} size="sm" onClick={() => setPasting(true)} data-testid="social-connect-token">
       <KeyRound className="h-4 w-4" aria-hidden />
@@ -141,7 +148,9 @@ export function ConnectedAccountsCard() {
                 </summary>
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted">
-                    Para agencias que ya tienen su propia aplicación de Meta y una clave de acceso de página de larga duración.
+                    {selfManaged
+                      ? 'Para quien ya tiene su propia aplicación de Meta y una clave de acceso de página de larga duración.'
+                      : 'Para agencias que ya tienen su propia aplicación de Meta y una clave de acceso de página de larga duración.'}
                   </p>
                   {tokenButton('secondary')}
                 </div>
@@ -167,8 +176,9 @@ export function ConnectedAccountsCard() {
             why={
               <>
                 El botón «Conectar con Meta» sale cuando la plataforma tiene completa su aplicación de Meta, incluida la
-                dirección de vuelta a la aplicación. Mientras tanto, se puede conectar la cuenta con la conexión avanzada,
-                que suele preparar la agencia.
+                dirección de vuelta a la aplicación. Mientras tanto, se puede conectar la cuenta con la conexión
+                avanzada
+                {selfManaged ? ', con vuestra propia clave de Meta.' : ', que suele preparar la agencia.'}
               </>
             }
             data-testid="social-oauth-off"
@@ -294,6 +304,7 @@ function TokenConnectDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const connect = useConnectWithToken(brandId);
+  const { selfManaged } = useWorkMode();
   const [igUserId, setIgUserId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -328,7 +339,11 @@ function TokenConnectDialog({
       open={open}
       onOpenChange={close}
       title="Conexión avanzada de Instagram"
-      description="Para cuentas que ya tienen su aplicación de Meta y una clave de acceso de página de larga duración. Normalmente la hace tu agencia."
+      description={
+        selfManaged
+          ? 'Para cuentas que ya tienen su aplicación de Meta y una clave de acceso de página de larga duración.'
+          : 'Para cuentas que ya tienen su aplicación de Meta y una clave de acceso de página de larga duración. Normalmente la hace tu agencia.'
+      }
       footer={
         <>
           <Button variant="ghost" onClick={() => close(false)}>
