@@ -91,6 +91,13 @@ export interface AiInput {
    */
   cacheKey?: string;
   /**
+   * Imágenes que el modelo tiene que mirar (visión), cada una con una etiqueta
+   * que se le enseña justo antes («Plano 2, segundo 3,1»). Son datos: nunca
+   * van al registro. Solo las admiten los adaptadores que lo dicen
+   * (`text/vision.ts`, `supportsImages`).
+   */
+  images?: Array<{ data: Uint8Array; mimeType: string; label?: string }>;
+  /**
    * Sonido que transcribir (tarea `transcription`): trozos ya cortados por
    * quien llama, cada uno con su duración. Nunca va al registro.
    */

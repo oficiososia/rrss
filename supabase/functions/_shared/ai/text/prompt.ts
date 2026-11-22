@@ -54,6 +54,17 @@ const SCHEMA_OVERHEAD_TOKENS = 400;
 const upperTokens = (chars: number) => Math.ceil(chars / CHARS_PER_TOKEN_FLOOR);
 
 /**
+ * Cota de tokens de entrada por imagen (visión), para reservar. Las imágenes que
+ * se mandan miden como mucho 512 px de lado: OpenAI en detalle bajo cobra 85
+ * tokens fijos en unos modelos y por teselas de 32 px en otros (hasta 256
+ * teselas × 2,46 ≈ 630); Anthropic, ancho × alto / 750 (≈ 350). El coste real
+ * es el que devuelve el proveedor.
+ */
+export const IMAGE_TOKENS_UPPER = 800;
+/** Tokens de la etiqueta que acompaña a cada imagen. */
+const IMAGE_LABEL_TOKENS = 20;
+
+/**
  * Consumo máximo previsible de una petición de texto. Con `cacheWrites`, el
  * material estable se cuenta como escritura de caché (su precio más alto).
  */
@@ -65,7 +76,8 @@ export function estimateTextUsage(input: AiInput, options: { cacheWrites: boolea
   const fixed =
     upperTokens((input.instructions ?? '').length + input.prompt.length + chars(volatile) + schemaChars) +
     BASE_OVERHEAD_TOKENS +
-    (input.outputSchema ? SCHEMA_OVERHEAD_TOKENS : 0);
+    (input.outputSchema ? SCHEMA_OVERHEAD_TOKENS : 0) +
+    (input.images?.length ?? 0) * (IMAGE_TOKENS_UPPER + IMAGE_LABEL_TOKENS);
   const stable = cacheable.length > 0 ? upperTokens(chars(cacheable)) : 0;
 
   const usage: AiUsage = { [TEXT_UNITS.output]: maxOutputTokens(input) };

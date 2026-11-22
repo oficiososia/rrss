@@ -26,6 +26,8 @@ import {
 import { createSimulatedTranscriptionProvider, SIMULATED_TRANSCRIPTION_MODEL } from './simulated.ts';
 
 export const TRANSCRIPTION_PURPOSE = 'reel.subtitles';
+/** Lo que se dice en un vídeo de referencia («Hacer un reel como este»). */
+export const REFERENCE_TRANSCRIPT_PURPOSE = 'reel.like.transcript';
 
 /** Precio por defecto, en micros por segundo: (precio por minuto × 1,10) / 60 × 10⁶. */
 export const DEFAULT_TRANSCRIPTION_PRICES: Record<string, number> = {
@@ -68,7 +70,7 @@ export function loadTranscriptionConfig(env: Env, options: { fetch?: Transcripti
           model: SIMULATED_TRANSCRIPTION_MODEL,
           task: 'transcription',
           microsPerUnit: { [TRANSCRIPTION_UNIT]: LOCAL_TEST_TRANSCRIPTION_PRICE },
-          purposes: [TRANSCRIPTION_PURPOSE],
+          purposes: [TRANSCRIPTION_PURPOSE, REFERENCE_TRANSCRIPT_PURPOSE],
         },
       ],
       unavailable: {},
@@ -115,7 +117,7 @@ export function loadTranscriptionConfig(env: Env, options: { fetch?: Transcripti
       model,
       task: 'transcription',
       microsPerUnit: { [TRANSCRIPTION_UNIT]: rate },
-      purposes: [TRANSCRIPTION_PURPOSE],
+      purposes: [TRANSCRIPTION_PURPOSE, REFERENCE_TRANSCRIPT_PURPOSE],
     });
   }
   for (const [id, reason] of Object.entries(unavailable))

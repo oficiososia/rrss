@@ -38,12 +38,20 @@ export interface SimulatedProvider extends AiProvider {
 const SUPPORTED: AiTask[] = ['text', 'image'];
 const DEFAULT_MAX_OUTPUT_TOKENS = 256;
 
+/** Lo que «cuesta» mirar una imagen en el proveedor simulado (inventado). */
+export const SIMULATED_IMAGE_TOKENS = 100;
+
 /** Aproximación fija: un token cada cuatro caracteres. */
 const tokens = (text: string) => Math.ceil(text.length / 4);
 
 function inputTokens(request: Pick<AiProviderRequest, 'input'>): number {
-  const { instructions = '', prompt, context = [] } = request.input;
-  return tokens(instructions) + tokens(prompt) + context.reduce((sum, part) => sum + tokens(part.content), 0);
+  const { instructions = '', prompt, context = [], images = [] } = request.input;
+  return (
+    tokens(instructions) +
+    tokens(prompt) +
+    context.reduce((sum, part) => sum + tokens(part.content), 0) +
+    images.length * SIMULATED_IMAGE_TOKENS
+  );
 }
 
 function numberParam(request: Pick<AiProviderRequest, 'input'>, name: string, fallback: number): number {
