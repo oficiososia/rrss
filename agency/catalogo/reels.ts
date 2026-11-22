@@ -120,7 +120,7 @@ function build(base: Base): Document {
     texts: base.texts,
     music: base.music,
     cover: base.cover,
-    origin: { note: 'Catálogo de la agencia (docs/plantillas-competencia.md).' },
+    origin: { note: 'Catálogo de plantillas (docs/plantillas-competencia.md).' },
   };
 }
 

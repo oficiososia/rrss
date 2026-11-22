@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f37/copiloto-herramientas` y `f36/reel-como-este`).
+Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -20,6 +20,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
 | Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
+| Modo de trabajo de la organización | «Lo llevamos nosotros» (autogestión) o «Nos lo lleva una agencia» por organización; en autogestión toda la IA a mano, sin Encargos ni textos de agencia; «Cargar plantillas del catálogo» desde la app; gasto propio para el propietario (`docs/modo-de-trabajo.md`) | Base de datos (PGlite) y componentes; el modo agencia sigue pasando sus pruebas | Aplicar `20261227010000` en staging; verlo en un navegador real; «Tareas» internas en vez de Encargos | — |
 | Legal / RGPD | Páginas como plantillas, consentimiento, descarga, borrado, registro de tratamientos, etiqueta de IA | Base de datos y e2e 17 | Revisión de abogado, contratos de encargo, plazos | Abogado |
 
 **En staging** (https://rrss-omega.vercel.app), según el último dato verificado

@@ -131,7 +131,12 @@ test('preparación: cuentas de la clienta y de la agencia, invitaciones y marca 
   const enlaceAgencia = await invitar(ana.page, correoDe('agencia'), 'editor');
   const enlaceClienta = await invitar(ana.page, correoDe('clienta'), 'client');
 
-  // La marca pasa a modo agencia: lo decide quien la gestiona.
+  // Las organizaciones nacen en autogestión: la organización pasa a «Nos lo lleva una agencia»…
+  await ana.page.goto(`/o/${dato('orgA')}/ajustes/general`);
+  await ana.page.getByTestId('work-mode-agency').check();
+  await ana.page.getByTestId('work-mode-save').click();
+  await aviso(ana.page, 'Cambios guardados');
+  // …y la marca pasa a modo agencia: lo decide quien la gestiona.
   await ana.page.goto(`${marca()}/marca`);
   await ana.page.getByRole('tab', { name: 'Datos de la marca' }).click();
   await ana.page.getByTestId('brand-ai-mode').selectOption('agency');

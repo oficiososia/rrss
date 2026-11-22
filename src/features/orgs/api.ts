@@ -8,6 +8,7 @@ import type {
   OrganizationRow,
   OrgKind,
   OrgRole,
+  OrgWorkMode,
   ProfileRow,
 } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
@@ -74,11 +75,16 @@ export function useCreateOrganization(userId: string) {
 export function useUpdateOrganization(orgId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { name: string; kind: OrgKind }) => {
+    mutationFn: async (input: { name?: string; kind?: OrgKind; work_mode?: OrgWorkMode }) => {
       const rows = unwrap(await supabase.from('organizations').update(input).eq('id', orgId).select('id'));
       if (rows.length === 0) throw { code: '42501', message: 'permission denied' };
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['orgs'] }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['orgs'] }),
+        // Al pasar a autogestión las marcas vuelven a redactar con IA: se leen de nuevo.
+        queryClient.invalidateQueries({ queryKey: ['org', orgId] }),
+      ]),
   });
 }
 

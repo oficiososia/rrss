@@ -13,6 +13,8 @@ respuestas HTTP simuladas. Tampoco hay pantallas: es la parte de servidor.
 | Arranque de `ai-generate` en Deno (`index.ts`) | Ejecutado **solo en local** (`supabase functions serve`, edge-runtime 1.74) con el proveedor simulado de pruebas locales, en la prueba de extremo a extremo de la Fase 2. **Sin desplegar** |
 | Interfaz (redactar en el editor, comprobar tono, proponer perfil desde fuentes de texto, consumo de IA, cupo en Plataforma) | Probada con Supabase simulado (componentes) y de extremo a extremo en local con el proveedor simulado |
 
+**Modo agencia.** `ai-generate` rechaza con 409 `agency_mode` las marcas con `brands.ai_mode = 'agency'`. Una organización en autogestión (`organizations.work_mode = 'self'`, `docs/modo-de-trabajo.md`) nunca tiene marcas en ese modo —lo impone la base de datos—, así que allí la IA de texto está disponible para quien puede editar la marca, dentro del cupo.
+
 ## 1. Dónde está cada cosa
 
 ```
