@@ -574,8 +574,9 @@ Decisión del dueño: probar BEN2 en el servidor con la máquina de Fly que ya e
 - **Qué queda en la biblioteca.** El PNG que deja el trabajo es un recurso propio (carpeta
   «Ediciones», listado entre las ediciones de la foto). El panel baja ese PNG, **solo usa su
   alfa** y lo pone sobre los píxeles que ya tiene; si luego se guarda otra edición (fondo
-  nuevo…), esa es otra copia. Es decir, un recorte por el servidor deja el PNG intermedio en la
-  biblioteca además del resultado final. Límite conocido, aceptado por sencillez.
+  nuevo…), esa es otra copia. **Desde `f31`** ese PNG intermedio se borra en cuanto se lee su alfa (solo si sigue siendo el
+  archivo de ese trabajo: procedencia `media_job` con su `job_id`, carpeta «Ediciones» y nombre «Sin fondo · …»;
+  si alguien lo renombró o movió, se queda) y la biblioteca se refresca sola.
 
 **Medido** (22/11/2026, Windows, procesador de escritorio, `onnxruntime-node` 1.30.0, 2 hilos,
 arena desactivada, `worker/scripts/bench-cutout.ts`: manejador completo, un proceso por foto):
@@ -873,6 +874,7 @@ hecha, no la original) y «Abrir».
   vista previa del fondo con el color elegido; comparar; deshacer una copia de
   la biblioteca. Los E2E de Playwright (22, 25, 26) se ajustaron al botón
   principal pero **no se han ejecutado** en esta rama.
+- **Esc** (`f31`): si el botón pulsado desaparece y el foco se pierde, la pantalla lo recupera y Esc cierra igualmente.
 - **No probado a mano en un navegador real**: el dibujo del lienzo (tamaño de la
   foto, comparar, diseño en móvil a 375 px) solo está cubierto por pruebas de
   componentes en jsdom; queda por revisar con la aplicación abierta.
@@ -947,10 +949,12 @@ archivo: «Modo retrato · plato.jpg».
   amplía; el radio es una fracción del lado mayor, así que la foto de 12 MP y
   su vista previa (1000 px) dan lo mismo (prueba: la misma escena a 300 y a 900
   px, diferencia media bajo 4 niveles). El pegado final usa el alfa completo, de
-  modo que el borde conserva todo su detalle. Al guardar se hace en el hilo
-  principal tras ceder un turno al navegador (el desenfoque trabaja a 720 px,
-  la parte a tamaño completo es el pegado); **no hay trabajador** (no hizo falta,
-  ver «Límites»).
+  modo que el borde conserva todo su detalle. Al guardar, desde `f31`, el
+  cálculo a tamaño completo (trazos del pincel + modo retrato) corre en un **worker**
+  (`portrait/retouch.ts` y `retouch.worker.ts`; sin Workers, en el hilo principal). Medido
+  en Node con 12 MP y 40 trazos: 2,4 s los trazos (ahora 1,1 s con el pincel optimizado) y
+  1,3 s el retrato, que en el hilo principal dejaban la pantalla sin responder
+  (`scripts/medir-guardado-retrato.ts`).
 - **El pincel** (`portrait/brush.ts`) guarda los trazos en coordenadas 0–1 y radio
   como fracción del lado menor: se repintan igual en la vista previa y a tamaño
   completo. Añadir (máximo) y quitar (mínimo) son idempotentes, por eso pintar
@@ -980,9 +984,8 @@ archivo: «Modo retrato · plato.jpg».
 
 ### Límites
 
-- El pincel es de puntero (dedo, lápiz, ratón); no hay pintado con teclado. Quien
-  no pueda usarlo puede dejar la selección del recorte tal cual o usar «Quitar el
-  fondo» con IA.
+- El pincel se maneja con puntero y, desde `f31`, con teclado (Tab para entrar en la foto,
+  flechas, Espacio o Intro para bajar y subir el lápiz, `[` `]`, `X`, Ctrl+Z, Esc).
 - El suavizado del borde del plato es el del recorte más 1–3 px: un cabello muy
   fino que el recorte no haya sacado no se recupera con el desenfoque.
 - No probado a mano en un navegador real con el modelo de recorte (solo jsdom y
