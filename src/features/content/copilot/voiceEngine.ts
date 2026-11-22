@@ -92,9 +92,9 @@ export function voiceEngineHint(engine: VoiceEngine): string {
 
 const NOTICE: Record<VoiceEngine, string> = {
   browser:
-    'El dictado lo hace el servicio de voz de tu navegador, no esta aplicación: el audio sale de tu dispositivo y lo procesa Google (en Chrome y Edge, según el navegador, Google o Microsoft). Aquí solo recibimos el texto de lo que dices. No dictes datos personales de terceros.',
+    'El dictado lo hace el servicio de voz de tu navegador (Google o Microsoft), no esta aplicación: el audio sale de tu dispositivo y aquí solo llega el texto. No dictes datos personales de terceros.',
   transcriber:
-    'Con el transcriptor, lo que dices se graba en tu dispositivo solo mientras dictas, se envía a nuestro servidor y de ahí a OpenAI, que lo pasa a texto; con el audio van, como pista, algunos nombres de la marca y de la pieza. No guardamos el audio: sí queda el texto de lo dictado en el registro de uso de IA de tu organización. Cada dictado cuenta para el cupo de IA. No dictes datos personales de terceros.',
+    'Lo que dictas se graba en tu dispositivo, va a nuestro servidor y de ahí a OpenAI, que lo pasa a texto (con algunos nombres de la marca y de la pieza como pista). No guardamos el audio; el texto queda en el registro de uso de IA y cada dictado cuenta para el cupo. No dictes datos personales de terceros.',
 };
 
 /**

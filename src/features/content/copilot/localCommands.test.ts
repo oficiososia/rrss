@@ -451,3 +451,27 @@ describe('copiloto: órdenes que se entienden pero no se pueden hacer', () => {
     );
   });
 });
+
+describe('órdenes que montan una pieza: nunca las resuelve el intérprete local', () => {
+  it('una orden compuesta con fondo, fotos y textos va entera al modelo', () => {
+    for (const order of [
+      'haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el centro',
+      'crea un fondo otoñal',
+      'genera un fondo de madera y pon las fotos de los platos en fila',
+      'busca las fotos de los postres y ponlas en rejilla',
+      'pon los platos en el centro',
+      'pon estas fotos en abanico',
+      'monta la pieza de la promoción con un fondo de gimnasio',
+      'eh… haz el cartel, con un fondo, no sé, de madera, y los platos en fila',
+    ]) {
+      expect(interpretLocally(order, context), order).toBeNull();
+      expect(interpretLocally(order, withSelection()), order).toBeNull();
+    }
+  });
+
+  it('«sí» y «no» sueltos tampoco son órdenes del intérprete (los resuelve el plan pendiente)', () => {
+    for (const answer of ['sí', 'si', 'vale', 'adelante', 'hazlo', 'no', 'cancela', 'sí, hazlo']) {
+      expect(interpretLocally(answer, context), answer).toBeNull();
+    }
+  });
+});

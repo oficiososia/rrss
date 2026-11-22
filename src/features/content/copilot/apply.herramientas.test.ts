@@ -17,7 +17,13 @@ import {
 import { activePageIndex, editorReducer, initEditor } from '../editor/history';
 import { DEFAULT_SHADOW } from '../editor/imageEffects/shadowDefaults';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from '../editor/layers';
-import { applyCopilotOperations, historyActions, type CopilotApplyContext, type CopilotApplyResult } from './apply';
+import {
+  applyCopilotOperations,
+  historyActions,
+  type CopilotApplyContext,
+  type CopilotApplyResult,
+  type PlacedCopilotOperation,
+} from './apply';
 import { COPILOT_SIZE_STEP, copilotOp, type CopilotOperation } from './operations';
 
 const PHOTO = '11111111-1111-4111-8111-111111111111';
@@ -77,7 +83,7 @@ function menu(pages = 1) {
   return checked.document;
 }
 
-function apply(document: ContentDocument, operations: CopilotOperation[], extra: Partial<CopilotApplyContext> = {}) {
+function apply(document: ContentDocument, operations: PlacedCopilotOperation[], extra: Partial<CopilotApplyContext> = {}) {
   const result = applyCopilotOperations(document, operations, { ...context, ...extra });
   if (!result.ok) throw new Error(JSON.stringify(result.issues));
   // Lo que sale es siempre un documento válido.
@@ -540,6 +546,82 @@ describe('copiloto: lienzo y páginas', () => {
     expect(apply(ten, [op({ op: 'page', action: 'add' })]).skipped).toEqual(['Este formato admite 10 páginas como mucho.']);
   });
 
+  it('«añade una página nueva y duplica esta»: «esta» es la página de la que se partía, no la recién añadida', () => {
+    const single = menu();
+    const limits = { pageLimits: { min: 1, max: 10 } };
+    const original = single.pages[0]!;
+    const kinds = (document: ContentDocument) => document.pages.map((page) => page.layers.map((layer) => layer.type).join(','));
+    const full = 'image,text,shape,image,logo';
+
+    // Añadir y duplicar: la copia es de la original (con sus cinco capas), no de la vacía. De una página se pasa a tres.
+    const added = apply(single, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], limits);
+    expect(added.document.pages).toHaveLength(3);
+    expect(kinds(added.document)).toEqual([full, full, '']);
+    expect(added.document.pages[0]).toEqual(original);
+    expect(added.skipped).toEqual([]);
+    expect(added.changes).toEqual(['Página 2 nueva', 'Página duplicada (ahora, la 2)']);
+    // Se queda en la copia, y sus capas llevan identificadores nuevos (ninguno repetido).
+    expect(added.pageIndex).toBe(1);
+    const all = added.document.pages.flatMap((page) => page.layers.map((layer) => layer.id));
+    expect(new Set(all).size).toBe(all.length);
+    expect(added.document.pages[1]!.layers.map((layer) => ({ ...layer, id: '' }))).toEqual(original.layers.map((layer) => ({ ...layer, id: '' })));
+
+    // Al revés queda lo mismo: la original, su copia y la vacía (aquí se termina en la vacía).
+    const reversed = apply(single, [op({ op: 'page', action: 'duplicate' }), op({ op: 'page', action: 'add' })], limits);
+    expect(kinds(reversed.document)).toEqual([full, full, '']);
+    expect(reversed.pageIndex).toBe(2);
+    expect(reversed.changes).toEqual(['Página duplicada (ahora, la 2)', 'Página 3 nueva']);
+
+    // Duplicar a secas, como siempre: la copia detrás y se pasa a ella.
+    const only = apply(single, [op({ op: 'page', action: 'duplicate' })], limits);
+    expect(kinds(only.document)).toEqual([full, full]);
+    expect(only.pageIndex).toBe(1);
+
+    // Lo que sigue en la misma orden nombra las capas de la original y actúa en la copia.
+    const edited = apply(
+      single,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' }), op({ op: 'update_text', target: 'titulo', text: 'Menú de la noche' })],
+      limits,
+    );
+    expect(edited.skipped).toEqual([]);
+    expect(edited.document.pages[0]).toEqual(original);
+    expect(edited.document.pages[1]!.layers[1]).toMatchObject({ type: 'text', text: 'Menú de la noche' });
+
+    // Dos páginas nuevas y «duplica esta»: sigue siendo la de partida.
+    const twice = apply(
+      single,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })],
+      limits,
+    );
+    expect(kinds(twice.document)).toEqual([full, full, '', '']);
+    // En un carrusel, desde otra página: «esta» es la activa al empezar la orden, no la primera.
+    const carousel = menu(2);
+    const second = apply(carousel, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageIndex: 1,
+      pageLimits: { min: 2, max: 10 },
+    });
+    // La segunda (vacía) es de la que se partía: su copia también está vacía, y la primera no se duplica.
+    expect(kinds(second.document)).toEqual([full, '', '', '']);
+    const first = apply(carousel, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageLimits: { min: 2, max: 10 },
+    });
+    expect(kinds(first.document)).toEqual([full, full, '', '']);
+
+    // Si se ha ido a otra página que ya existía, se duplica esa (no es una de las añadidas en la orden).
+    const moved = apply(
+      carousel,
+      [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'go', direction: 'first' }), op({ op: 'page', action: 'duplicate' })],
+      { pageIndex: 1, pageLimits: { min: 2, max: 10 } },
+    );
+    expect(kinds(moved.document)).toEqual([full, full, '', '']);
+    // Sin sitio para las dos, la segunda se dice y no se hace.
+    const tight = apply(single, [op({ op: 'page', action: 'add' }), op({ op: 'page', action: 'duplicate' })], {
+      pageLimits: { min: 1, max: 2 },
+    });
+    expect(kinds(tight.document)).toEqual([full, '']);
+    expect(tight.skipped).toEqual(['Este formato admite 2 páginas como mucho.']);
+  });
+
   it('borrar y mover la página activa', () => {
     const document = menu(3);
     const removed = apply(document, [op({ op: 'page', action: 'remove' })], { pageIndex: 1 });
@@ -736,5 +818,50 @@ describe('copiloto: acciones del editor y órdenes compuestas', () => {
     const full = apply(document, [op({ op: 'add_shape', shape: 'star' }), op({ op: 'duplicate_layer', target: document.pages[0]!.layers[0]!.id })]);
     expect(full.document).toBe(document);
     expect(full.skipped).toEqual(['No caben más capas (máximo 60).', 'No caben más capas (máximo 60).']);
+  });
+});
+
+describe('copiloto: fotos con el sitio que les da un plan', () => {
+  it('`add_image` con caja: la foto cabe en ella con sus proporciones, girada, con sombra y por debajo de los textos', () => {
+    const document = menu();
+    const placed = {
+      ...op({ op: 'add_image', assetId: LOOSE }),
+      place: { x: 100, y: 600, width: 300, height: 300, rotation: -12, shadow: true },
+    };
+    const result = apply(document, [placed]);
+    const added = result.document.pages[0]!.layers.find((layer) => result.touched.includes(layer.id)) as ImageLayer;
+    // La foto es 2:1: ocupa el ancho de la caja y queda centrada en su alto.
+    expect(added).toMatchObject({ x: 100, y: 675, width: 300, height: 150, rotation: -12, fit: 'contain', shadow: DEFAULT_SHADOW });
+    expect(added.source).toEqual({ kind: 'asset', assetId: LOOSE });
+    // Encima del fondo, por debajo del título (el primer texto) y del logotipo.
+    expect(ids(result)).toEqual(['fondo', added.id, 'titulo', 'forma', 'suelta', 'logo']);
+    expect(result.changes).toEqual(['Foto «plato.jpg» añadida encima']);
+    // Sin sombra ni giro, y con una foto de medidas desconocidas: la caja entera.
+    const plain = apply(document, [{ ...op({ op: 'add_image', assetId: UNKNOWN }), place: { x: 40, y: 40, width: 200, height: 200 } }]);
+    const square = plain.document.pages[0]!.layers.find((layer) => plain.touched.includes(layer.id)) as ImageLayer;
+    expect(square).toMatchObject({ x: 40, y: 40, width: 200, height: 200, rotation: 0 });
+    expect(square.shadow).toBeUndefined();
+    // Sin textos ni logotipo, va delante de todo, como cualquier foto.
+    const bare = apply(createEmptyDocument(), [{ ...op({ op: 'add_image', assetId: LOOSE }), place: { x: 0, y: 0, width: 400, height: 400 } }]);
+    expect(bare.document.pages[0]!.layers).toHaveLength(1);
+  });
+
+  it('sin caja, `add_image` sigue como siempre (delante de todo y centrada)', () => {
+    const result = apply(menu(), [op({ op: 'add_image', assetId: LOOSE })]);
+    const added = result.document.pages[0]!.layers.at(-1) as ImageLayer;
+    expect(result.touched).toEqual([added.id]);
+    expect(added).toMatchObject({ width: 648, height: 324, rotation: 0 });
+  });
+
+  it('los pasos de plan no se aplican solos: hay que confirmarlos en el copiloto', () => {
+    const document = menu();
+    const result = apply(document, [
+      op({ op: 'generate_background', prompt: 'Madera clara' }),
+      op({ op: 'find_photos', query: 'platos', count: 2 }),
+      op({ op: 'place_photos', layout: 'row', cutout: true, on: false }),
+    ]);
+    expect(result.document).toBe(document);
+    expect(result.changes).toEqual([]);
+    expect(result.skipped).toEqual(Array(3).fill('Ese paso es de un plan: hay que confirmarlo en el copiloto.'));
   });
 });

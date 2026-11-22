@@ -75,6 +75,8 @@ export function estimateTextUsage(input: AiInput, options: { cacheWrites: boolea
   // Las herramientas viajan en cada petición y se cobran como entrada: cuentan
   // en la reserva (son la mayor parte del prompt del copiloto del editor).
   const toolChars = input.tools && input.tools.length > 0 ? JSON.stringify(input.tools).length : 0;
+  // Las vueltas anteriores de herramientas (lo que se llamó y su resultado) vuelven a viajar como entrada.
+  const turnChars = input.toolTurns && input.toolTurns.length > 0 ? JSON.stringify(input.toolTurns).length : 0;
   const instructionChars = (input.instructions ?? '').length;
   // Con herramientas, donde escribir en caché se cobra (Anthropic), el adaptador
   // marca «herramientas + instrucciones» para la caché: se reservan a ese precio.
@@ -82,7 +84,11 @@ export function estimateTextUsage(input: AiInput, options: { cacheWrites: boolea
 
   const fixed =
     upperTokens(
-      (cachedPrefixChars > 0 ? 0 : instructionChars + toolChars) + input.prompt.length + chars(volatile) + schemaChars,
+      (cachedPrefixChars > 0 ? 0 : instructionChars + toolChars) +
+        input.prompt.length +
+        chars(volatile) +
+        schemaChars +
+        turnChars,
     ) +
     BASE_OVERHEAD_TOKENS +
     (input.outputSchema ? SCHEMA_OVERHEAD_TOKENS : 0) +

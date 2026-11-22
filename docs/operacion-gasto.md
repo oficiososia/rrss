@@ -136,7 +136,7 @@ quien no ha aceptado. Para volver a pedir la aceptación a todos, basta subir la
 Antes del primer dictado el copiloto enseña un aviso (el servicio de voz del navegador, no la
 aplicación, procesa el audio: Google o Microsoft según el navegador; aquí solo llega el texto) con
 enlace a la política y «No volver a mostrar» (en `localStorage`, clave `rrss.voiceNoticeHidden`).
-Hasta pulsar «Entendido, empezar a dictar» no se escucha. La e2e 19 pasa por el aviso.
+Hasta pulsar «Entendido, dictar» no se escucha. La e2e 19 pasa por el aviso.
 
 ## Variables y ajustes
 

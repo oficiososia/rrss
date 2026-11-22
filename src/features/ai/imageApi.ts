@@ -164,6 +164,37 @@ function failureMessage(row: Pick<AiGenerationRow, 'status' | 'error_code'>): st
 }
 
 /**
+ * Cómo va una generación asíncrona: su estado en `ai_generations` y, si ha
+ * terminado, el recurso que dejó en la biblioteca.
+ */
+export async function readGenerationProgress(brandId: string, generationId: string): Promise<GenerationProgress> {
+  const generation = unwrap(
+    await supabase
+      .from('ai_generations')
+      .select('id, status, error_code, cost_micros, output')
+      .eq('id', generationId)
+      .maybeSingle(),
+  ) as Pick<AiGenerationRow, 'id' | 'status' | 'error_code' | 'cost_micros' | 'output'> | null;
+  if (!generation || generation.status === 'reserved') return { status: 'running' };
+  if (generation.status !== 'succeeded') return { status: 'failed', message: failureMessage(generation) };
+  // El servicio anota en la generación el recurso que creó en la biblioteca.
+  const assetId = (generation.output as AiMediaGenerationOutput | null)?.assets?.[0]?.asset_id;
+  const asset = assetId
+    ? (unwrap(
+        await supabase.from('media_assets').select('*').eq('brand_id', brandId).eq('id', assetId).maybeSingle(),
+      ) as MediaAssetRow | null)
+    : null;
+  if (!asset) {
+    return { status: 'failed', message: 'La IA generó la imagen, pero no se ha podido añadir a la biblioteca.' };
+  }
+  return {
+    status: 'completed',
+    asset,
+    costMicros: generation.cost_micros === null ? null : Number(generation.cost_micros),
+  };
+}
+
+/**
  * Sigue una generación asíncrona: consulta cada pocos segundos su estado en
  * `ai_generations` y, al terminar, el recurso que dejó en la biblioteca.
  */
@@ -174,31 +205,49 @@ export function useGenerationProgress(brandId: string, generationId: string | nu
     enabled: generationId !== null,
     refetchInterval: (query) => (query.state.data?.status === 'running' || !query.state.data ? 3000 : false),
     queryFn: async (): Promise<GenerationProgress> => {
-      const generation = unwrap(
-        await supabase
-          .from('ai_generations')
-          .select('id, status, error_code, cost_micros, output')
-          .eq('id', generationId!)
-          .maybeSingle(),
-      ) as Pick<AiGenerationRow, 'id' | 'status' | 'error_code' | 'cost_micros' | 'output'> | null;
-      if (!generation || generation.status === 'reserved') return { status: 'running' };
-      if (generation.status !== 'succeeded') return { status: 'failed', message: failureMessage(generation) };
-      // El servicio anota en la generación el recurso que creó en la biblioteca.
-      const assetId = (generation.output as AiMediaGenerationOutput | null)?.assets?.[0]?.asset_id;
-      const asset = assetId
-        ? (unwrap(
-            await supabase.from('media_assets').select('*').eq('brand_id', brandId).eq('id', assetId).maybeSingle(),
-          ) as MediaAssetRow | null)
-        : null;
-      if (!asset) {
-        return { status: 'failed', message: 'La IA generó la imagen, pero no se ha podido añadir a la biblioteca.' };
-      }
-      void queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
-      return {
-        status: 'completed',
-        asset,
-        costMicros: generation.cost_micros === null ? null : Number(generation.cost_micros),
-      };
+      const progress = await readGenerationProgress(brandId, generationId!);
+      if (progress.status === 'completed') void queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
+      return progress;
     },
   });
+}
+
+/** Lo que se espera, como mucho, a una imagen asíncrona antes de dejar de mirar (sigue generándose). */
+export const GENERATION_WAIT_MS = 4 * 60_000;
+
+/**
+ * Genera una imagen y espera a tenerla en la biblioteca, sea el modelo síncrono
+ * o asíncrono (lo usa el plan del copiloto para el fondo). Con `signal` se deja
+ * de esperar; lo que ya se ha pedido al proveedor puede terminar igualmente.
+ */
+export async function generateImageAndWait(
+  brandId: string,
+  input: ImageRequestInput,
+  options: { signal?: AbortSignal; intervalMs?: number; timeoutMs?: number } = {},
+): Promise<MediaAssetRow> {
+  const result = await invokeAiMedia<GenerateImageResult>('image.generate', brandId, input);
+  options.signal?.throwIfAborted();
+  if (result.status === 'completed') {
+    const asset = unwrap(
+      await supabase.from('media_assets').select('*').eq('brand_id', brandId).eq('id', result.asset.id).maybeSingle(),
+    ) as MediaAssetRow | null;
+    if (!asset) {
+      throw new AiRequestError('internal', 'La IA generó la imagen, pero no se ha podido leer de la biblioteca.');
+    }
+    return asset;
+  }
+  const deadline = Date.now() + (options.timeoutMs ?? GENERATION_WAIT_MS);
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 3000));
+    options.signal?.throwIfAborted();
+    const progress = await readGenerationProgress(brandId, result.generationId);
+    if (progress.status === 'completed') return progress.asset;
+    if (progress.status === 'failed') throw new AiRequestError('provider_failed', progress.message);
+    if (Date.now() > deadline) {
+      throw new AiRequestError(
+        'provider_failed',
+        'La imagen está tardando más de lo normal. Si termina, aparecerá en la biblioteca.',
+      );
+    }
+  }
 }

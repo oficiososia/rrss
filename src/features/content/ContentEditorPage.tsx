@@ -36,6 +36,7 @@ import {
   useState,
   type MouseEvent,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -78,7 +79,7 @@ import { loadBrandFonts, useBrandFontFaces } from '@/features/brand/fontsApi';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
-import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { assetKeys, previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { ContentStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -92,6 +93,7 @@ import {
 } from './api';
 import { aiContentReasons, describeAiReasons } from './aiLabel';
 import { toneOfPalette } from './copilot/legibility';
+import { createCopilotPlanHost } from './copilot/planHost';
 import type { CopilotHost } from './copilot/VoiceCopilot';
 import {
   allLayers,
@@ -318,6 +320,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Capa cuya foto se va a cambiar por otra de la biblioteca (orden del copiloto). */
   const [replaceLayerId, setReplaceLayerId] = useState<string | null>(null);
   const saveEdit = useSaveEdit(brand.id);
+  const queryClient = useQueryClient();
   // El estado al día también fuera del ciclo de React: el copiloto encadena
   // órdenes (deshacer y, acto seguido, otra) sin esperar a que se repinte.
   const stateRef = useRef(state);
@@ -766,6 +769,25 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     setConfirmLeave(true);
   }
 
+  /**
+   * Lo que un plan del copiloto puede gastar o leer. La imagen con IA solo se
+   * ofrece si el servidor la tiene configurada y esta persona puede usarla en
+   * la marca; si no, el plan lo dice y propone un fondo de color (sin simular nada).
+   */
+  const copilotPlanHost = createCopilotPlanHost({
+    brandId: brand.id,
+    imageAi: aiImage
+      ? { available: true }
+      : {
+          available: false,
+          reason: imageAgencyBlocked
+            ? 'En modo agencia, la imagen con IA la usa solo el personal de la agencia.'
+            : 'La imagen con IA no está configurada.',
+        },
+    saveEdit: (input) => saveEdit.mutateAsync(input),
+    onLibraryChange: () => void queryClient.invalidateQueries({ queryKey: assetKeys.all(brand.id) }),
+  });
+
   /** Lo que el copiloto pide al editor que no es cambiar el documento. */
   const copilotHost: CopilotHost = {
     history: (kind) => {
@@ -806,6 +828,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       setPhotoEditing(true);
       return null;
     },
+    // Órdenes que montan una pieza: el fondo con `ai-media`, las fotos de la biblioteca y el recorte de siempre.
+    plan: copilotPlanHost,
   };
 
   const canvas = state.document.canvas;

@@ -65,7 +65,9 @@ describe('motor de voz', () => {
     expect(text).toContain('servicio de voz de tu navegador');
     expect(text).toContain('Google');
     expect(text).toContain('Microsoft');
-    expect(text).toContain('Aquí solo recibimos el texto');
+    // La aplicación no recibe el audio: solo el texto.
+    expect(text).toContain('no esta aplicación');
+    expect(text).toContain('aquí solo llega el texto');
     expect(text).toContain('No dictes datos personales de terceros');
     expect(text).not.toContain('OpenAI');
   });
@@ -77,8 +79,8 @@ describe('motor de voz', () => {
     expect(text).toContain('OpenAI');
     expect(text).toContain('No guardamos el audio');
     // Lo que sí se guarda se dice: el texto, en el registro de uso de IA.
-    expect(text).toContain('sí queda el texto de lo dictado');
-    expect(text).toContain('cupo de IA');
+    expect(text).toContain('el texto queda en el registro de uso de IA');
+    expect(text).toContain('cada dictado cuenta para el cupo');
     expect(text).toContain('No dictes datos personales de terceros');
     expect(text).not.toContain('Google');
   });

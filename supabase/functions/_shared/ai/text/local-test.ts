@@ -479,6 +479,13 @@ function editorCopilot(request: AiProviderRequest): string {
  * («orden», «fotos» como f1, f2…) y nombra las fotos por su alias. Ante «ignora
  * lo anterior» imita igual a un modelo comprometido: un texto no dictado y una
  * foto que no está entre las elegidas (f9).
+ *
+ * Entiende además las órdenes que montan una pieza («crea un fondo que parezca
+ * otoñal y pon los platos en el centro»): devuelve los pasos de plan
+ * (`generate_background`, `find_photos`, `place_photos`). Ante «genera un plato
+ * de…» imita a un modelo que se salta la regla y pide generar comida.
+ *
+ * Como pide la tarea, cierra siempre con `done` y su nota para la persona.
  */
 function editorCopilotTools(request: AiProviderRequest): { text: string; tool_calls: AiToolCall[] } {
   const legacy = { ...request, input: { ...request.input, context: [...(request.input.context ?? [])] } };
@@ -488,11 +495,37 @@ function editorCopilotTools(request: AiProviderRequest): { text: string; tool_ca
     .split('\n')
     .map((line) => line.trim().split(' ')[0])
     .filter((alias): alias is string => Boolean(alias));
-  legacy.input.context.push({ label: 'dictado', content: order });
   legacy.input.context.push({
     label: 'fotos elegidas',
     content: JSON.stringify(photos.map((alias) => ({ id: alias }))),
   });
+  // Montar una pieza: «crea un fondo que parezca otoñal y pon los platos en el centro» → los pasos de plan.
+  // Imita también a un modelo que se salta la regla: ante «genera un plato de…» pide generar comida
+  // (el producto debe descartarlo: la IA solo crea el fondo).
+  const planCalls: AiToolCall[] = [];
+  const food = /\b(?:crea|genera)\w*\s+(?:un|una|unos|unas)\s+((?:plato|hamburguesa|pizza|producto|botella)[^.,;:]*)/i.exec(order);
+  const backdrop = /\b(?:crea|genera|haz)\w*\s+un\s+fondo\s+([^.,;:]+?)(?=\s+y\s+pon|[.,;:]|$)/i.exec(order);
+  const placing = /\bpon\w*\s+(?:los|las)\s+([^.,;:]+?)\s+en\s+(el centro|fila|rejilla|abanico)\b/i.exec(order);
+  if (food) planCalls.push({ name: 'generate_background', arguments: { prompt: food[1]!.trim(), ratio: null } });
+  else if (backdrop) planCalls.push({ name: 'generate_background', arguments: { prompt: `Fondo ${backdrop[1]!.trim()}`, ratio: null } });
+  if (placing) {
+    const layouts: Record<string, string> = { 'el centro': 'center', fila: 'row', rejilla: 'grid', abanico: 'fan' };
+    planCalls.push({ name: 'find_photos', arguments: { query: placing[1]!.trim(), count: 3 } });
+    planCalls.push({
+      name: 'place_photos',
+      arguments: {
+        layout: layouts[placing[2]!.toLowerCase()] ?? 'center',
+        cutout: /recort|sin (?:el |su )?fondo/i.test(order),
+        on: /sombra/i.test(order),
+      },
+    });
+  }
+  // Lo que ya es un paso de plan no se vuelve a leer con las reglas de siempre («fondo», «platos»).
+  const rest = [food?.[0], backdrop?.[0], placing?.[0]].reduce<string>(
+    (text, part) => (part ? text.replace(part, ' ') : text),
+    order,
+  );
+  legacy.input.context.push({ label: 'dictado', content: rest });
   // El perfil compacto no trae los logotipos: basta con saber si hay.
   const plan = JSON.parse(editorCopilot(legacy)) as { operations: Record<string, unknown>[] };
   const calls: AiToolCall[] = plan.operations.map((op) => {
@@ -519,10 +552,12 @@ function editorCopilotTools(request: AiProviderRequest): { text: string; tool_ca
       },
     };
   });
-  return {
-    text: calls.length ? '' : '[simulado] No he entendido ningún cambio en la orden.',
-    tool_calls: calls,
-  };
+  const all = [...planCalls, ...calls];
+  const note = all.length
+    ? `[simulado] ${all.length === 1 ? '1 cambio' : `${all.length} cambios`} a partir de la orden.`
+    : '[simulado] No he entendido ningún cambio en la orden.';
+  // Todas las llamadas en una vuelta y, la última, el cierre con la nota.
+  return { text: '', tool_calls: [...all, { name: 'done', arguments: { note } }] };
 }
 
 /**
