@@ -77,6 +77,8 @@ async function exportarJpeg(page: Page): Promise<void> {
 
 /** Programa una pieza desde el calendario para dentro de una hora, con su exportación si la hay. */
 async function programar(page: Page, titulo: string): Promise<void> {
+  // La lista cubre cuatro semanas desde el lunes: no depende de la hora a la que corra la prueba (la semana sí).
+  await page.addInitScript(`window.localStorage.setItem('rrss.calendar.view', '"agenda"')`);
   await page.goto(`${marca()}/calendario`);
   await page.getByTestId('calendar-schedule').click();
   const opcion = page.getByTestId('schedule-content').locator('option', { hasText: titulo });
@@ -144,6 +146,8 @@ test('una pieza aprobada y exportada se programa y el publicador la publica', as
   await page.reload();
   await expect(chip).toHaveAttribute('data-state', 'published');
   await chip.click();
+  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
+  await page.getByTestId('calendar-quick-open').click();
   await expect(page.getByTestId('publication-state')).toHaveText('Publicada');
   await expect(page.getByTestId('publication-external-id')).toHaveText(fila!.external_id);
   await expect(page.getByTestId('publication-link')).toHaveAttribute('href', fila!.external_url);
@@ -185,6 +189,8 @@ test('una pieza programada sin aprobar no se publica aunque llegue su hora', asy
 
   await page.reload();
   await chip.click();
+  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
+  await page.getByTestId('calendar-quick-open').click();
   await expect(page.getByTestId('publication-state')).toHaveText('Borrador');
   await expect(page.getByTestId('publication-hold')).toContainText('no está aprobada');
   sinErrores(s);

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
+import { openFicha as openEntry } from '@/test/calendario';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 
 // «Publicar ahora» (calendario y diálogo de programar): confirmación en un
@@ -144,7 +145,7 @@ afterEach(() => {
 async function openFicha() {
   const { user } = renderApp(`${BRAND_BASE}/calendario`);
   const chip = (await screen.findAllByTestId('calendar-entry')).find((e) => e.textContent?.includes('Pieza c-prog'))!;
-  await user.click(chip);
+  await openEntry(user, chip);
   return user;
 }
 
@@ -211,9 +212,9 @@ describe('Publicar ahora desde la ficha del calendario', () => {
 
   it('quien solo ve no tiene el botón', async () => {
     seed('member');
-    renderApp(`${BRAND_BASE}/calendario`);
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
     const chip = (await screen.findAllByTestId('calendar-entry')).find((e) => e.textContent?.includes('Pieza c-prog'))!;
-    chip.click();
+    await openEntry(user, chip);
     await screen.findByTestId('publication-dialog');
     expect(screen.queryByTestId('publication-publish-now')).toBeNull();
   });

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
+import { openFicha } from '@/test/calendario';
 import { BRAND_BASE, BRAND_ID, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
 import { toLocalInput } from './calendar';
 import { formatTimeIn } from './zone';
@@ -119,7 +120,7 @@ describe('Hora del calendario según la zona de la marca', () => {
     expect(entry).toHaveTextContent(formatTimeIn(at, ZONE));
     expect(screen.getByTestId('calendar-zone')).toHaveTextContent('Horas en hora de Auckland');
 
-    await user.click(entry);
+    await openFicha(user, entry);
     const dialog = await screen.findByTestId('publication-dialog');
     expect(within(dialog).getByText(/En la hora de Auckland/)).toBeInTheDocument();
     const when = within(dialog).getByLabelText('Mover a') as HTMLInputElement;
@@ -130,7 +131,7 @@ describe('Hora del calendario según la zona de la marca', () => {
     seed(ZONE);
     fake.rpc('reschedule_publication', (args) => ({ ...publication, scheduled_at: String(args.p_scheduled_at) }));
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
-    await user.click((await screen.findAllByTestId('calendar-entry'))[0]!);
+    await openFicha(user, (await screen.findAllByTestId('calendar-entry'))[0]!);
     const dialog = await screen.findByTestId('publication-dialog');
     const when = within(dialog).getByLabelText('Mover a');
     await user.clear(when);

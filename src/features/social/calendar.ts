@@ -9,14 +9,21 @@ import { formatTimeIn, fromZoned, toZoned } from './zone';
 // Fechas del calendario (en la hora de la marca: ver zone.ts; sin zona, la del navegador) y el estado que se enseña de
 // cada publicación. Sin dependencias: se prueba aparte.
 
-export type CalendarView = 'month' | 'week' | 'day' | 'network';
+/** Semana (la de planificar), mes (de un vistazo) y lista (la de móvil). */
+export type CalendarView = 'week' | 'month' | 'agenda';
 
 export const CALENDAR_VIEWS: { value: CalendarView; label: string }[] = [
-  { value: 'month', label: 'Mes' },
   { value: 'week', label: 'Semana' },
-  { value: 'day', label: 'Día' },
-  { value: 'network', label: 'Por red' },
+  { value: 'month', label: 'Mes' },
+  { value: 'agenda', label: 'Lista' },
 ];
+
+/** Días que cubre la lista: cuatro semanas desde el lunes de la semana elegida. */
+export const AGENDA_DAYS = 28;
+
+export function isCalendarView(value: unknown): value is CalendarView {
+  return value === 'week' || value === 'month' || value === 'agenda';
+}
 
 export function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -46,27 +53,28 @@ export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
 }
 
-/** Intervalo [desde, hasta) que cubre la vista. El mes se ve en semanas completas (6 filas). */
+/** Intervalo [desde, hasta) que cubre la vista. El mes se ve en semanas completas, solo las que toca (4 a 6 filas). */
 export function viewRange(view: CalendarView, anchor: Date): { from: Date; to: Date; days: Date[] } {
   let from: Date;
   let count: number;
-  if (view === 'day') {
-    from = startOfDay(anchor);
-    count = 1;
-  } else if (view === 'week') {
+  if (view === 'week') {
     from = startOfWeek(anchor);
     count = 7;
+  } else if (view === 'agenda') {
+    from = startOfWeek(anchor);
+    count = AGENDA_DAYS;
   } else {
     from = startOfWeek(startOfMonth(anchor));
-    count = 42;
+    const last = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+    count = (Math.round((startOfWeek(last).getTime() - from.getTime()) / 86_400_000) + 7);
   }
   const days = Array.from({ length: count }, (_, i) => addDays(from, i));
   return { from, to: addDays(from, count), days };
 }
 
-/** Avanza o retrocede la vista una unidad (mes, semana o día). */
+/** Avanza o retrocede la vista una unidad (semana, mes o cuatro semanas en la lista). */
 export function shiftAnchor(view: CalendarView, anchor: Date, step: 1 | -1): Date {
-  if (view === 'day') return addDays(anchor, step);
+  if (view === 'agenda') return addDays(anchor, AGENDA_DAYS * step);
   if (view === 'week') return addDays(anchor, 7 * step);
   return new Date(anchor.getFullYear(), anchor.getMonth() + step, 1);
 }
@@ -104,12 +112,9 @@ export function formatTime(iso: string, zone?: string): string {
 }
 
 export function rangeTitle(view: CalendarView, anchor: Date): string {
-  if (view === 'day') {
-    return anchor.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  }
-  if (view === 'week') {
+  if (view === 'week' || view === 'agenda') {
     const from = startOfWeek(anchor);
-    const to = addDays(from, 6);
+    const to = addDays(from, view === 'week' ? 6 : AGENDA_DAYS - 1);
     const f = (d: Date) => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
     return `${f(from)} – ${f(to)} de ${to.getFullYear()}`;
   }

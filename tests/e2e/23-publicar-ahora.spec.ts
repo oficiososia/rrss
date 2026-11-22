@@ -78,10 +78,13 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
 
   // El calendario la enseña publicada, con su enlace.
   await page.getByTestId('publish-now-close').click();
+  await page.addInitScript(`window.localStorage.setItem('rrss.calendar.view', '"agenda"')`);
   await page.goto(`${marca()}/calendario`);
   const chip = page.getByTestId('calendar-entry').filter({ hasText: TITULO });
   await expect(chip).toHaveAttribute('data-state', 'published');
   await chip.click();
+  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
+  await page.getByTestId('calendar-quick-open').click();
   await expect(page.getByTestId('publication-link')).toHaveAttribute('href', fila!.external_url);
 
   // Repetir «ahora» sobre lo publicado no publica otra vez (la ficha ya no ofrece el botón).

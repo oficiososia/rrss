@@ -35,6 +35,8 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_MEDIA_WORKER_ENABLED': JSON.stringify('true'),
     'import.meta.env.VITE_REEL_LIKE_ENABLED': JSON.stringify('true'),
+    // El banco del calendario enseña «Programar», el «+» de los días y «Por programar».
+    'import.meta.env.VITE_SOCIAL_PUBLISHING_ENABLED': JSON.stringify('true'),
   },
   server: { port: 5391, strictPort: true },
   optimizeDeps: { exclude: ['onnxruntime-web'] },

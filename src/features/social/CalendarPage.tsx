@@ -1,16 +1,14 @@
-import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, FileText, Plus } from 'lucide-react';
+import { CalendarDays, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, FileText, Inbox, Plus, X } from 'lucide-react';
 import { useMemo, useState, type DragEvent } from 'react';
 import { toast } from 'sonner';
 import {
   ActionNotice,
-  Badge,
   Button,
   Card,
   ErrorState,
   LinkButton,
   Notice,
   PageHeader,
-  Select,
   Skeleton,
 } from '@/components/ui';
 import { contentPaths } from '@/features/content/labels';
@@ -18,6 +16,7 @@ import { networkLabel } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
+import { useWorkspaceMode } from '@/layout/workspace';
 import { cn } from '@/lib/utils';
 import {
   useApproveContents,
@@ -25,32 +24,42 @@ import {
   useReschedulePublication,
   useSavePublication,
   useSocialAccounts,
+  type CalendarContent,
   type CalendarEntry,
 } from './api';
 import {
   CALENDAR_VIEWS,
   DISPLAY_LABEL,
   DISPLAY_STATES,
-  DISPLAY_TONE,
   dayKey,
   displayState,
-  formatTime,
   HOLD_REASON_TEXT,
   isEditable,
   isPast,
   moveToDay,
-  moveToHour,
   rangeTitle,
   sameDay,
   shiftAnchor,
   viewRange,
-  type CalendarView,
   type DisplayState,
 } from './calendar';
+import {
+  useActiveCampaigns,
+  useCalendarView,
+  useCampaignLinks,
+  useUnscheduled,
+  useWeeklyGoal,
+} from './calendarData';
+import { readDrag } from './calendarDnd';
+import { countsAsPlanned, daysOfWeek, isPastDay } from './calendarPlan';
+import { CalendarEntryCard } from './CalendarEntryCard';
+import { formatLabel } from './formatLabel';
+import { CalendarQuickView } from './CalendarQuickView';
+import { CalendarTray } from './CalendarTray';
+import { AgendaView, DayPanel, MonthView, PlanStrip, WeekView, type ViewCommon } from './CalendarViews';
 import { activeAccountOf, heldCountText, holdAdvice, type HoldAdvice } from './holdAdvice';
 import { connectedAccountsPath, exportPath, planPath } from './links';
 import { PublicationDialog } from './PublicationDialog';
-import { EntryThumb } from './preview';
 import { useEntryThumbs } from './previewData';
 import { PublishNowDialog } from './PublishNowDialog';
 import { AccountAttentionNotice } from './AccountAttentionNotice';
@@ -66,29 +75,79 @@ function entryAdvice(e: CalendarEntry, accounts: SocialAccountRow[] | undefined)
     : null;
 }
 
-const WEEKDAYS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
-const HOURS = Array.from({ length: 24 }, (_, h) => h);
+/** Una lista desplegable con forma de chip: se ve qué filtra y se resalta cuando está puesto. */
+function FilterChip({
+  label,
+  value,
+  onChange,
+  testId,
+  allLabel,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  testId: string;
+  allLabel: string;
+  options: { value: string; label: string }[];
+}) {
+  const active = value !== '';
+  return (
+    <label
+      className={cn(
+        'relative inline-flex h-9 shrink-0 items-center gap-1 rounded-full border pl-3 pr-7 text-sm',
+        active ? 'border-primary/40 bg-primary-soft text-primary' : 'border-border bg-surface text-muted',
+      )}
+    >
+      <span aria-hidden>{label}:</span>
+      <select
+        aria-label={`Filtrar por ${label.toLowerCase()}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="max-w-[9rem] cursor-pointer appearance-none truncate bg-transparent font-medium text-fg outline-none focus-visible:underline"
+        data-testid={testId}
+      >
+        <option value="">{allLabel}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 h-3.5 w-3.5" aria-hidden />
+    </label>
+  );
+}
 
-/** Calendario editorial de la marca: mes, semana, día y por red, con arrastrar y soltar. */
+/** Calendario editorial de la marca: semana, mes y lista, con arrastrar y soltar y ayudas para planificar. */
 export function CalendarPage() {
+  // Pantalla de trabajo: la página mide justo la ventana y solo se desplaza el calendario por dentro.
+  useWorkspaceMode();
   const { org, isAdmin } = useOrg();
   const { brand, can } = useBrand();
   const canEdit = can('edit');
   const canApprove = can('approve');
   const publishing = useFeature('publishing');
 
-  const [view, setView] = useState<CalendarView>('month');
+  const [view, setView] = useCalendarView();
   const zone = useBrandZone();
   // El calendario trabaja con «fechas de pared» de la zona de la marca (ver zone.ts).
   const [anchor, setAnchor] = useState(() => nowInZone(zone));
   const [network, setNetwork] = useState('');
   const [state, setState] = useState<DisplayState | ''>('');
+  const [format, setFormat] = useState('');
+  const [campaign, setCampaign] = useState('');
+  const [selectedDay, setSelectedDay] = useState(() => nowInZone(zone));
   const [openId, setOpenId] = useState<string | null>(null);
-  const [scheduling, setScheduling] = useState<{ date: Date | null } | null>(null);
+  const [quickId, setQuickId] = useState<string | null>(null);
+  const [scheduling, setScheduling] = useState<{ date: Date | null; contentId?: string } | null>(null);
+  const [trayOpen, setTrayOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [publishNow, setPublishNow] = useState<CalendarEntry | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [goal, setGoal] = useWeeklyGoal(brand.id);
 
+  const today = nowInZone(zone);
   const range = useMemo(() => viewRange(view, anchor), [view, anchor]);
   const from = useMemo(() => fromZoned(range.from, zone), [range.from, zone]);
   const to = useMemo(() => fromZoned(range.to, zone), [range.to, zone]);
@@ -97,17 +156,28 @@ export function CalendarPage() {
   const approve = useApproveContents(brand.id);
   const accounts = useSocialAccounts(brand.id);
   const rearm = useSavePublication(brand.id);
+  const campaigns = useActiveCampaigns(brand.id);
+  const links = useCampaignLinks(brand.id, campaigns.length > 0);
+  const canSchedule = publishing && canEdit;
+  const unscheduled = useUnscheduled(brand.id, canSchedule);
 
   const entries = useMemo(
     () =>
       (calendar.data ?? []).filter((e) => {
         if (network && e.network !== network) return false;
+        if (format && e.format !== format) return false;
         if (state && displayState(e, e.content?.status ?? null) !== state) return false;
+        if (campaign && !(links.data?.get(e.content_id) ?? []).includes(campaign)) return false;
         return true;
       }),
-    [calendar.data, network, state],
+    [calendar.data, network, format, state, campaign, links.data],
   );
   const networks = useMemo(() => [...new Set((calendar.data ?? []).map((e) => e.network))].sort(), [calendar.data]);
+  const formats = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of calendar.data ?? []) if (!map.has(e.format)) map.set(e.format, formatLabel(e.network, e.format));
+    return [...map.entries()].map(([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [calendar.data]);
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarEntry[]>();
     for (const e of entries) {
@@ -116,10 +186,37 @@ export function CalendarPage() {
     }
     return map;
   }, [entries, zone]);
+  // Sin filtros: de aquí salen los huecos y el contador de la semana (un filtro no debe inventar huecos).
+  const plannedByDay = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of calendar.data ?? []) {
+      if (!countsAsPlanned(displayState(e, e.content?.status ?? null))) continue;
+      const key = dayKey(toZoned(e.scheduled_at, zone));
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [calendar.data, zone]);
   const thumbs = useEntryThumbs(brand.id, entries);
   const open = (calendar.data ?? []).find((e) => e.id === openId) ?? null;
+  const quick = (calendar.data ?? []).find((e) => e.id === quickId) ?? null;
   const reviewable = entries.filter((e) => e.content?.status === 'in_review');
-  const filtering = Boolean(network || state);
+  const filtering = Boolean(network || state || format || campaign);
+  const clearFilters = () => {
+    setNetwork('');
+    setState('');
+    setFormat('');
+    setCampaign('');
+  };
+
+  // La semana que resumen el contador y los huecos: la que se ve, o la de hoy si se ve un mes o la lista.
+  const stripWeek =
+    view === 'week' ? daysOfWeek(anchor) : range.days.some((d) => sameDay(d, today)) ? daysOfWeek(today) : null;
+
+  const panelDay = range.days.some((d) => sameDay(d, selectedDay))
+    ? selectedDay
+    : range.days.some((d) => sameDay(d, today))
+      ? today
+      : range.days.find((d) => d.getDate() === 1) ?? range.days[0]!;
 
   const adviceFor = (e: CalendarEntry) => entryAdvice(e, accounts.data);
   // Un aviso por motivo encima del calendario, con cuántas hay en estas fechas.
@@ -215,17 +312,59 @@ export function CalendarPage() {
     }
   };
 
-  const drop = (target: Date, event: DragEvent) => {
-    event.preventDefault();
-    const id = event.dataTransfer.getData('text/plain');
-    const entry = (calendar.data ?? []).find((e) => e.id === id);
-    if (!entry || !canEdit || !isEditable(entry.status)) return;
-    const real = fromZoned(target, zone);
-    if (isPast(real)) return void toast.error('No se puede mover al pasado.');
+  /** Día a las 10:00 (o dentro de una hora si hoy ya pasó), como fecha de pared de la marca. */
+  const scheduleDate = (day: Date): Date => {
+    const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0);
+    return isPast(fromZoned(at, zone)) ? new Date(nowInZone(zone).getTime() + 3_600_000) : at;
+  };
+  const openSchedule = (day: Date | null, contentId?: string) =>
+    setScheduling({ date: day ? scheduleDate(day) : null, ...(contentId ? { contentId } : {}) });
+
+  /** Mover una publicación a otro día y hora, con «Deshacer». No se mueve lo ya publicado ni al pasado. */
+  const moveEntry = (entry: CalendarEntry, scheduledAt: string) => {
+    if (!isEditable(entry.status)) return void toast.error('Lo ya publicado no se puede mover.');
+    if (isPast(scheduledAt)) return void toast.error('No se puede mover al pasado.');
+    const previous = entry.scheduled_at;
     reschedule.mutate(
-      { publicationId: entry.id, scheduledAt: real.toISOString() },
-      { onSuccess: () => toast.success('Movida'), onError: (e) => toast.error(translateError(e)) },
+      { publicationId: entry.id, scheduledAt },
+      {
+        onSuccess: () => {
+          setQuickId(null);
+          toast.success('Movida', {
+            action: {
+              label: 'Deshacer',
+              onClick: () =>
+                reschedule.mutate(
+                  { publicationId: entry.id, scheduledAt: previous },
+                  {
+                    onSuccess: () => toast.success('Vuelta a su sitio'),
+                    onError: (e) => toast.error(translateError(e)),
+                  },
+                ),
+            },
+          });
+        },
+        onError: (e) => toast.error(translateError(e)),
+      },
     );
+  };
+
+  /** Lo que se suelta en un día: una publicación (se mueve) o una pieza de «Por programar» (se programa). */
+  const dropOnDay = (day: Date, event: DragEvent) => {
+    event.preventDefault();
+    const payload = readDrag(event.dataTransfer);
+    if (!payload || !canEdit) return;
+    if (payload.kind === 'entry') {
+      const entry = (calendar.data ?? []).find((e) => e.id === payload.id);
+      if (!entry) return;
+      const wall = toZoned(entry.scheduled_at, zone);
+      if (sameDay(wall, day)) return;
+      moveEntry(entry, fromZoned(moveToDay(wall, day), zone).toISOString());
+    } else {
+      if (!publishing) return;
+      if (isPastDay(day, today)) return void toast.error('No se puede programar en un día que ya pasó.');
+      openSchedule(day, payload.id);
+    }
   };
 
   const approveSelected = () => {
@@ -246,103 +385,68 @@ export function CalendarPage() {
     });
   };
 
-  const chip = (e: CalendarEntry, compact = false) => {
-    const s = displayState(e, e.content?.status ?? null);
-    const reason = adviceFor(e)?.short;
-    const draggable = canEdit && isEditable(e.status);
-    const selectable = selecting && e.content?.status === 'in_review';
-    return (
-      <div key={e.id} className="flex items-center gap-1">
-        {selectable && (
-          <input
-            type="checkbox"
-            aria-label={`Seleccionar ${e.content?.title ?? 'publicación'}`}
-            checked={selected.has(e.content_id)}
-            onChange={() =>
-              setSelected((prev) => {
-                const next = new Set(prev);
-                if (next.has(e.content_id)) next.delete(e.content_id);
-                else next.add(e.content_id);
-                return next;
-              })
-            }
-            data-testid="calendar-select"
-          />
-        )}
-        <button
-          type="button"
-          draggable={draggable}
-          onDragStart={(ev) => ev.dataTransfer.setData('text/plain', e.id)}
-          onClick={() => setOpenId(e.id)}
-          className={cn(
-            'flex w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-1.5 py-1 text-left text-xs hover:bg-subtle',
-            draggable && 'cursor-grab',
-          )}
-          data-testid="calendar-entry"
-          data-state={s}
-          title={reason ? `Detenida: ${reason}` : undefined}
-        >
-          <EntryThumb thumb={thumbs.get(e.media_asset_ids[0] ?? '')} />
-          <span className="shrink-0 tabular-nums text-muted">{formatTime(e.scheduled_at, zone)}</span>
-          <span className="min-w-0 flex-1 truncate">{e.content?.title ?? 'Pieza'}</span>
-          {!compact && <span className="shrink-0 text-muted">{networkLabel(e.network)}</span>}
-          <Badge tone={DISPLAY_TONE[s]} className="shrink-0 px-1.5">
-            {DISPLAY_LABEL[s]}
-            {reason && <span className="sr-only">: {reason}</span>}
-          </Badge>
-          {reason && !compact && (
-            <span className="hidden shrink truncate text-warning sm:inline" data-testid="calendar-entry-reason">
-              {reason}
-            </span>
-          )}
-        </button>
-      </div>
-    );
+  const renderCard = (e: CalendarEntry, layout: 'week' | 'row') => (
+    <CalendarEntryCard
+      entry={e}
+      zone={zone}
+      thumb={thumbs.get(e.media_asset_ids[0] ?? '')}
+      reason={adviceFor(e)?.short}
+      draggable={canEdit && isEditable(e.status)}
+      layout={layout}
+      {...(selecting && e.content?.status === 'in_review'
+        ? {
+            select: {
+              checked: selected.has(e.content_id),
+              onChange: () =>
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(e.content_id)) next.delete(e.content_id);
+                  else next.add(e.content_id);
+                  return next;
+                }),
+            },
+          }
+        : {})}
+      onOpen={(entry) => setQuickId(entry.id)}
+    />
+  );
+
+  const common: ViewCommon = {
+    byDay,
+    plannedByDay,
+    today,
+    renderCard,
+    thumbOf: (e) => thumbs.get(e.media_asset_ids[0] ?? ''),
+    canDrop: canEdit,
+    canSchedule,
+    onAdd: (day) => openSchedule(day),
+    onDropOnDay: dropOnDay,
+    campaigns,
+    goal,
   };
 
-  const dayCell = (day: Date, muted: boolean) => {
-    const list = byDay.get(dayKey(day)) ?? [];
-    const today = sameDay(day, nowInZone(zone));
-    return (
-      <div
-        key={day.toISOString()}
-        className={cn('min-h-[6.5rem] space-y-1 border-b border-r border-border p-1', muted && 'bg-subtle/50')}
-        onDragOver={(ev) => canEdit && ev.preventDefault()}
-        onDrop={(ev) => {
-          const id = ev.dataTransfer.getData('text/plain');
-          const entry = (calendar.data ?? []).find((x) => x.id === id);
-          if (entry) drop(moveToDay(toZoned(entry.scheduled_at, zone), day), ev);
-        }}
-        data-testid="calendar-day"
-        data-day={dayKey(day)}
-      >
-        <div className="flex items-center justify-between">
-          <span className={cn('text-xs', today ? 'font-semibold text-primary' : 'text-muted')}>{day.getDate()}</span>
-          {publishing && canEdit && (
-            <button
-              type="button"
-              className="rounded p-0.5 text-muted hover:bg-subtle"
-              aria-label={`Programar el ${day.toLocaleDateString('es-ES')}`}
-              onClick={() => setScheduling({ date: day })}
-            >
-              <Plus className="h-3 w-3" aria-hidden />
-            </button>
-          )}
-        </div>
-        {list.map((e) => chip(e, true))}
-      </div>
-    );
-  };
+  const quickAdvice = quick ? adviceFor(quick) : null;
+  const unscheduledCount = unscheduled.list.length;
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="calendar-page">
       <PageHeader
+        compact
         title="Calendario"
-        description={`Lo programado en las redes de ${brand.name}. «Programada» no es «publicada»: se publica a su hora y solo si está aprobada.`}
+        description={
+          <>
+            <span data-testid="calendar-zone">
+              Horas en {zoneLabel(zone)}
+              {differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}
+            </span>
+            <span className="hidden lg:inline">
+              {' · '}«Programada» no es «publicada»: se publica a su hora y solo si está aprobada.
+            </span>
+          </>
+        }
         action={
-          publishing &&
-          canEdit && (
-            <Button onClick={() => setScheduling({ date: null })} data-testid="calendar-schedule">
+          canSchedule && (
+            <Button onClick={() => openSchedule(null)} data-testid="calendar-schedule">
               <Plus className="h-4 w-4" aria-hidden />
               Programar
             </Button>
@@ -362,33 +466,55 @@ export function CalendarPage() {
         moreTestId="calendar-more"
       />
 
-      <div className="mb-4 empty:hidden">
-        <AccountAttentionNotice />
-      </div>
-
-      {heldGroups.length > 0 && (
-        <div className="mb-4 space-y-2" data-testid="calendar-held">
-          {heldGroups.map(({ advice, reason, entries: list }) => (
-            <ActionNotice
-              key={`${advice.fix}:${advice.short}`}
-              title={`${heldCountText(list.length)}: ${advice.short.charAt(0).toLowerCase()}${advice.short.slice(1)}`}
-              action={fixButton(advice, list, `calendar-held-fix-${reason}`)}
-              why={HOLD_REASON_TEXT[reason as keyof typeof HOLD_REASON_TEXT]}
-              data-testid={`calendar-held-${reason}`}
-            />
-          ))}
+      <div className="max-h-[24dvh] space-y-2 overflow-y-auto empty:hidden">
+        <div className="empty:hidden">
+          <AccountAttentionNotice />
         </div>
-      )}
-
-      {!publishing && (
-        <div className="mb-4">
+        {heldGroups.length > 0 && (
+          <div className="space-y-2" data-testid="calendar-held">
+            {heldGroups.map(({ advice, reason, entries: list }) => (
+              <ActionNotice
+                key={`${advice.fix}:${advice.short}`}
+                title={`${heldCountText(list.length)}: ${advice.short.charAt(0).toLowerCase()}${advice.short.slice(1)}`}
+                action={fixButton(advice, list, `calendar-held-fix-${reason}`)}
+                why={HOLD_REASON_TEXT[reason as keyof typeof HOLD_REASON_TEXT]}
+                data-testid={`calendar-held-${reason}`}
+              />
+            ))}
+          </div>
+        )}
+        {!publishing && (
           <Notice>
             La publicación en redes no está activa en este entorno: aquí se ve lo programado, pero no se publica nada.
           </Notice>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Anterior"
+            onClick={() => setAnchor(shiftAnchor(view, anchor, -1))}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setAnchor(nowInZone(zone))} data-testid="calendar-today">
+            Hoy
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Siguiente"
+            onClick={() => setAnchor(shiftAnchor(view, anchor, 1))}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+        <h2 className="order-last min-w-0 basis-full truncate text-sm font-semibold first-letter:uppercase sm:order-none sm:basis-0 sm:flex-1" data-testid="calendar-title">
+          {rangeTitle(view, anchor)}
+        </h2>
         <div className="flex rounded-lg border border-border" role="group" aria-label="Vista">
           {CALENDAR_VIEWS.map((v) => (
             <button
@@ -397,8 +523,8 @@ export function CalendarPage() {
               aria-pressed={view === v.value}
               onClick={() => setView(v.value)}
               className={cn(
-                'px-3 py-1.5 text-sm',
-                view === v.value ? 'bg-primary-soft text-primary' : 'hover:bg-subtle',
+                'h-9 px-3 text-sm first:rounded-l-lg last:rounded-r-lg',
+                view === v.value ? 'bg-primary-soft font-medium text-primary' : 'hover:bg-subtle',
               )}
               data-testid={`calendar-view-${v.value}`}
             >
@@ -406,60 +532,23 @@ export function CalendarPage() {
             </button>
           ))}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Anterior"
-          onClick={() => setAnchor(shiftAnchor(view, anchor, -1))}
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden />
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => setAnchor(nowInZone(zone))}>
-          Hoy
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Siguiente"
-          onClick={() => setAnchor(shiftAnchor(view, anchor, 1))}
-        >
-          <ChevronRight className="h-4 w-4" aria-hidden />
-        </Button>
-        <h2 className="mr-auto text-sm font-semibold capitalize" data-testid="calendar-title">
-          {rangeTitle(view, anchor)}
-        </h2>
-        <span className="text-xs text-muted" data-testid="calendar-zone">
-          Horas en {zoneLabel(zone)}
-          {differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}
-        </span>
-        <Select
-          aria-label="Filtrar por red"
-          value={network}
-          onChange={(e) => setNetwork(e.target.value)}
-          className="w-auto"
-          data-testid="calendar-network-filter"
-        >
-          <option value="">Todas las redes</option>
-          {networks.map((n) => (
-            <option key={n} value={n}>
-              {networkLabel(n)}
-            </option>
-          ))}
-        </Select>
-        <Select
-          aria-label="Filtrar por estado"
-          value={state}
-          onChange={(e) => setState(e.target.value as DisplayState | '')}
-          className="w-auto"
-          data-testid="calendar-state-filter"
-        >
-          <option value="">Todos los estados</option>
-          {DISPLAY_STATES.map((s) => (
-            <option key={s} value={s}>
-              {DISPLAY_LABEL[s]}
-            </option>
-          ))}
-        </Select>
+        {canSchedule && (
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-expanded={trayOpen}
+            onClick={() => setTrayOpen((v) => !v)}
+            data-testid="calendar-tray-toggle"
+          >
+            <Inbox className="h-4 w-4" aria-hidden />
+            Por programar
+            {!unscheduled.isPending && (
+              <span className="rounded-full bg-primary px-1.5 text-xs tabular-nums text-primary-fg">
+                {unscheduledCount}
+              </span>
+            )}
+          </Button>
+        )}
         {canApprove && selecting && (
           <Button
             size="sm"
@@ -479,15 +568,66 @@ export function CalendarPage() {
         )}
       </div>
 
+      <div className="flex gap-2 overflow-x-auto pb-0.5" role="group" aria-label="Filtros" data-testid="calendar-filters">
+        <FilterChip
+          label="Estado"
+          value={state}
+          onChange={(v) => setState(v as DisplayState | '')}
+          testId="calendar-state-filter"
+          allLabel="Todos"
+          options={DISPLAY_STATES.map((s) => ({ value: s, label: DISPLAY_LABEL[s] }))}
+        />
+        <FilterChip
+          label="Red"
+          value={network}
+          onChange={setNetwork}
+          testId="calendar-network-filter"
+          allLabel="Todas"
+          options={networks.map((n) => ({ value: n, label: networkLabel(n) }))}
+        />
+        <FilterChip
+          label="Formato"
+          value={format}
+          onChange={setFormat}
+          testId="calendar-format-filter"
+          allLabel="Todos"
+          options={formats}
+        />
+        {campaigns.length > 0 && (
+          <FilterChip
+            label="Campaña"
+            value={campaign}
+            onChange={setCampaign}
+            testId="calendar-campaign-filter"
+            allLabel="Todas"
+            options={campaigns.map((c) => ({ value: c.id, label: c.title }))}
+          />
+        )}
+        {filtering && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-3 text-sm text-primary hover:bg-subtle"
+            data-testid="calendar-filters-clear"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+            Quitar filtros
+          </button>
+        )}
+      </div>
+
+      {stripWeek && calendar.isSuccess && (
+        <PlanStrip week={stripWeek} plannedByDay={plannedByDay} today={today} goal={goal} onGoal={setGoal} />
+      )}
+
       {calendar.isSuccess && entries.length === 0 && !filtering && (
         <ActionNotice
           tone="info"
           icon={CalendarDays}
-          className="mb-4"
           title="Nada programado en estas fechas"
           action={
-            publishing && canEdit ? (
-              <Button size="sm" onClick={() => setScheduling({ date: null })} data-testid="calendar-empty-action">
+            canSchedule ? (
+              <Button size="sm" onClick={() => openSchedule(null)} data-testid="calendar-empty-action">
                 <Plus className="h-4 w-4" aria-hidden />
                 Programar
               </Button>
@@ -507,66 +647,70 @@ export function CalendarPage() {
         />
       )}
 
-      {calendar.isPending ? (
-        <Skeleton className="h-96" />
-      ) : calendar.isError ? (
-        <Card>
-          <ErrorState error={calendar.error} onRetry={() => void calendar.refetch()} />
-        </Card>
-      ) : view === 'month' || view === 'week' ? (
-        <div
-          className="overflow-x-auto rounded-xl border-l border-t border-border bg-surface"
-          data-testid="calendar-grid"
-        >
-          <div className="grid min-w-[42rem] grid-cols-7">
-            {WEEKDAYS.map((d) => (
-              <div key={d} className="border-b border-r border-border px-1 py-1 text-xs font-medium text-muted">
-                {d}
-              </div>
-            ))}
-            {range.days.map((day) => dayCell(day, view === 'month' && day.getMonth() !== anchor.getMonth()))}
-          </div>
-        </div>
-      ) : view === 'day' ? (
-        <ul className="divide-y divide-border rounded-xl border border-border bg-surface" data-testid="calendar-hours">
-          {HOURS.map((h) => {
-            const list = (byDay.get(dayKey(anchor)) ?? []).filter((e) => toZoned(e.scheduled_at, zone).getHours() === h);
-            return (
-              <li
-                key={h}
-                className="flex min-h-[2.5rem] gap-2 px-2 py-1"
-                onDragOver={(ev) => canEdit && ev.preventDefault()}
-                onDrop={(ev) => {
-                  const id = ev.dataTransfer.getData('text/plain');
-                  const entry = (calendar.data ?? []).find((x) => x.id === id);
-                  if (entry) drop(moveToHour(toZoned(entry.scheduled_at, zone), anchor, h), ev);
-                }}
-              >
-                <span className="w-12 shrink-0 pt-1 text-xs tabular-nums text-muted">
-                  {String(h).padStart(2, '0')}:00
-                </span>
-                <div className="flex-1 space-y-1">{list.map((e) => chip(e))}</div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : entries.length === 0 ? (
-        <Card>
-          <p className="flex items-center gap-2 p-6 text-sm text-muted">
-            <CalendarDays className="h-4 w-4" aria-hidden /> Nada en estas fechas.
-          </p>
-        </Card>
-      ) : (
-        <div className="space-y-4" data-testid="calendar-by-network">
-          {[...new Set(entries.map((e) => e.network))].sort().map((n) => (
-            <Card key={n} className="p-3">
-              <h3 className="mb-2 text-sm font-semibold">{networkLabel(n)}</h3>
-              <div className="space-y-1">{entries.filter((e) => e.network === n).map((e) => chip(e))}</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
+        {canSchedule && trayOpen && (
+          <CalendarTray
+            items={unscheduled.list}
+            loading={unscheduled.isPending}
+            canSchedule={canSchedule}
+            onSchedule={(c: CalendarContent) => openSchedule(null, c.id)}
+            className="max-h-[28dvh] min-h-0 shrink lg:order-last lg:max-h-none lg:w-64 lg:shrink-0"
+          />
+        )}
+        <div className="flex min-h-[8rem] min-w-0 flex-1 flex-col gap-2 lg:min-h-0">
+          {calendar.isPending ? (
+            <Skeleton className="min-h-0 flex-1" />
+          ) : calendar.isError ? (
+            <Card>
+              <ErrorState error={calendar.error} onRetry={() => void calendar.refetch()} />
             </Card>
-          ))}
+          ) : view === 'week' ? (
+            <WeekView {...common} days={range.days} />
+          ) : view === 'month' ? (
+            <>
+              <MonthView
+                {...common}
+                days={range.days}
+                anchor={anchor}
+                selected={panelDay}
+                onSelect={setSelectedDay}
+              />
+              <DayPanel
+                day={panelDay}
+                list={byDay.get(dayKey(panelDay)) ?? []}
+                today={today}
+                renderCard={renderCard}
+                canSchedule={canSchedule}
+                onAdd={(day) => openSchedule(day)}
+              />
+            </>
+          ) : (
+            <AgendaView {...common} days={range.days} />
+          )}
         </div>
-      )}
+      </div>
 
+      <CalendarQuickView
+        key={quick ? `${quick.id}:${quick.scheduled_at}` : 'cerrada'}
+        brandId={brand.id}
+        entry={quick}
+        zone={zone}
+        canEdit={canEdit}
+        publishing={publishing}
+        advice={quickAdvice}
+        fix={quick && quickAdvice ? fixButton(quickAdvice, [quick], 'calendar-quick-fix') : null}
+        onClose={() => setQuickId(null)}
+        onOpenFicha={(e) => {
+          setQuickId(null);
+          setOpenId(e.id);
+        }}
+        onPublishNow={(e) => {
+          setQuickId(null);
+          setPublishNow(e);
+        }}
+        onMove={moveEntry}
+        moving={reschedule.isPending}
+      />
       <PublicationDialog
         key={open ? `${open.id}:${open.scheduled_at}` : 'cerrada'}
         orgId={org.id}
@@ -593,12 +737,14 @@ export function CalendarPage() {
       )}
       {publishing && scheduling && (
         <ScheduleDialog
+          key={`${scheduling.date?.toISOString() ?? 'sin-fecha'}:${scheduling.contentId ?? ''}`}
           brandId={brand.id}
           open
           onOpenChange={(o) => !o && setScheduling(null)}
           initialDate={scheduling.date}
+          {...(scheduling.contentId ? { initialContentId: scheduling.contentId } : {})}
         />
       )}
-    </>
+    </div>
   );
 }
