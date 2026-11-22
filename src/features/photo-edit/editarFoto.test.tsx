@@ -1044,6 +1044,44 @@ describe('Modo retrato y retoque de la selección', () => {
     expect(dialog.getByTestId('photo-edit-backgrounds')).toBeInTheDocument();
   });
 
+  it('se puede pintar solo con el teclado: flechas, Espacio, [ ], X y Ctrl+Z', async () => {
+    stubStageGeometry();
+    const { user, dialog } = await cutAndOpenBackgrounds();
+    await user.click(dialog.getByTestId('photo-edit-retouch-toggle'));
+    expect(dialog.getByTestId('photo-edit-retouch-keys')).toBeInTheDocument();
+    const canvas = await screen.findByTestId('photo-edit-retouch-canvas');
+    expect(canvas).toHaveAttribute('tabindex', '0');
+    canvas.focus();
+    // Atajos de tamaño y de modo con el foco en la foto.
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('4');
+    await user.keyboard(']]');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('6');
+    await user.keyboard('[[');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('5');
+    await user.keyboard('x');
+    expect(dialog.getByTestId('photo-edit-brush-remove')).toHaveAttribute('aria-checked', 'true');
+    await user.keyboard('x');
+    expect(dialog.getByTestId('photo-edit-brush-add')).toHaveAttribute('aria-checked', 'true');
+    // Mover sin pintar no deja trazos; bajar el lápiz, mover y levantarlo deja uno.
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled();
+    await user.keyboard(' {ArrowDown}{ArrowDown}{Shift>}{ArrowLeft}{/Shift} ');
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled());
+    // Esc con el lápiz bajado solo lo levanta (deja un toque) y no cierra la pantalla.
+    await user.keyboard(' {Escape}');
+    expect(screen.getByTestId('photo-edit')).toBeInTheDocument();
+    expect(screen.queryByTestId('photo-edit-discard')).not.toBeInTheDocument();
+    // Ctrl+Z deshace un trazo cada vez (con el foco en la foto): eran dos.
+    await user.keyboard('{Control>}z{/Control}');
+    expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeEnabled();
+    await user.keyboard('{Control>}z{/Control}');
+    await waitFor(() => expect(dialog.getByTestId('photo-edit-retouch-undo')).toBeDisabled());
+    // También con el foco en el panel.
+    dialog.getByTestId('photo-edit-brush-size').focus();
+    await user.keyboard(']');
+    expect(dialog.getByTestId('photo-edit-brush-size')).toHaveValue('6');
+  });
+
   it('el velo de color se puede quitar para ver el recorte sobre el ajedrez', async () => {
     stubStageGeometry();
     const { user, dialog } = await cutAndOpenBackgrounds();
