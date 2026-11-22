@@ -1021,6 +1021,29 @@ describe('Modo retrato y retoque de la selección', () => {
     });
   });
 
+  it('Esc cierra la pantalla aunque el botón pulsado haya desaparecido y el foco esté fuera (tras quitar el fondo)', async () => {
+    const { dialog } = await cutAndOpenBackgrounds();
+    // «Quitar el fondo» ya no está: el foco se quedó en la página, no dentro de la pantalla.
+    expect(dialog.queryByTestId('photo-edit-cutout-run')).not.toBeInTheDocument();
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(screen.getByTestId('photo-edit').contains(document.activeElement)).toBe(false);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    // Con un recorte sin guardar pregunta antes de descartar, como Volver.
+    expect(await dialog.findByTestId('photo-edit-discard')).toBeInTheDocument();
+  });
+
+  it('si el foco se pierde al desaparecer un botón, la pantalla lo recupera', async () => {
+    const { dialog } = await cutAndOpenBackgrounds();
+    const root = screen.getByTestId('photo-edit');
+    const probe = document.createElement('button');
+    root.appendChild(probe);
+    probe.focus();
+    probe.remove(); // jsdom no avisa con focusout al quitar un elemento: se avisa a mano
+    root.dispatchEvent(new FocusEvent('focusout', { relatedTarget: null }));
+    await waitFor(() => expect(document.activeElement).toBe(root));
+    expect(dialog.getByTestId('photo-edit-backgrounds')).toBeInTheDocument();
+  });
+
   it('el velo de color se puede quitar para ver el recorte sobre el ajedrez', async () => {
     stubStageGeometry();
     const { user, dialog } = await cutAndOpenBackgrounds();

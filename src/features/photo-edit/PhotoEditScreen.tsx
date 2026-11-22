@@ -402,6 +402,37 @@ export function PhotoEditScreen({
     else onClose();
   };
 
+  // Si el botón que tenía el foco desaparece (p. ej. «Quitar el fondo» al terminar), el navegador deja el
+  // foco en la página y Esc no llegaría a esta pantalla. Dos redes: se devuelve el foco a la pantalla y,
+  // si aun así Esc llega al documento con el foco perdido, también cierra.
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+  useEffect(() => {
+    const lost = () => {
+      const active = document.activeElement;
+      return !active || active === document.body || active === document.documentElement;
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !lost()) return;
+      event.preventDefault();
+      requestCloseRef.current();
+    };
+    const root = rootRef.current;
+    const onFocusOut = (event: FocusEvent) => {
+      // Sin destino = el foco se ha ido a la página (el elemento se quitó o se desactivó).
+      if (event.relatedTarget) return;
+      setTimeout(() => {
+        if (root?.isConnected && lost()) root.focus({ preventScroll: true });
+      }, 0);
+    };
+    document.addEventListener('keydown', onDocumentKeyDown);
+    root?.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('keydown', onDocumentKeyDown);
+      root?.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     // Lo que se teclea aquí no es del editor de debajo (Ctrl+Z, Supr, flechas…).
     event.stopPropagation();
@@ -1081,6 +1112,7 @@ function BackgroundTab({
   }, [small, effectiveChoice, shadow, previewAlpha, previewOriginal, deferredPortrait]);
 
   const cutAbort = useRef<AbortController | null>(null);
+  const queryClient = useQueryClient();
   async function cut() {
     const abort = new AbortController();
     cutAbort.current = abort;
@@ -1099,6 +1131,8 @@ function BackgroundTab({
       cutAbort.current = null;
       setCutting(false);
       setProgress(null);
+      // El recorte en el servidor pasa por la biblioteca (deja y borra un archivo intermedio): se redibuja sola.
+      void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
     }
   }
   // Salir del diálogo con el recorte en marcha lo cancela (y corta la descarga).
@@ -1750,6 +1784,7 @@ function AiAction({
   const [maskProgress, setMaskProgress] = useState<CutoutProgress | null>(null);
   const [preparing, setPreparing] = useState(false);
   const plate = useRef<PlateProtection | null>(null);
+  const queryClient = useQueryClient();
   const saveEdit = useSaveEdit(asset.brand_id);
   // Para estimar basta un texto cualquiera: el coste no depende de lo que se pida.
   const input = useMemo<AiEditInput>(
@@ -1875,6 +1910,7 @@ function AiAction({
         } finally {
           setPreparing(false);
           setMaskProgress(null);
+          void queryClient.invalidateQueries({ queryKey: assetKeys.all(asset.brand_id) });
         }
       }
     }
