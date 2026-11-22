@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { validateDocumentFromAnyVersion, HEX_COLOR, type ContentDocument } from '../content/document';
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  validateDocumentFromAnyVersion,
+  HEX_COLOR,
+  type ContentDocument,
+} from '../content/document';
 import { allowedCanvasRatios, getFormatSpec } from '../content/networks';
 
 // Plantillas de diseño de una marca, sacadas de las publicaciones que ya tiene
@@ -220,7 +225,7 @@ export function validateTemplate(
   if (typeof input.key !== 'string' || !KEY.test(input.key)) {
     issues.push({
       path: `${at}.key`,
-      message: 'clave en minúsculas, cifras y guiones (hasta 63), p. ej. «plato-del-dia»',
+      message: 'clave en minúsculas, cifras y guiones (hasta 63), p. ej. «oferta-del-dia»',
     });
   }
   if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 120) {
@@ -239,10 +244,13 @@ export function validateTemplate(
   let document: ContentDocument | null = null;
   const documentRaw = input.document;
   const schemaVersion = (documentRaw as { schemaVersion?: unknown } | null)?.schemaVersion;
-  if (schemaVersion !== 3 && schemaVersion !== 4) {
-    issues.push({ path: `${at}.document.schemaVersion`, message: 'el documento debe ser de la versión 3 o 4' });
+  if (schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== DOCUMENT_SCHEMA_VERSION) {
+    issues.push({
+      path: `${at}.document.schemaVersion`,
+      message: `el documento debe ser de la versión 3, 4 o ${DOCUMENT_SCHEMA_VERSION}`,
+    });
   } else {
-    // Un documento v3 (una página) se guarda ya convertido a la versión vigente.
+    // Un documento v3 (una página) o v4 se guarda ya convertido a la versión vigente.
     const parsed = validateDocumentFromAnyVersion(documentRaw);
     if (!parsed.ok) {
       issues.push(...parsed.issues.map((i) => ({ path: `${at}.document.${i.path}`, message: i.message })));

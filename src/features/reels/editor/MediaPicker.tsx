@@ -29,6 +29,11 @@ export interface MediaPickerProps {
   description?: string;
   /** Texto del botón, con el número de elegidas: «Añadir 3». */
   confirmLabel?: (count: number) => string;
+  /**
+   * Con una plantilla: qué va en cada plano, en orden (se marca el que toca
+   * elegir). `wanted` son los que hacen falta para la plantilla entera.
+   */
+  guide?: { steps: string[]; wanted: number };
   onConfirm: (assets: ReelSourceAsset[]) => void;
 }
 
@@ -82,6 +87,7 @@ export function MediaPicker({
   title = 'Elige fotos y clips',
   description = 'De la biblioteca de la marca. Toca varias: entran en el reel en el orden en que las eliges.',
   confirmLabel = (n) => (n === 1 ? 'Añadir 1' : `Añadir ${n}`),
+  guide,
   onConfirm,
 }: MediaPickerProps) {
   const [query, setQuery] = useState('');
@@ -123,7 +129,10 @@ export function MediaPicker({
         <>
           <span className="mr-auto self-center text-sm text-muted" data-testid="reel-media-count">
             {chosen.length === 0 ? 'Ninguna elegida' : `${chosen.length} elegida${chosen.length === 1 ? '' : 's'}`}
-            {full ? ' (el máximo del reel)' : ''}
+            {full ? (guide ? ' (todos los planos)' : ' (el máximo del reel)') : ''}
+            {guide && chosen.length > 0 && chosen.length < guide.wanted
+              ? ` · faltan ${guide.wanted - chosen.length} para la plantilla entera`
+              : ''}
           </span>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Cancelar
@@ -134,6 +143,30 @@ export function MediaPicker({
         </>
       }
     >
+      {guide && (
+        <ol
+          className="mb-3 flex flex-wrap gap-1.5 text-xs"
+          aria-label="Planos de la plantilla"
+          data-testid="reel-media-guide"
+        >
+          {guide.steps.map((step, index) => (
+            <li
+              key={`${index}-${step}`}
+              aria-current={index === chosen.length ? 'step' : undefined}
+              className={cn(
+                'rounded-full border px-2 py-0.5',
+                index < chosen.length
+                  ? 'border-primary bg-primary text-primary-fg'
+                  : index === chosen.length
+                    ? 'border-primary bg-primary-soft font-medium'
+                    : 'border-border text-muted',
+              )}
+            >
+              {index + 1}. {step}
+            </li>
+          ))}
+        </ol>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 basis-40">
           <Search

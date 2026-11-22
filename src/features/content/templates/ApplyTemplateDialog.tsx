@@ -52,7 +52,7 @@ export function ApplyTemplateDialog({
       onOpenChange={onOpenChange}
       size="lg"
       title="Empezar desde una plantilla"
-      description="Las fotos de la plantilla se quedan para que las sustituyas; el texto, el pie y los hashtags son una guía."
+      description="Las fotos son huecos para que pongas las tuyas; el texto, el pie y los hashtags son una guía."
       footer={
         <>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

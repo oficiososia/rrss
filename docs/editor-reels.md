@@ -300,3 +300,128 @@ guardadas sin ganar nada. Campos nuevos, sin ningún `null` (`request_media_job`
 2. Redesplegar el trabajador (Action `worker-fly.yml`): sin él, un plan con animaciones o portada falla en el esquema
    estricto del trabajador viejo.
 3. La aplicación (Vercel), después de lo anterior.
+
+## 9. Plantillas de reel por marca (rama `f35/catalogo-plantillas`, 22/11/2026)
+
+Hasta aquí un reel solo partía de un **estilo** del trabajador (`worker/templates/*.json`: transición,
+duración de foto y estilo de texto). Una **plantilla de reel** dice además qué planos lleva, cuánto dura
+cada uno, qué textos salen y cuándo, con qué animación, qué movimiento de cámara y qué música le va. El
+paso «Empieza tu reel» las ofrece: se elige una, pide N fotos o clips y deja el reel montado.
+
+### Decisiones
+
+| Tema | Decisión | Por qué |
+| --- | --- | --- |
+| Qué es | Un documento JSON propio (`kind: "rrss.reel-template"`, `schemaVersion: 1`) con **huecos** (`slots`), no un plan v2 con rutas falsas | Una plantilla no lleva archivos; el plan v2 exige rutas reales de la marca |
+| Qué sale al usarla | Un **proyecto de reel normal** (plan v2 sobre un estilo del trabajador) | No cambian ni el trabajador, ni `request_media_job`, ni la publicación: nada que redesplegar salvo la migración y la aplicación |
+| Estilo base | `style.id` es uno de `worker/templates` (lienzo, exportación, volúmenes y estilo de texto por defecto); la plantilla solo cambia lo que quiere | Los tres estilos siguen siendo la única fuente de lo que el trabajador sabe montar |
+| Dónde se guarda | Tabla `brand_reel_templates` (una fila por plantilla y marca), no en el perfil ni en el código | Son varias por marca, se entregan una a una y las de cada marca llevan sus colores |
+| Música | Solo una **sugerencia escrita** (`music.suggestion`, pulsaciones orientativas, si pide cortes al golpe) | La plantilla nunca incluye una canción: la licencia es de la marca (§2) |
+| Tipografía | La plantilla no la lleva; al montar se pone la tipografía de reels de la marca, como en un texto nuevo | La base de datos rechaza cualquier `path` o `fontPath` en una plantilla |
+| Colores | Hex en el documento guardado. El catálogo de la agencia los escribe por **papeles** (acento, fondo oscuro…) y los resuelve con el perfil de la marca al cargar | Sin código por cliente |
+
+### Esquema compartido (`src/features/reels/reelTemplate.ts`)
+
+Es el **único** validador: lo usan la aplicación (zod 3), `agency/` (lo importa tal cual) y la prueba del
+catálogo. Quien genere plantillas de reel (el catálogo, «un reel como este» a partir de un vídeo de
+referencia, o un futuro «Guardar como plantilla») escribe **este** documento y lo entrega con
+`deliver_reel_templates`.
+
+```jsonc
+{
+  "kind": "rrss.reel-template",
+  "schemaVersion": 1,
+  "purpose": "Para qué sirve, en una frase",            // ≤ 200
+  "whenToUse": "Cuándo usarla",                          // ≤ 240
+  "material": "4 a 6 fotos o clips, en este orden: …",   // ≤ 240
+  "style": { "id": "corte-ritmico" },                    // un estilo de worker/templates
+  "slots": [                                             // 1 a 30 planos, en orden; ≤ 90 s entre todos
+    { "id": "resultado", "label": "Plato terminado", "hint": "El mejor plano: es el gancho.",
+      "kind": "any",                                     // any | photo | video: pista, no obliga
+      "seconds": 1.8,                                    // 0,5 a 60 (una foto no pasa de 10)
+      "motion": "zoom-in", "motionAmount": 0.15,         // si se llena con una foto
+      "transition": { "type": "cut", "seconds": 0 },     // con la que entra; la del estilo si falta
+      "volume": 0.7,                                     // si se llena con un clip; el del estilo si falta
+      "optional": true }                                 // de los que se quitan si falta material
+  ],
+  "texts": [                                             // textos de MUESTRA (se sustituyen), hasta 30
+    { "id": "gancho", "role": "hook",                    // hook | title | step | detail | cta
+      "text": "Así se hace",
+      "from": "resultado", "offset": 0,                  // entra con ese plano, tantos segundos después
+      "to": "resultado", "endOffset": 0,                 // sale con ese (el mismo si falta), tantos antes (≤ 0)
+      "position": "center",                              // top | center | bottom
+      "style": { "sizeRatio": 0.085, "color": "#FFFFFF", "box": null,
+                 "outline": { "color": "#000000", "widthRatio": 0.08 } },   // parcial: lo demás, del estilo
+      "animation": { "in": "zoom", "out": "fade", "seconds": 0.4 } }        // las del plan v2
+  ],
+  "music": { "suggestion": "Instrumental con pulso marcado…", "bpm": { "min": 100, "max": 125 }, "cutsOnBeat": true },
+  "cover": { "slot": "resultado", "offset": 0.9 },       // portada: fotograma de ese plano
+  "origin": { "note": "De dónde sale", "url": "https://…" }   // opcional, solo informa
+}
+```
+
+Reglas (todas en `reelTemplateSchema`): forma cerrada (un campo de más invalida), identificadores de plano
+únicos, al menos un plano no opcional, textos que apuntan a planos que existen y no salen antes de entrar,
+portada en un plano que existe. Funciones que se exportan:
+
+| Función | Para qué |
+| --- | --- |
+| `validateReelTemplate(raw, styleIds?)` | Valida un documento; con `styleIds`, además que el estilo exista |
+| `validateReelTemplatesDelivery(raw, styleIds?)` | Valida un archivo de entrega `{ format: "rrss.agency-reel-templates", version: 1, note, templates: [{ key, name, document }] }` (1 a 12) |
+| `reelTemplateNeeds(t)` / `describeNeeds(t)` | Mínimo y máximo de piezas y duración: «4 a 6 fotos o clips · unos 13 s» |
+| `slotsFor(t, n)` | Qué planos se usan con `n` piezas: si faltan, se quitan primero los opcionales (los últimos antes) y, por debajo del mínimo, los del medio (se conservan el primero y el último) |
+| `buildReelFromTemplate(t, assets, style, { font })` | El proyecto de reel: cada pieza en su plano, textos con su plano (los de un plano quitado no salen), portada; sin música |
+
+### Base de datos (migración `20261224010000_reel_templates.sql`, con vuelta atrás)
+
+- Tabla `brand_reel_templates`: `brand_id`, `organization_id`, `template_key` (única por marca: entregar otra
+  vez la misma la actualiza), `name` (≤ 80), `document` (lo de arriba; la base comprueba `kind`, versión,
+  de 1 a 30 planos y ≤ 64 KiB) y `source`: `catalog` (catálogo de la agencia), `reference` (de un vídeo de
+  referencia) o `editor` (guardada desde el editor).
+- RLS: la ve quien ve la marca; sin políticas de escritura.
+- `deliver_reel_templates(p_brand_id, p_templates jsonb, p_source default 'catalog')`: quien **edita** la
+  marca; de 1 a 12 por llamada; rechaza lo que no es una plantilla de la versión 1, un estilo sin forma de
+  identificador y cualquier `path` o `fontPath`; tope de **60 por marca**.
+- `delete_reel_template(p_template_id)`: quien edita la marca.
+- Casos en `tests/db/aislamiento.test.ts` («plantillas de reel por marca»).
+
+### En el editor
+
+- `useBrandReelTemplates` (`editor/api.ts`) lee las de la marca y deja fuera las que la aplicación no sabe
+  montar (mal formadas o de un estilo que no existe).
+- `Starter.tsx`: si la marca tiene plantillas, «Empieza con una plantilla» (nombre, para qué sirve, lo que
+  necesita y la música que le va) encima de los tres pasos de siempre. Sin plantillas, la pantalla es la de
+  antes.
+- Al elegir una, `MediaPicker` enseña los planos en orden («1. Plato terminado · 2. …»), marca cuál toca y
+  deja confirmar con menos piezas avisando de cuántas faltan. Al confirmar, `buildReelFromTemplate` y un
+  aviso con la música sugerida. Es un paso del historial: «Deshacer» lo quita.
+
+### Catálogo
+
+Cuatro juegos (`restaurante`, `cocteleria`, `gimnasio`, `generico`) con 10 plantillas de reel y 10 de
+publicación cada uno, en `agency/catalogo/`. Cómo se cargan: `agency/README.md`. Por qué estas:
+`docs/plantillas-competencia.md`.
+
+### Probado
+
+- Unitarias (`reelTemplate.test.ts`): forma, rechazos, qué planos se usan según el material y montaje
+  (duraciones, transiciones, tiempos de los textos, portada, clip corto, foto en plano largo).
+- Componentes (`editorReels.test.tsx`): la pantalla de salida ofrece las plantillas de la marca, el selector
+  guía por planos, el reel queda montado y se guarda como plan v2.
+- Base de datos: aislamiento, permisos, rechazos, tope y borrado; la migración se deshace y se vuelve a aplicar.
+- `agency/tests/catalogo.test.ts`: las 40 plantillas de reel con tres temas montan un plan v2 válido con el
+  mínimo y con todo el material, con fotos y con clips.
+
+### Sin probar
+
+- **Ningún reel de plantilla se ha montado con el trabajador ni se ha visto en un navegador real**: las
+  duraciones, los textos y las animaciones están comprobados contra los esquemas y las cuentas de la línea
+  de tiempo, no a ojo. Antes de darlas por buenas hay que montar al menos una por juego en staging.
+- La migración en staging.
+- No hay todavía pantalla para borrar o renombrar plantillas de reel (existe `delete_reel_template`).
+
+### Para llevarlo a staging
+
+1. Migración `20261224010000_reel_templates.sql`.
+2. La aplicación (Vercel). El trabajador no cambia.
+3. Cargar el catálogo en cada marca (`agency/`, en seco primero).

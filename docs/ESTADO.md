@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f32/operacion-gasto`; antes, `f27/calidad`).
+Última actualización: 22/11/2026 (rama `f33/integraciones-sencillas`; antes, `f32/operacion-gasto`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -174,6 +174,44 @@ Reels, `provenance.role = 'cover'`) pero **la publicación todavía no la envía
 reordenar con el dedo con agarre largo, asas de 24 px y recorte con teclado. Probado: unitarias, componentes, trabajador
 con FFmpeg real (posición del texto en fotogramas), base de datos. Sin probar: análisis de música real y agarre largo en un
 móvil real, FFmpeg 6 de Alpine (`fontsize` como expresión), migración en staging. Detalle y despliegue en `docs/editor-reels.md` §8.
+
+### Catálogo de plantillas y plantillas de reel por marca (rama `f35/catalogo-plantillas`, 22/11/2026)
+
+Hasta ahora una marca tenía las plantillas de publicación que alguien le entregara a mano y, para los reels,
+solo los tres estilos del trabajador. Detalle: `docs/plantillas-competencia.md` (estudio y por qué cada
+plantilla), `docs/editor-reels.md` §9 (formato de la plantilla de reel) y `agency/README.md` (cómo se carga).
+
+- **Estudio de la competencia** (restaurantes y asadores, bares de cócteles, gimnasios), con fuentes
+  enlazadas y cada afirmación marcada como dato, consejo, inferencia o sin verificar. Límite importante:
+  Instagram y TikTok no se dejan leer sin sesión, así que **no se ha visto por dentro ningún reel real**; las
+  duraciones de plano son una propuesta razonada, no una medición.
+- **Plantillas de reel con estructura** (`src/features/reels/reelTemplate.ts`): planos con duración,
+  movimiento y transición, textos de muestra con su animación, música sugerida (solo escrita) y portada.
+  Tabla `brand_reel_templates` con RLS, `deliver_reel_templates` y `delete_reel_template` (**migración
+  `20261224010000_reel_templates.sql`**, con vuelta atrás y casos en `tests/db/aislamiento.test.ts`).
+  **No aplicada en staging ni en producción.** Al usar una plantilla sale un proyecto de reel normal (plan
+  v2): el trabajador, `request_media_job` y la publicación no cambian.
+- **«Empieza tu reel»** ofrece las plantillas de la marca encima de los tres pasos: se elige una, el selector
+  enseña los planos en orden y, al confirmar, el reel queda montado con sus textos de muestra. Sin
+  plantillas, la pantalla es la de antes.
+- **Catálogo** en `agency/catalogo/`: cuatro juegos (`restaurante`, `cocteleria`, `gimnasio`, `generico`)
+  con 10 plantillas de reel y 10 de publicación o carrusel cada uno (80 en total). Sin nada de ningún
+  cliente: nombres neutros, textos de muestra y colores y tipografías por papeles, que se llenan con el
+  perfil de la marca al cargar. Órdenes nuevas `catalogo` y `cargar-catalogo` (**en seco por defecto**;
+  `--cargar` guarda). El archivo de entrega de plantillas de publicación admite ya documentos v5.
+- **Probado:** unitarias y componentes del formato y de la pantalla de salida; base de datos (aislamiento,
+  permisos, rechazos, tope, vuelta atrás); `agency/tests/catalogo.test.ts` recorre las 80 plantillas con
+  tres temas y las pasa por los validadores de la aplicación (documento v5 y análisis; plantilla de reel y
+  plan v2 con el mínimo y con todo el material), y prueba la carga en seco y la de verdad contra el
+  Supabase simulado. Las publicaciones del juego de restaurante y del de gimnasio se miraron dibujadas en
+  un navegador (una hoja de contactos hecha para la ocasión, no el editor).
+- **Sin probar:** nada cargado en staging; **ningún reel de plantilla montado con el trabajador ni visto en
+  la vista previa real**; las publicaciones dentro del editor de verdad (tipografías de la marca, textos
+  largos); el reparto automático de colores con perfiles distintos de los tres de prueba y los dos reales
+  que se usaron en seco.
+- **Pendiente:** pantalla para borrar o renombrar plantillas de reel; «Guardar como plantilla» desde el
+  editor de reels (el origen `editor` ya existe); que «un reel como este» (rama `f36`) guarde en este
+  formato; medir con la analítica qué plantillas funcionan y ajustar duraciones.
 
 ### Fase 4 · Campañas (primera parte)
 
@@ -805,3 +843,36 @@ atrás), **sin aplicar en staging**.
   imitados; la e2e 19 está actualizada pero no se ha ejecutado (sin Docker).
 - **Pendiente:** aviso hacia fuera (correo o Telegram), comprobación periódica de la máquina de Fly,
   cargar y verificar precios reales de IA, decidir si se activan los topes (apagados por defecto; los avisos y la pantalla son solo informativos).
+
+### Plantillas: miniaturas reales y tarjetas legibles (rama `f34/plantillas-ui`)
+
+- **Miniatura real** (`content/templates/preview.ts`, `useTemplatePreviews.ts`): se dibuja la primera página con el motor del exportador (`renderDocument`), con las 8 fotos más recientes de la biblioteca en los huecos de foto (marcador neutro si no hay) y el texto de muestra de la plantilla. Una a una, cacheada (LRU de 80, por plantilla y fotos) y con esqueleto; si falla, el esquema de siempre. Sirve a «Nueva idea», «Desde una plantilla» y Marca → Plantillas.
+- **Tarjetas**: nombre, una frase (primera del resumen, sin la etiqueta «PROPUESTA de la agencia…»), formato, páginas y «Con hueco para N fotos»; el texto largo, el tipo de foto y la repetición, en «Ver más». Etiqueta «Manual» pasa a «De la agencia». Filtro por formato. «Nueva idea» ofrece «En blanco» / «Desde una plantilla» siempre.
+- **Datos de staging**: `supabase/scripts/renombrar-plantillas-neutras.sql` (a mano; sin migración).
+- **Sin probar**: dibujo real en navegador (en jsdom Konva no dibuja: allí sale el esquema), 375 px a mano.
+## Integraciones en dos niveles, precios al día y sugerencias de modelo (rama `f33/integraciones-sencillas`, 22/11/2026)
+
+Detalle en `docs/integraciones-sencillas.md`. Migración `20261222010000_precios_y_coste_real.sql`
+(con vuelta atrás), **sin aplicar en staging**.
+
+- **Implementado y probado en componentes y en base de datos (con fuentes y proveedores simulados):**
+  vista sencilla de «Plataforma → Integraciones» (una tarjeta por servicio, estado en una palabra,
+  la clave imprescindible, «Guardar», «Probar conexión» y «Con esto se enciende»; todo lo demás en
+  «Opciones avanzadas» de cada tarjeta); resumen «Qué funciona ahora» (8 funciones); OpenAI como una
+  sola tarjeta; al guardar la clave de OpenAI se aplican valores por defecto (servidor europeo,
+  modelo barato para el copiloto, modelo mejor para redactar, precios, modelos de imagen de OpenAI
+  activados) con «Deshacer»; «Usar la configuración recomendada»; sugerencia de modelo por tarea con
+  su precio por uso (OpenAI y, como tarjeta nueva y opcional, Claude); precios al día leídos por el
+  servidor desde LiteLLM (caché de 12 h, último valor guardado si la fuente falla) comparados con
+  los cargados, con «Usar estos precios»; coste real medio por operación del mes; si la clave de
+  OpenAI no es de un proyecto europeo, «Probar conexión» lo dice y ofrece el servidor general en un
+  clic (con el aviso de los datos fuera de la UE).
+- **Para llevar a staging:** migración `20261222010000`; redesplegar `platform-integrations` (hace
+  falta salida a `raw.githubusercontent.com` y a la API de OpenAI); la aplicación web.
+- **No probado:** nada contra OpenAI, Anthropic ni GitHub reales desde la aplicación (la fuente de
+  precios se leyó a mano el 22/11/2026 para elegirla); la pantalla no se ha visto en un navegador
+  ni a 375 px reales (maquetación con rejilla y `flex-wrap`, sin captura); la e2e 18 y la 21 están
+  adaptadas pero no se han ejecutado (sin Docker; corren en CI).
+- **Pendiente:** leer el gasto real del proveedor con una clave de administración (documentado, sin
+  implementar: `docs/integraciones-sencillas.md` §6); medir con nuestros casos los modelos que hoy
+  salen como «sin medir con nuestros casos»; precio por imagen (la fuente solo da precio por token de imagen).

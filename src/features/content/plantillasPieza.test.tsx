@@ -168,8 +168,9 @@ describe('Nueva idea desde una plantilla', () => {
     expect(option).toHaveTextContent('Plato del día');
     expect(option).toHaveTextContent('Instagram · Publicación');
     expect(option).toHaveTextContent('Foto del plato a sangre con el titular centrado.');
-    expect(option).toHaveTextContent('1 foto para sustituir');
-    expect(option).toHaveTextContent('en 12 de 30 publicaciones');
+    expect(option).toHaveTextContent('Con hueco para 1 foto');
+    expect(option).not.toHaveTextContent('publicaciones');
+    expect(option).not.toHaveTextContent('Sin fotos');
 
     // Sin elegir ninguna, no se crea.
     await user.click(dialog.getByTestId('create-content-submit'));
@@ -192,7 +193,7 @@ describe('Nueva idea desde una plantilla', () => {
     expect(saved[0]!.data.copy.caption).toBe('Hoy en la carta: …');
   });
 
-  it('una plantilla manual se ve igual en el selector, con la etiqueta «Manual»', async () => {
+  it('una plantilla manual se ve igual en el selector, con la etiqueta «De la agencia»', async () => {
     const base = templateRow();
     seed({ orgRole: 'member', brandRole: 'editor' }, [
       templateRow({
@@ -216,10 +217,46 @@ describe('Nueva idea desde una plantilla', () => {
     expect(options).toHaveLength(2);
     const manual = options.find((o) => o.getAttribute('data-template-key') === 'manual')!;
     expect(manual).toHaveTextContent('Cartel manual');
-    expect(manual).toHaveTextContent('Manual');
+    expect(manual).toHaveTextContent('De la agencia');
     expect(manual).toHaveTextContent('Foto del plato a sangre');
     const importada = options.find((o) => o.getAttribute('data-template-key') === 'importada')!;
-    expect(importada).not.toHaveTextContent('Manual');
+    expect(importada).not.toHaveTextContent('De la agencia');
+  });
+
+  it('ofrece empezar en blanco siempre, filtra por formato y deja el texto largo en «Ver más»', async () => {
+    const base = templateRow();
+    seed({ orgRole: 'member', brandRole: 'editor' }, [
+      templateRow({
+        analysis: {
+          ...(base.analysis as object),
+          summary:
+            'PROPUESTA de la agencia (no observada en el feed): Foto a sangre con titular. Detalle largo de la agencia.',
+        },
+      }),
+      templateRow({ id: 'tpl-c', template_key: 'carrusel', name: 'Tres pasos', format: 'carousel' }),
+    ]);
+    const { user } = renderApp(CONTENT);
+    await user.click(await screen.findByTestId('content-new'));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByTestId('create-content-blank')).toBeChecked();
+    await user.click(dialog.getByTestId('create-content-from-template'));
+    expect(await dialog.findAllByTestId('template-option')).toHaveLength(2);
+
+    const first = dialog
+      .getAllByTestId('template-option')
+      .find((o) => o.getAttribute('data-template-key') === 'plato-del-dia')!;
+    expect(first).toHaveTextContent('Foto a sangre con titular.');
+    expect(first).not.toHaveTextContent('PROPUESTA');
+    expect(dialog.queryByTestId('template-detail')).not.toBeInTheDocument();
+    await user.click(dialog.getAllByTestId('template-more')[0]!);
+    expect(await dialog.findByTestId('template-detail')).toHaveTextContent(
+      'Propuesta de la agencia: Foto a sangre con titular. Detalle largo',
+    );
+
+    await user.click(dialog.getByRole('button', { name: 'Carrusel' }));
+    expect(dialog.getAllByTestId('template-option')).toHaveLength(1);
+    await user.click(dialog.getByTestId('create-content-blank'));
+    expect(dialog.queryByTestId('template-list')).not.toBeInTheDocument();
   });
 
   it('sin plantillas lo dice y explica cómo conseguirlas', async () => {

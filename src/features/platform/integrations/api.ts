@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { IntegrationAuditRow, IntegrationSettingRow, IntegrationTestRow } from '@/lib/database.types';
+import type {
+  IntegrationAuditRow,
+  IntegrationSettingRow,
+  IntegrationTestRow,
+  PlatformCostRow,
+} from '@/lib/database.types';
+import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
-import type { AiTextTask, IntegrationId } from './catalog';
+import { UI_INTEGRATIONS, type AiTextTask, type IntegrationId } from './catalog';
 
 export { AI_TEXT_TASKS, type AiTextTask } from './catalog';
 
@@ -44,7 +50,14 @@ export interface ProbeResult {
   ok: boolean;
   message: string;
   checks: Array<{ name: string; ok: boolean | null; message: string }>;
+  /** Arreglo de un clic que ofrece la pantalla (hoy: usar el servidor general de OpenAI). */
+  fix?: 'openai_global';
 }
+
+/** A qué integración pertenece cada ajuste (el servidor guarda de una integración por llamada). */
+export const SETTING_INTEGRATION: Record<string, IntegrationId> = Object.fromEntries(
+  UI_INTEGRATIONS.flatMap((i) => i.groups.flatMap((g) => g.fields.map((f) => [f.key, i.id] as const))),
+);
 
 export const integrationKeys = {
   availability: ['platform', 'integrations', 'availability'] as const,
@@ -140,5 +153,167 @@ export function useGenerateTokenKey() {
   return useMutation({
     mutationFn: () => callIntegrations<{ keyId: string }>({ action: 'generate_token_key' }),
     onSuccess: invalidate,
+  });
+}
+
+// ───────────────────── IA sencilla: precios al día y configuración recomendada ─────────────────────
+
+export type AiProviderId = 'openai' | 'claude';
+export type PriceStatus = 'same' | 'different' | 'none' | 'no_source';
+
+/** Precio en micros por unidad (1 micro por token = 1 dólar por millón de tokens). */
+export interface MicroPrice {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_write_input_tokens?: number;
+  audio_seconds?: number;
+}
+
+export interface AiTaskView {
+  id: string;
+  label: string;
+  kind: 'text' | 'image' | 'transcription';
+  unit: string;
+  recommended: null | {
+    model: string;
+    why: string;
+    measured: string;
+    centsPerUse: number | null;
+    skipped: string[];
+    unchecked: boolean;
+  };
+  none?: string;
+  current: string | null;
+}
+
+export interface AiPriceRow {
+  provider: AiProviderId;
+  model: string;
+  usedFor: string[];
+  source: {
+    mode: 'chat' | 'transcription' | 'image';
+    inputPerM?: number;
+    outputPerM?: number;
+    perSecond?: number;
+  } | null;
+  expected: MicroPrice | null;
+  loaded: MicroPrice | null;
+  status: PriceStatus;
+  surcharge: number;
+}
+
+export interface AiOverview {
+  source: {
+    name: string;
+    url: string;
+    officialUrl: Record<AiProviderId, string>;
+    fetchedAt: string | null;
+    stale: boolean;
+    problem: string | null;
+  };
+  region: 'eu' | 'global' | 'unset';
+  openaiModels: { known: boolean; problem: string | null };
+  providers: Record<
+    AiProviderId,
+    {
+      tasks: AiTaskView[];
+      prices: AiPriceRow[];
+      monthly: { usd: number | null; notCounted: string[] };
+      differing: number;
+    }
+  >;
+}
+
+/** Lo que devuelven las acciones que cambian ajustes: lo anterior (para deshacer) y avisos. */
+export interface AppliedChange {
+  previous: Record<string, string | null>;
+  applied: Array<{ key: string; from: string | null; to: string | null }>;
+  notes: string[];
+  activatedImageModels?: string[];
+}
+
+export const aiKeys = {
+  overview: ['platform', 'integrations', 'ai-overview'] as const,
+  cost: (period: string) => ['platform', 'integrations', 'cost-per-operation', period] as const,
+};
+
+/** Precios al día y sugerencias. Lo lee el servidor (con caché de 12 h); si la fuente falla, usa lo último guardado. */
+export function useAiOverview(enabled = true) {
+  return useQuery({
+    queryKey: aiKeys.overview,
+    queryFn: () => callIntegrations<AiOverview>({ action: 'ai_overview' }),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+}
+
+/** «Actualizar»: vuelve a leer la fuente de precios (como mucho cada 10 minutos). */
+export function useRefreshAiOverview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => callIntegrations<AiOverview>({ action: 'ai_overview', refresh: true }),
+    onSuccess: (data) => qc.setQueryData(aiKeys.overview, data),
+  });
+}
+
+/** Aplica los valores por defecto, la configuración recomendada o solo los precios. */
+export function useAiApply() {
+  const invalidate = useInvalidate();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { provider: AiProviderId; scope: 'defaults' | 'all' | 'prices' }) =>
+      callIntegrations<AppliedChange>({ action: 'ai_apply', ...input }),
+    onSettled: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: aiKeys.overview });
+    },
+  });
+}
+
+/** Pasa OpenAI al servidor europeo o al general (los datos se tratan fuera de la UE). */
+export function useOpenAiRegion() {
+  const invalidate = useInvalidate();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (region: 'eu' | 'global') => callIntegrations<AppliedChange>({ action: 'openai_region', region }),
+    onSettled: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: aiKeys.overview });
+    },
+  });
+}
+
+/** Deshace un cambio: vuelve a guardar (o borra, si no había) lo que había antes. */
+export function useRestoreSettings() {
+  const invalidate = useInvalidate();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (previous: Record<string, string | null>) => {
+      const byIntegration = new Map<IntegrationId, Record<string, string | null>>();
+      for (const [key, value] of Object.entries(previous)) {
+        const integration = SETTING_INTEGRATION[key];
+        if (!integration) continue;
+        byIntegration.set(integration, { ...(byIntegration.get(integration) ?? {}), [key]: value });
+      }
+      for (const [integration, values] of byIntegration) {
+        await callIntegrations<{ saved: string[] }>({ action: 'save', integration, values });
+      }
+    },
+    onSettled: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: aiKeys.overview });
+    },
+  });
+}
+
+/** Coste liquidado del mes por tipo de operación (de `ai_generations`), solo superadministradores. */
+export function useCostPerOperation(periodStart: string, enabled = true) {
+  return useQuery({
+    queryKey: aiKeys.cost(periodStart),
+    enabled,
+    queryFn: async (): Promise<PlatformCostRow[]> =>
+      unwrap(await supabase.rpc('platform_cost_per_operation', { p_period_start: periodStart })),
   });
 }

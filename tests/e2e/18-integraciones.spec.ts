@@ -37,6 +37,8 @@ test('la superadministradora guarda la aplicación de Meta, la prueba y la ve co
   const meta = page.getByTestId('integration-meta');
   await expect(meta).toBeVisible();
   // En la prueba local la publicación ya funciona (Graph API simulada): se enseña.
+  // «Qué funciona ahora», arriba, resume en llano lo que ya funciona; el detalle técnico está en «Opciones avanzadas».
+  await expect(page.getByTestId('working-now')).toContainText('Publicar en Instagram');
   await expect(page.getByTestId('integration-flags')).toContainText('Se enseña');
 
   await meta.getByTestId('setting-META_APP_ID').getByRole('textbox').fill(APP_ID);
@@ -86,7 +88,6 @@ test('un secreto mal escrito no se guarda y quien no es superadministrador no en
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto('/plataforma/integraciones');
-  await page.getByRole('tab', { name: 'Stripe' }).click();
   const stripe = page.getByTestId('integration-stripe');
   await stripe.getByLabel('Clave secreta').fill('esto-no-es-una-clave');
   await stripe.getByTestId('integration-save').click();
