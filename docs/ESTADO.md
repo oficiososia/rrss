@@ -453,6 +453,36 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 - **Sin probar:** el pellizco táctil y los gestos en un móvil real (solo emulación y pruebas); el editor contra un Supabase real en esta rama (no hay Docker aquí): componentes, base de datos y navegador con cliente simulado.
 - **Pendiente:** e2e del editor con Supabase local para guardar plantilla y exportar de verdad; una vista de gestión de plantillas en la marca (hoy solo se borran desde «Desde una plantilla»).
 
+### Recorte de fondo: refinado y servidor (rama `f18/recorte-refinado`, 22/11/2026)
+
+El dueño vio que «Quitar el fondo» sin WebGPU (IS-Net) recortaba mal un chuletón
+en bandeja, y que en el panel del restaurante sale bien. Causa (detalle en
+`docs/edicion-fotos.md`, §7): el modelo era el mismo, pero rrss encogía la foto con
+bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto.
+
+- **Implementado y probado:** entrada de IS-Net con promedio de área; limpieza de
+  motas, islas y agujeros y filtro guiado a resolución completa (`cutout/refine.ts`,
+  portado del panel); BEN2 con solo la limpieza; modelo uint8 de 45 MB alojado en
+  `public/models/`; cadena navegador (BEN2 con WebGPU, si no IS-Net) → servidor;
+  función `api/cutout-mask.ts` (sesión validada, permiso de edición de la marca,
+  topes de 60 por persona y día y 600 por marca y mes, límite de 4 MB) y
+  migración `20261213120000_cutout_server_usage.sql` con su vuelta atrás.
+- **Medido:** la máscara del servidor es idéntica a la del navegador (IoU 1,000);
+  ≈ 2,1 s y ≈ 290 MB por foto en local; paquete de la función ≈ 115 MB (límite 250).
+- **Sin probar:** el fallo exacto de la captura del dueño (no se tiene su foto; en
+  las 12 de prueba la mejora se ve, pero el defecto original era menor); la función
+  **desplegada en Vercel** (arranque en frío, CPU real, que el paquete lleve los
+  binarios); BEN2 con WebGPU real (sigue igual que en `f17`); el refinado sobre
+  fotos de 12 MP reales (solo una copia sintética).
+- **Pendiente del dueño / de despliegue:** aplicar la migración en staging; que el
+  proyecto `rrss` de Vercel tenga `SUPABASE_URL` y `SUPABASE_ANON_KEY` (o las
+  `VITE_` equivalentes) para la función; mirar `GET /api/cutout-mask` tras el
+  primer despliegue. El plan Hobby de Vercel es solo para uso no comercial y da
+  4 h de CPU al mes para todo el equipo.
+- **Límite conocido:** el plato blanco sobre mantel claro lo pierde IS-Net (también
+  en el panel); con BEN2 (WebGPU) sale bien.
+- **Sin reproducir:** la pieza que falló al dueño (`chuleton-de-vaca-madurada-post-1080x1080-v1.jpg`, en la biblioteca de staging) no se ha podido descargar desde esta sesión (acceso a staging denegado); el corte en diagonal de esa pieza sigue sin explicar. Con el plato blanco del coulant, BEN2 lo conserva y IS-Net (también el del panel) lo pierde.
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
