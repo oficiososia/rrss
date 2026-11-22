@@ -3,23 +3,14 @@ import { createEmptyDocument, pageView, withLayers, type TextLayer } from '../do
 import { editorReducer, initEditor } from '../editor/history';
 import { applyCopilotOperations, backgroundImageOf, needsPhotoPick, withPickedPhoto, type CopilotApplyContext } from './apply';
 import { ASSUMED_PHOTO_TONE, colorRole, contrastOf, legibleTextColor, preferredTextColor, toneOfPalette } from './legibility';
-import { isDictated, keepDictated, parseCopilotResponse, summarizeDocument, type CopilotOperation } from './operations';
+import { copilotOp, isDictated, keepDictated, parseCopilotResponse, summarizeDocument, type CopilotOperation } from './operations';
 
 const PHOTO = '11111111-1111-4111-8111-111111111111';
 const LOGO = '22222222-2222-4222-8222-222222222222';
 
+/** Operación con todo a null menos lo indicado, SIN validar (hay pruebas con valores que no valen). */
 const op = (fields: Partial<CopilotOperation> & Pick<CopilotOperation, 'op'>): CopilotOperation => ({
-  target: null,
-  text: null,
-  style: null,
-  assetId: null,
-  position: null,
-  align: null,
-  color: null,
-  font: null,
-  blur: null,
-  dx: null,
-  dy: null,
+  ...copilotOp({ op: fields.op }),
   ...fields,
 });
 

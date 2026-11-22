@@ -1,24 +1,41 @@
 import {
+  adaptDocument,
+  addPage,
   clampPageIndex,
+  duplicatePage,
   MAX_LAYERS,
+  MAX_PAGES,
+  movePage,
   pageView,
+  removePage,
   validateDocument,
+  type AspectRatio,
   type Canvas,
   type ContentDocument,
   type DocumentIssue,
+  type ImageAdjust,
+  type ImageBackdrop,
   type ImageLayer,
   type Layer,
+  type PageLimits,
   type PageView,
   type TextLayer,
 } from '../document';
 import { dropLoneGroups } from '../editor/arrange';
-import { applyLayerPatch, type LayerPatch } from '../editor/history';
-import { FALLBACK_FONTS, newImageLayer, newLayerId, newLogoLayer } from '../editor/layers';
+import { applyLayerPatch, duplicateLayer, reorderLayers, type LayerPatch } from '../editor/history';
+import { fitBoxAround } from '../editor/imageEffects/cropMath';
+import { FILTER_LABEL } from '../editor/imageEffects/filters';
+import { flipPhoto, largestCrop, orientedSize, turnQuarter } from '../editor/imageEffects/imageEdit';
+import { DEFAULT_SHADOW } from '../editor/imageEffects/shadowDefaults';
+import { FALLBACK_FONTS, layerLabel, newImageLayer, newLayerId, newLogoLayer, newShapeLayer } from '../editor/layers';
 import { backdropAt, contrastOf, legibleTextColor, type CopilotBrandColor } from './legibility';
 import {
   COPILOT_MOVE_STEP,
+  COPILOT_SIZE_STEP,
   type CopilotAlign,
+  type CopilotEditorAction,
   type CopilotOperation,
+  type CopilotPhotoFlow,
   type CopilotPosition,
   type CopilotTextStyle,
 } from './operations';
@@ -63,6 +80,18 @@ export interface CopilotApplyContext {
   imageTones?: ReadonlyMap<string, string>;
   /** Página sobre la que actúa (la activa del editor). Por omisión, la primera. */
   pageIndex?: number;
+  /** Capas elegidas en el editor: «esta foto» sin decir cuál. */
+  selectedIds?: readonly string[];
+  /** Páginas que admite el formato de la pieza (un post, una; un carrusel, de 2 a 10). */
+  pageLimits?: PageLimits;
+  /** Proporciones que admite la red de la pieza; sin ellas no se avisa. */
+  allowedRatios?: readonly AspectRatio[] | null;
+}
+
+/** Flujo del editor que una orden pide abrir para una foto («quita el fondo», «modo retrato»…). */
+export interface CopilotFlowRequest {
+  flow: CopilotPhotoFlow;
+  layerId: string;
 }
 
 export type CopilotApplyResult =
@@ -75,6 +104,12 @@ export type CopilotApplyResult =
       skipped: string[];
       /** Capas nuevas o tocadas, para dejarlas elegidas. */
       touched: string[];
+      /** Página que queda activa (una orden puede añadir una página o pasar a otra). */
+      pageIndex: number;
+      /** Flujos de foto que hay que abrir después (no cambian el documento aquí). */
+      flows: CopilotFlowRequest[];
+      /** Acciones del editor para después de aplicar: guardar, abrir plantillas. */
+      after: CopilotEditorAction[];
     }
   | { ok: false; issues: DocumentIssue[] };
 
@@ -101,17 +136,60 @@ export function backgroundImageOf(document: Pick<PageView, 'canvas' | 'layers'>)
   return (found as ImageLayer | undefined) ?? null;
 }
 
+const wantsPhoto = (op: CopilotOperation) => op.op === 'set_background_image' || op.op === 'add_image';
+
 /** ¿Hay alguna orden que pide una foto sin decir cuál? (el editor abre el selector). */
 export function needsPhotoPick(operations: CopilotOperation[]): boolean {
-  return operations.some((op) => op.op === 'set_background_image' && op.assetId === null);
+  return operations.some((op) => wantsPhoto(op) && op.assetId === null);
 }
 
 /** Rellena «esta foto» con la elegida. */
 export function withPickedPhoto(operations: CopilotOperation[], assetId: string | null): CopilotOperation[] {
   return operations.flatMap((op) => {
-    if (op.op !== 'set_background_image' || op.assetId !== null) return [op];
+    if (!wantsPhoto(op) || op.assetId !== null) return [op];
     return assetId ? [{ ...op, assetId }] : [];
   });
+}
+
+/** Órdenes de deshacer y rehacer de una respuesta, en su orden (las ejecuta el editor antes que nada). */
+export function historyActions(operations: CopilotOperation[]): ('undo' | 'redo')[] {
+  return operations.flatMap((op) =>
+    op.op === 'editor' && (op.action === 'undo' || op.action === 'redo') ? [op.action] : [],
+  );
+}
+
+const NEUTRAL_ADJUST: ImageAdjust = { brightness: 0, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 };
+const CROP_RATIO: Record<string, number> = { '1:1': 1, '4:5': 4 / 5, '9:16': 9 / 16, '16:9': 16 / 9, '3:2': 3 / 2 };
+/** Blanco o negro: el que más contrasta con un color. */
+const contrasting = (color: string) =>
+  contrastOf(color, '#000000') >= contrastOf(color, '#FFFFFF') ? '#000000' : '#FFFFFF';
+
+/** Sitio de una caja nueva (figura o foto suelta): centrada salvo que se diga otra cosa. */
+function placeBox(
+  canvas: Canvas,
+  box: { width: number; height: number },
+  position: CopilotPosition | null,
+  align: CopilotAlign | null,
+): { x: number; y: number } {
+  const margin = Math.round(Math.min(canvas.width, canvas.height) * 0.05);
+  const maxY = Math.max(0, canvas.height - box.height - margin);
+  const y =
+    position === 'top'
+      ? margin
+      : position === 'upper'
+        ? Math.min(maxY, Math.round(canvas.height * SLOT.upper))
+        : position === 'lower'
+          ? Math.min(maxY, Math.round(canvas.height * SLOT.lower))
+          : position === 'bottom'
+            ? maxY
+            : Math.round((canvas.height - box.height) / 2);
+  const x =
+    align === 'left'
+      ? margin
+      : align === 'right'
+        ? canvas.width - box.width - margin
+        : Math.round((canvas.width - box.width) / 2);
+  return { x, y };
 }
 
 function textBox(canvas: Canvas, text: string, fontSize: number) {
@@ -157,7 +235,9 @@ function fontFor(brand: CopilotBrandStyle, style: CopilotTextStyle) {
 const looksHeading = (layer: TextLayer) => layer.fontWeight >= 600;
 
 const layerName = (layer: Layer) =>
-  layer.type === 'text' ? `«${layer.text.split('\n')[0]!.slice(0, 40)}»` : layer.name || 'la capa';
+  layer.type === 'text'
+    ? `«${layer.text.split('\n')[0]!.slice(0, 40)}»`
+    : layer.name || (layer.type === 'shape' ? `la figura (${layerLabel(layer).toLowerCase()})` : 'la capa');
 
 /**
  * Aplica las operaciones en orden sobre una copia de UNA página del documento
@@ -169,20 +249,51 @@ export function applyCopilotOperations(
   operations: CopilotOperation[],
   context: CopilotApplyContext,
 ): CopilotApplyResult {
-  const pageIndex = clampPageIndex(input, context.pageIndex ?? 0);
-  const start = pageView(input, pageIndex);
-  let document: PageView = { ...start, canvas: { ...start.canvas }, layers: [...start.layers] };
+  // El documento entero en curso y la página que se está cambiando. Las órdenes
+  // de capas actúan sobre `document` (la vista de esa página); las de páginas y
+  // de proporción, sobre `working`, pasando antes lo hecho en la página.
+  let working: ContentDocument = input;
+  let pageIndex = clampPageIndex(input, context.pageIndex ?? 0);
+  let document!: PageView;
+  let canvas!: Canvas;
   // Las capas nuevas no repiten identificador con las de otras páginas.
-  const otherLayers = input.pages.flatMap((page, index) => (index === pageIndex ? [] : page.layers));
+  let otherLayers: Layer[] = [];
+  const load = () => {
+    const view = pageView(working, pageIndex);
+    document = { ...view, canvas: { ...view.canvas }, layers: [...view.layers] };
+    canvas = document.canvas;
+    otherLayers = working.pages.flatMap((page, index) => (index === pageIndex ? [] : page.layers));
+  };
+  const flush = () => {
+    working = {
+      ...working,
+      canvas: document.canvas,
+      pages: working.pages.map((page, index) => (index === pageIndex ? { ...page, layers: document.layers } : page)),
+    };
+  };
+  load();
   const taken = () => [...otherLayers, ...document.layers];
   const changes: string[] = [];
   const skipped: string[] = [];
   const touched = new Set<string>();
+  const flows: CopilotFlowRequest[] = [];
+  const after: CopilotEditorAction[] = [];
+  const limits = context.pageLimits ?? { min: 1, max: MAX_PAGES };
+  const palette = context.brand.palette;
   let lastText: Layer | null = null;
   /** Textos con el color dictado en esta orden: ese color se respeta. */
   const dictatedColor = new Set<string>();
 
-  const find = (id: string | null) => (id ? (document.layers.find((layer) => layer.id === id) ?? null) : null);
+  /**
+   * Tras «duplica la página», las capas de la copia llevan identificadores nuevos
+   * y lo que sigue en la misma orden («…y cambia el título») las nombra con los
+   * de la original: aquí, de cada capa original a su copia.
+   */
+  const renamed = new Map<string, string>();
+  const find = (id: string | null) => {
+    const real = id ? (renamed.get(id) ?? id) : null;
+    return real ? (document.layers.find((layer) => layer.id === real) ?? null) : null;
+  };
   const replaceLayer = (next: Layer) => {
     document = { ...document, layers: document.layers.map((layer) => (layer.id === next.id ? next : layer)) };
     touched.add(next.id);
@@ -197,7 +308,44 @@ export function applyCopilotOperations(
     touched.add(layer.id);
     return true;
   };
-  const { canvas } = document;
+  /** La foto de una orden: la que dice, la elegida en el editor, la de fondo o la única que hay. */
+  const imageFor = (op: CopilotOperation): ImageLayer | null => {
+    if (op.target) {
+      const layer = find(op.target);
+      return layer?.type === 'image' ? layer : null;
+    }
+    const chosen = (context.selectedIds ?? []).map((id) => find(id)).find((layer) => layer?.type === 'image');
+    if (chosen?.type === 'image') return chosen;
+    const background = backgroundImageOf(document);
+    if (background) return background;
+    const images = document.layers.filter((layer): layer is ImageLayer => layer.type === 'image');
+    return images.length === 1 ? images[0]! : null;
+  };
+  /** La capa de una orden, si existe y se puede tocar; si no, deja dicho por qué. */
+  const editable = (id: string | null, what: string): Layer | null => {
+    const layer = find(id);
+    if (!layer) {
+      skipped.push(`No se encuentra la capa que hay que ${what}.`);
+      return null;
+    }
+    if (layer.locked) {
+      skipped.push(`${layerName(layer)} está bloqueada.`);
+      return null;
+    }
+    return layer;
+  };
+  const editableImage = (op: CopilotOperation): ImageLayer | null => {
+    const layer = imageFor(op);
+    if (!layer) {
+      skipped.push('No hay ninguna foto a la que aplicarlo: elige una o di cuál.');
+      return null;
+    }
+    if (layer.locked) {
+      skipped.push(`${layerName(layer)} está bloqueada.`);
+      return null;
+    }
+    return layer;
+  };
 
   /**
    * Tras cambiar el fondo, los textos sin color dictado en esta orden que ya no
@@ -375,6 +523,13 @@ export function applyCopilotOperations(
         }
         if (op.font) change.fontFamily = op.font;
         if (op.align) change.align = op.align;
+        // Negrita y cursiva («ponlo en negrita», «quita la cursiva»): mandan sobre el peso del estilo.
+        if (op.bold !== null) change.fontWeight = op.bold ? 700 : 400;
+        if (op.italic !== null) change.italic = op.italic;
+        if (Object.keys(change).length === 0) {
+          skipped.push(`No dice qué cambiar de ${layerName(layer)}.`);
+          break;
+        }
         patch(layer, change);
         changes.push(`Cambiado el texto ${layerName(layer)}`);
         break;
@@ -417,19 +572,386 @@ export function applyCopilotOperations(
       case 'set_background_color': {
         if (!op.color) break;
         document = { ...document, canvas: { ...document.canvas, backgroundColor: op.color.toUpperCase() } };
+        canvas = document.canvas;
         changes.push(`Color de fondo ${op.color.toUpperCase()}`);
         keepTextsReadable();
+        break;
+      }
+      case 'resize_layer': {
+        const layer = editable(op.target, 'cambiar de tamaño');
+        if (!layer || !op.steps) break;
+        const factor = COPILOT_SIZE_STEP ** op.steps;
+        if (layer.type === 'text') {
+          const fontSize = Math.min(2000, Math.max(8, Math.round(layer.fontSize * factor)));
+          if (fontSize === layer.fontSize) {
+            skipped.push(`${layerName(layer)} ya no puede cambiar más de tamaño.`);
+            break;
+          }
+          // La caja crece con la letra para que el texto no se corte.
+          patch(layer, { fontSize, height: Math.max(1, Math.round((layer.height * fontSize) / layer.fontSize)) });
+        } else {
+          const width = Math.max(8, Math.round(layer.width * factor));
+          const height = Math.max(8, Math.round(layer.height * factor));
+          patch(layer, {
+            x: Math.round(layer.x - (width - layer.width) / 2),
+            y: Math.round(layer.y - (height - layer.height) / 2),
+            width,
+            height,
+          });
+        }
+        changes.push(`${layerName(layer)}, más ${op.steps > 0 ? 'grande' : 'pequeño'}`);
+        break;
+      }
+      case 'arrange_layer': {
+        const layer = editable(op.target, 'reordenar');
+        if (!layer || !op.order) break;
+        const next = reorderLayers(document.layers, layer.id, op.order);
+        if (next === document.layers) {
+          skipped.push(`${layerName(layer)} ya está ahí.`);
+          break;
+        }
+        document = { ...document, layers: next };
+        touched.add(layer.id);
+        changes.push(
+          `${layerName(layer)}, ${op.order === 'front' ? 'al frente' : op.order === 'back' ? 'al fondo' : op.order === 'forward' ? 'un nivel más arriba' : 'un nivel más abajo'}`,
+        );
+        break;
+      }
+      case 'duplicate_layer': {
+        const layer = find(op.target);
+        if (!layer) {
+          skipped.push('No se encuentra la capa que hay que duplicar.');
+          break;
+        }
+        if (add(duplicateLayer(layer, taken()))) changes.push(`Duplicada ${layerName(layer)}`);
+        break;
+      }
+      case 'style_layer': {
+        const layer = find(op.target);
+        if (!layer) {
+          skipped.push('No se encuentra la capa que hay que cambiar.');
+          break;
+        }
+        if (layer.locked && op.locked !== false) {
+          skipped.push(`${layerName(layer)} está bloqueada.`);
+          break;
+        }
+        const change: LayerPatch = {};
+        const done: string[] = [];
+        if (op.opacity !== null) {
+          change.opacity = op.opacity / 100;
+          done.push(`opacidad ${Math.round(op.opacity)} %`);
+        }
+        if (op.rotation !== null) {
+          change.rotation = op.rotation;
+          done.push(`giro ${Math.round(op.rotation)}°`);
+        }
+        if (op.visible !== null) {
+          change.visible = op.visible;
+          done.push(op.visible ? 'visible' : 'oculta');
+        }
+        if (op.locked !== null) {
+          change.locked = op.locked;
+          done.push(op.locked ? 'bloqueada' : 'desbloqueada');
+        }
+        if (done.length === 0) break;
+        patch(layer, change);
+        changes.push(`${layerName(layer)}: ${done.join(', ')}`);
+        break;
+      }
+      case 'set_effect': {
+        const layer = editable(op.target, 'cambiar');
+        if (!layer || !op.effect) break;
+        const on = op.on ?? true;
+        if (op.effect === 'shadow') {
+          if (layer.type === 'logo') {
+            skipped.push('El logotipo no admite sombra.');
+            break;
+          }
+          patch(layer, { shadow: on ? { ...DEFAULT_SHADOW, ...(op.color ? { color: op.color } : {}) } : undefined });
+          changes.push(`${layerName(layer)}, ${on ? 'con' : 'sin'} sombra`);
+          break;
+        }
+        if (layer.type !== 'text') {
+          skipped.push('El contorno y el fondo de etiqueta son solo para textos.');
+          break;
+        }
+        const size = layer.fontSize;
+        if (op.effect === 'outline') {
+          patch(layer, {
+            outline: on
+              ? { color: op.color ?? contrasting(layer.color), width: Math.max(2, Math.round(size * 0.06)) }
+              : undefined,
+          });
+          changes.push(`${layerName(layer)}, ${on ? 'con' : 'sin'} contorno`);
+        } else {
+          patch(layer, {
+            background: on
+              ? {
+                  color: op.color ?? contrasting(layer.color),
+                  opacity: 1,
+                  padding: Math.round(size * 0.25),
+                  radius: Math.round(size * 0.2),
+                }
+              : undefined,
+          });
+          changes.push(`${layerName(layer)}, ${on ? 'con' : 'sin'} fondo de etiqueta`);
+        }
+        break;
+      }
+      case 'add_shape': {
+        if (!op.shape) break;
+        const base = newShapeLayer(canvas, taken(), op.shape, op.color ?? palette[1]?.hex ?? palette[0]?.hex);
+        const layer = { ...base, ...placeBox(canvas, base, op.position, op.align) };
+        if (add(layer)) changes.push(`Añadida ${layerName(layer)}`);
+        break;
+      }
+      case 'style_shape': {
+        const layer = editable(op.target, 'cambiar');
+        if (!layer) break;
+        if (layer.type !== 'shape') {
+          skipped.push('Solo las figuras tienen relleno y borde.');
+          break;
+        }
+        const change: LayerPatch = {};
+        // Una línea solo tiene borde: su color es el del trazo.
+        if (op.color && layer.shape === 'line') change.stroke = { color: op.color, width: layer.stroke?.width ?? 8 };
+        else if (op.color) change.fill = op.color;
+        if (op.color2) change.stroke = { color: op.color2, width: layer.stroke?.width ?? 4 };
+        if (Object.keys(change).length === 0) break;
+        patch(layer, change);
+        changes.push(`Cambiado el color de ${layerName(layer)}`);
+        break;
+      }
+      case 'add_image': {
+        if (!op.assetId) {
+          skipped.push('Falta elegir la foto.');
+          break;
+        }
+        const asset = context.assets.get(op.assetId);
+        const name = asset?.name ?? 'Foto';
+        const aspect = asset?.width && asset?.height ? asset.width / asset.height : 1;
+        const side = Math.min(canvas.width, canvas.height) * 0.6;
+        const box = {
+          width: Math.round(aspect >= 1 ? side : side * aspect),
+          height: Math.round(aspect >= 1 ? side / aspect : side),
+        };
+        const layer: ImageLayer = {
+          ...newImageLayer(canvas, taken(), { id: op.assetId, name }),
+          ...box,
+          ...placeBox(canvas, box, op.position, op.align),
+          anchor: { x: 'center', y: 'center' },
+          fit: 'contain',
+        };
+        if (add(layer)) changes.push(`Foto «${name}» añadida encima`);
+        break;
+      }
+      case 'adjust_image': {
+        const layer = editableImage(op);
+        if (!layer) break;
+        const adjust: ImageAdjust = { ...NEUTRAL_ADJUST, ...layer.adjust };
+        for (const key of ['brightness', 'contrast', 'saturation', 'temperature', 'sharpness'] as const) {
+          if (op[key] !== null) adjust[key] = op[key];
+        }
+        if (op.filter === 'none') delete adjust.filter;
+        else if (op.filter) adjust.filter = op.filter;
+        patch(layer, { adjust });
+        changes.push(
+          op.filter && op.filter !== 'none'
+            ? `Filtro «${FILTER_LABEL[op.filter]}» en la foto`
+            : op.filter === 'none'
+              ? 'Foto sin filtro'
+              : 'Luz y color de la foto ajustados',
+        );
+        break;
+      }
+      case 'transform_image': {
+        const layer = editableImage(op);
+        if (!layer) break;
+        let current: ImageLayer = layer;
+        const done: string[] = [];
+        const step = (change: LayerPatch) => {
+          current = applyLayerPatch(current, change) as ImageLayer;
+        };
+        if (op.turn) {
+          step(turnQuarter(current));
+          done.push('girada 90°');
+        }
+        if (op.flip) {
+          step(flipPhoto(current, op.flip === 'horizontal' ? 'x' : 'y'));
+          done.push(op.flip === 'horizontal' ? 'volteada en horizontal' : 'volteada en vertical');
+        }
+        if (op.fit) {
+          step({ fit: op.fit });
+          done.push(op.fit === 'cover' ? 'llenando su caja' : 'entera');
+        }
+        if (op.crop === 'none') {
+          step({ crop: undefined });
+          done.push('sin recorte');
+        } else if (op.crop) {
+          const asset = current.source.kind === 'asset' ? context.assets.get(current.source.assetId) : undefined;
+          if (!asset?.width || !asset.height) {
+            skipped.push('No se conocen las medidas de la foto: recórtala desde «Recortar…».');
+          } else {
+            const ratio = CROP_RATIO[op.crop]!;
+            const frame = orientedSize(asset.width, asset.height, current.turn);
+            // La caja toma la proporción del recorte, con el mismo centro.
+            step({ crop: largestCrop(frame, ratio, current.focus), ...fitBoxAround(current, ratio) });
+            done.push(`recortada a ${op.crop}`);
+          }
+        }
+        if (done.length === 0) break;
+        replaceLayer(current);
+        changes.push(`Foto ${done.join(', ')}`);
+        break;
+      }
+      case 'image_backdrop': {
+        const layer = editableImage(op);
+        if (!layer || !op.backdrop) break;
+        if (op.backdrop === 'none') {
+          patch(layer, { backdrop: undefined });
+          changes.push('Foto sin nada detrás');
+          break;
+        }
+        const first = op.color ?? palette[0]?.hex ?? '#FFFFFF';
+        const backdrop: ImageBackdrop =
+          op.backdrop === 'color'
+            ? { kind: 'color', color: first }
+            : op.backdrop === 'gradient'
+              ? { kind: 'gradient', from: first, to: op.color2 ?? palette[1]?.hex ?? '#000000', angle: 180 }
+              : { kind: 'blur', blur: 60 };
+        // El fondo solo se ve donde la foto no llega: la foto pasa a verse entera.
+        patch(layer, { backdrop, fit: 'contain' });
+        changes.push(
+          op.backdrop === 'color'
+            ? `Color ${first} detrás de la foto`
+            : op.backdrop === 'gradient'
+              ? 'Degradado detrás de la foto'
+              : 'La misma foto, desenfocada, detrás',
+        );
+        break;
+      }
+      case 'photo_flow': {
+        const layer = imageFor(op);
+        const flow = op.action as CopilotPhotoFlow | null;
+        if (!flow) break;
+        if (!layer) {
+          skipped.push('No hay ninguna foto a la que aplicarlo: elige una o di cuál.');
+          break;
+        }
+        if (layer.locked) {
+          skipped.push(`${layerName(layer)} está bloqueada.`);
+          break;
+        }
+        flows.push({ flow, layerId: layer.id });
+        break;
+      }
+      case 'set_canvas_ratio': {
+        if (!op.ratio) break;
+        if (op.ratio === canvas.aspectRatio) {
+          skipped.push(`El lienzo ya es ${op.ratio}.`);
+          break;
+        }
+        flush();
+        working = adaptDocument(working, op.ratio);
+        load();
+        changes.push(`Lienzo en ${op.ratio} (las capas se han recolocado: revísalo)`);
+        if (context.allowedRatios && !context.allowedRatios.includes(op.ratio)) {
+          skipped.push(`Ojo: la red de esta pieza no admite ${op.ratio}.`);
+        }
+        break;
+      }
+      case 'page': {
+        const count = working.pages.length;
+        const goTo = (index: number, done: string, copies?: ReadonlyMap<string, string>) => {
+          pageIndex = index;
+          load();
+          touched.clear();
+          // En otra página, los identificadores de la anterior ya no valen (salvo los de su copia).
+          renamed.clear();
+          copies?.forEach((copy, original) => renamed.set(original, copy));
+          changes.push(done);
+        };
+        if (op.action === 'add' || op.action === 'duplicate') {
+          if (count >= limits.max) {
+            skipped.push(
+              limits.max === 1 ? 'Esta pieza es de una sola página.' : `Este formato admite ${limits.max} páginas como mucho.`,
+            );
+            break;
+          }
+          flush();
+          const change = op.action === 'add' ? addPage(working, pageIndex) : duplicatePage(working, pageIndex);
+          if (!change) break;
+          // La copia conserva el orden de las capas: la primera de una es la primera de la otra.
+          const originals = working.pages[pageIndex]!.layers;
+          const copied = change.document.pages[change.index]!.layers;
+          const copies =
+            op.action === 'duplicate'
+              ? new Map(originals.flatMap((layer, i) => (copied[i] ? [[layer.id, copied[i].id] as const] : [])))
+              : undefined;
+          working = change.document;
+          goTo(
+            change.index,
+            op.action === 'add' ? `Página ${change.index + 1} nueva` : `Página duplicada (ahora, la ${change.index + 1})`,
+            copies,
+          );
+        } else if (op.action === 'remove') {
+          flush();
+          const change = removePage(working, pageIndex);
+          if (!change) {
+            skipped.push('Una pieza tiene al menos una página.');
+            break;
+          }
+          const removed = pageIndex + 1;
+          working = change.document;
+          goTo(change.index, `Borrada la página ${removed}`);
+        } else if (op.action === 'move' && op.page !== null) {
+          flush();
+          const change = movePage(working, pageIndex, op.page - 1);
+          if (!change) {
+            skipped.push('La página ya está en ese puesto.');
+            break;
+          }
+          working = change.document;
+          goTo(change.index, `Página movida al puesto ${change.index + 1}`, new Map(renamed));
+        } else if (op.action === 'go') {
+          const target =
+            op.page !== null
+              ? op.page - 1
+              : op.direction === 'next'
+                ? pageIndex + 1
+                : op.direction === 'previous'
+                  ? pageIndex - 1
+                  : op.direction === 'first'
+                    ? 0
+                    : count - 1;
+          if (target < 0 || target >= count) {
+            skipped.push(target < 0 ? 'Ya estás en la primera página.' : count === 1 ? 'Solo hay una página.' : 'Esa página no existe.');
+            break;
+          }
+          if (target === pageIndex) {
+            skipped.push('Ya estás en esa página.');
+            break;
+          }
+          flush();
+          goTo(target, `Página ${target + 1}`);
+        }
+        break;
+      }
+      case 'editor': {
+        // Deshacer y rehacer los ejecuta el editor antes de aplicar; aquí, lo que va después.
+        if (op.action === 'save' || op.action === 'template') after.push(op.action);
         break;
       }
     }
   }
 
-  const merged: ContentDocument = {
-    ...input,
-    canvas: document.canvas,
-    pages: input.pages.map((page, index) => (index === pageIndex ? { ...page, layers: document.layers } : page)),
-  };
-  const checked = validateDocument(merged);
+  flush();
+  // Sin cambios en el documento (solo ir a otra página, abrir un flujo…): el mismo, sin tocar.
+  if (JSON.stringify(working) === JSON.stringify(input)) {
+    return { ok: true, document: input, changes, skipped, touched: [], pageIndex, flows, after };
+  }
+  const checked = validateDocument(working);
   if (!checked.ok) return { ok: false, issues: checked.issues };
   const present = new Set(checked.document.pages[pageIndex]!.layers.map((layer) => layer.id));
   return {
@@ -438,5 +960,8 @@ export function applyCopilotOperations(
     changes,
     skipped,
     touched: [...touched].filter((id) => present.has(id)),
+    pageIndex,
+    flows,
+    after,
   };
 }
