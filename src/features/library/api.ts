@@ -101,6 +101,30 @@ export function useAssetCount(brandId: string) {
   });
 }
 
+/** Imágenes entre las que busca el copiloto cuando monta una pieza: las más recientes de la marca. */
+export const LIBRARY_SEARCH_LIMIT = 500;
+
+/**
+ * Las imágenes más recientes de la marca, con lo justo para buscar entre ellas
+ * por nombre, etiquetas y carpeta (el copiloto las ordena en el navegador, sin
+ * tildes ni plurales: `matchLibraryPhotos`).
+ */
+export async function fetchRecentImages(
+  brandId: string,
+  limit = LIBRARY_SEARCH_LIMIT,
+): Promise<Pick<MediaAssetRow, 'id' | 'file_name' | 'tags' | 'folder' | 'width' | 'height' | 'provenance'>[]> {
+  return unwrap(
+    await supabase
+      .from('media_assets')
+      .select('id, file_name, tags, folder, width, height, provenance')
+      .eq('brand_id', brandId)
+      .eq('kind', 'image')
+      .order('created_at', { ascending: false })
+      .order('id')
+      .limit(limit),
+  );
+}
+
 export function useAssetsByIds(brandId: string, ids: string[]) {
   return useQuery({
     queryKey: assetKeys.byIds(brandId, ids),

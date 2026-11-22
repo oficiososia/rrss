@@ -358,3 +358,107 @@ test('sin Web Speech API ni grabación, el copiloto se abre y funciona por tecla
   sinErrores(s);
   await s.context.close();
 });
+
+/** Generaciones de imagen con IA de la organización (cada una, con su coste). */
+async function generacionesDeImagen(orgId: string): Promise<number> {
+  const [fila] = await sql<{ n: string }>(
+    `select count(*) as n from public.ai_generations where organization_id = $1 and purpose = 'post.visual'`,
+    [orgId],
+  );
+  return Number(fila!.n);
+}
+
+// Orden que MONTA una pieza (docs/copiloto-voz.md §15). El simulado de texto devuelve los pasos de
+// plan (fondo con IA + fotos de la biblioteca + titular) y `ai-media`, la imagen simulada (0,02 créditos).
+// Sin recorte: la orden no lo pide. SIN EJECUTAR EN LOCAL (no hay Docker): corre en CI.
+test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta el «sí» y entra en un solo paso de deshacer', async ({
+  browser,
+}) => {
+  const orgA = dato('orgA');
+  const marcaA = dato('marcaA');
+  const FOTO = 'boletus-plan-e2e.png';
+  const ORDEN_PLAN = 'Crea un fondo que parezca otoñal y pon los boletus en el centro. Título: Menú de otoño.';
+  const s = await abrir(browser, 'ana');
+  const { page } = s;
+  await s.context.addInitScript(SIN_VOZ);
+  await piezaNueva(page, 'Menú de otoño por pasos');
+  const pieza = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())![1]!;
+  await page.getByTestId('copilot-open').click();
+  await expect(page.getByTestId('copilot-panel')).toBeVisible();
+
+  // Una foto REAL del plato en la biblioteca (se sube desde «Elegir foto» y se quita de las del copiloto:
+  // el plan tiene que encontrarla él, buscando en la biblioteca).
+  await page.getByTestId('copilot-pick-photo').click();
+  await page
+    .getByRole('dialog', { name: 'Foto para el copiloto' })
+    .getByTestId('picker-upload-input')
+    .setInputFiles(archivoPng(FOTO, png(200, 160, [150, 90, 40], true)));
+  await expect(page.getByTestId('copilot-photos')).toContainText(FOTO);
+  await page.getByRole('button', { name: `Quitar ${FOTO}` }).click();
+  await expect(page.getByTestId('copilot-photos')).toHaveCount(0);
+
+  const copilotoAntes = await generacionesCopiloto(orgA);
+  const imagenAntes = await generacionesDeImagen(orgA);
+
+  // La orden: sale el plan, con la indicación del fondo entera y el coste máximo. Nada gastado ni cambiado.
+  await escribir(page, ORDEN_PLAN);
+  const plan = page.getByTestId('copilot-plan');
+  await expect(plan).toHaveAttribute('data-phase', 'ready');
+  await expect(plan).toContainText('Crear el fondo con IA');
+  await expect(plan.getByTestId('copilot-plan-detail')).toContainText(
+    'Fondo que parezca otoñal. Fondo para una pieza de redes sociales, sin comida, platos, bebidas, productos, personas, texto ni logotipos.',
+  );
+  await expect(plan).toContainText('Buscar en la biblioteca hasta 3 fotos de «boletus»');
+  await expect(plan).toContainText(FOTO);
+  await expect(plan).toContainText('en el centro');
+  await expect(plan).toContainText('Poner el titular «Menú de otoño»');
+  await expect(plan.getByTestId('copilot-plan-cost')).toContainText('Coste máximo: 0,02 créditos');
+  await expect(plan.getByTestId('copilot-plan-confirm')).toBeEnabled();
+  const ordenes = page.getByTestId('copilot-order');
+  await expect(ordenes.first()).toHaveAttribute('data-status', 'plan');
+  expect(await generacionesCopiloto(orgA)).toBe(copilotoAntes + 1);
+  expect(await generacionesDeImagen(orgA)).toBe(imagenAntes);
+  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+
+  // «sí», escrito: se resuelve sin IA de texto, genera el fondo y lo mete todo de una vez.
+  await escribir(page, 'sí');
+  await expect(page.getByTestId('copilot-plan')).toHaveCount(0);
+  const ordenPlan = ordenes.filter({ hasText: 'Crea un fondo' });
+  await expect(ordenPlan).toHaveAttribute('data-status', 'applied');
+  await expect(ordenPlan.getByTestId('copilot-notes')).toContainText('En la biblioteca queda lo creado: el fondo');
+  await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
+  expect(await generacionesCopiloto(orgA)).toBe(copilotoAntes + 1);
+  expect(await generacionesDeImagen(orgA)).toBe(imagenAntes + 1);
+
+  await guardar(page, 'Copiloto: pieza montada por pasos');
+  const version = await versionGuardada(pieza);
+  const capas = version.layers as (Capa & { source?: { kind: string; assetId?: string } })[];
+  // Del fondo al frente: el fondo generado, las fotos de la biblioteca y el titular.
+  expect(capas.length).toBeGreaterThanOrEqual(3);
+  expect(capas[0]!.type).toBe('image');
+  expect(capas.at(-1)).toMatchObject({ type: 'text', text: 'Menú de otoño' });
+  const [fondo] = await sql<{ id: string; provenance: { type: string; prompt?: string } }>(
+    `select id, provenance from public.media_assets
+      where brand_id = $1 and provenance->>'type' = 'ai_generation' order by created_at desc limit 1`,
+    [marcaA],
+  );
+  // El fondo queda en la biblioteca con su procedencia de IA, y sale de la indicación que se enseñó.
+  expect(capas[0]!.source).toEqual({ kind: 'asset', assetId: fondo!.id });
+  expect(fondo!.provenance.prompt).toContain('Fondo que parezca otoñal');
+  // Los platos son fotos reales de la biblioteca: ninguna es una imagen generada.
+  const fotos = await sql<{ id: string }>(`select id from public.media_assets where brand_id = $1 and file_name = $2`, [marcaA, FOTO]);
+  const colocadas = capas.slice(1, -1);
+  expect(colocadas.length).toBeGreaterThanOrEqual(1);
+  for (const capa of colocadas) {
+    expect(capa.type).toBe('image');
+    expect(fotos.map((foto) => foto.id)).toContain(capa.source!.assetId);
+  }
+
+  // Un solo «Deshacer» quita la pieza entera.
+  await page.getByTestId('undo').click();
+  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+
+  await page.getByTestId('copilot-close').click();
+  sinErrores(s);
+  await s.context.close();
+});

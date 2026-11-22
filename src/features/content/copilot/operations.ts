@@ -45,8 +45,22 @@ export const COPILOT_OPS = [
   'page',
   // Acciones del editor (no cambian el documento: deshacer, rehacer, guardar, plantilla)
   'editor',
+  // Pasos de plan (montar una pieza): no se aplican al momento; se enseñan y se confirman (plan.ts)
+  'generate_background',
+  'find_photos',
+  'place_photos',
 ] as const;
 export type CopilotOp = (typeof COPILOT_OPS)[number];
+
+/** Pasos de plan: crear el fondo con IA, buscar fotos en la biblioteca y colocarlas. */
+export const COPILOT_PLAN_OPS = ['generate_background', 'find_photos', 'place_photos'] as const;
+/** Disposición de las fotos que coloca un plan. */
+export const COPILOT_LAYOUTS = ['center', 'row', 'grid', 'fan'] as const;
+export type CopilotLayout = (typeof COPILOT_LAYOUTS)[number];
+/** Igual que en el servidor (`MAX_BACKGROUND_PROMPT_CHARS`, `MAX_PHOTO_QUERY_CHARS`, `MAX_PLAN_PHOTOS`). */
+export const COPILOT_MAX_BACKGROUND_PROMPT = 400;
+export const COPILOT_MAX_PHOTO_QUERY = 80;
+export const COPILOT_MAX_PLAN_PHOTOS = 6;
 
 export const COPILOT_TEXT_STYLES = ['title', 'subtitle', 'body', 'small'] as const;
 export const COPILOT_POSITIONS = ['top', 'upper', 'middle', 'lower', 'bottom'] as const;
@@ -140,6 +154,14 @@ export const copilotOperationSchema = z.strictObject({
   /** Número de página, desde 1. */
   page: opt(z.number().int().min(1).max(10)),
   direction: opt(z.enum(COPILOT_DIRECTIONS)),
+  /** generate_background: descripción del fondo (la escribe la IA; no va al diseño como texto). */
+  prompt: opt(z.string().min(1).max(COPILOT_MAX_BACKGROUND_PROMPT)),
+  /** find_photos: qué buscar en la biblioteca y cuántas fotos. */
+  query: opt(z.string().min(1).max(COPILOT_MAX_PHOTO_QUERY)),
+  count: opt(z.number().int().min(1).max(COPILOT_MAX_PLAN_PHOTOS)),
+  /** place_photos: disposición y si se recortan (quitar el fondo). `on` = con sombra. */
+  layout: opt(z.enum(COPILOT_LAYOUTS)),
+  cutout: opt(z.boolean()),
 });
 export type CopilotOperation = z.infer<typeof copilotOperationSchema>;
 

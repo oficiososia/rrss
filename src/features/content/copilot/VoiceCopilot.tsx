@@ -15,18 +15,34 @@ import {
   historyActions,
   needsPhotoPick,
   withPickedPhoto,
+  type CopilotApplyContext,
   type CopilotAssetInfo,
   type CopilotBrandStyle,
+  type PlacedCopilotOperation,
 } from './apply';
 import { interpretLocally, LOCAL_COMMAND_EXAMPLES } from './localCommands';
 import { MicLevel } from './MicLevel';
 import {
+  COPILOT_MAX_PLAN_PHOTOS,
   keepDictated,
   parseCopilotResponse,
   summarizeDocument,
   type CopilotOperation,
   type CopilotPhotoFlow,
 } from './operations';
+import {
+  backgroundPrompt,
+  buildPlan,
+  composePlan,
+  hasPlanSteps,
+  planAnswer,
+  planNeedsConfirmation,
+  planOperations,
+  type CopilotPlanHost,
+  type PlanStepStatus,
+} from './plan';
+import { PlanCard, type PendingPlan } from './PlanCard';
+import { planProblems } from './planCost';
 import { recordingAvailable, useRecordedDictation } from './recording';
 import { speechRecognitionAvailable, useDictation } from './speech';
 import { useTranscriberConfigured } from './transcriber';
@@ -55,8 +71,14 @@ export const VOICE_NOTICE_KEY = VOICE_NOTICE_KEYS.browser;
 // (`editor.copilot`). Sus operaciones, ya validadas, se aplican al documento
 // como un solo paso de deshacer. Las órdenes van de una en una y en el orden en
 // que llegan, cada una sobre el documento que dejó la anterior.
+//
+// Una orden que MONTA una pieza («haz el menú de otoño: crea un fondo otoñal y
+// pon los platos en el centro») trae pasos de plan: no se aplica nada al
+// momento. Se enseña el plan con su coste máximo (PlanCard) y solo con el «sí»
+// de la persona se ejecuta paso a paso y entra como un solo paso de deshacer
+// (plan.ts, docs/copiloto-voz.md §15).
 
-type OrderStatus = 'pending' | 'sending' | 'photo' | 'applied' | 'nothing' | 'failed';
+type OrderStatus = 'pending' | 'sending' | 'photo' | 'plan' | 'running' | 'applied' | 'nothing' | 'failed';
 
 interface Order {
   id: number;
@@ -73,6 +95,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   pending: 'En espera',
   sending: 'Interpretando…',
   photo: 'Elige la foto',
+  plan: 'Esperando tu «sí»',
+  running: 'Haciendo el plan…',
   applied: 'Aplicada',
   nothing: 'Sin cambios',
   failed: 'No aplicada',
@@ -99,7 +123,27 @@ export interface CopilotHost {
   openTemplates(): void;
   /** Abre el flujo para la foto de esa capa. Devuelve por qué no se puede, o null si se ha abierto. */
   photoFlow(flow: CopilotPhotoFlow, layerId: string): string | null;
+  /**
+   * Lo que hace falta para montar una pieza por pasos: generar el fondo, buscar
+   * en la biblioteca y quitar el fondo a las fotos (planHost.ts). Sin él, las
+   * órdenes que montan una pieza se dicen como no disponibles.
+   */
+  plan?: CopilotPlanHost;
 }
+
+/** Espera a una promesa, pero deja de esperar en cuanto se cancela (lo pedido puede terminar igualmente). */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  // Si se deja de esperar, el resultado (o el fallo) ya no le importa a nadie.
+  promise.catch(() => undefined);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException('Cancelado', 'AbortError'));
+    if (signal.aborted) return abort();
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject);
+  });
+}
+
+const namesOf = (assets: readonly CopilotAssetInfo[]) => assets.map((asset) => `«${asset.name}»`).join(', ');
 
 export interface VoiceCopilotProps {
   orgId: string;
@@ -156,6 +200,13 @@ export function VoiceCopilot({
   const [photos, setPhotos] = useState<CopilotAssetInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [typed, setTyped] = useState('');
+  /** Plan a la espera del «sí» o en marcha (uno como mucho). En `planRef`, al día fuera del ciclo de React. */
+  const [pendingPlan, setPendingPlan] = useState<PendingPlan | null>(null);
+  const planRef = useRef<PendingPlan | null>(null);
+  /** Para cancelar el plan en marcha. */
+  const planAbort = useRef<AbortController | null>(null);
+  /** Para qué se ha abierto el selector de fotos: para el copiloto («esta foto») o para el plan. */
+  const pickingFor = useRef<'copilot' | 'plan'>('copilot');
   const logos = useAssetsByIds(brandId, logoIds);
 
   // Lo último de cada cosa, para las órdenes que se procesan en cola (fuera del ciclo de React).
@@ -192,12 +243,46 @@ export function VoiceCopilot({
       setPickerOpen(true);
     });
 
+  /** Nombre y medidas de los recursos conocidos: los del documento, los logotipos de la marca y los que se den. */
+  const knownAssets = (extra: readonly CopilotAssetInfo[]): Map<string, CopilotAssetInfo> => {
+    const current = latest.current;
+    const assets = new Map<string, CopilotAssetInfo>();
+    for (const asset of current.documentAssets) assets.set(asset.id, asset);
+    for (const logo of current.logos) {
+      assets.set(logo.id, { id: logo.id, name: logo.file_name, width: logo.width, height: logo.height });
+    }
+    for (const asset of extra) assets.set(asset.id, asset);
+    return assets;
+  };
+
+  /** Con qué se aplican las operaciones: la marca, la página activa, lo elegido y los recursos conocidos. */
+  const applyContext = (assets: ReadonlyMap<string, CopilotAssetInfo>): CopilotApplyContext => {
+    const current = latest.current;
+    return {
+      brand: current.brand,
+      assets,
+      logoIds: current.logoIds,
+      imageTones: current.imageTones,
+      pageIndex: current.pageIndex,
+      selectedIds: current.selectedIds,
+      pageLimits: current.pageLimits,
+      allowedRatios: current.allowedRatios,
+    };
+  };
+
   /**
    * Ejecuta las operaciones de una orden (vengan de la IA o del intérprete
    * local): primero deshacer y rehacer, después los cambios del documento como
    * UN paso, y al final lo que abre algo del editor (guardar, plantillas, fotos).
    */
-  async function execute(order: Order, wanted: CopilotOperation[], notes: string[], chosen: CopilotAssetInfo[]) {
+  async function execute(
+    order: Order,
+    wanted: PlacedCopilotOperation[],
+    notes: string[],
+    chosen: CopilotAssetInfo[],
+    /** Recursos que trae un plan (el fondo generado, las fotos): para sus nombres y medidas. */
+    planAssets: readonly CopilotAssetInfo[] = [],
+  ) {
     const changes: string[] = [];
     const skipped: string[] = [];
     let operations = wanted;
@@ -222,22 +307,8 @@ export function VoiceCopilot({
     operations = withPickedPhoto(operations, photo?.id ?? null);
 
     const current = latest.current;
-    const assets = new Map<string, CopilotAssetInfo>();
-    for (const asset of current.documentAssets) assets.set(asset.id, asset);
-    for (const logo of current.logos) {
-      assets.set(logo.id, { id: logo.id, name: logo.file_name, width: logo.width, height: logo.height });
-    }
-    for (const asset of [...chosen, ...(photo ? [photo] : [])]) assets.set(asset.id, asset);
-    const result = applyCopilotOperations(current.document, operations, {
-      brand: current.brand,
-      assets,
-      logoIds: current.logoIds,
-      imageTones: current.imageTones,
-      pageIndex: current.pageIndex,
-      selectedIds: current.selectedIds,
-      pageLimits: current.pageLimits,
-      allowedRatios: current.allowedRatios,
-    });
+    const assets = knownAssets([...chosen, ...(photo ? [photo] : []), ...planAssets]);
+    const result = applyCopilotOperations(current.document, operations, applyContext(assets));
     if (!result.ok) {
       update(order.id, {
         status: 'failed',
@@ -278,7 +349,247 @@ export function VoiceCopilot({
     });
   }
 
+  // ── Plan por pasos (órdenes que montan una pieza) ──
+
+  /** Cambia el plan pendiente (y su copia al día para lo que corre fuera del ciclo de React). */
+  const changePlan = (change: (plan: PendingPlan) => PendingPlan) => {
+    if (!planRef.current) return;
+    planRef.current = change(planRef.current);
+    setPendingPlan(planRef.current);
+  };
+  const clearPlan = () => {
+    planRef.current = null;
+    planAbort.current = null;
+    setPendingPlan(null);
+  };
+  const setStep = (id: string, status: PlanStepStatus, note?: string) =>
+    changePlan((plan) => ({
+      ...plan,
+      statuses: { ...plan.statuses, [id]: status },
+      ...(note !== undefined ? { stepNotes: { ...plan.stepNotes, [id]: note } } : {}),
+    }));
+
+  /** Descarta el plan que espera el «sí»: no se ha gastado ni cambiado nada. */
+  function discardPlan(reason: string) {
+    const pending = planRef.current;
+    if (!pending || pending.phase === 'running') return;
+    clearPlan();
+    update(pending.orderId, { status: 'nothing', notes: [...pending.notes, reason] });
+  }
+
+  /**
+   * Una orden con pasos de plan: se construye el plan, se busca en la biblioteca
+   * y se pide el coste del fondo (ni lo uno ni lo otro gastan) y se enseña. No
+   * se genera, no se recorta y no se toca el documento hasta el «sí».
+   */
+  async function preparePlan(order: Order, operations: CopilotOperation[], notes: string[], chosen: CopilotAssetInfo[]) {
+    const now = latest.current;
+    const host = now.host?.plan;
+    if (!host) {
+      update(order.id, { status: 'nothing', notes: [...notes, 'Montar una pieza por pasos hay que hacerlo desde el editor.'] });
+      return;
+    }
+    const plan = buildPlan(operations, {
+      canvasRatio: now.document.canvas.aspectRatio,
+      imageAi: host.imageAi,
+      palette: now.brand.palette,
+      canCutout: host.canCutout,
+    });
+    // Sin fondo que crear ni fotos que colocar no hay nada que confirmar: es una orden normal.
+    if (!planNeedsConfirmation(plan)) {
+      await execute(order, planOperations(plan), [...notes, ...plan.notes], chosen);
+      return;
+    }
+    const paid = plan.background?.mode === 'ai';
+    planRef.current = {
+      orderId: order.id,
+      transcript: order.transcript,
+      plan,
+      notes,
+      chosen,
+      photos: [],
+      missing: [],
+      backgroundMicros: paid ? undefined : 0,
+      phase: 'preparing',
+      statuses: {},
+      stepNotes: {},
+    };
+    setPendingPlan(planRef.current);
+    update(order.id, { status: 'plan' });
+    const mine = () => planRef.current?.orderId === order.id;
+
+    // El precio del fondo y las fotos de la biblioteca, a la vez: leer no gasta.
+    const price = paid && plan.background?.mode === 'ai' ? host.estimateBackground(plan.background.ratio).catch(() => null) : Promise.resolve(0);
+    const photos: CopilotAssetInfo[] = [];
+    const missing: string[] = [];
+    for (const [index, search] of plan.searches.entries()) {
+      if (!mine()) return;
+      setStep(`find-${index}`, 'running');
+      let found: CopilotAssetInfo[] = [];
+      let failed = false;
+      try {
+        found = await host.searchLibrary(search.query, search.count);
+      } catch {
+        failed = true;
+      }
+      if (!mine()) return;
+      const fresh = found.filter((photo) => !photos.some((p) => p.id === photo.id)).slice(0, COPILOT_MAX_PLAN_PHOTOS - photos.length);
+      photos.push(...fresh);
+      if (fresh.length === 0) missing.push(search.query);
+      setStep(
+        `find-${index}`,
+        fresh.length > 0 ? 'done' : 'failed',
+        failed
+          ? 'No se ha podido buscar en la biblioteca.'
+          : fresh.length > 0
+            ? `${fresh.length === 1 ? 'Encontrada' : `Encontradas ${fresh.length}`}: ${namesOf(fresh)}`
+            : 'No hay ninguna foto que case.',
+      );
+    }
+    // Sin búsqueda («pon estas fotos en fila»): las elegidas a mano.
+    if (plan.placement && plan.searches.length === 0) photos.push(...chosen.slice(0, COPILOT_MAX_PLAN_PHOTOS));
+    const backgroundMicros = await price;
+    if (!mine()) return;
+    changePlan((pending) => ({ ...pending, photos, missing, backgroundMicros, phase: 'ready' }));
+  }
+
+  /**
+   * Ejecuta el plan confirmado, paso a paso: el fondo (lo único que gasta), los
+   * recortes y, al final, TODO al documento de una vez (un paso de deshacer).
+   * Si el fondo falla o se cancela, el documento no se toca; lo ya creado queda
+   * en la biblioteca y se dice.
+   */
+  async function runPlan() {
+    const pending = planRef.current;
+    const host = latest.current.host?.plan;
+    if (!pending || pending.phase !== 'ready' || !host) return;
+    if (planProblems(pending.plan, pending.photos.length, pending.backgroundMicros).length > 0) return;
+    const { plan, orderId } = pending;
+    const order: Order = { id: orderId, transcript: pending.transcript, status: 'running' };
+    const controller = new AbortController();
+    planAbort.current = controller;
+    changePlan((current) => ({ ...current, phase: 'running' }));
+    update(orderId, { status: 'running' });
+
+    /** Lo creado en este plan, que se queda en la biblioteca pase lo que pase. */
+    const created: string[] = [];
+    const inLibrary = () => (created.length > 0 ? [`En la biblioteca queda lo creado: ${created.join(', ')}.`] : []);
+    const cancelled = (extra: string[] = []) => {
+      clearPlan();
+      update(orderId, {
+        status: 'nothing',
+        notes: [...pending.notes, 'Plan cancelado: no se ha cambiado el diseño.', ...extra, ...inLibrary()],
+      });
+    };
+
+    // 1. El fondo con IA: lo único de pago. Si falla, el plan se para sin tocar el documento.
+    let background: CopilotAssetInfo | null = null;
+    if (plan.background?.mode === 'ai') {
+      setStep('background', 'running');
+      try {
+        background = await untilAborted(
+          host.generateBackground(backgroundPrompt(plan.background.prompt), plan.background.ratio, controller.signal),
+          controller.signal,
+        );
+      } catch (error) {
+        if (controller.signal.aborted) {
+          cancelled(['El fondo que se estaba generando puede terminar igualmente: si termina, quedará en la biblioteca y contará para el cupo de IA.']);
+          return;
+        }
+        clearPlan();
+        update(orderId, {
+          status: 'failed',
+          error: await toAiError(error),
+          notes: [...pending.notes, 'No se ha podido crear el fondo: el plan se para aquí y el diseño no ha cambiado.'],
+        });
+        return;
+      }
+      created.push(`el fondo «${background.name}»`);
+      setStep('background', 'done');
+    }
+
+    // 2. Quitar el fondo a las fotos (gratis). Si una no se puede, se coloca tal cual y se dice.
+    let photos = [...(planRef.current?.photos ?? pending.photos)];
+    const planNotes: string[] = [];
+    if (plan.placement?.cutout && photos.length > 0) {
+      setStep('cutout', 'running', `0 de ${photos.length}`);
+      const cut: CopilotAssetInfo[] = [];
+      const failed: CopilotAssetInfo[] = [];
+      for (const photo of photos) {
+        if (controller.signal.aborted) return cancelled();
+        try {
+          const result = await untilAborted(host.cutout(photo, controller.signal), controller.signal);
+          cut.push(result.asset);
+          if (result.created) created.push(`el recorte «${result.asset.name}»`);
+        } catch {
+          if (controller.signal.aborted) return cancelled();
+          cut.push(photo);
+          failed.push(photo);
+        }
+        setStep('cutout', 'running', `${cut.length} de ${photos.length}`);
+      }
+      photos = cut;
+      if (failed.length > 0) {
+        planNotes.push(`No se ha podido quitar el fondo de ${namesOf(failed)}: ${failed.length === 1 ? 'se coloca' : 'se colocan'} tal cual.`);
+      }
+      setStep('cutout', failed.length === 0 ? 'done' : 'failed');
+    }
+    if (controller.signal.aborted) return cancelled();
+
+    // 3. Todo al documento de una vez: un solo paso de deshacer.
+    if (plan.placement && photos.length === 0) planNotes.push('No hay fotos que colocar: ese paso se ha saltado.');
+    const planAssets = [...(background ? [background] : []), ...photos];
+    const assets = knownAssets([...pending.chosen, ...planAssets]);
+    const composed = composePlan(plan, { background, photos }, latest.current.document, applyContext(assets));
+    clearPlan();
+    await execute(
+      order,
+      composed.operations,
+      [...pending.notes, ...plan.notes, ...planNotes, ...composed.notes, ...inLibrary()],
+      pending.chosen,
+      planAssets,
+    );
+  }
+
+  /** «Sí, hazlo»: en la cola, como una orden más, para no pisarse con otra en curso. */
+  function confirmPlan() {
+    queue.current = queue.current.then(() => runPlan());
+  }
+
+  /** «No» o «Cancelar»: descarta el plan que espera o para el que está en marcha. */
+  function cancelPlan() {
+    const pending = planRef.current;
+    if (!pending) return;
+    if (pending.phase === 'running') {
+      changePlan((plan) => ({ ...plan, cancelling: true }));
+      planAbort.current?.abort();
+    } else {
+      discardPlan('Plan descartado: no se ha gastado ni cambiado nada.');
+    }
+  }
+
   async function process(order: Order) {
+    // 0. Con un plan a la espera, «sí» y «no» se resuelven aquí, sin IA; cualquier otra orden lo descarta.
+    const waiting = planRef.current;
+    if (waiting && waiting.phase !== 'running') {
+      const answer = planAnswer(order.transcript);
+      if (answer === 'yes') {
+        const problems = planProblems(waiting.plan, waiting.photos.length, waiting.backgroundMicros);
+        if (problems.length > 0) {
+          update(order.id, { local: true, status: 'nothing', notes: problems });
+          return;
+        }
+        update(order.id, { local: true, status: 'applied', changes: ['Plan confirmado'] });
+        await runPlan();
+        return;
+      }
+      if (answer === 'no') {
+        discardPlan('Plan descartado: no se ha gastado ni cambiado nada.');
+        update(order.id, { local: true, status: 'applied', changes: ['Plan descartado'] });
+        return;
+      }
+      discardPlan('Plan descartado al dar otra orden: no se ha gastado ni cambiado nada.');
+    }
     update(order.id, { status: 'sending' });
     const now = latest.current;
     const view = pageView(now.document, now.pageIndex);
@@ -331,6 +642,11 @@ export function VoiceCopilot({
         ...response.discarded.map((item) => item.reason),
         ...(dictated.removed > 0 ? ['Se ha quitado un texto que no estaba en lo dictado.'] : []),
       ];
+      // 3. ¿Monta una pieza por pasos? Nada se aplica todavía: se enseña el plan y se espera el «sí».
+      if (hasPlanSteps(dictated.operations)) {
+        await preparePlan(order, dictated.operations, notes, chosen);
+        return;
+      }
       await execute(order, dictated.operations, notes, chosen);
     } catch (error) {
       update(order.id, { status: 'failed', error: await toAiError(error) });
@@ -340,6 +656,11 @@ export function VoiceCopilot({
   const onPhrase = useCallback((transcript: string) => {
     const text = transcript.trim();
     if (!text) return;
+    // Con un plan en marcha, «no» o «cancela» lo paran al momento (no esperan en la cola).
+    if (planRef.current?.phase === 'running' && planAnswer(text) === 'no') {
+      cancelPlan();
+      return;
+    }
     orderCounter += 1;
     const order: Order = { id: orderCounter, transcript: text, status: 'pending' };
     setOrders((list) => [...list, order]);
@@ -408,9 +729,21 @@ export function VoiceCopilot({
     setPickerOpen(false);
     const resolve = waitingPhoto.current;
     waitingPhoto.current = null;
+    const forPlan = pickingFor.current === 'plan';
+    pickingFor.current = 'copilot';
     if (resolve) resolve(asset);
-    else if (asset) setPhotos((list) => (list.some((p) => p.id === asset.id) ? list : [...list, asset]));
+    else if (asset && forPlan) {
+      // Una foto más para el plan que espera (hasta el tope); no se gasta nada todavía.
+      changePlan((plan) =>
+        plan.phase !== 'ready' || plan.photos.some((p) => p.id === asset.id) || plan.photos.length >= COPILOT_MAX_PLAN_PHOTOS
+          ? plan
+          : { ...plan, photos: [...plan.photos, asset] },
+      );
+    } else if (asset) setPhotos((list) => (list.some((p) => p.id === asset.id) ? list : [...list, asset]));
   }
+
+  // Al cerrar el copiloto, lo que esté en marcha deja de esperarse.
+  useEffect(() => () => planAbort.current?.abort(), []);
 
   return (
     <section
@@ -449,7 +782,15 @@ export function VoiceCopilot({
           </>
         )}
         {noticeDone && (
-          <Button size="sm" variant="secondary" onClick={() => setPickerOpen(true)} data-testid="copilot-pick-photo">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              pickingFor.current = 'copilot';
+              setPickerOpen(true);
+            }}
+            data-testid="copilot-pick-photo"
+          >
             <ImagePlus className="h-4 w-4" aria-hidden />
             Elegir foto
           </Button>
@@ -584,6 +925,21 @@ export function VoiceCopilot({
         )
       )}
 
+      {pendingPlan && (
+        <PlanCard
+          pending={pendingPlan}
+          onConfirm={confirmPlan}
+          onCancel={cancelPlan}
+          onPick={() => {
+            pickingFor.current = 'plan';
+            setPickerOpen(true);
+          }}
+          onRemovePhoto={(id) =>
+            changePlan((plan) => (plan.phase === 'ready' ? { ...plan, photos: plan.photos.filter((p) => p.id !== id) } : plan))
+          }
+        />
+      )}
+
       {lastOrders.length > 0 && (
         <ol className="max-h-48 space-y-2 overflow-y-auto" aria-label="Órdenes" data-testid="copilot-orders">
           {lastOrders.map((order) => (
@@ -595,7 +951,7 @@ export function VoiceCopilot({
               data-source={order.local ? 'local' : 'ai'}
             >
               <p className="flex items-start gap-2">
-                {order.status === 'sending' || order.status === 'pending' ? (
+                {order.status === 'sending' || order.status === 'pending' || order.status === 'running' ? (
                   <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
                 ) : order.status === 'applied' ? (
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />

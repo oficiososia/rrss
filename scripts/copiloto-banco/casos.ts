@@ -19,6 +19,7 @@ import {
 } from '../../src/features/content/document';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from '../../src/features/content/editor/layers';
 import type { CopilotOp } from '../../src/features/content/copilot/operations';
+import type { LibraryPhoto } from '../../src/features/content/copilot/plan';
 
 // ── Marca y recursos de mentira ──────────────────────────────────────────
 
@@ -47,6 +48,57 @@ export const BENCH_DOCUMENT_ASSETS: BenchAsset[] = [
   { id: PHOTO_DISH, name: 'plato.jpg', width: 1200, height: 800 },
   { id: BENCH_LOGO, name: 'logo.png', width: 400, height: 200 },
 ];
+
+/** El fondo que «generaría» la IA en un plan. En el banco no se genera nada: es solo un identificador. */
+export const BENCH_GENERATED_BACKGROUND: BenchAsset = {
+  id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  name: 'IA · fondo.png',
+  width: 1024,
+  height: 1280,
+};
+
+const library = (n: number, name: string, extra: Partial<LibraryPhoto> = {}): LibraryPhoto => ({
+  id: `cccccccc-cccc-4ccc-8ccc-${String(n).padStart(12, '0')}`,
+  name,
+  width: 1600,
+  height: 1200,
+  ...extra,
+});
+
+/**
+ * Bibliotecas de mentira para los casos de plan (órdenes que montan una pieza):
+ * las fotos «reales» de la marca entre las que busca `find_photos`. En cada una
+ * hay además una imagen GENERADA CON IA que casa con lo que se busca: nunca
+ * debe salir (los platos y productos son fotos reales).
+ */
+export const BENCH_LIBRARIES = {
+  hosteleria: [
+    library(1, 'crema-calabaza.jpg', { tags: ['plato', 'otoño'] }),
+    library(2, 'guiso-setas.jpg', { tags: ['plato', 'otoño'] }),
+    library(3, 'IMG_0412.jpg', { folder: 'Platos de otoño' }),
+    library(4, 'tarta-manzana.jpg', { tags: ['postre'] }),
+    library(5, 'flan-casero.jpg', { tags: ['postre'] }),
+    library(6, 'arroz-con-leche.jpg', { tags: ['postre'] }),
+    library(7, 'paella-domingo.jpg', { tags: ['arroz'] }),
+    library(8, 'terraza.jpg', { tags: ['local'] }),
+    library(9, 'plato-otoño-ia.png', { tags: ['plato', 'otoño', 'postre', 'paella'], provenance: { type: 'ai_generation' } }),
+  ],
+  gimnasio: [
+    library(11, 'botella-marca.jpg', { tags: ['producto'] }),
+    library(12, 'camiseta-marca.jpg', { tags: ['producto'] }),
+    library(13, 'toalla-marca.jpg', { tags: ['producto'] }),
+    library(14, 'sala-pesas.jpg', { tags: ['instalaciones'] }),
+    library(15, 'producto-ia.png', { tags: ['producto'], provenance: { type: 'ai_generation' } }),
+  ],
+  generica: [
+    library(21, 'novedad-lampara.jpg', { tags: ['novedades'] }),
+    library(22, 'novedad-jarron.jpg', { tags: ['novedades'] }),
+    library(23, 'escaparate.jpg'),
+    library(24, 'novedades-ia.png', { tags: ['novedades'], provenance: { type: 'ai_generation' } }),
+  ],
+  vacia: [],
+} satisfies Record<string, LibraryPhoto[]>;
+export type BenchLibraryId = keyof typeof BENCH_LIBRARIES;
 
 export const BRAND_COLORS = { principal: '#1F3A5F', fondo: '#F5EBDD', texto: '#2B2B2B', acento: '#E0A526' } as const;
 
@@ -226,11 +278,11 @@ export const BENCH_DOCUMENTS: Record<BenchDocumentId, BenchDocument> = buildDocu
 // ── Casos ────────────────────────────────────────────────────────────────
 
 /**
- * Grupos de casos. `plan` está reservado para órdenes compuestas que montan una
- * pieza entera por pasos (varias órdenes encadenadas sobre el mismo documento):
- * PUNTO DE EXTENSIÓN, todavía sin casos. Para añadirlos basta con dar casos de
- * ese grupo (ver `PLAN_CASES`, abajo): el banco ya los cuenta, los filtra con
- * `--grupo plan` y los ejecuta como los demás.
+ * Grupos de casos. `plan` son las órdenes compuestas que MONTAN una pieza entera
+ * («haz el menú de otoño: crea un fondo otoñal y pon los platos en el centro»):
+ * el copiloto devuelve pasos de plan y el banco evalúa SOLO ese plan (pasos,
+ * fondo sin comida, fotos de la biblioteca, disposición, titular). Nunca
+ * ejecuta los pasos de pago ni genera imágenes.
  */
 export const BENCH_GROUPS = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio', 'titubeo', 'plan'] as const;
 export type BenchGroup = (typeof BENCH_GROUPS)[number];
@@ -243,10 +295,39 @@ export const BASE_GROUPS: readonly BenchGroup[] = ['simple', 'compuesta', 'ambig
  *     `steps`, por su signo; los colores, sin distinguir mayúsculas);
  *   * `{ anyOf }`: vale cualquiera de la lista (por ejemplo, la foto de fondo se
  *     puede nombrar por su capa o dejar sin capa);
- *   * `{ between }`: un número dentro del intervalo, extremos incluidos.
+ *   * `{ between }`: un número dentro del intervalo, extremos incluidos;
+ *   * `{ background }`: la descripción de un fondo. La escribe el modelo, así
+ *     que vale cualquiera que no esté vacía y NO nombre comida ni productos; el
+ *     texto es el que se usa en el modo en seco;
+ *   * `{ includes, example }`: un texto que contiene esa palabra (sin tildes ni
+ *     mayúsculas: «plato» vale para «Platos de otoño»); `example` es el que se
+ *     usa en el modo en seco.
  */
 export type ExpectedScalar = string | number | boolean | null;
-export type ExpectedValue = ExpectedScalar | { anyOf: ExpectedScalar[] } | { between: [number, number] };
+export type ExpectedValue =
+  | ExpectedScalar
+  | { anyOf: ExpectedScalar[] }
+  | { between: [number, number] }
+  | { background: string }
+  | { includes: string; example: string };
+
+/** Un número exacto o un intervalo (extremos incluidos). */
+export type ExpectedCount = number | [number, number];
+
+/**
+ * Lo que debe cumplir el PLAN de una orden que monta una pieza, además de sus
+ * operaciones: se comprueba con el mismo código que usa el editor (plan.ts).
+ */
+export interface PlanExpectation {
+  /** Biblioteca de la marca en este caso (`vacia` = sin fotos). */
+  library: BenchLibraryId;
+  /** ¿Debe llevar un fondo creado con IA? (`false` en «genera un plato…»: nada que generar). */
+  background: boolean;
+  /** Fotos de la biblioteca que acaban colocadas. */
+  photos: ExpectedCount;
+  /** Pasos del plan (el fondo, cada búsqueda, cada recorte, colocar y cada texto). */
+  steps: ExpectedCount;
+}
 
 /** Operación esperada: `op` y los campos clave. Lo que no se nombra no se compara. */
 export type ExpectedOperation = { op: CopilotOp } & { [field: string]: ExpectedValue };
@@ -269,6 +350,8 @@ export interface BenchCase {
   json: boolean;
   /** ¿Debe resolverla el intérprete local, sin IA? */
   local: boolean;
+  /** Solo en el grupo `plan`: lo que debe cumplir el plan. */
+  plan?: PlanExpectation;
 }
 
 type CaseFields = Omit<BenchCase, 'group' | 'json' | 'local' | 'anyOrder' | 'note'> &
@@ -585,11 +668,106 @@ const HESITANT = group('titubeo', [
   { id: 'titubeo-blanco-negro', order: 'Pon la foto en sepia… no, mejor en blanco y negro', document: 'menu', expected: [{ op: 'adjust_image', target: BACKGROUND, filter: 'bw' }] },
 ]);
 
-/**
- * PUNTO DE EXTENSIÓN (`group: 'plan'`): órdenes compuestas que montan una pieza
- * por pasos. Vacío a propósito; se rellena con `group('plan', [...])`.
- */
-export const PLAN_CASES: BenchCase[] = group('plan', []);
+// Órdenes que MONTAN una pieza: fondo creado con IA (solo el fondo), fotos reales de la
+// biblioteca colocadas encima y el titular. Las llamadas pueden venir en cualquier orden.
+const EITHER = { anyOf: [false, true] };
+const CANVAS_RATIO = { anyOf: [null, '4:5'] };
+const SOME = { between: [1, 6] as [number, number] };
+
+export const PLAN_CASES: BenchCase[] = group('plan', [
+  {
+    id: 'plan-menu-otono',
+    order: 'Haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el centro, con el título Menú de otoño',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Mesa de madera con hojas secas y luz cálida de otoño' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'plato', example: 'platos de otoño' }, count: SOME },
+      { op: 'place_photos', layout: 'center', cutout: EITHER, on: EITHER },
+      { op: 'add_text', text: 'Menú de otoño', style: 'title' },
+    ],
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [4, 7] },
+  },
+  {
+    id: 'plan-postres-fila',
+    order: 'Monta la pieza de los postres: un fondo de mármol claro creado con IA, los tres postres recortados y en fila, y arriba el título Postres de la casa',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Superficie de mármol claro con luz suave de ventana' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'postre', example: 'postres' }, count: 3 },
+      { op: 'place_photos', layout: 'row', cutout: true, on: EITHER },
+      { op: 'add_text', text: 'Postres de la casa', style: 'title', position: TOP },
+    ],
+    // 1 fondo + 1 búsqueda + 3 recortes + colocar + 1 texto.
+    plan: { library: 'hosteleria', background: true, photos: 3, steps: 7 },
+  },
+  {
+    id: 'plan-gimnasio-abanico',
+    order: 'Haz la promo de la tienda del gimnasio: un fondo oscuro con luces de neón, los productos en abanico con sombra y el título Nueva colección',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Pared oscura de gimnasio con luces de neón azules' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'producto', example: 'productos' }, count: SOME },
+      { op: 'place_photos', layout: 'fan', cutout: EITHER, on: true },
+      { op: 'add_text', text: 'Nueva colección', style: 'title' },
+    ],
+    plan: { library: 'gimnasio', background: true, photos: [1, 3], steps: [4, 7] },
+  },
+  {
+    id: 'plan-novedades-rejilla',
+    order: 'Prepara la pieza de las novedades: crea un fondo liso y elegante en tonos crema y pon las fotos de las novedades en rejilla',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Fondo liso y elegante en tonos crema, con una textura suave de papel' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'novedad', example: 'novedades' }, count: SOME },
+      { op: 'place_photos', layout: 'grid', cutout: EITHER, on: EITHER },
+    ],
+    plan: { library: 'generica', background: true, photos: [1, 2], steps: [3, 5] },
+  },
+  {
+    id: 'plan-titubeo-otono-fila',
+    order: 'Eh… haz el, el menú de otoño… con un fondo, no sé, que parezca de otoño, y los platos, eh, en el centro… no, mejor en fila',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Hojas secas y ramas sobre una mesa de madera oscura' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'plato', example: 'platos' }, count: SOME },
+      { op: 'place_photos', layout: 'row', cutout: EITHER, on: EITHER },
+    ],
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [3, 6] },
+  },
+  {
+    id: 'plan-sin-fotos',
+    order: 'Haz el menú del día: crea un fondo de mesa de madera y pon los platos en el centro, con el título Menú del día',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'generate_background', prompt: { background: 'Tablero de madera clara visto desde arriba, con luz natural' }, ratio: CANVAS_RATIO },
+      { op: 'find_photos', query: { includes: 'plato', example: 'platos' }, count: SOME },
+      { op: 'place_photos', layout: 'center', cutout: EITHER, on: EITHER },
+      { op: 'add_text', text: 'Menú del día', style: 'title' },
+    ],
+    // La biblioteca no tiene fotos: no se coloca ninguna (el editor pide elegirlas) y no hay recortes.
+    plan: { library: 'vacia', background: true, photos: 0, steps: 4 },
+  },
+  {
+    id: 'plan-genera-plato',
+    order: 'Genera con IA un plato de paella bien apetitoso y ponlo en el centro, con el título Paella de domingo',
+    document: 'vacio',
+    anyOrder: true,
+    // La IA no genera comida: se dice, y el plato sale de la biblioteca.
+    note: true,
+    expected: [
+      { op: 'find_photos', query: { includes: 'paella', example: 'paella' }, count: SOME },
+      { op: 'place_photos', layout: 'center', cutout: EITHER, on: EITHER },
+      { op: 'add_text', text: 'Paella de domingo', style: 'title' },
+    ],
+    plan: { library: 'hosteleria', background: false, photos: 1, steps: [3, 4] },
+  },
+]);
 
 export const BENCH_CASES: BenchCase[] = [
   ...SIMPLE,

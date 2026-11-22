@@ -3,7 +3,9 @@
 Estado a 22/11/2026, rama `f37/copiloto-herramientas`. La persona dicta o **escribe** una
 orden en el editor de una pieza («pon el título arriba y más grande», «foto difuminada
 detrás, esta», «siguiente página», «deshaz») y el copiloto la ejecuta sobre el documento.
-**No genera imágenes ni redacta**: los textos van exactamente como se dicen.
+**No redacta**: los textos van exactamente como se dicen. **Lo único que genera es un fondo**,
+y solo dentro de una orden que monta una pieza entera, con el plan y su coste a la vista y el
+«sí» de la persona (apartado 15); los platos y productos son siempre fotos de la biblioteca.
 
 Lo medido con un proveedor real (22/11/2026, staging, OpenAI, servidor general, **ruta JSON
 anterior**): `gpt-6-luna` hizo bien 8 de 8 órdenes, ~2,7 s de media en servidor y 0,00045
@@ -15,12 +17,13 @@ banco del apartado 13 es la forma de medirla.
 
 | Pieza | Estado |
 |---|---|
-| Ruta de **herramientas** (function calling): 23 herramientas, una por operación del editor; adaptadores de OpenAI y de Claude (API directa, Vertex, Bedrock) | Implementada; probada con simulados y base de datos real. **Sin probar con proveedor real** |
+| Ruta de **herramientas** (function calling): 26 herramientas (23 operaciones del editor y 3 pasos de plan); adaptadores de OpenAI y de Claude (API directa, Vertex, Bedrock) | Implementada; probada con simulados y base de datos real. **Sin probar con proveedor real** |
+| **Órdenes que montan una pieza** (plan por pasos: fondo con IA, fotos de la biblioteca recortadas y colocadas, titular; apartado 15) | Implementado; unitarias, componentes y base de datos con todo SIMULADO (IA de texto, generador de imágenes, biblioteca y recorte). **Sin probar con nada real**; e2e escrita y sin ejecutar en local |
 | Ruta **JSON** (la anterior, 8 operaciones) detrás de `AI_TEXT_EDITOR_COPILOT_MODE=json` | Sin cambios; es la medida con `gpt-6-luna` |
-| **Intérprete local** de órdenes frecuentes (sin IA, coste cero) | Implementado; 234 pruebas |
+| **Intérprete local** de órdenes frecuentes (sin IA, coste cero) | Implementado; 236 pruebas |
 | **Órdenes por teclado** (campo junto al micrófono; sirve sin micrófono) | Implementado; componentes y e2e 19 (la e2e, sin ejecutar en local) |
 | **Motor de voz**: dictado del navegador o transcriptor (`ai-transcribe`) | Implementado con micrófono y transcriptor SIMULADOS. **Sin probar con micrófono ni transcriptor reales** |
-| Banco de pruebas `scripts/copiloto-banco.ts` (75 órdenes) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
+| Banco de pruebas `scripts/copiloto-banco.ts` (82 órdenes, 7 de ellas de plan) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
 | Desenfoque de imágenes, color legible de los textos, aviso previo al dictado | Como estaban (apartados 6, 7 y 9 bis) |
 
 ## 1. Cómo funciona
@@ -77,7 +80,11 @@ ORDEN + estado compacto del documento + fotos elegidas ──► ai-generate    
   ninguna, se abre el selector; si se cierra sin elegir, se aplica el resto.
 - **Marca «Generado con IA».** El copiloto no la pone: los textos son los de la
   persona y las fotos, suyas. Si coloca una imagen generada con IA de la
-  biblioteca, la marca sale por esa imagen como siempre.
+  biblioteca (también el fondo que crea un plan, apartado 15), la marca sale por
+  esa imagen como siempre (`aiLabel.ts`).
+- **Órdenes que montan una pieza.** Si la orden trae pasos de plan (crear un fondo,
+  buscar y colocar fotos), no se aplica nada al momento: se enseña el plan y se
+  espera el «sí» (apartado 15).
 
 ## 2. Operaciones y herramientas
 
@@ -109,6 +116,14 @@ paralelo. Es una sola vuelta: el modelo llama y el editor ejecuta.
 | `set_background_color` / `set_canvas_ratio` | Color de fondo y proporción del lienzo | Solo el color |
 | `page` | Páginas del carrusel: añadir, duplicar, borrar, mover, ir a | No |
 | `editor` | Deshacer, rehacer, guardar una versión, abrir las plantillas | No |
+| `generate_background` | **Paso de plan.** `{ prompt, ratio }`: crear con IA el fondo, y solo el fondo. `prompt` (hasta 400 caracteres) es lo único que redacta la IA y no va al diseño como texto; `ratio` null = la del lienzo | No |
+| `find_photos` | **Paso de plan.** `{ query, count }`: buscar en la biblioteca de la marca las fotos reales que nombra la orden (`count` de 1 a 6) | No |
+| `place_photos` | **Paso de plan.** `{ layout, cutout, on }`: colocar las fotos encontradas o elegidas (`center`, `row`, `grid`, `fan`), sin su fondo (`cutout`) y con sombra suave (`on`) | No |
+
+Los tres **pasos de plan** no cambian el documento por sí solos: la tarea del servidor no
+genera ni busca nada, solo los devuelve; el editor los enseña con su coste y pide confirmación
+(apartado 15). Titular y subtítulo son `add_text` con `style` `title` o `subtitle`; las
+plantillas, `editor` con `action: 'template'`.
 
 Todo se aplica con las funciones que ya usa el editor a mano (`applyLayerPatch`,
 `reorderLayers`, `duplicateLayer`, `turnQuarter`, `flipPhoto`, `largestCrop`, `adaptDocument`,
@@ -137,7 +152,11 @@ ninguna, las de foto van a la de fondo y el resto se descarta diciéndolo.
   anterior sigue aceptando las órdenes que solo usan lo de antes y rechaza
   entera («respuesta no válida», sin cambiar nada) la que traiga una operación o
   un campo nuevo; un editor nuevo funciona con una función anterior. **Desplegar
-  primero la aplicación y después `ai-generate`.**
+  primero la aplicación y después `ai-generate`.** Los pasos de plan siguen la
+  misma regla: son operaciones nuevas con campos nuevos (`prompt`, `query`,
+  `count`, `layout`, `cutout`), salen compactas (sin los nueve campos de antes) y
+  un editor anterior rechaza entera la respuesta que los traiga, sin aplicar nada
+  a medias. La ruta JSON no los conoce: no puede pedir un plan.
 
 **Órdenes ambiguas.** Si una orden se refiere a una capa y ninguna coincide
 («el título» y ningún texto lo parece) o coinciden varias, la IA no la hace y
@@ -161,7 +180,10 @@ operaciones, la orden queda «Sin cambios».
      marca que el usuario ve, por RLS);
    - logotipos que no son del perfil, capas que no existen o están bloqueadas;
    - colores fuera de la paleta (salvo blanco y negro) y tipografías fuera del
-     perfil: se quitan y el editor pone los de la marca.
+     perfil: se quitan y el editor pone los de la marca;
+   - un `generate_background` cuya descripción nombra comida o productos
+     (apartado 15): «La IA solo crea el fondo: los platos y productos son fotos
+     de la biblioteca.»
 4. **En el navegador**: la respuesta se valida otra vez con un esquema zod
    estricto, se vuelve a comprobar que los textos están en lo dictado y el
    documento resultante se valida con el esquema del documento. Si algo falla,
@@ -204,6 +226,10 @@ frases, no descartar en silencio.
   con propósito `editor.copilot`, con su reserva de cupo y su coste por
   organización, como las demás tareas. Sin cupo, se explica igual que en el
   resto de la IA y se puede seguir editando a mano.
+- Una orden que monta una pieza (apartado 15) es esa misma llamada de texto y, **solo si
+  la persona confirma el plan**, una generación de imagen de `ai-media` (propósito
+  `post.visual`, con su reserva de cupo y su coste, como «Generar imagen con IA»). Buscar en
+  la biblioteca, quitar el fondo y colocar no gastan cupo de IA.
 - **Modo agencia (provisional).** `ai-generate` devuelve 409 `agency_mode` a las
   tareas de texto de las marcas en modo agencia. El copiloto es la única
   excepción (`AGENCY_MODE_ALLOWED_ACTIONS`): no redacta, coloca lo dictado.
@@ -491,8 +517,8 @@ ejecutar en local).
 
 **Qué viaja** (`editor-copilot-tools.ts`), en este orden:
 
-1. Herramientas (23) e instrucciones cortas, sin ejemplos: **idénticas para todas las marcas
-   y personas**. Es lo que el proveedor puede leer de caché.
+1. Herramientas (26: 23 operaciones y 3 pasos de plan) e instrucciones cortas, sin ejemplos:
+   **idénticas para todas las marcas y personas**. Es lo que el proveedor puede leer de caché.
 2. La marca en tres líneas (colores con su uso, tipografías, si hay logotipo): estable por
    marca. Ya no viaja el perfil entero.
 3. El documento en una línea por capa, con identificadores cortos (`c1`, `c2`…; el servidor
@@ -505,17 +531,20 @@ de ningún proveedor), perfil de marca completo y documento de 6 capas
 | Ruta | Total | Común a todas las marcas | Marca | Variable (documento + orden) |
 |---|---|---|---|---|
 | JSON (antes) | 2.455 | 1.390 (instrucciones 1.090 + esquema 300) | 835 | 230 |
-| Herramientas (ahora) | 3.122 | 2.973 (herramientas 2.441 + instrucciones 532) | 33 | 116 |
+| Herramientas, 23 (antes de los pasos de plan) | 3.122 | 2.973 (herramientas 2.441 + instrucciones 532) | 33 | 116 |
+| Herramientas, 26 (ahora, con los pasos de plan) | 3.473 | 3.324 (herramientas 2.715 + instrucciones 609) | 33 | 116 |
 
-- **El total sube un 27 %**: las 23 herramientas pesan. Lo que baja es lo que no se puede
+- **El total sube un 41 % frente a JSON**: las 26 herramientas pesan. Los tres pasos de plan
+  y su regla añaden 351 tokens al prefijo común (+12 %: 274 de herramientas y 77 de
+  instrucciones); la parte variable no cambia. Lo que baja frente a JSON es lo que no se puede
   compartir entre marcas (marca + variable): de 1.065 a 149 tokens.
 - El objetivo «menos de 1.500 tokens de entrada sin caché por orden» se cumple **cuando el
   prefijo común se lee de caché** (quedarían unos 150–250 reales sin caché); en la primera
-  orden tras un rato sin uso, no: se paga todo (del orden de 4.000 tokens reales, si la
+  orden tras un rato sin uso, no: se paga todo (del orden de 4.500 tokens reales, si la
   proporción real/estimado es la medida en la ruta JSON, 1,3).
 - OpenAI (guía de caché, 22/11/2026): desde GPT-5.6 el mínimo cacheable son 1.024 tokens, la
   caché dura 30 minutos por defecto y **escribirla cuesta 1,25 veces la entrada**. El prefijo
-  común (unos 3.000 tokens) supera el mínimo y es el mismo para todo el mundo, así que
+  común (unos 3.300 tokens) supera el mínimo y es el mismo para todo el mundo, así que
   basta con que alguien use el copiloto cada media hora. **El adaptador cuenta hoy las
   escrituras de caché de OpenAI como entrada normal** (pendiente: leer
   `cache_write_tokens` y ponerle precio).
@@ -557,7 +586,8 @@ la etiqueta «Sin IA».
 | Desenfoque | «más difuminada», «menos difuminada» (la foto elegida o la de fondo) |
 | Páginas | «siguiente página», «página anterior», «ve a la página 3», «añade una página», «duplica la página», «borra esta página» |
 
-A la IA a propósito: órdenes compuestas («más grande y más arriba»), las que nombran una
+A la IA a propósito: órdenes compuestas («más grande y más arriba»), las que montan una pieza
+(«crea un fondo otoñal y pon los platos en el centro», apartado 15), las que nombran una
 capa («borra el título»), las que traen una corrección («no, mejor…») y las ambiguas («quita
 el fondo»). Sin nada elegido, «más grande» contesta «No hay ninguna capa elegida…» sin
 llamar a la IA.
@@ -602,10 +632,21 @@ privacidad, que todavía no recoge este motor (sí el registro de tratamientos, 
 
 ## 13. Banco de pruebas
 
-`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 75 órdenes en
+`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 82 órdenes en
 español con sus operaciones esperadas: 58 base (simples, compuestas, ambiguas, imposibles,
-hostelería y gimnasio) y 17 de habla titubeante. 11 las resuelve el intérprete local; 33 no
-se pueden expresar por la ruta JSON.
+hostelería y gimnasio), 17 de habla titubeante y 7 de **plan** (órdenes que montan una pieza).
+11 las resuelve el intérprete local; 40 no se pueden expresar por la ruta JSON.
+
+- **Grupo `plan`** (`--grupo plan`): 7 órdenes compuestas (hostelería, gimnasio y una
+  genérica; una titubeante con corrección; una con la biblioteca vacía; y «genera con IA un
+  plato de paella…», que debe quedar sin generación y diciéndolo). Cada caso trae una
+  biblioteca de mentira con fotos «reales» y una imagen generada con IA que casa con lo
+  buscado (y que nunca debe salir). Además de las operaciones, se comprueba **el plan** con
+  el mismo código del editor (`plan.ts`): que ningún `generate_background` nombra comida ni
+  productos, cuántos pasos tiene, que las fotos salen de `find_photos` (biblioteca) y no de
+  la generación, la disposición pedida, el titular, y que al componerlo queda un documento
+  válido. **El banco nunca ejecuta pasos de pago ni genera imágenes ni recorta**, ni en seco
+  ni con `--apply`: de un plan solo evalúa lo que devuelve el copiloto (una llamada de texto).
 
 - **En seco (por defecto, sin red ni coste):** `npx vite-node scripts/copiloto-banco.ts`.
   Un proveedor simulado responde lo esperado y cada caso pasa por la tarea real, el saneado y
@@ -621,7 +662,7 @@ se pueden expresar por la ruta JSON.
   npx vite-node scripts/copiloto-banco.ts --apply --salida banco-resultados.json
   ```
 
-  Antes de empezar dice cuántas llamadas hará (por defecto 106: 64 por herramientas y 42 por
+  Antes de empezar dice cuántas llamadas hará (por defecto 113: 71 por herramientas y 42 por
   JSON) y una estimación, y pregunta (o `--si`). Tabla por ruta y modelo: aciertos, latencia
   p50/p95, tokens de entrada, salida y caché, y coste (los lee de `ai_generations`). Para
   comparar modelos: cambiar el modelo en Plataforma → Integraciones y relanzar con el mismo
@@ -633,10 +674,131 @@ se pueden expresar por la ruta JSON.
 ## 14. Pendiente
 
 - **Medir la ruta de herramientas con un proveedor real** (banco con `--apply`): aciertos,
-  latencia, tokens y coste frente a JSON, con `gpt-6-luna` y con Haiku 5.5.
+  latencia, tokens y coste frente a JSON, con `gpt-6-luna` y con Haiku 5.5. Incluye el grupo
+  `plan`: si el modelo real devuelve los pasos de plan como se espera (apartado 15).
+- **Probar un plan de verdad** en staging: una imagen de fondo real (calidad, que respete «sin
+  comida»), el recorte de fotos reales y cómo queda la composición. Nada de eso está probado.
 - Desplegar: la aplicación, después `ai-generate`, `ai-transcribe` y `platform-integrations`;
-  migración `20261226010000`.
+  migración `20261226010000`. Los planes no añaden migraciones ni funciones nuevas (usan
+  `ai-media`, que ya estaba).
+- Planes: fondo en degradado cuando no hay IA de imagen (hoy, color liso), elegir el modelo
+  de imagen desde el plan (usa el de por defecto) y buscar en bibliotecas de más de 500 imágenes.
 - Precio de la escritura de caché de OpenAI (hoy se cuenta como entrada normal).
 - Probar el dictado y el transcriptor con micrófonos reales (apartado 12).
 - Elegir una plantilla concreta por voz; recorte libre.
 - Ofrecer el desenfoque en la pantalla de reels.
+
+## 15. Órdenes que montan una pieza (plan por pasos)
+
+Ejemplo: «haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el
+centro, con el título Menú de otoño». Es una sola orden y una sola llamada a la IA del
+copiloto; lo que cambia es que **no se aplica nada al momento**.
+
+**La regla del fondo (decisión del dueño).** La IA solo crea el FONDO. Los platos y productos
+son SIEMPRE fotos reales de la biblioteca, recortadas (con la cadena de «quitar el fondo» que
+ya existe) y colocadas encima. Nunca se genera comida ni producto. Se defiende en cuatro sitios:
+
+1. La herramienta `generate_background` y una regla de las instrucciones lo dicen («solo el
+   fondo: nunca comida, platos, bebidas, productos, personas ni texto; los platos y productos
+   son fotos de la biblioteca: `find_photos` + `place_photos`»).
+2. **Servidor** (`sanitizeOperations`): un `generate_background` cuya descripción nombra comida
+   o un producto se descarta con el motivo «La IA solo crea el fondo: los platos y productos
+   son fotos de la biblioteca.». Es una lista corta de palabras (plato, comida, alimento,
+   hamburguesa, pizza, bocadillo, postre, tarta, bebida, cóctel, cerveza, refresco, producto,
+   botella, en singular y plural y sin tildes, y sus equivalentes en inglés); no lleva palabras
+   que también son colores o ambiente («vino», «café», «naranja»). Lo **negado** no cuenta:
+   «sin comida, platos ni personas» pasa. Es una defensa por palabras, no entiende la frase.
+3. **Navegador** (`plan.ts`): la misma comprobación otra vez, y a lo que se manda al generador
+   se le añade SIEMPRE una coletilla fija: «Fondo para una pieza de redes sociales, sin comida,
+   platos, bebidas, productos, personas, texto ni logotipos.»
+4. La búsqueda en la biblioteca **nunca devuelve una imagen generada con IA** (procedencia
+   `ai_generation`): lo que se coloca como plato o producto es una foto real o una edición suya.
+
+La descripción del fondo es lo único que redacta la IA; no entra en el diseño como texto y se
+enseña ENTERA (con la coletilla) antes de gastar.
+
+**Cómo funciona** (`copilot/plan.ts`, puro; `PlanCard.tsx`; `VoiceCopilot.tsx`; `planHost.ts`):
+
+```
+orden ──► IA del copiloto ──► operaciones con pasos de plan (generate_background, find_photos, place_photos)
+            │
+            ▼  (nada aplicado todavía)
+   plan: se busca en la biblioteca y se pide el precio del fondo (ni lo uno ni lo otro gastan)
+            ▼
+   tarjeta «Esto es lo que voy a hacer»: pasos, indicación del fondo, fotos y COSTE MÁXIMO
+            │  «Sí, hazlo» / «sí», «vale», «adelante», «hazlo»      «no», «cancela» / otra orden
+            ▼                                                        └─► plan descartado, sin gasto
+   1. fondo con IA (ai-media)   2. recortes (gratis)   3. TODO al documento de una vez (un Ctrl+Z)
+```
+
+- **Confirmación.** Con un toque («Sí, hazlo») o diciendo o escribiendo «sí», «vale»,
+  «adelante», «hazlo», «de acuerdo»…; «no» o «cancela» lo descartan. Con un plan pendiente,
+  esas respuestas se resuelven en el navegador (sin IA, etiqueta «Sin IA») **antes** del
+  intérprete local y de la IA. Cuenta la frase entera: «sí, pero más grande» es otra orden.
+  Cualquier otra orden descarta el plan pendiente y sigue su camino normal (la tarjeta lo dice).
+- **Coste antes de gastar.** Lo único de pago es el fondo con IA. Su precio es el mismo
+  cálculo que enseña «Generar imagen con IA»: la acción `image.estimate` de `ai-media` (no
+  reserva nada), con el modelo de imagen por defecto y la proporción del lienzo. Se enseña con
+  `formatMicros`, como el resto de importes («créditos» mientras no haya moneda fijada):
+  «Coste máximo: 0,14 créditos (el fondo con IA; lo demás es gratis)» y «1 fondo con IA ≈ 0,14
+  créditos · 3 recortes gratis · 2 textos». Buscar en la biblioteca, quitar el fondo (en el
+  navegador o en el trabajador de medios: no usa cupo de IA; sí ocupa almacenamiento) y poner
+  textos no cuestan. Si el precio no se puede calcular antes, la tarjeta lo dice («se verá al
+  generar y contará para el cupo de IA») y deja decidir. La llamada de texto que interpretó la
+  orden ya se ha hecho y cuenta aparte, como cualquier orden.
+- **Topes** (constantes de `plan.ts`): **12 pasos** por plan (`PLAN_MAX_STEPS`; cuentan el
+  fondo, cada búsqueda, cada recorte, colocar y cada operación normal), **6 fotos**
+  (`COPILOT_MAX_PLAN_PHOTOS`) y **1 crédito** de coste máximo por plan
+  (`PLAN_MAX_COST_MICROS`, 1.000.000 de micros). Un plan que los supera no se puede confirmar
+  (ni con el botón ni diciendo «sí») y la tarjeta dice por qué. Además, el cupo de IA de la
+  organización se comprueba en `ai-media` como siempre.
+- **Ejecución por pasos**, con su estado a la vista (pendiente, en curso, hecho, fallido) y un
+  botón «Cancelar» (también vale decir «cancela»). Si se cancela o falla la generación del
+  fondo, **el documento no se toca**; lo ya creado queda en la biblioteca y se dice. Un fondo
+  que se estaba generando al cancelar puede terminar igualmente (se dice: quedará en la
+  biblioteca y contará para el cupo). Si una foto no se puede recortar, se coloca tal cual y
+  se dice; el plan termina.
+- **Un solo paso de deshacer.** Con los recursos ya creados, el plan se convierte en
+  operaciones normales (`composePlan`): `set_background_image` con el fondo generado,
+  una `add_image` por foto con la caja que le da `layoutBoxes` (apply.ts admite ahora una caja,
+  un giro y una sombra en `add_image`) y los `add_text`. Se aplican juntas (`replace`): un
+  Ctrl+Z lo quita todo.
+- **Disposiciones** (`layoutBoxes`, de 1 a 6 fotos): `center` (una grande, o varias agrupadas
+  y algo solapadas), `row` (fila), `grid` (rejilla con aire) y `fan` (abanico: giradas hasta
+  ±15°, solapadas y las de los lados más bajas). Las fotos van en la franja más alta que dejan
+  libre los textos y el logotipo (los de la orden y los que ya había), por debajo de ellos y
+  sin salirse del lienzo; cada una, entera y con sus proporciones. Si no queda una franja con
+  sitio, se colocan igualmente y se avisa.
+- **Si falta material.** Si la búsqueda no encuentra nada («No encuentro fotos de “platos de
+  otoño” en la biblioteca»), la tarjeta lo dice y ofrece elegirlas con el selector de fotos de
+  siempre («Elegir fotos», una cada vez, hasta el tope); el plan sigue con las elegidas. Las
+  encontradas se pueden quitar una a una antes de confirmar. Sin fotos y sin elegir, ese paso
+  se salta y se dice.
+- **Sin IA de imagen configurada** (interruptor apagado, sin modelo, o marca en modo agencia y
+  quien mira no es de la agencia): el fondo **no se ofrece como IA**. La tarjeta propone un
+  fondo liso con el color de uso «fondo» de la paleta de la marca (`set_background_color`) y
+  dice por qué; si la marca no tiene ese color, el fondo se queda como está y se dice. No hay
+  degradados de lienzo en el documento: es un color liso.
+- **Buscar en la biblioteca** (`matchLibraryPhotos`): por nombre de archivo, etiquetas y
+  carpeta, sin tildes ni mayúsculas y sin distinguir el plural, entre las 500 imágenes más
+  recientes de la marca. Si casan una foto y una edición suya, se queda la original.
+- **Qué queda en la biblioteca.** El fondo generado, guardado por `ai-media` como siempre
+  (origen «generado», procedencia `ai_generation` con proveedor, modelo e indicación; la pieza
+  lleva la marca «Generado con IA» por esa imagen). Cada recorte nuevo, guardado por
+  `runQuickEdit` + `useSaveEdit` (carpeta «Ediciones», etiqueta «edición», procedencia
+  `photo_edit` con la foto original y el paso `remove_background`). Si la foto ya estaba
+  recortada o ya había un recorte suyo en la biblioteca, se usa ese y no se crea otro. La foto
+  original no se toca.
+
+**Probado** (todo con simulados): el servidor (`tests/db/ia-copiloto-herramientas.test.ts`:
+las tres herramientas, el saneado y la compatibilidad), `plan.ts` (`plan.test.ts`), la tarjeta
+y la ejecución (`copilotoPlan.test.tsx`), lo que el editor ofrece al plan (`planHost.test.ts`,
+`src/features/ai/generarYEsperar.test.tsx`), el editor entero con Supabase y `ai-media`
+simulados (`src/features/content/editorCopilotoPlan.test.tsx`: precio, fondo, foto real,
+titular y un solo «Deshacer») y el banco (apartado 13).
+
+**Sin probar:** nada de esto contra servicios reales. Ni que un modelo real devuelva los pasos
+de plan como se espera, ni la calidad de un fondo generado de verdad (ni si respeta «sin
+comida»), ni el recorte de fotos reales dentro de un plan, ni cómo queda la composición a la
+vista (no se ha abierto en un navegador: sin servidor local). La e2e 19 tiene un caso nuevo
+con el camino feliz (sin recorte), **escrito y sin ejecutar en local**.

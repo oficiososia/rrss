@@ -36,6 +36,15 @@ import {
   summarizeDocument,
   type CopilotOperation,
 } from '../../src/features/content/copilot/operations';
+import {
+  buildPlan,
+  composePlan,
+  hasPlanSteps,
+  matchLibraryPhotos,
+  namesFoodOrProduct,
+  planStepCount,
+  type LibraryPhoto,
+} from '../../src/features/content/copilot/plan';
 import { pageView, validateDocument } from '../../src/features/content/document';
 import type { AiService, AiToolCall, Json, RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { createAiService } from '../../supabase/functions/_shared/ai/service.ts';
@@ -53,13 +62,16 @@ import {
   BENCH_DOCUMENT_ASSETS,
   BENCH_DOCUMENT_IDS,
   BENCH_DOCUMENTS,
+  BENCH_GENERATED_BACKGROUND,
   BENCH_GROUPS,
+  BENCH_LIBRARIES,
   BENCH_LOGO,
   BENCH_PHOTOS,
   type BenchCase,
   type BenchDocumentId,
   type BenchGroup,
   type BenchPhotoId,
+  type ExpectedCount,
   type ExpectedOperation,
   type ExpectedValue,
 } from './casos.ts';
@@ -83,6 +95,17 @@ const isAnyOf = (value: ExpectedValue): value is { anyOf: Scalar[] } =>
   isObject(value) && Array.isArray((value as { anyOf?: unknown }).anyOf);
 const isBetween = (value: ExpectedValue): value is { between: [number, number] } =>
   isObject(value) && Array.isArray((value as { between?: unknown }).between);
+const isBackground = (value: ExpectedValue): value is { background: string } =>
+  isObject(value) && typeof (value as { background?: unknown }).background === 'string';
+const isIncludes = (value: ExpectedValue): value is { includes: string; example: string } =>
+  isObject(value) && typeof (value as { includes?: unknown }).includes === 'string';
+
+/** Sin tildes ni mayúsculas, para comparar palabras sueltas. */
+const plainText = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase();
 
 function sameScalar(field: string, expected: Scalar, actual: unknown): boolean {
   const got = actual === undefined ? null : actual;
@@ -107,12 +130,17 @@ export function matchesValue(field: string, expected: ExpectedValue, actual: unk
     const [min, max] = expected.between;
     return typeof actual === 'number' && actual >= min && actual <= max;
   }
+  // La descripción de un fondo la escribe el modelo: vale cualquiera que no nombre comida ni productos.
+  if (isBackground(expected)) return typeof actual === 'string' && actual.trim() !== '' && !namesFoodOrProduct(actual);
+  if (isIncludes(expected)) return typeof actual === 'string' && plainText(actual).includes(plainText(expected.includes));
   return sameScalar(field, expected, actual);
 }
 
 function describeExpected(field: string, expected: ExpectedValue): string {
   if (isAnyOf(expected)) return `uno de ${show(expected.anyOf)}`;
   if (isBetween(expected)) return `entre ${expected.between[0]} y ${expected.between[1]}`;
+  if (isBackground(expected)) return 'la descripción de un fondo, sin comida ni productos';
+  if (isIncludes(expected)) return `un texto con «${expected.includes}»`;
   if (SIGN_FIELDS.has(field) && typeof expected === 'number') return expected > 0 ? 'un valor positivo' : 'un valor negativo';
   return field === 'text' ? `las palabras de ${show(expected)}` : show(expected);
 }
@@ -185,6 +213,8 @@ export function compareOperations(
 function simulatedValue(expected: ExpectedValue): Json {
   if (isAnyOf(expected)) return expected.anyOf[0] ?? null;
   if (isBetween(expected)) return Math.round((expected.between[0] + expected.between[1]) / 2);
+  if (isBackground(expected)) return expected.background;
+  if (isIncludes(expected)) return expected.example;
   return expected;
 }
 
@@ -297,7 +327,90 @@ export function evaluateResponse(benchCase: BenchCase, body: unknown, transcript
   const problems = [...comparison.problems];
   if (dictated.removed > 0) problems.push('El editor ha quitado un texto que no estaba en lo dictado.');
   if (benchCase.note && response.note.trim() === '') problems.push('Se esperaba una frase para la persona (una pregunta o lo que no se puede hacer) y no ha llegado.');
+  // Órdenes que montan una pieza: se evalúa el PLAN que saldría (sin ejecutar ningún paso).
+  if (benchCase.plan) problems.push(...planProblemsFor(benchCase, dictated.operations));
   return { ok: problems.length === 0, problems, operations: dictated.operations, note: response.note };
+}
+
+const inCount = (expected: ExpectedCount, actual: number) =>
+  typeof expected === 'number' ? actual === expected : actual >= expected[0] && actual <= expected[1];
+const showCount = (expected: ExpectedCount) => (typeof expected === 'number' ? String(expected) : `entre ${expected[0]} y ${expected[1]}`);
+
+/**
+ * Evalúa el PLAN de una orden que monta una pieza, con el mismo código que usa
+ * el editor (plan.ts) y sin gastar nada: el banco NO genera imágenes, NO
+ * recorta y NO llama a `ai-media`. Comprueba que ningún fondo nombra comida ni
+ * productos, que el plan se puede ejecutar, cuántos pasos tiene, que las fotos
+ * salen de la biblioteca (`find_photos`) y no de la generación, y que al
+ * componerlo queda un documento válido con cada cosa en su sitio.
+ */
+export function planProblemsFor(benchCase: BenchCase, operations: CopilotOperation[]): string[] {
+  const expected = benchCase.plan;
+  if (!expected) return [];
+  const problems: string[] = [];
+  const start = BENCH_DOCUMENTS[benchCase.document];
+  const library: readonly LibraryPhoto[] = BENCH_LIBRARIES[expected.library];
+  const chosen = (benchCase.assets ?? []).map((id) => BENCH_PHOTOS[id]);
+
+  // 1. La IA solo crea el fondo: ninguna descripción de fondo nombra comida ni productos.
+  for (const operation of operations) {
+    if (operation.op === 'generate_background' && namesFoodOrProduct(operation.prompt ?? '')) {
+      problems.push(`El fondo nombra comida o un producto («${(operation.prompt ?? '').slice(0, 80)}»): la IA solo crea el fondo.`);
+    }
+  }
+  const generates = operations.some((operation) => operation.op === 'generate_background');
+  if (!expected.background && generates) problems.push('No se esperaba generar nada y la respuesta trae un `generate_background`.');
+  if (expected.background && !hasPlanSteps(operations)) problems.push('Se esperaba un plan (pasos de fondo y fotos) y la respuesta no trae ninguno.');
+
+  // 2. El plan, como lo construye el editor (con IA de imagen disponible y recorte posible).
+  const context = applyContext(benchCase.document, benchCase.assets ?? []);
+  const plan = buildPlan(operations, {
+    canvasRatio: start.document.canvas.aspectRatio,
+    imageAi: { available: true },
+    palette: context.brand.palette,
+    canCutout: true,
+  });
+  for (const blocker of plan.blockers) problems.push(`El plan no se podría ejecutar: ${blocker}`);
+  if (expected.background !== (plan.background?.mode === 'ai')) {
+    problems.push(expected.background ? 'El plan no lleva fondo con IA y se esperaba.' : 'El plan lleva un fondo con IA y no se esperaba.');
+  }
+
+  // 3. Las fotos salen de la biblioteca (o de las elegidas a mano), nunca de la generación.
+  const photos: LibraryPhoto[] = [];
+  for (const search of plan.searches) {
+    for (const found of matchLibraryPhotos(library, search.query, search.count)) {
+      if (photos.length < 6 && !photos.some((photo) => photo.id === found.id)) photos.push(found);
+    }
+  }
+  if (plan.placement && plan.searches.length === 0) photos.push(...chosen);
+  if (photos.length > 0 && !plan.placement) problems.push('Hay fotos buscadas, pero el plan no dice cómo colocarlas.');
+  if (!inCount(expected.photos, photos.length)) {
+    problems.push(`Se esperaban ${showCount(expected.photos)} fotos de la biblioteca y el plan colocaría ${photos.length}.`);
+  }
+  const steps = planStepCount(plan, photos.length);
+  if (!inCount(expected.steps, steps)) problems.push(`Se esperaban ${showCount(expected.steps)} pasos y el plan tiene ${steps}.`);
+
+  // 4. Lo que quedaría en el documento: fondo (el generado, si lo hay), una capa por foto de la biblioteca y los textos.
+  const background = plan.background?.mode === 'ai' ? BENCH_GENERATED_BACKGROUND : null;
+  const assets = new Map(context.assets);
+  for (const asset of [...photos, ...(background ? [background] : [])]) assets.set(asset.id, asset);
+  const composed = composePlan(plan, { background, photos }, start.document, { ...context, assets });
+  const result = applyCopilotOperations(start.document, composed.operations, { ...context, assets });
+  if (!result.ok) return [...problems, `El documento resultante no sería válido: ${JSON.stringify(result.issues).slice(0, 200)}`];
+  if (!validateDocument(result.document).ok) problems.push('El documento resultante no pasa su esquema.');
+  for (const reason of result.skipped) problems.push(`El editor se ha saltado algo: ${reason}`);
+  const sources = pageView(result.document, result.pageIndex).layers.flatMap((layer) =>
+    layer.type === 'image' && layer.source.kind === 'asset' ? [layer.source.assetId] : [],
+  );
+  const before = new Set(
+    pageView(start.document, start.pageIndex).layers.flatMap((layer) => (layer.type === 'image' && layer.source.kind === 'asset' ? [layer.source.assetId] : [])),
+  );
+  const allowed = new Set([...library, ...chosen].map((photo) => photo.id));
+  const placed = sources.filter((id) => id !== background?.id && !before.has(id));
+  if (placed.length !== photos.length) problems.push(`Se esperaba una capa por foto (${photos.length}) y hay ${placed.length}.`);
+  if (placed.some((id) => !allowed.has(id))) problems.push('Alguna foto colocada no es de la biblioteca.');
+  if (background && sources.filter((id) => id === background.id).length !== 1) problems.push('El fondo generado no ha quedado como foto de fondo.');
+  return problems;
 }
 
 /** Aplica las operaciones al documento de partida del caso, como el editor. Devuelve los problemas. */
@@ -442,7 +555,8 @@ export async function dryRunCase(benchCase: BenchCase, mode: CopilotMode): Promi
     }
     const evaluation = evaluateResponse(benchCase, simulated.body);
     problems.push(...evaluation.problems);
-    if (evaluation.problems.length === 0) problems.push(...applyProblems(benchCase, evaluation.operations));
+    // Un plan no se aplica tal cual: ya se ha evaluado, compuesto y aplicado en `planProblemsFor`.
+    if (evaluation.problems.length === 0 && !benchCase.plan) problems.push(...applyProblems(benchCase, evaluation.operations));
     return { ...base, ok: problems.length === 0, problems, tokens: simulated.tokens };
   } catch (error) {
     return { ...base, ok: false, problems: [`Error al ejecutar el caso: ${error instanceof Error ? error.message : 'desconocido'}`] };
@@ -528,6 +642,13 @@ export function formatDryReport(report: DryReport, cases: BenchCase[] = BENCH_CA
           result.tokens ? `${result.tokens.total}/${result.tokens.stable}/${result.tokens.volatile}` : '',
         ]),
       ]),
+    );
+  }
+  const plans = cases.filter((item) => item.plan).length;
+  if (plans > 0) {
+    lines.push('');
+    lines.push(
+      `Planes (órdenes que montan una pieza): ${plans} casos. Se evalúa el plan que saldría (pasos, fondo sin comida ni productos, fotos de la biblioteca, disposición y titular) y el documento que quedaría; el banco no genera imágenes ni recorta.`,
     );
   }
   const failures = report.results.filter((result) => !result.ok);
@@ -1268,6 +1389,12 @@ export async function runReal(options: RealOptions, deps: RealDeps): Promise<Rea
   );
   if (localSkipped > 0) log(`No se envían ${localSkipped} casos que resuelve el intérprete local sin IA (coste cero). Con --incluir-locales, sí.`);
   if (notExpressible > 0) log(`Por la ruta JSON no se envían ${notExpressible} casos que no puede expresar.`);
+  const planCases = cases.filter((item) => item.plan).length;
+  if (planCases > 0) {
+    log(
+      `De los ${planCases} casos de plan (órdenes que montan una pieza) solo se evalúa el plan que devuelve el copiloto: el banco no ejecuta sus pasos, no genera imágenes y no recorta (su único gasto es la llamada de texto).`,
+    );
+  }
   log(
     `Estimación (sin audio): unos ${inputTokens} tokens de entrada (parte se leerá de caché) y unos ${outputTokens} de salida. ` +
       (options.priceIn !== undefined && options.priceOut !== undefined

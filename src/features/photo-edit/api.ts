@@ -160,19 +160,22 @@ export async function signedUrlFor(path: string): Promise<string | undefined> {
 }
 
 /** Ediciones ya hechas de una foto (en el navegador o con IA), las más nuevas primero. */
+export async function fetchPhotoEdits(brandId: string, assetId: string): Promise<MediaAssetRow[]> {
+  return unwrap(
+    await supabase
+      .from('media_assets')
+      .select('*')
+      .eq('brand_id', brandId)
+      .eq('provenance->>source_asset_id', assetId)
+      .order('created_at', { ascending: false })
+      .limit(12),
+  );
+}
+
 export function usePhotoEdits(brandId: string, assetId: string) {
   return useQuery({
     queryKey: photoEditKeys.edits(brandId, assetId),
-    queryFn: async (): Promise<MediaAssetRow[]> =>
-      unwrap(
-        await supabase
-          .from('media_assets')
-          .select('*')
-          .eq('brand_id', brandId)
-          .eq('provenance->>source_asset_id', assetId)
-          .order('created_at', { ascending: false })
-          .limit(12),
-      ),
+    queryFn: () => fetchPhotoEdits(brandId, assetId),
   });
 }
 

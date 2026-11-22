@@ -12,11 +12,21 @@
 //
 // La ruta JSON (la anterior) tiene sus pruebas en ia-copiloto.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   copilotResponseSchema,
+  COPILOT_LAYOUTS,
+  COPILOT_MAX_BACKGROUND_PROMPT,
+  COPILOT_MAX_PHOTO_QUERY,
+  COPILOT_MAX_PLAN_PHOTOS,
   COPILOT_OPS as CLIENT_OPS,
+  COPILOT_PLAN_OPS,
   parseCopilotResponse,
 } from '../../src/features/content/copilot/operations';
+import {
+  BACKGROUND_ONLY_REASON as CLIENT_BACKGROUND_ONLY_REASON,
+  namesFoodOrProduct as clientNamesFoodOrProduct,
+} from '../../src/features/content/copilot/plan';
 import type {
   AiInput,
   AiModelSpec,
@@ -45,9 +55,17 @@ import {
   compactPhotos,
   EDITOR_COPILOT_TOOL_INSTRUCTIONS,
   EDITOR_COPILOT_TOOLS,
+  MAX_BACKGROUND_PROMPT_CHARS,
+  MAX_PHOTO_QUERY_CHARS,
+  MAX_PLAN_PHOTOS,
+  TOOL_LAYOUTS,
+  TOOL_PLAN_STEPS,
 } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot-tools.ts';
 import {
+  BACKGROUND_ONLY_REASON,
   brandAllowance,
+  namesFoodOrProduct,
+  sanitizeOperations,
   COPILOT_LEGACY_OPS,
   COPILOT_OPS,
   EDITOR_COPILOT_INSTRUCTIONS,
@@ -209,7 +227,9 @@ function localOnlyKeywords(value: unknown, found: string[] = []): string[] {
 
 describe('adaptadores: herramientas (sin red)', () => {
   it('las herramientas cubren todas las operaciones, con esquema estricto y nombres válidos', () => {
-    expect(EDITOR_COPILOT_TOOLS).toHaveLength(23);
+    // 23 operaciones del editor + 3 pasos de plan (montar una pieza).
+    expect(EDITOR_COPILOT_TOOLS).toHaveLength(26);
+    expect(EDITOR_COPILOT_TOOLS.slice(-3).map((tool) => tool.name)).toEqual(TOOL_PLAN_STEPS);
     expect(EDITOR_COPILOT_TOOLS.map((tool) => tool.name).sort()).toEqual([...COPILOT_OPS].sort());
     // El servidor y el editor hablan de las mismas operaciones.
     expect([...COPILOT_OPS]).toEqual([...CLIENT_OPS]);
@@ -996,6 +1016,9 @@ describe('tarea editor.copilot por herramientas', () => {
       call('editor', { action: 'redo' }),
       call('editor', { action: 'save' }),
       call('editor', { action: 'template' }),
+      call('generate_background', { prompt: 'Mesa de madera con hojas secas', ratio: null }),
+      call('find_photos', { query: 'platos de otoño', count: 3 }),
+      call('place_photos', { layout: 'fan', cutout: true, on: false }),
     ];
     // Las llamadas de la prueba cumplen el esquema completo de su herramienta.
     for (const item of [...every, ...rest]) {
@@ -1034,6 +1057,9 @@ describe('tarea editor.copilot por herramientas', () => {
       { op: 'editor', action: 'redo' },
       { op: 'editor', action: 'save' },
       { op: 'editor', action: 'template' },
+      { op: 'generate_background', prompt: 'Mesa de madera con hojas secas' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', on: false, layout: 'fan', cutout: true },
     ]);
     expect(parseCopilotResponse(b.body)).not.toBeNull();
   });
@@ -1147,6 +1173,243 @@ describe('tarea editor.copilot por herramientas', () => {
     expect(mine.sent().context!.map((part) => part.label)).toEqual(['marca', 'documento', 'orden']);
     expect(response.body.operations).toEqual([]);
     expect(reasons(response.body)).toEqual(['La foto no está entre las elegidas para esta pieza.']);
+  });
+});
+
+// ── 2 bis. Pasos de plan: montar una pieza ───────────────────────────────
+
+describe('pasos de plan: la IA solo crea el fondo; los platos y productos son fotos de la biblioteca', () => {
+  const MENU = 'Haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el centro. Título: Menú de otoño.';
+  const background = (prompt: string, ratio: string | null = null) => call('generate_background', { prompt, ratio });
+  const find = (query: string, count: number) => call('find_photos', { query, count });
+  const place = (layout: string, cutout = false, on = false) => call('place_photos', { layout, cutout, on });
+
+  it('la regla está en la herramienta y en las instrucciones, y las tres herramientas tienen su esquema', () => {
+    const spec = (name: string) => EDITOR_COPILOT_TOOLS.find((tool) => tool.name === name)!;
+    const rule = 'nunca comida, platos, bebidas, productos, personas ni texto';
+    expect(spec('generate_background').description).toContain(`SOLO el fondo: ${rule}`);
+    expect(spec('generate_background').description).toContain('fotos de la biblioteca (find_photos + place_photos)');
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toContain(`solo el fondo: ${rule}`);
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toContain('Los platos y productos son SIEMPRE fotos de la biblioteca: find_photos + place_photos.');
+    // Una sola regla (una línea) habla de montar una pieza.
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS.split('\n').filter((line) => line.includes('generate_background'))).toHaveLength(1);
+    expect(spec('generate_background').parameters.properties).toEqual({
+      prompt: { type: 'string', maxLength: 400 },
+      ratio: { type: ['string', 'null'], enum: ['1:1', '4:5', '9:16', '16:9', null] },
+    });
+    expect(spec('find_photos').parameters.properties).toEqual({
+      query: { type: 'string', maxLength: 80 },
+      count: { type: 'integer', minimum: 1, maximum: 6 },
+    });
+    expect(spec('place_photos').parameters.properties).toEqual({
+      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan'] },
+      cutout: { type: 'boolean' },
+      on: { type: 'boolean' },
+    });
+    // Los mismos topes y el mismo motivo en el servidor y en el editor.
+    expect([MAX_BACKGROUND_PROMPT_CHARS, MAX_PHOTO_QUERY_CHARS, MAX_PLAN_PHOTOS]).toEqual([
+      COPILOT_MAX_BACKGROUND_PROMPT,
+      COPILOT_MAX_PHOTO_QUERY,
+      COPILOT_MAX_PLAN_PHOTOS,
+    ]);
+    expect(TOOL_LAYOUTS).toEqual([...COPILOT_LAYOUTS]);
+    expect(TOOL_PLAN_STEPS).toEqual([...COPILOT_PLAN_OPS]);
+    expect(BACKGROUND_ONLY_REASON).toBe(CLIENT_BACKGROUND_ONLY_REASON);
+  });
+
+  it('«haz el menú de otoño…»: los pasos llegan al editor en su orden, compactos, y la tarea no genera ni busca nada', async () => {
+    const t = await setup({
+      calls: [
+        background('  Mesa de madera con   hojas secas y luz cálida, sin comida ni personas  '),
+        find(' platos de otoño ', 3),
+        place('center', true, true),
+        text('Menú de otoño', { style: 'title', position: 'top' }),
+      ],
+    });
+    const response = await t.copilot({ transcript: MENU });
+    expect(response.status).toBe(200);
+    expect(response.body.discarded).toEqual([]);
+    expect(response.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Mesa de madera con hojas secas y luz cálida, sin comida ni personas' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', on: true, layout: 'center', cutout: true },
+      out({ op: 'add_text', text: 'Menú de otoño', style: 'title', position: 'top' }),
+    ]);
+    // El editor acepta la respuesta (contrato estricto) con los campos nuevos.
+    const parsed = parseCopilotResponse(response.body)!;
+    expect(parsed.operations[0]).toMatchObject({ op: 'generate_background', prompt: expect.stringContaining('hojas secas'), ratio: null, text: null });
+    expect(parsed.operations[2]).toMatchObject({ op: 'place_photos', layout: 'center', cutout: true, on: true });
+    // Una sola llamada de texto: interpretar la orden. Nada de imagen: eso lo decide la persona después.
+    expect(await generations(t.org)).toEqual([expect.objectContaining({ purpose: 'editor.copilot', status: 'succeeded' })]);
+    expect(t.provider.calls).toHaveLength(1);
+  });
+
+  it('un fondo cuya indicación nombra comida o un producto se descarta con su motivo; lo demás de la orden sigue', async () => {
+    const t = await setup({
+      calls: [
+        background('Un plato de crema de calabaza humeante sobre una mesa'),
+        background('Hamburguesas y cócteles en una barra'),
+        background('Mesa con una botella de aceite y pan'),
+        background('Autumn table with a soup dish'),
+        find('platos de otoño', 2),
+        place('row'),
+      ],
+    });
+    const response = await t.copilot({ transcript: 'Genera un plato de crema de calabaza y pon los platos en fila' });
+    expect(response.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos de otoño', count: 2 },
+      { op: 'place_photos', on: false, layout: 'row', cutout: false },
+    ]);
+    expect(response.body.discarded).toEqual(
+      [0, 1, 2, 3].map((index) => ({
+        index,
+        op: 'generate_background',
+        reason: 'La IA solo crea el fondo: los platos y productos son fotos de la biblioteca.',
+      })),
+    );
+    expect(parseCopilotResponse(response.body)).not.toBeNull();
+  });
+
+  it('negar la comida no es pedirla: «sin comida, platos ni personas» pasa, igual en el servidor que en el editor', () => {
+    const asks = [
+      'Un plato de sopa sobre la mesa',
+      'Fondo otoñal con hamburguesas',
+      'Mesa de madera, sin personas, con un plato de sopa',
+      'Hojas secas. Un producto en el centro.',
+      'Bodegón de comida de temporada',
+      'Fondo cálido sin texto, plato de cerámica y cubiertos',
+      'Wooden table with a bottle and two drinks',
+    ];
+    const fine = [
+      'Mesa de madera con hojas secas y luz cálida de otoño',
+      'Textura de pizarra oscura con tonos vino y naranja',
+      'Fondo otoñal sin comida, platos ni personas',
+      'Hojas secas sobre lino. Sin comida, platos, bebidas, productos, personas ni texto.',
+      'Warm wooden table, no food, no people, no text',
+      'Interior de gimnasio vacío con luz de neón, sin personas ni botellas',
+      'Fondo para una pieza de redes sociales, sin comida, platos, bebidas, productos, personas, texto ni logotipos.',
+    ];
+    for (const prompt of asks) {
+      expect(namesFoodOrProduct(prompt), prompt).toBe(true);
+      expect(clientNamesFoodOrProduct(prompt), prompt).toBe(true);
+    }
+    for (const prompt of fine) {
+      expect(namesFoodOrProduct(prompt), prompt).toBe(false);
+      expect(clientNamesFoodOrProduct(prompt), prompt).toBe(false);
+    }
+  });
+
+  it('valores que no valen: `count` fuera de 1-6, disposición desconocida, indicación vacía o larguísima, búsqueda vacía', async () => {
+    const t = await setup({
+      calls: [
+        find('platos', 0),
+        find('platos', 7),
+        find('platos', 2.5),
+        place('circle'),
+        background('x'.repeat(401)),
+        background('   '),
+        find('   ', 2),
+        call('place_photos', { layout: 'grid', cutout: null, on: true }),
+        background('Madera clara', '3:2'),
+        // Los que sí valen, en los extremos.
+        find('platos', 1),
+        find('platos', 6),
+        background('Madera clara', '9:16'),
+        place('grid', false, true),
+      ],
+    });
+    const response = await t.copilot({ transcript: 'Pon los platos en rejilla con un fondo de madera clara' });
+    expect(response.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos', count: 1 },
+      { op: 'find_photos', query: 'platos', count: 6 },
+      { op: 'generate_background', ratio: '9:16', prompt: 'Madera clara' },
+      { op: 'place_photos', on: true, layout: 'grid', cutout: false },
+    ]);
+    const invalid = 'La IA ha pedido la operación con datos que no valen.';
+    expect((response.body.discarded as Row[]).map((item) => [item.index, item.op, item.reason])).toEqual([
+      [0, 'find_photos', invalid],
+      [1, 'find_photos', invalid],
+      [2, 'find_photos', invalid],
+      [3, 'place_photos', invalid],
+      [4, 'generate_background', invalid],
+      [5, 'generate_background', 'Falta la descripción del fondo.'],
+      [6, 'find_photos', 'No dice qué fotos buscar.'],
+      [7, 'place_photos', invalid],
+      [8, 'generate_background', invalid],
+    ]);
+  });
+
+  it('el saneado acota lo que el esquema no vio (por si llegase por otra vía) y limpia los campos que no tocan', () => {
+    const base = { transcript: 'x', document: DOCUMENT as never, assets: [], allowance: brandAllowance(PROFILE) };
+    const { operations, discarded } = sanitizeOperations(
+      [
+        { ...emptyOperation('find_photos'), query: ' platos ', count: 40 },
+        { ...emptyOperation('find_photos'), query: 'postres', count: null },
+        { ...emptyOperation('place_photos'), layout: 'espiral', cutout: null, on: null },
+        { ...emptyOperation('generate_background'), prompt: 'Madera clara', ratio: '3:2', query: 'no toca', layout: 'fan', cutout: true },
+        // Los campos de plan no cuelan en otra operación.
+        { ...emptyOperation('set_canvas_ratio'), ratio: '1:1', prompt: 'un plato', query: 'x', count: 3, layout: 'fan', cutout: true },
+      ],
+      base,
+    );
+    expect(discarded).toEqual([]);
+    expect(operations.map(toResponseOperation)).toEqual([
+      { op: 'find_photos', query: 'platos', count: 6 },
+      { op: 'find_photos', query: 'postres', count: 1 },
+      { op: 'place_photos', on: false, layout: 'center', cutout: false },
+      { op: 'generate_background', prompt: 'Madera clara' },
+      { op: 'set_canvas_ratio', ratio: '1:1' },
+    ]);
+  });
+
+  it('compatibilidad: las ocho operaciones de siempre no cambian, los pasos de plan van compactos y la ruta JSON no los conoce', async () => {
+    const t = await setup({
+      calls: [background('Pizarra oscura'), find('bolsas', 1), place('center'), text('Menú de Navidad', { style: 'title' })],
+    });
+    const response = await t.copilot();
+    const [first, second, third, title] = response.body.operations as Row[];
+    for (const operation of [first!, second!, third!]) expect(Object.values(operation).every((value) => value !== null)).toBe(true);
+    // El texto sigue llevando sus nueve campos de la primera versión.
+    expect(Object.keys(title!).sort()).toEqual(['align', 'assetId', 'blur', 'color', 'font', 'op', 'position', 'style', 'target', 'text']);
+    // Un editor anterior (esquema estricto, sin estas operaciones) rechaza la respuesta entera: no aplica nada a medias.
+    const legacyOps = z.object({ op: z.enum(COPILOT_LEGACY_OPS) });
+    expect(z.array(legacyOps).safeParse(response.body.operations).success).toBe(false);
+    expect(legacyOps.safeParse(title).success).toBe(true);
+    // Y la ruta JSON sigue con sus ocho operaciones y sus doce campos: no puede pedir un plan.
+    const jsonOperation = (EDITOR_COPILOT_SCHEMA.schema.properties as Record<string, { items: { properties: Record<string, { enum?: string[] }> } }>)
+      .operations!.items.properties;
+    expect(jsonOperation.op!.enum).toEqual([...COPILOT_LEGACY_OPS]);
+    for (const field of ['prompt', 'query', 'count', 'layout', 'cutout']) expect(jsonOperation).not.toHaveProperty(field);
+    expect(EDITOR_COPILOT_INSTRUCTIONS).not.toContain('generate_background');
+  });
+
+  it('el simulado local (el de la e2e): «crea un fondo… y pon los platos en el centro» devuelve los pasos de plan', async () => {
+    const t = await setup({ localTest: true });
+    const response = await t.copilot({
+      transcript: 'Crea un fondo que parezca otoñal y pon los platos en el centro. Título: Menú de otoño.',
+      assets: [],
+    });
+    expect(response.body.discarded).toEqual([]);
+    expect(response.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Fondo que parezca otoñal' },
+      { op: 'find_photos', query: 'platos', count: 3 },
+      { op: 'place_photos', on: false, layout: 'center', cutout: false },
+      out({ op: 'add_text', text: 'Menú de otoño', style: 'title', position: 'upper' }),
+    ]);
+    // Con recorte, sombra y otra disposición.
+    const fan = await t.copilot({ transcript: 'Genera un fondo de madera clara y pon las bolsas en abanico, recortadas y con sombra', assets: [] });
+    expect(fan.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Fondo de madera clara' },
+      { op: 'find_photos', query: 'bolsas', count: 3 },
+      { op: 'place_photos', on: true, layout: 'fan', cutout: true },
+    ]);
+    // Imita a un modelo que se salta la regla: pide generar comida, y el producto lo descarta.
+    const food = await t.copilot({ transcript: 'Genera un plato de paella y pon los platos en fila', assets: [] });
+    expect(food.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos', count: 3 },
+      { op: 'place_photos', on: false, layout: 'row', cutout: false },
+    ]);
+    expect(reasons(food.body)).toEqual(['La IA solo crea el fondo: los platos y productos son fotos de la biblioteca.']);
   });
 });
 

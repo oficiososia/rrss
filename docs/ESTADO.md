@@ -848,9 +848,10 @@ herramientas para ver si sale mejor».
   operaciones, mandaba el perfil de marca entero en cada orden y «deshaz» contestaba «No
   puedo deshacer desde aquí». «Probar conexión» de IA de texto solo listaba modelos.
 - **Ahora:**
-  - **Herramientas** (function calling) por defecto: 23 herramientas, una por operación, con
+  - **Herramientas** (function calling) por defecto: 26 herramientas: 23, una por operación, con
     todo lo que el editor hace a mano (textos y efectos, capas, figuras, fotos, lienzo,
-    páginas, deshacer, guardar, plantillas y los flujos de foto). Adaptadores de OpenAI y de
+    páginas, deshacer, guardar, plantillas y los flujos de foto), y 3 pasos de plan (más
+    abajo). Adaptadores de OpenAI y de
     Claude por la misma interfaz (`AiInput.tools`). La ruta JSON sigue detrás de
     `AI_TEXT_EDITOR_COPILOT_MODE=json`.
   - **Órdenes frecuentes sin IA** (intérprete local): «deshaz», «guarda», «más grande»,
@@ -864,17 +865,33 @@ herramientas para ver si sale mejor».
   - **«Probar conexión» de IA de texto hace una generación mínima real** (1 token de salida
     por modelo configurado) con el mismo endpoint que las tareas: una clave que lista modelos
     pero no puede generar ya no da «Funciona».
-  - **Banco** `scripts/copiloto-banco.ts`: 75 órdenes; en seco por defecto.
+  - **Banco** `scripts/copiloto-banco.ts`: 82 órdenes (7 de plan); en seco por defecto.
+  - **Órdenes que montan una pieza** («haz el menú de otoño: crea un fondo otoñal y pon los
+    platos en el centro»; `docs/copiloto-voz.md` §15). Tres herramientas nuevas en la misma
+    llamada (`generate_background`, `find_photos`, `place_photos`). El editor no aplica nada:
+    enseña un plan en lenguaje llano con el coste máximo (el de `image.estimate` de
+    `ai-media`), espera el «sí» (botón, voz o teclado, sin IA), lo ejecuta por pasos con
+    «Cancelar» y lo mete en el documento como un solo paso de deshacer. **Regla del dueño: la
+    IA solo crea el fondo; los platos y productos son siempre fotos de la biblioteca**
+    (herramienta, instrucciones, saneado del servidor, comprobación del navegador y coletilla
+    fija en lo que se manda al generador). Topes: 12 pasos, 6 fotos y 1 crédito por plan. Sin
+    IA de imagen no se ofrece generar: se propone el color de fondo de la marca.
 - **Probado:** unitarias, componentes y base de datos (proveedores y micrófono simulados);
-  e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI).
+  e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI). Los planes, igual: todo
+  con simulados (IA de texto, generador de imágenes, biblioteca y recorte) y un caso nuevo en
+  la e2e 19, sin ejecutar.
 - **Sin probar contra nada real:** la ruta de herramientas con OpenAI o Claude (formato,
   `strict`, `reasoning_effort: "none"`, caché), el transcriptor, el micrófono, la sonda de
   generación y el banco con `--apply`. Los objetivos de latencia (< 1,5 s) y de tokens sin
   caché (< 1.500) **no están medidos**: con el contador del simulado el total por orden sube
-  de 2.455 a 3.122 tokens y lo no compartible entre marcas baja de 1.065 a 149; que se cumpla
-  depende de que el proveedor lea de caché el prefijo común.
+  de 2.455 a 3.473 tokens (3.122 antes de los pasos de plan) y lo no compartible entre marcas
+  baja de 1.065 a 149; que se cumpla depende de que el proveedor lea de caché el prefijo común.
+  De los planes no se ha probado nada real: ni que el modelo devuelva los pasos, ni un fondo
+  generado de verdad, ni el recorte de fotos reales, ni la composición a la vista.
 - **Para llevar a staging (en este orden):** aplicación → migración `20261226010000` (dos
   ajustes de Integraciones, con vuelta atrás) → funciones `ai-generate`, `ai-transcribe` y
-  `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13).
+  `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13). Los
+  planes no añaden migraciones ni funciones: basta con la aplicación y `ai-generate` (en ese
+  orden) y con que `ai-media` siga desplegada.
 - **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
   política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.

@@ -28,6 +28,7 @@ import {
   parseArgs,
   parseWav,
   percentile,
+  planProblemsFor,
   readAudioEntries,
   readOutput,
   readRealConfig,
@@ -45,11 +46,13 @@ import {
   BASE_GROUPS,
   BENCH_DOCUMENTS,
   BENCH_GROUPS,
+  BENCH_LIBRARIES,
   PLAN_CASES,
   type BenchCase,
   type ExpectedOperation,
 } from '../../scripts/copiloto-banco/casos.ts';
 import { copilotOp, isDictated } from '../../src/features/content/copilot/operations';
+import { isAiGenerated, matchLibraryPhotos, namesFoodOrProduct } from '../../src/features/content/copilot/plan';
 import type { CopilotMode } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot.ts';
 
 const byId = (id: string): BenchCase => {
@@ -83,10 +86,53 @@ describe('casos del banco', () => {
     expect(BENCH_DOCUMENTS.seleccion.selectedIds).toEqual(['titulo']);
     expect(BENCH_DOCUMENTS.carrusel.document.pages).toHaveLength(3);
     expect(BENCH_DOCUMENTS.vacio.document.pages[0]!.layers).toEqual([]);
-    // Punto de extensión: el grupo «plan» existe y todavía no tiene casos.
+    // Órdenes que montan una pieza: entre 5 y 8, todas con su plan esperado.
     expect(BENCH_GROUPS).toContain('plan');
-    expect(PLAN_CASES).toEqual([]);
-    expect(count('plan')).toBe(0);
+    expect(count('plan')).toBe(PLAN_CASES.length);
+    expect(PLAN_CASES.length).toBeGreaterThanOrEqual(5);
+    expect(PLAN_CASES.length).toBeLessThanOrEqual(8);
+  });
+
+  it('los casos de plan montan una pieza: hostelería, gimnasio y genérica, uno titubeante, uno sin fotos y uno que pide generar comida', () => {
+    for (const item of PLAN_CASES) {
+      expect(item.plan, item.id).toBeDefined();
+      // Van a la IA y solo por herramientas: ni el intérprete local ni la ruta JSON saben de planes.
+      expect(item, item.id).toMatchObject({ group: 'plan', local: false, json: false });
+      expect(BENCH_LIBRARIES[item.plan!.library], item.id).toBeDefined();
+      const ops = item.expected.map((expected) => expected.op);
+      // Las fotos salen siempre de la biblioteca: se buscan y se colocan; nunca se generan.
+      expect(ops, item.id).toContain('find_photos');
+      expect(ops, item.id).toContain('place_photos');
+      expect(ops.filter((op) => op === 'generate_background').length, item.id).toBe(item.plan!.background ? 1 : 0);
+      // Lo que respondería un modelo que acierta no nombra comida ni productos en el fondo.
+      for (const expected of item.expected.filter((operation) => operation.op === 'generate_background')) {
+        const prompt = (expected.prompt as { background: string }).background;
+        expect(prompt.length, item.id).toBeGreaterThan(10);
+        expect(namesFoodOrProduct(prompt), `${item.id}: ${prompt}`).toBe(false);
+      }
+    }
+    const of = (library: string) => PLAN_CASES.filter((item) => item.plan!.library === library);
+    expect(of('hosteleria').length).toBeGreaterThanOrEqual(2);
+    expect(of('gimnasio').length).toBeGreaterThanOrEqual(1);
+    expect(of('generica').length).toBeGreaterThanOrEqual(1);
+    // Sin fotos en la biblioteca: no se coloca ninguna.
+    expect(of('vacia').map((item) => item.plan!.photos)).toEqual([0]);
+    // Habla titubeante, con corrección: cuenta la intención final («no, mejor en fila»).
+    const hesitant = PLAN_CASES.filter((item) => /…|\beh\b/i.test(item.order) && /\bno\b.*mejor/i.test(item.order));
+    expect(hesitant).toHaveLength(1);
+    expect(hesitant[0]!.expected.find((expected) => expected.op === 'place_photos')).toMatchObject({ layout: 'row' });
+    // «Genera un plato…»: nada que generar, se dice, y el plato sale de la biblioteca.
+    const food = PLAN_CASES.filter((item) => /genera\b.*\bplato/i.test(item.order));
+    expect(food).toHaveLength(1);
+    expect(food[0]).toMatchObject({ note: true, plan: { background: false, photos: 1 } });
+    // Las cuatro disposiciones y algún titular.
+    const layouts = PLAN_CASES.map((item) => item.expected.find((expected) => expected.op === 'place_photos')!.layout);
+    expect(new Set(layouts)).toEqual(new Set(['center', 'row', 'grid', 'fan']));
+    expect(PLAN_CASES.filter((item) => item.expected.some((expected) => expected.op === 'add_text' && expected.style === 'title')).length).toBeGreaterThanOrEqual(4);
+    // En cada biblioteca con fotos hay una imagen generada con IA que casa con lo buscado: nunca debe salir.
+    for (const [name, photos] of Object.entries(BENCH_LIBRARIES)) {
+      if (photos.length > 0) expect(photos.filter((photo) => isAiGenerated(photo)), name).toHaveLength(1);
+    }
   });
 
   it('cada grupo es lo que dice ser', () => {
@@ -148,7 +194,9 @@ describe('modo en seco', () => {
 
     const text = formatDryReport(report);
     expect(text).toContain(`los ${BENCH_CASES.length} casos cuadran de principio a fin`);
-    expect(text).toMatch(/^plan\s+0\s+0\s+0$/m);
+    expect(text).toMatch(new RegExp(`^plan\\s+${PLAN_CASES.length}\\s+0\\s+${PLAN_CASES.length}$`, 'm'));
+    expect(text).toContain(`Planes (órdenes que montan una pieza): ${PLAN_CASES.length} casos.`);
+    expect(text).toContain('el banco no genera imágenes ni recorta');
     expect(text).toMatch(/^tools\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+$/m);
     expect(text).toContain(`La ruta JSON no puede expresar ${BENCH_CASES.filter((item) => !item.json).length} casos`);
     console.info(text);
@@ -210,14 +258,176 @@ describe('modo en seco', () => {
     const lines: string[] = [];
     const log = (line: string) => lines.push(line);
     expect(await main(['--loquesea'], log)).toBe(2);
-    expect(await main(['--grupo', 'plan'], log)).toBe(0);
-    expect(lines.join('\n')).toContain('punto de extensión');
+    lines.length = 0;
+    expect(await main(['--grupo', 'plan', '--modos', 'tools'], log)).toBe(0);
+    expect(lines.join('\n')).toContain(`EN SECO (sin red ni coste): ${PLAN_CASES.length} casos, rutas tools.`);
+    expect(lines.join('\n')).toContain(`los ${PLAN_CASES.length} casos cuadran de principio a fin`);
     lines.length = 0;
     expect(await main(['--caso', 'titubeo-menu-otono', '--detalle'], log)).toBe(0);
     const text = lines.join('\n');
     expect(text).toContain('EN SECO (sin red ni coste): 1 casos');
     expect(text).toMatch(/titubeo-menu-otono\s+tools\s+bien\s+\d+\/\d+\/\d+/);
     expect(text).toMatch(/titubeo-menu-otono\s+json\s+bien/);
+  });
+});
+
+describe('órdenes que montan una pieza: se evalúa el plan, sin ejecutar nada', () => {
+  const plan = (id: string) => byId(id);
+  /** Lo que respondería el servidor con un modelo que acierta, y lo que el editor sacaría de ahí. */
+  async function perfect(id: string) {
+    const benchCase = plan(id);
+    const simulated = await simulateServer(benchCase, 'tools');
+    return { benchCase, body: simulated.body, evaluation: evaluateResponse(benchCase, simulated.body) };
+  }
+  const body = (operations: Record<string, unknown>[], note = '') => ({
+    action: 'editor.copilot',
+    generationId: '66666666-6666-4666-8666-666666666666',
+    operations,
+    discarded: [],
+    note,
+  });
+
+  it('en seco, cada plan esperado pasa por el servidor y por plan.ts: pasos, fotos de la biblioteca y documento válido', async () => {
+    for (const benchCase of PLAN_CASES) {
+      const result = await dryRunCase(benchCase, 'tools');
+      expect(result.problems, benchCase.id).toEqual([]);
+      expect(result.ok, benchCase.id).toBe(true);
+      // Por JSON no se puede pedir un plan: no se intenta.
+      expect(await dryRunCase(benchCase, 'json')).toMatchObject({ ok: true, notExpressible: true });
+    }
+    // El servidor devuelve los pasos tal cual: no genera ni busca nada.
+    const { body: answer, evaluation } = await perfect('plan-menu-otono');
+    expect((answer.operations as { op: string }[]).map((operation) => operation.op)).toEqual(['generate_background', 'find_photos', 'place_photos', 'add_text']);
+    expect(answer.discarded).toEqual([]);
+    expect(evaluation.operations[0]).toMatchObject({ op: 'generate_background', prompt: 'Mesa de madera con hojas secas y luz cálida de otoño' });
+    expect(planProblemsFor(plan('plan-menu-otono'), evaluation.operations)).toEqual([]);
+  });
+
+  it('un fondo que nombra comida no pasa: el servidor lo descarta y el plan se queda sin fondo', async () => {
+    const tainted: BenchCase = {
+      ...plan('plan-menu-otono'),
+      expected: plan('plan-menu-otono').expected.map((expected) =>
+        expected.op === 'generate_background' ? { ...expected, prompt: 'Un plato de crema de calabaza sobre la mesa' } : expected,
+      ),
+    };
+    const result = await dryRunCase(tainted, 'tools');
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' | ')).toMatch(/ha descartado «generate_background»: La IA solo crea el fondo: los platos y productos son fotos de la biblioteca\./);
+    expect(result.problems.join(' | ')).toMatch(/El plan no lleva fondo con IA y se esperaba\./);
+    // Y si llegase al editor (un servidor que no lo filtrase), el banco también lo señala.
+    const leaked = evaluateResponse(plan('plan-menu-otono'), body([
+      { op: 'generate_background', prompt: 'Hamburguesas en una barra de bar' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', layout: 'center', cutout: false, on: false },
+      { op: 'add_text', text: 'Menú de otoño', style: 'title' },
+    ]));
+    expect(leaked.ok).toBe(false);
+    expect(leaked.problems.join(' | ')).toMatch(/Ninguna operación recibida coincide con la esperada \{"op":"generate_background"/);
+    expect(leaked.problems.join(' | ')).toMatch(/El fondo nombra comida o un producto \(«Hamburguesas en una barra de bar»\)/);
+  });
+
+  it('«genera un plato…»: si el modelo genera algo, es un fallo; las fotos son siempre de la biblioteca', async () => {
+    const benchCase = plan('plan-genera-plato');
+    expect((await perfect('plan-genera-plato')).evaluation).toMatchObject({ ok: true, problems: [] });
+    // Un modelo que «genera el plato» con un fondo inocente: no se esperaba generar nada.
+    const generated = evaluateResponse(benchCase, body([
+      { op: 'generate_background', prompt: 'Mantel de cuadros con luz de mediodía' },
+      { op: 'find_photos', query: 'paella', count: 1 },
+      { op: 'place_photos', layout: 'center', cutout: false, on: false },
+      { op: 'add_text', text: 'Paella de domingo', style: 'title' },
+    ], 'Hecho.'));
+    expect(generated.ok).toBe(false);
+    expect(generated.problems.join(' | ')).toMatch(/No se esperaba generar nada y la respuesta trae un `generate_background`\./);
+    // Y sin decirlo (sin frase para la persona) también falla.
+    const silent = evaluateResponse(benchCase, body([
+      { op: 'find_photos', query: 'paella', count: 1 },
+      { op: 'place_photos', layout: 'center', cutout: false, on: false },
+      { op: 'add_text', text: 'Paella de domingo', style: 'title' },
+    ]));
+    expect(silent.problems).toEqual(['Se esperaba una frase para la persona (una pregunta o lo que no se puede hacer) y no ha llegado.']);
+    // La imagen generada con IA de la biblioteca casa con «paella», pero no sale: solo la foto real.
+    expect(matchLibraryPhotos(BENCH_LIBRARIES.hosteleria, 'paella', 6).map((photo) => photo.name)).toEqual(['paella-domingo.jpg']);
+  });
+
+  it('detecta lo que no cuadra del plan: otra disposición, fotos que no hay, pasos de más y un plan que no se podría ejecutar', async () => {
+    const menu = plan('plan-menu-otono');
+    const good = [
+      { op: 'generate_background', prompt: 'Madera y hojas secas' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', layout: 'center', cutout: true, on: true },
+      { op: 'add_text', text: 'Menú de otoño', style: 'title' },
+    ];
+    // Con recorte: 1 fondo + 1 búsqueda + 3 recortes + colocar + 1 texto = 7 pasos (dentro de lo esperado).
+    expect(evaluateResponse(menu, body(good))).toMatchObject({ ok: true, problems: [] });
+    const wrongLayout = evaluateResponse(menu, body(good.map((operation) => (operation.op === 'place_photos' ? { ...operation, layout: 'fan' } : operation))));
+    expect(wrongLayout.problems.join(' | ')).toMatch(/Ninguna operación recibida coincide con la esperada .*"layout":"center"/);
+    // Buscar lo que la biblioteca no tiene: no hay fotos que colocar.
+    const nothing = evaluateResponse(menu, body(good.map((operation) => (operation.op === 'find_photos' ? { ...operation, query: 'platos de marisco gallego' } : operation))));
+    expect(nothing.ok).toBe(true);
+    const missing = planProblemsFor({ ...menu, plan: { ...menu.plan!, library: 'vacia' } }, evaluateResponse(menu, body(good)).operations);
+    expect(missing).toEqual(['Se esperaban entre 1 y 3 fotos de la biblioteca y el plan colocaría 0.']);
+    // Sin fotos esperadas (biblioteca vacía), el caso sin fotos sí cuadra, y con fotos no.
+    const empty = plan('plan-sin-fotos');
+    expect((await perfect('plan-sin-fotos')).evaluation.problems).toEqual([]);
+    expect(planProblemsFor({ ...empty, plan: { ...empty.plan!, library: 'hosteleria' } }, (await perfect('plan-sin-fotos')).evaluation.operations)).toEqual([
+      'Se esperaban 0 fotos de la biblioteca y el plan colocaría 3.',
+    ]);
+    // Pasos fuera de lo esperado.
+    const steps = planProblemsFor({ ...menu, plan: { ...menu.plan!, steps: 4 } }, evaluateResponse(menu, body(good)).operations);
+    expect(steps).toEqual(['Se esperaban 4 pasos y el plan tiene 7.']);
+    // Un plan con más pasos que el tope del editor no se podría ejecutar.
+    const texts = Array.from({ length: 8 }, () => ({ op: 'add_text', text: 'Menú de otoño', style: 'body' }));
+    const huge = planProblemsFor(menu, evaluateResponse(menu, body([...good, ...texts])).operations);
+    expect(huge.join(' | ')).toMatch(/El plan no se podría ejecutar: El plan tiene 15 pasos y el tope es 12/);
+  });
+
+  it('con `--apply` solo se llama al copiloto: ni `ai-media` ni ninguna otra función, y se evalúa el plan devuelto', async () => {
+    const service = fakeService();
+    const { real, output } = deps(service);
+    const report = await runReal({ ...OPTIONS, group: 'plan' }, real);
+    // Un caso, una llamada (solo por herramientas: JSON no puede pedir un plan).
+    expect(report.results).toHaveLength(PLAN_CASES.length);
+    expect(report.results.map((result) => result.mode)).toEqual(PLAN_CASES.map(() => 'tools'));
+    expect(report.results.filter((result) => !result.ok).map((result) => `${result.caseId}: ${result.problems.join(' | ')}`)).toEqual([]);
+    expect(report.exitCode).toBe(0);
+    // Las únicas direcciones a las que se llama: el copiloto y la lectura del consumo.
+    const called = new Set(service.calls.map((call) => new URL(call.url).pathname));
+    expect([...called].sort()).toEqual(['/functions/v1/ai-generate', '/rest/v1/ai_generations']);
+    expect(service.copilot()).toHaveLength(PLAN_CASES.length);
+    expect(output()).toContain(`Se van a hacer ${PLAN_CASES.length} llamadas de pago`);
+    expect(output()).toContain(`De los ${PLAN_CASES.length} casos de plan (órdenes que montan una pieza) solo se evalúa el plan que devuelve el copiloto`);
+    expect(output()).toContain('no genera imágenes y no recorta');
+    // Lo recibido queda anotado: los pasos del plan, con la descripción del fondo que escribió el modelo.
+    const menu = report.results.find((result) => result.caseId === 'plan-menu-otono')!;
+    expect(menu.received.map((operation) => operation.op)).toEqual(['generate_background', 'find_photos', 'place_photos', 'add_text']);
+    expect(menu.received[0]).toMatchObject({ prompt: 'Mesa de madera con hojas secas y luz cálida de otoño' });
+
+    // Un modelo que pide generar comida: el caso falla y se explica.
+    const bad = fakeService({
+      override: (benchCase) =>
+        benchCase.id === 'plan-sin-fotos'
+          ? new Response(
+              JSON.stringify({
+                action: 'editor.copilot',
+                generationId: '66666666-6666-4666-8666-666666666666',
+                operations: [
+                  { op: 'generate_background', prompt: 'Platos del día sobre una mesa de madera' },
+                  { op: 'find_photos', query: 'platos', count: 2 },
+                  { op: 'place_photos', layout: 'center', cutout: false, on: false },
+                  { op: 'add_text', text: 'Menú del día', style: 'title' },
+                ],
+                discarded: [],
+                note: '',
+              }),
+              { status: 200 },
+            )
+          : undefined,
+    });
+    const failing = deps(bad);
+    const second = await runReal({ ...OPTIONS, modes: ['tools'], caseId: 'plan-sin-fotos' }, failing.real);
+    expect(second.exitCode).toBe(1);
+    expect(second.results[0]!.problems.join(' | ')).toMatch(/El fondo nombra comida o un producto/);
+    expect(failing.output()).toMatch(/Fallos de openai\/modelo-de-prueba por «tools» \(1\):\n {2}- plan-sin-fotos/);
   });
 });
 

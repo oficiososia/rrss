@@ -14,6 +14,12 @@
 // que los casos se pueden ejecutar de principio a fin y enseña cuánto ocupa el
 // prompt en cada ruta. Sale con código distinto de 0 si algún caso no cuadra.
 //
+// El grupo `plan` son órdenes que MONTAN una pieza («haz el menú de otoño: crea
+// un fondo otoñal y pon los platos en el centro»). De esas se evalúa SOLO el
+// plan (pasos, fondo sin comida ni productos, fotos de la biblioteca,
+// disposición, titular): el banco nunca ejecuta pasos de pago, no genera
+// imágenes y no recorta, ni en seco ni con --apply.
+//
 // Con --apply llama a la función desplegada `ai-generate` (CUESTA DINERO y gasta
 // cupo de IA de la organización). Antes dice cuántas llamadas va a hacer y pide
 // confirmación (o --si). Variables de entorno, todas obligatorias:
@@ -134,7 +140,7 @@ export async function main(argv: string[], log: (line: string) => void = console
   if (!args.apply) {
     const cases = selectCases(args);
     if (cases.length === 0) {
-      log(args.group === 'plan' ? 'El grupo «plan» todavía no tiene casos (es un punto de extensión).' : 'No hay casos con esos filtros.');
+      log('No hay casos con esos filtros.');
       return 0;
     }
     const report = await dryRun(cases, args.modes);
