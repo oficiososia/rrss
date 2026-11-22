@@ -3,7 +3,7 @@
 // no dibujan ni leen nada, así se prueban sin navegador. El resultado tiene
 // SIEMPRE el tamaño del recorte y es opaco; la entrada no se modifica.
 import { compositeOver, parseHex, type Backdrop, type Pixels } from '../pixels';
-import { resizeChannel } from './mask';
+import { resizeChannel } from './resample';
 
 export interface ShadowOptions {
   /** Cuánto se desplaza hacia abajo, como fracción del alto (por defecto 0,02). */

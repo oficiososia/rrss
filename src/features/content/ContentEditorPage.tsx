@@ -263,7 +263,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [logoPicker, setLogoPicker] = useState(false);
   const [imageAi, setImageAi] = useState(false);
   const [photoEditing, setPhotoEditing] = useState(false);
-  const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai'>('enhance');
+  const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai' | 'portrait'>('enhance');
   const [templateOpen, setTemplateOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   /** En pantallas estrechas, los paneles son una hoja inferior que se abre con las pestañas. */
@@ -401,6 +401,10 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             id: editablePhoto.layerId,
             patch: { source: { kind: 'asset', assetId: row.id }, fit },
           }),
+        onPortrait: () => {
+          setPhotoEditTab('portrait');
+          setPhotoEditing(true);
+        },
         onAiBackground:
           aiBackgroundAvailable && editablePhoto.url
             ? () => {
@@ -1590,7 +1594,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           )}
           {photoEditing && editablePhoto && (
             <PhotoEditScreen
-              initialTab={photoEditTab}
+              initialTab={photoEditTab === 'portrait' ? 'background' : photoEditTab}
+              initialPortrait={photoEditTab === 'portrait'}
               asset={editablePhoto.row}
               url={editablePhoto.url}
               onClose={() => setPhotoEditing(false)}

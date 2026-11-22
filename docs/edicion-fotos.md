@@ -668,7 +668,7 @@ lienzo y al exportar.
 | Fondo detrás de la foto: color, degradado o la misma foto desenfocada                       | «Fondo» → «Poner detrás de la foto»                                           | `backdrop`                                                                                              | No             |
 | Sombra bajo la foto o el plato (sigue la silueta si hay transparencia)                      | «Fondo» → «Sombra»                                                            | `shadow`                                                                                                | No             |
 | Quitar el fondo                                                                             | «Fondo» → «Quitar el fondo»                                                   | **foto nueva** (carpeta «Ediciones») y la capa pasa a usarla                                            | No (navegador) |
-| Desenfocar el fondo y dejar el plato nítido                                                 | «Fondo» → «Desenfocar el fondo…»                                              | **foto nueva**; la capa pasa a usarla                                                                   | No (navegador) |
+| Modo retrato (desenfocar solo el fondo, con vista previa) y retocar la selección con pincel | «Editar foto» → «Fondo» (acción rápida del panel: «Modo retrato…»; ver §13)    | **foto nueva**; la capa pasa a usarla                                                                   | No (navegador) |
 | Cambiar el fondo con IA                                                                     | «Fondo» → «Cambiar el fondo con IA…» (abre «Editar foto» en su pestaña de IA) | foto nueva                                                                                              | **Sí**, OpenAI |
 | Contorno, sombra y fondo del texto                                                          | Panel de un texto → «Efectos del texto»                                       | `outline`, `shadow`, `background`                                                                       | No             |
 | Sombra de las formas                                                                        | Panel de una forma                                                            | `shadow`                                                                                                | No             |
@@ -720,8 +720,8 @@ lienzo y al exportar.
 - Luz y color necesitan leer los píxeles: si el almacén no responde a CORS, la
   foto se ve sin esos ajustes y la exportación avisa (como ya hacía).
 - El filtro «foto desenfocada» difumina la propia foto; para desenfocar el
-  fondo **detrás del plato** hay que usar «Desenfocar el fondo…», que crea una
-  foto nueva (necesita el recorte del navegador).
+  fondo **detrás del plato** hay que usar el «Modo retrato» de «Editar foto»
+  (§13), que crea una foto nueva (necesita el recorte del navegador).
 - Las figuras no cambian de forma al estirarlas: se deforman con la caja. La
   línea se dibuja horizontal en el centro de su caja; para inclinarla, gírala.
 - No probado a mano en un navegador real en esta rama: solo pruebas de unidad,
@@ -804,3 +804,106 @@ hecha, no la original) y «Abrir».
 - **Exportación = lienzo.** `tests/layout/exportar-pixeles.spec.ts` dibuja una escena con el lienzo (`Scene.snapshot`) y con `renderDocument` y compara los píxeles; con filtros, luz y color, recorte, giro, volteo, enderezado, fondos, sombras y contorno de texto la diferencia media es 0 en PNG y menor de 0,5 de 255 en JPEG. Una imagen que no carga detiene la exportación con un aviso que la nombra.
 - **Atajos** del editor: Ctrl/Cmd+Z deshace, Ctrl+Mayús+Z o Ctrl+Y rehacen, Ctrl+S abre «Guardar versión», Supr borra, flechas mueven 1 px (Mayús, 10 px), Ctrl+G agrupa (con Mayús, desagrupa) y Esc suelta. Funcionan aunque el foco esté en la página (tras cerrar un diálogo); no actúan con un diálogo abierto ni escribiendo en un campo.
 - **Banco de maquetación** (`layout.html`, `exportar.html`, `vite.layout.config.ts`, `playwright.layout.config.ts`): la aplicación real con el cliente de Supabase simulado de `src/test`, servida con Vite para pruebas en un navegador real sin Docker ni Supabase. Solo para pruebas, no entra en la compilación.
+
+## 13. Modo retrato y retoque de la selección (rama `f22/modo-retrato`, 22/11/2026)
+
+Petición del dueño: «que se pueda seleccionar el fondo para hacer modo retrato».
+Antes, «Desenfocar el fondo y dejar el plato nítido» (panel de la capa) hacía una
+foto nueva **sin vista previa** y con un difuminado plano de toda la foto, que
+dejaba un halo del color del plato alrededor; y no había forma de corregir qué
+era plato y qué fondo.
+
+### Dónde está
+
+«Editar foto» → pestaña **Fondo**. Tras «Quitar el fondo» (que no guarda nada)
+salen, junto a los fondos de color:
+
+- **Modo retrato: desenfocar solo el fondo.** Vista previa al momento con tres
+  controles: _Intensidad del desenfoque_ (1–100), _Más borroso cuanto más lejos
+  del plato_ (activado) y _Resaltar el plato_ (oscurece el fondo, hasta la mitad).
+  La sombra suave no aplica en este modo.
+- **Retocar la selección.** Pincel con dedo, lápiz o ratón: _Añadir al plato_ /
+  _Quitar del plato_, _Tamaño del pincel_, _Deshacer el último trazo_, _Borrar los
+  retoques_ y _Ver la selección como un velo de color_ (rosa sobre el plato; sin
+  velo se ve el recorte sobre el ajedrez). Corrige la máscara **antes** de
+  aplicar, así que vale igual para el modo retrato, para «Dejarlo sin fondo»
+  (PNG transparente) y para los fondos de color o de imagen.
+- La acción rápida del panel de la capa pasó a **«Modo retrato: desenfocar el
+  fondo…»** y abre esta pantalla con el modo ya elegido (hay que hacer el
+  recorte; el resto es igual que desde la biblioteca).
+
+Se aplica como el resto: «Aplicar a la capa» desde el editor (Ctrl+Z, «Volver a
+la foto original» siguen funcionando) o «Guardar copia» desde la biblioteca.
+Procedencia: `remove_background` → (`retouch_selection`, con el nº de trazos, si
+se retocó) → `portrait_blur` con `amount`, `progressive` y `dim`. Nombre del
+archivo: «Modo retrato · plato.jpg».
+
+### Cómo está hecho
+
+- **La máscara** es el alfa del recorte (`remover.ts`: BEN2/IS-Net en el
+  navegador o el servidor; esta rama no toca ni `remover.ts`, ni `engine.ts`, ni
+  el trabajador, solo consume lo que devuelven). Los colores del plato y de lo
+  añadido con el pincel son siempre los de la **foto original**, no los del
+  recorte (un recorte del servidor puede traer los píxeles transparentes
+  borrados). Si el recorte no tiene las medidas de la foto, o la foto ya venía sin
+  fondo, no se ofrece retrato ni retoque.
+- **El desenfoque** (`photo-edit/portrait/blur.ts`) evita el halo y se parece al
+  de una lente:
+  1. el alfa se **dilata** unos píxeles (el borde suave del recorte también lleva
+     color del plato) y todo lo que toca al plato deja de contar como fondo;
+  2. el difuminado es **normalizado** (promedia solo fondo y divide por el peso
+     reunido): el hueco que deja el plato se **rellena** con el color del fondo
+     de alrededor, y el plato no «sangra» en el fondo;
+  3. lo brillante pesa más (apertura de la lente, luces del fondo que se abren);
+  4. **progresivo**: cuatro niveles de desenfoque mezclados según la distancia al
+     plato (más lejos, más borroso);
+  5. «Resaltar el plato» oscurece el fondo;
+  6. el plato se pega con su alfa a tamaño completo, con un suavizado de 1–3 px
+     en el borde. Donde el alfa es 255 sale la foto sin tocar.
+- **Mismo resultado en la vista previa y en el archivo.** El desenfoque (de baja
+  frecuencia) se calcula siempre en una versión de 720 px de lado mayor y se
+  amplía; el radio es una fracción del lado mayor, así que la foto de 12 MP y
+  su vista previa (1000 px) dan lo mismo (prueba: la misma escena a 300 y a 900
+  px, diferencia media bajo 4 niveles). El pegado final usa el alfa completo, de
+  modo que el borde conserva todo su detalle. Al guardar se hace en el hilo
+  principal tras ceder un turno al navegador (el desenfoque trabaja a 720 px,
+  la parte a tamaño completo es el pegado); **no hay trabajador** (no hizo falta,
+  ver «Límites»).
+- **El pincel** (`portrait/brush.ts`) guarda los trazos en coordenadas 0–1 y radio
+  como fracción del lado menor: se repintan igual en la vista previa y a tamaño
+  completo. Añadir (máximo) y quitar (mínimo) son idempotentes, por eso pintar
+  tramo a tramo da lo mismo que repetir el trazo. Borde suave (dureza 0,6).
+  Los trazos viven con el recorte en la pantalla, así que no se pierden al
+  cambiar de pestaña, y «Cancelar» los descarta con el recorte.
+- Se retiró la edición rápida `blur_background` (y su deslizador del panel): el
+  procedimiento nuevo es este. Las fotos ya guardadas con esa procedencia no
+  cambian.
+- `composition.ts` importa `resizeChannel` de `resample.ts` en lugar de
+  `mask.ts` (mismo código; así el script de la hoja de ejemplo no arrastra el
+  modelo).
+
+### Pruebas y comprobación
+
+- Unitarias (`portrait/portrait.test.ts`): el plato no cambia y el fondo sí; las
+  entradas no se modifican; **sin halo** (un gaussiano plano deja más de 30
+  niveles de rojo junto al plato, aquí ≤ 3); intensidad, progresivo y
+  oscurecido; borde sin escalón; vista previa y archivo coinciden; el pincel
+  (añadir, quitar, orden, a cualquier resolución, tramo a tramo, velo).
+- Componentes (`editarFoto.test.tsx`): flujo de retrato con su procedencia,
+  retoque con pincel (puntero), quitar, deshacer y borrar, retoque con fondo de
+  color, velo, foto sin fondo sin estas opciones y la acción rápida del panel
+  aplicada a la capa y deshecha con Ctrl+Z.
+- Hoja de ejemplo: `scripts/hoja-modo-retrato.ts` con máscaras BEN2 →
+  `rrss-recursos-comparativa/modo-retrato.jpg` (original | suave | fuerte).
+
+### Límites
+
+- El pincel es de puntero (dedo, lápiz, ratón); no hay pintado con teclado. Quien
+  no pueda usarlo puede dejar la selección del recorte tal cual o usar «Quitar el
+  fondo» con IA.
+- El suavizado del borde del plato es el del recorte más 1–3 px: un cabello muy
+  fino que el recorte no haya sacado no se recupera con el desenfoque.
+- No probado a mano en un navegador real con el modelo de recorte (solo jsdom y
+  pruebas de unidad); la hoja de ejemplo sí usa el desenfoque real con máscaras
+  BEN2 reales. No hay prueba de diseño a 375 px de esta pestaña (necesita el
+  modelo).
