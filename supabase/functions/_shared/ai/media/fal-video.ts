@@ -182,7 +182,10 @@ export function createFalVideoProvider(options: FalOptions): MediaProvider {
         };
       }
       const status = await requestJson(job.statusUrl, { method: 'GET', headers: auth }, { ...http, signal });
-      if (stringAt(status, 'status') !== 'COMPLETED') return { status: 'pending' };
+      const state = stringAt(status, 'status');
+      if (state !== 'COMPLETED') {
+        return { status: 'pending', progress: state === 'IN_PROGRESS' ? 'running' : 'queued' };
+      }
       // «COMPLETED» también cubre los trabajos que terminaron con error.
       const error = stringAt(status, 'error');
       if (error) return failed(stringAt(status, 'error_type') ?? error);

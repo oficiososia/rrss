@@ -14,6 +14,13 @@
 //                   es SIEMPRE un recurso nuevo (procedencia `ai_edit` con el
 //                   original); la foto original no se toca (docs/edicion-fotos.md).
 //
+//   video.options   animar una foto con IA: modelos, duraciones y si hay permiso, plan
+//                   y cupo (solo se ofrece si hay proveedor, modelo activo y cupo);
+//   video.estimate  coste máximo de animar una foto, SIN reservar nada;
+//   video.animate   reserva cupo y anima una foto de la biblioteca. Siempre
+//                   asíncrono; el resultado es un vídeo NUEVO en «Vídeos con IA»
+//                   (procedencia `ai_animation`); la foto no se toca.
+//
 // El permiso de edición en la marca lo impone la base de datos al reservar el
 // cupo (`ai_reserve_generation`, 42501 → 403): no hay forma de generar sin él.
 // Modo agencia (`brands.ai_mode = 'agency'`): como con el texto (`ai-generate`),
@@ -33,8 +40,10 @@ import {
   type ImageEditRequest,
   type ImageRequest,
   type MediaInput,
+  type VideoRequest,
 } from '../_shared/ai/media/contract.ts';
 import type { MediaRuntime } from '../_shared/ai/media/runtime.ts';
+import { ANIMATE_MAX_SECONDS } from '../_shared/ai/media/service.ts';
 
 export const AI_MEDIA_ACTIONS = [
   'image.models',
@@ -43,6 +52,9 @@ export const AI_MEDIA_ACTIONS = [
   'photo.options',
   'photo.estimate',
   'photo.edit',
+  'video.options',
+  'video.estimate',
+  'video.animate',
 ] as const;
 export type AiMediaAction = (typeof AI_MEDIA_ACTIONS)[number];
 
@@ -95,6 +107,16 @@ export interface AiMediaDeps {
     assetId: string,
     options: { sign: boolean },
   ): Promise<{ input: MediaInput & { width: number; height: number }; fileName: string } | null>;
+  /**
+   * ¿Puede esta persona generar este tipo de medio ahora (permiso, plan y
+   * cupo)? Con la clave de servicio; no reserva nada. Sin ella, animar fotos
+   * no se ofrece.
+   */
+  allowance?(
+    userId: string,
+    brandId: string,
+    task: 'video',
+  ): Promise<{ allowed: boolean; reason: string | null; remainingMicros: number }>;
   /** Servicio y modelos, ya montados (ver runtime.ts). */
   runtime(): Promise<MediaRuntime>;
   /** Registro del servidor. Nunca recibe claves ni el encargo. */
@@ -124,6 +146,63 @@ export function imageSizeFor(ratio: string): { width: number; height: number } {
 }
 
 class InputError extends Error {}
+
+/** Proporciones de vídeo para reels y publicaciones, con su valor. */
+export const ANIMATE_ASPECT_RATIOS = [
+  { ratio: '9:16', value: 9 / 16 },
+  { ratio: '4:5', value: 4 / 5 },
+  { ratio: '1:1', value: 1 },
+] as const;
+export const ANIMATE_DEFAULT_SECONDS = 5;
+export const MAX_MOTION_CHARS = 500;
+/** Frase fija: el plato, la comida y la vajilla no se tocan; solo se mueve la cámara o el ambiente. */
+export const ANIMATE_GUARD =
+  'Keep the dish, the food and the tableware exactly as in the photo: do not add, remove or change any food, text or object. Only subtle, natural motion.';
+
+/**
+ * La proporción de reel o publicación más cercana a la de la foto. Los modelos
+ * no tienen parámetro de proporción: el vídeo sale con la forma de la foto, y
+ * `exact` dice si esa forma ya es una de las tres.
+ */
+export function animateAspectFor(width: number, height: number): { ratio: AspectRatio; exact: boolean } {
+  const value = width / height;
+  let best: (typeof ANIMATE_ASPECT_RATIOS)[number] = ANIMATE_ASPECT_RATIOS[0];
+  for (const candidate of ANIMATE_ASPECT_RATIOS) {
+    if (Math.abs(Math.log(value / candidate.value)) < Math.abs(Math.log(value / best.value))) best = candidate;
+  }
+  return { ratio: best.ratio, exact: Math.abs(Math.log(value / best.value)) <= 0.04 };
+}
+
+/** El encargo que recibe el modelo: el movimiento y la frase fija que protege el plato. */
+export function buildAnimatePrompt(motion: string): string {
+  return `${motion.trim() || 'slow natural camera movement'}. ${ANIMATE_GUARD}`;
+}
+
+interface AnimateInput {
+  assetId: string;
+  motion: string;
+  seconds: number;
+  model?: string;
+}
+
+function parseAnimateInput(data: Record<string, unknown>, requireMotion: boolean): AnimateInput {
+  if (typeof data.assetId !== 'string' || !UUID.test(data.assetId)) {
+    throw new InputError('Indica la foto de la biblioteca que quieres animar.');
+  }
+  const motion = typeof data.motion === 'string' ? data.motion.trim() : '';
+  if (requireMotion && motion.length < 3) throw new InputError('Describe el movimiento que quieres.');
+  if (motion.length > MAX_MOTION_CHARS) {
+    throw new InputError(`La descripción es demasiado larga: como mucho ${MAX_MOTION_CHARS} caracteres.`);
+  }
+  const seconds = data.seconds ?? ANIMATE_DEFAULT_SECONDS;
+  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 1 || seconds > ANIMATE_MAX_SECONDS) {
+    throw new InputError(`La duración debe ser de 1 a ${ANIMATE_MAX_SECONDS} segundos enteros.`);
+  }
+  if (data.model !== undefined && (typeof data.model !== 'string' || !data.model)) {
+    throw new InputError('El modelo indicado no es válido.');
+  }
+  return { assetId: data.assetId, motion, seconds, model: data.model as string | undefined };
+}
 
 interface PhotoInput {
   assetId: string;
@@ -306,6 +385,103 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
           action,
           models: agencyBlocked ? [] : runtime.imageChoices,
           ...(agencyBlocked ? { agencyMode: true } : {}),
+        });
+      }
+
+      if (action === 'video.options') {
+        const choices = runtime.animateChoices;
+        const allowance =
+          deps.loadPhoto && deps.allowance && choices.length > 0
+            ? await deps.allowance(user.userId, brandId, 'video')
+            : null;
+        const available = Boolean(allowance?.allowed);
+        return json(200, {
+          action,
+          animate: {
+            available,
+            // Por qué no: sin proveedor (`not_configured`) o lo que diga el servidor (plan, cupo, permiso).
+            reason: available ? null : allowance ? allowance.reason : 'not_configured',
+            remainingMicros: allowance?.remainingMicros ?? 0,
+            maxSeconds: ANIMATE_MAX_SECONDS,
+            defaultSeconds: ANIMATE_DEFAULT_SECONDS,
+            models: available ? choices : [],
+          },
+        });
+      }
+
+      if (action === 'video.estimate' || action === 'video.animate') {
+        const animate = parseAnimateInput(data, action === 'video.animate');
+        if (!deps.loadPhoto || runtime.animateChoices.length === 0) {
+          throw new AiError('not_configured', 'No hay ningún modelo para animar fotos disponible.');
+        }
+        if (animate.model && !runtime.animateChoices.some((c) => c.id === animate.model)) {
+          return fail(400, 'invalid_request', 'Ese modelo no está disponible. Elige otro de la lista.');
+        }
+        const loaded = await deps.loadPhoto(accessToken, brandId, animate.assetId, { sign: action === 'video.animate' });
+        if (!loaded) {
+          return fail(
+            400,
+            'invalid_request',
+            'Esa foto no existe, no es de esta marca o no se puede animar con IA (solo fotos JPEG, PNG o WebP subidas a la biblioteca).',
+          );
+        }
+        const aspect = animateAspectFor(loaded.input.width, loaded.input.height);
+        const videoRequest: VideoRequest = {
+          kind: 'video',
+          operation: 'animate_photo',
+          startImage: loaded.input,
+          prompt: buildAnimatePrompt(animate.motion),
+          durationSeconds: animate.seconds,
+          aspectRatio: aspect.ratio,
+        };
+        const service = runtime.animateServiceFor(animate.model);
+        if (action === 'video.estimate') {
+          const estimate = service.estimate(videoRequest);
+          return json(200, {
+            action,
+            model: `${estimate.provider}:${estimate.model}`,
+            costMicros: estimate.costMicros,
+            seconds: animate.seconds,
+            aspectRatio: aspect.ratio,
+            exactAspect: aspect.exact,
+            dataHandling: estimate.dataHandling,
+          });
+        }
+        const result = await service.generate({
+          userId: user.userId,
+          brandId,
+          purpose: 'photo.animate',
+          request: videoRequest,
+          animate: { sourceAssetId: animate.assetId, sourceName: loaded.fileName, motion: animate.motion },
+        });
+        const common = {
+          action,
+          generationId: result.generationId,
+          model: `${result.provider}:${result.model}`,
+          estimatedCostMicros: result.estimatedCostMicros,
+          seconds: animate.seconds,
+          aspectRatio: aspect.ratio,
+          exactAspect: aspect.exact,
+          dataHandling: {
+            dataRegion: result.dataRegion,
+            euProcessing: result.euProcessing,
+            trainsOnInputs: result.trainsOnInputs,
+            untestedAdapter: result.untestedAdapter,
+          },
+        };
+        if (result.status === 'pending') return json(202, { ...common, status: 'pending', jobId: result.jobId });
+        const asset = result.assets[0];
+        if (!asset?.assetId) {
+          return fail(500, 'internal', 'El vídeo se generó, pero no se ha podido añadir a la biblioteca.', {
+            retryable: true,
+            generationId: result.generationId,
+          });
+        }
+        return json(200, {
+          ...common,
+          status: 'completed',
+          costMicros: result.costMicros,
+          asset: { id: asset.assetId, path: asset.path, mimeType: asset.mimeType, bytes: asset.bytes },
         });
       }
 

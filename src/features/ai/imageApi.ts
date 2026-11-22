@@ -68,7 +68,7 @@ export type GenerateImageResult =
 /** La generación de imagen tarda más que la de texto: margen sobre los 120 s del servidor. */
 const CLIENT_TIMEOUT_MS = 150_000;
 
-async function invokeAiMedia<T>(action: string, brandId: string, input?: unknown): Promise<T> {
+export async function invokeAiMedia<T>(action: string, brandId: string, input?: unknown): Promise<T> {
   let result: { data: unknown; error: unknown };
   try {
     result = await supabase.functions.invoke('ai-media', {

@@ -38,6 +38,10 @@ export const AI_PROVENANCE_TYPE = 'ai_generation';
 export const AI_EDIT_PROVENANCE_TYPE = 'ai_edit';
 /** Carpeta de la biblioteca de las fotos editadas (con IA o en el navegador). */
 export const EDITS_FOLDER = 'Ediciones';
+/** Procedencia de un vídeo animado con IA a partir de una foto (solo la escribe el servidor, migración 20261217010000). */
+export const AI_ANIMATION_PROVENANCE_TYPE = 'ai_animation';
+/** Carpeta de la biblioteca de los vídeos animados con IA. */
+export const ANIMATIONS_FOLDER = 'Vídeos con IA';
 
 /** Tipos que admite el cubo y su extensión. */
 const EXTENSIONS: Record<string, string> = {
@@ -64,6 +68,7 @@ export interface GeneratedAssetRow {
   height: number | null;
   folder: string;
   tags: string[];
+  duration_ms?: number | null;
   provenance: Record<string, unknown>;
   created_by: string | null;
 }
@@ -141,6 +146,25 @@ export function imageDimensions(bytes: Uint8Array): { width: number; height: num
  * no pase de 2048 bytes (se mide en UTF-8, como la restricción de la tabla).
  */
 export function provenanceJson(generationId: string, provenance: MediaProvenance | undefined): Record<string, unknown> {
+  if (provenance?.animate) {
+    const animate = provenance.animate;
+    return {
+      type: AI_ANIMATION_PROVENANCE_TYPE,
+      // Marca de contenido generado con IA: la lee la base de datos y la interfaz.
+      ai_generated: true,
+      animated_from: animate.sourceAssetId,
+      generation_id: generationId,
+      provider: provenance.provider,
+      model: provenance.model,
+      purpose: provenance.purpose ?? null,
+      seconds: animate.seconds,
+      aspect_ratio: animate.aspectRatio,
+      ...(provenance.prompt ? { prompt: [...provenance.prompt].slice(0, 400).join('') } : {}),
+      data_region: provenance.dataRegion,
+      trains_on_inputs: provenance.trainsOnInputs,
+      untested_adapter: provenance.untestedAdapter,
+    };
+  }
   if (provenance?.edit) {
     const edit = provenance.edit;
     return {
@@ -191,6 +215,16 @@ const EDIT_NAME: Record<string, (scale?: number) => string> = {
 
 /** Nombre legible en la biblioteca: «IA · <encargo recortado>.png» o «Sin fondo · <original>.png». */
 function fileNameFor(provenance: MediaProvenance | undefined, generationId: string, index: number, extension: string) {
+  const animate = provenance?.animate;
+  if (animate) {
+    const original = (animate.sourceName ?? '')
+      .replace(/\.[a-z0-9]{2,5}$/i, '')
+      .replace(/[\\/:*?"<>|\s]+/g, ' ')
+      .trim()
+      .slice(0, 80)
+      .trim();
+    return `Animada · ${original || generationId.slice(0, 8)}${index > 0 ? ` (${index + 1})` : ''}.${extension}`;
+  }
   const edit = provenance?.edit;
   if (edit) {
     const original = (edit.sourceName ?? '')
@@ -255,8 +289,17 @@ export function createSupabaseMediaStorage(
         bytes: object.bytes.byteLength,
         width: size && size.width > 0 ? size.width : null,
         height: size && size.height > 0 ? size.height : null,
-        folder: object.provenance?.edit ? EDITS_FOLDER : GENERATED_FOLDER,
-        tags: object.provenance?.edit ? ['ia', 'edición'] : ['ia'],
+        folder: object.provenance?.animate
+          ? ANIMATIONS_FOLDER
+          : object.provenance?.edit
+            ? EDITS_FOLDER
+            : GENERATED_FOLDER,
+        tags: object.provenance?.animate
+          ? ['ia', 'animada']
+          : object.provenance?.edit
+            ? ['ia', 'edición']
+            : ['ia'],
+        ...(object.durationMs ? { duration_ms: object.durationMs } : {}),
         provenance: provenanceJson(object.generationId, object.provenance),
         created_by: object.provenance?.requestedBy ?? null,
       });

@@ -537,7 +537,8 @@ bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
 | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | IA de texto (Claude por Vertex UE, Bedrock UE, Mistral, Anthropic directo)                 | Adaptadores escritos, sin claves                                                                                                                                                                                    | `docs/ia-texto.md`                         |
-| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
+| Animar una foto con IA (fal.ai: MiniMax H3 y Kling v3; `docs/ia-medios.md` §15)            | Adaptador y flujo escritos; solo con HTTP simulado; sin clave; modelos inactivos y precios sin verificar (0,06 y 0,084 USD/s según la ficha; la página de precios daba otras cifras)                                         |
+| IA de imagen (Vertex UE, FLUX.2, Ideogram, ComfyUI propio) y vídeo (Higgsfield, fal.ai)    | Adaptadores escritos, sin claves; vídeo suelto apagado                                                                                                                                                                     | `docs/ia-medios.md`                        |
 | Meta (OAuth, publicación, métricas)                                                        | Adaptador escrito; sin aplicación de Meta                                                                                                                                                                           | `docs/publicacion.md`, `docs/analitica.md` |
 | Stripe                                                                                     | Funciones escritas; sin cuenta                                                                                                                                                                                      | `docs/facturacion.md`                      |
 | Google Drive (OAuth, listar, servir imágenes)                                              | Adaptador escrito; sin cliente OAuth de Google                                                                                                                                                                      | `docs/biblioteca-drive.md`                 |
@@ -620,6 +621,16 @@ Proyecto `zzkdrfhqmjfvrdsoguio`, plan gratuito, región UE:
 8. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
 9. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
 10. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
+3. Activar el vídeo con IA (por defecto, apagado). Decidido el 22/11/2026: ofrecer animar una foto real (rama `f28/animar-foto-ia`); falta que el dueño ponga la clave de fal.ai, admita el tratamiento fuera de la UE y contraste los precios (`docs/ia-medios.md` §15).
+4. Alojamiento del trabajador de medios: recomendado Fly.io en Fráncfort; código preparado (`docs/alojamiento.md`), falta la cuenta.
+5. Música para los reels y su licencia.
+6. Alojamiento del trabajador de medios.
+7. Música para los reels: el editor ya pide a la marca que confirme la licencia (queda en la procedencia); falta decidir si se ofrece una biblioteca de música con licencia.
+8. Plazos de conservación de datos y revisión legal (`docs/rgpd.md`).
+9. **Copiloto por voz en modo agencia (provisional).** `ai-generate` rechaza la IA de texto en marcas en modo agencia, salvo el copiloto por voz (`editor.copilot`), que no redacta: coloca literalmente lo dictado. Decidir si se mantiene, se quita o se hace configurable por marca (`docs/copiloto-voz.md` §4).
+10. Decisiones provisionales que se pueden cambiar: una aprobación vale solo para la versión aprobada; quien edita y aprueba puede aprobar sin revisión; cada red es una pieza distinta; los colores fuera de la marca avisan pero no bloquean; aceptar un encargo aprueba la versión entregada; logotipos provisionales se borran a las 48 h.
+11. Pasar los archivos a Cloudflare R2: crear la cuenta y dar el «sí» al recuento de la migración (`docs/almacenamiento-r2.md`).
+12. Edición de fotos: si se quita el fondo con ComfyUI (GPU, con cupo de IA) o también en el trabajador sin GPU (descargar pesos de BiRefNet o IS-Net, 100–200 MB), y el precio por edición (`docs/edicion-fotos.md` §4 y §5).
 
 ## Pendientes conocidos
 
@@ -683,3 +694,24 @@ Cierra los fallos de la auditoría de staging del 21/11/2026. Rama `f26/ia-coher
 - **Falta de cupo.** El mensaje de «sin cupo asignado» dice a quién pedirlo: a quien administra la organización y, si es quien la administra, a la plataforma.
 - **Registro de modelos.** Una fila activa de un proveedor sin configurar no cuenta como disponible ni sale en los selectores (probado en `tests/db/ia-openai-imagen.test.ts`).
 - **Para llevarlo a staging:** aplicar la migración `20261216010000`; redesplegar `platform-integrations` y `ai-media`; después, la web. Para encender el texto: en Plataforma → Integraciones → IA de texto, proveedor y modelo por defecto (y la clave y los precios de ese proveedor).
+## Animar una foto con IA (rama `f28/animar-foto-ia`, 22/11/2026)
+
+«Animar con IA…» en la ficha de una foto de la biblioteca: un clip de 5 s (máx. 10)
+con MiniMax H3 (principal) o Kling v3 Standard (respaldo) por fal.ai; el vídeo queda en
+«Vídeos con IA» con su procedencia y la marca de contenido generado con IA, y el
+selector de clips de los reels ya lo puede elegir. Detalle, ids, precios y pasos en
+`docs/ia-medios.md` §15.
+
+- **Hecho y probado (con fal.ai simulado):** migración `20261217010000` (con vuelta
+  atrás), acciones `video.*` de `ai-media`, cupo, permisos, aislamiento, modo agencia,
+  «Probar conexión» de fal.ai, diálogo con coste máximo y estado, script de prueba
+  a ciegas.
+- **Sin probar:** ninguna llamada real a fal.ai (no hay clave); duración real de un clip;
+  si el plato queda intacto (de ahí el aviso y la prueba a ciegas); el diálogo en un
+  navegador contra un servidor real.
+- **Sin confirmar:** los precios (la ficha de cada modelo y la página general de
+  fal.ai no coinciden); región y entrenamiento con lo enviado.
+- **Pendiente del dueño:** clave de fal.ai en Plataforma → Integraciones, admitir el
+  tratamiento fuera de la UE, contrastar y activar los dos modelos, `ai_video` en el
+  plan, `VITE_AI_ANIMATE_ENABLED=true`, aplicar la migración y redesplegar `ai-media`,
+  `ai-media-poll` y `ai-media-webhook`.

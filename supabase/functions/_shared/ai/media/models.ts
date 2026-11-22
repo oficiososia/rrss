@@ -37,7 +37,7 @@ export interface MediaModelRow {
 const EDIT_OPERATIONS: readonly string[] = ['remove_background', 'upscale', 'replace_background', 'enhance'];
 
 /** Qué hace un modelo: sin el campo, generar (así eran todos antes de la edición de fotos). */
-export function operationOf(model: Pick<MediaModel, 'operation'>): 'generate' | ImageEditOperation {
+export function operationOf(model: Pick<MediaModel, 'operation'>): 'generate' | ImageEditOperation | 'animate_photo' {
   return model.operation ?? 'generate';
 }
 
@@ -59,7 +59,10 @@ export function mediaModelsFromRows(rows: MediaModelRow[]): MediaModel[] {
     if (!Number.isFinite(price) || price < 0) continue;
     const details = record(row.price_details);
     const operation = row.operation ?? 'generate';
-    if (operation !== 'generate' && (row.task !== 'image' || !EDIT_OPERATIONS.includes(operation))) continue;
+    const validOperation =
+      operation === 'generate' ||
+      (operation === 'animate_photo' ? row.task === 'video' : row.task === 'image' && EDIT_OPERATIONS.includes(operation));
+    if (!validOperation) continue;
     models.push({
       provider: row.provider,
       model: row.model,
@@ -77,7 +80,7 @@ export function mediaModelsFromRows(rows: MediaModelRow[]): MediaModel[] {
         ? row.trains_on_inputs
         : 'unknown') as TrainsOnInputs,
       delivery: row.delivery === 'async' ? 'async' : 'sync',
-      operation: operation as 'generate' | ImageEditOperation,
+      operation: operation as 'generate' | ImageEditOperation | 'animate_photo',
       settings: record(row.settings) as { [key: string]: Json | undefined },
       priority: Number.isFinite(row.priority) ? row.priority : 0,
       active: row.active === true,
@@ -141,6 +144,8 @@ export interface ModelSelection {
   allowNonEu?: boolean;
   /** Modelo fijado para cada edición de foto: `proveedor:modelo`. */
   preferredEdits?: Partial<Record<ImageEditOperation, string>>;
+  /** Modelo elegido para animar una foto (`proveedor:modelo`); debe estar entre los ofrecidos. */
+  preferredAnimate?: string;
 }
 
 export interface ProviderAvailability {
@@ -297,6 +302,46 @@ export function resolveEditModel(
   }
   const reasons = [...new Set(allowed.map((m) => whyNot(m.provider)))].join('; ');
   throw new AiError('not_configured', `Ningún proveedor para ${label} está disponible: ${reasons}.`);
+}
+
+/**
+ * Elige el modelo para animar una foto: el activo de más prioridad (el
+ * principal; si no está activo o su proveedor no está configurado, el
+ * respaldo) que procese en la UE, salvo que se permitan los demás, y cuyo
+ * adaptador esté cargado. Sin ninguno, `AiError('not_configured')`.
+ */
+export function resolveAnimateModel(
+  models: MediaModel[],
+  availability: ProviderAvailability,
+  selection: ModelSelection = {},
+): { model: MediaModel; provider: MediaProvider } {
+  const chosen = selection.preferredAnimate;
+  const providers = new Map(availability.providers.map((p) => [p.id, p]));
+  const candidates = models.filter((m) => m.kind === 'video' && operationOf(m) === 'animate_photo');
+  const active = candidates.filter((m) => m.active).sort((a, b) => b.priority - a.priority);
+  if (active.length === 0) {
+    throw new AiError('not_configured', 'No hay ningún modelo para animar fotos activo en el registro de modelos.');
+  }
+  const allowed = selection.allowNonEu ? active : active.filter((m) => regionOf(m, providers.get(m.provider)) === 'eu');
+  if (allowed.length === 0) {
+    throw new AiError(
+      'not_configured',
+      'Hay modelos para animar fotos activos, pero ninguno procesa los datos en la UE. ' +
+        'Hay que permitir el tratamiento fuera de la UE a propósito en la configuración del servidor.',
+    );
+  }
+  const usable = allowed.filter((m) => providers.get(m.provider)?.kinds.includes('video'));
+  if (chosen) {
+    const model = usable.find((m) => `${m.provider}:${m.model}` === chosen);
+    if (!model) throw new AiError('not_configured', 'El modelo para animar elegido no está disponible.');
+    return { model, provider: providers.get(model.provider)! };
+  }
+  const model = usable[0];
+  if (!model) {
+    const reasons = [...new Set(allowed.map((m) => availability.unavailable.find((u) => u.id === m.provider)?.reason ?? `no hay adaptador «${m.provider}»`))].join('; ');
+    throw new AiError('not_configured', `Ningún proveedor para animar fotos está disponible: ${reasons}.`);
+  }
+  return { model, provider: providers.get(model.provider)! };
 }
 
 // ─────────────────────────── Geometría ───────────────────────────
