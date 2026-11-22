@@ -1,18 +1,19 @@
-// «Hacer un reel como este»: el formato de lo que sale (docs/reel-como-este.md).
+// «Hacer un reel como este»: el formato del ANÁLISIS (docs/reel-como-este.md).
 //
-//   * `ReelMeasurement`    lo que mide el trabajador SIN IA (`media.reel.analyze`).
-//   * `BrandReelTemplate`  la PLANTILLA DE REEL REUTILIZABLE de una marca: nº de
-//                          planos, duración y tipo de cada uno, transiciones,
-//                          textos en pantalla (posición, momento, tamaño), ritmo
-//                          y portada. Es la estructura, sin contenido: no lleva
-//                          ni una imagen ni una frase del vídeo de referencia.
-//   * `ReelLikeResult`     la plantilla + el guion con la lista de planos + los
-//                          textos (gancho, rótulos y pie) ya con el tono de la marca.
+//   * `ReelMeasurement`  lo que mide el trabajador SIN IA (`media.reel.analyze`).
+//   * `ReelStructure`    la estructura del reel de referencia: nº de planos,
+//                        duración y tipo de cada uno, transiciones, textos en
+//                        pantalla (posición, momento, tamaño), ritmo y portada.
+//                        No lleva ni una imagen ni una frase de la referencia.
+//   * `ReelLikeResult`   la estructura + el guion con la lista de planos + los
+//                        textos (gancho, rótulos y pie) con el tono de la marca.
+//                        Es lo que se guarda en `reel_references.result`.
 //
-// ESQUEMA MÍNIMO PROPIO (versión 1). El catálogo de plantillas de reel por marca
-// lo está definiendo otra rama (f35/catalogo-plantillas): cuando exista, este
-// archivo es el único sitio que hay que adaptar (`parseBrandReelTemplate` lee
-// lo guardado en `brand_reel_templates.spec`). Ver «Convergencia» en la doc.
+// La PLANTILLA REUTILIZABLE no es este formato: al pulsar «Guardar como
+// plantilla», la aplicación convierte la estructura al formato compartido de
+// plantillas de reel por marca (`rrss.reel-template`,
+// src/features/reels/reelTemplate.ts) y la entrega con origen `reference`
+// (src/features/reels/like/template.ts).
 //
 // Lo usan la función `ai-reel-like`, la aplicación y las pruebas: NO IMPORTA
 // NADA (ni Deno, ni Node, ni zod) para que valga en los tres sitios.
@@ -220,7 +221,7 @@ export function paceOf(shots: Array<{ seconds: number }>): Pace {
   return average < 1.5 ? 'rapido' : average < 3.5 ? 'medio' : 'lento';
 }
 
-// ───────────────────────────── Plantilla de reel de marca ─────────────────────────────
+// ───────────────────────────── Estructura del reel ─────────────────────────────
 
 export interface TemplateShot {
   /** `s1`, `s2`… en el orden del reel. */
@@ -250,7 +251,7 @@ export interface TemplateText {
   maxChars: number;
 }
 
-export interface BrandReelTemplate {
+export interface ReelStructure {
   schemaVersion: typeof REEL_LIKE_SCHEMA_VERSION;
   name: string;
   /** Por qué funciona la estructura, en una o dos frases. */
@@ -302,11 +303,11 @@ function parseShots(value: unknown): TemplateShot[] | null {
 }
 
 /**
- * Lee (y deja en su forma canónica) una plantilla de reel de marca. Null si no
- * lo es. Los tiempos de los textos se recalculan desde los planos: lo guardado
- * no puede quedar incoherente.
+ * Lee (y deja en su forma canónica) la estructura de un análisis. Null si no lo
+ * es. Los tiempos de los textos se recalculan desde los planos: lo guardado no
+ * puede quedar incoherente.
  */
-export function parseBrandReelTemplate(value: unknown): BrandReelTemplate | null {
+export function parseReelStructure(value: unknown): ReelStructure | null {
   if (!isDict(value) || value.schemaVersion !== REEL_LIKE_SCHEMA_VERSION) return null;
   const shots = parseShots(value.shots);
   if (!shots) return null;
@@ -371,7 +372,7 @@ export interface ScriptShot {
 
 export interface ReelLikeResult {
   schemaVersion: typeof REEL_LIKE_SCHEMA_VERSION;
-  template: BrandReelTemplate;
+  template: ReelStructure;
   /** Guion y lista de planos, en el orden del reel. */
   script: { title: string; idea: string; shots: ScriptShot[] };
   /** Textos con el tono de la marca. `onScreen[i].text` es el `id` del texto de la plantilla. */
@@ -475,7 +476,7 @@ export function buildReelLikeResult(
 
   const coverIndex = clamp(Math.round(num(ai.coverShot, 1)), 1, shots.length) - 1;
   const audio = measurement.audio;
-  const template: BrandReelTemplate = {
+  const template: ReelStructure = {
     schemaVersion: REEL_LIKE_SCHEMA_VERSION,
     name: str(ai.name, 120) || 'Plantilla de reel',
     summary: str(ai.summary, 400),
@@ -537,7 +538,7 @@ export function buildReelLikeResult(
 /** Lee un resultado guardado (`reel_references.result`). Null si no tiene la forma esperada. */
 export function parseReelLikeResult(value: unknown): ReelLikeResult | null {
   if (!isDict(value) || value.schemaVersion !== REEL_LIKE_SCHEMA_VERSION) return null;
-  const template = parseBrandReelTemplate(value.template);
+  const template = parseReelStructure(value.template);
   if (!template) return null;
   const script = isDict(value.script) ? value.script : {};
   const texts = isDict(value.texts) ? value.texts : {};

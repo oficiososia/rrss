@@ -5,7 +5,7 @@
 // Vive dentro de la Biblioteca (no es un área del menú): parte de sus recursos
 // y deja allí el resultado. El área «Crear» (docs/03-experiencia-de-usuario.md)
 // no existe todavía; cuando exista, podrá encargar reels con la misma función.
-import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Trash2, XCircle } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Sparkles, Trash2, XCircle } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -25,7 +25,7 @@ import {
   Select,
   Skeleton,
 } from '@/components/ui';
-import { mediaWorkerEnabled } from '@/config/app';
+import { mediaWorkerEnabled, reelLikeEnabled } from '@/config/app';
 import { ReelFontLine } from '@/features/brand/BrandFontsCard';
 import { useSignedUrls } from '@/features/library/api';
 import { useContentMutations } from '@/features/content/api';
@@ -51,6 +51,7 @@ import {
   type TextPosition,
 } from './plan';
 import { estimateReelSize } from './size';
+import { useReelLikeOptions } from './like/api';
 import { REEL_TEMPLATES } from './templates';
 
 const POSITION_LABEL: Record<TextPosition, string> = { top: 'Arriba', center: 'Centro', bottom: 'Abajo' };
@@ -83,6 +84,8 @@ function ReelsScreen() {
   const canEdit = can('edit');
   const navigate = useNavigate();
   const { create } = useContentMutations(org.id, brand.id);
+  // «Hacer un reel como este» solo sale si el servidor puede hacerlo para esta marca (nada simulado).
+  const like = useReelLikeOptions(brand.id, reelLikeEnabled() && canEdit);
   // El editor de reels trabaja sobre una pieza de formato reel (con versiones y aprobación).
   const openEditor = () =>
     create
@@ -101,6 +104,16 @@ function ReelsScreen() {
                 <Clapperboard className="h-4 w-4" aria-hidden />
                 Crear con el editor
               </Button>
+            )}
+            {canEdit && like.data?.available && (
+              <Link
+                to="como-este"
+                className="inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm font-medium hover:bg-subtle"
+                data-testid="reels-like"
+              >
+                <Sparkles className="h-4 w-4" aria-hidden />
+                Hacer un reel como este
+              </Link>
             )}
             <Link
               to=".."

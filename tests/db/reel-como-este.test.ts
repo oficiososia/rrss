@@ -50,13 +50,13 @@ import {
 } from '../../supabase/functions/_shared/ai/transcription/simulated.ts';
 import {
   LIKE_LIMITS,
-  parseBrandReelTemplate,
+  parseReelStructure,
   parseMeasurement,
   parseReelLikeResult,
   REFERENCE_LIMITS,
-  type ReelLikeResult,
 } from '../../supabase/functions/_shared/reels/like.ts';
 import { createAiReelLikeHandler, type ReelLikeBrand } from '../../supabase/functions/ai-reel-like/handler.ts';
+import { formatPlan, planRealTest, runRealTest, SAMPLE_PROFILE } from '../../scripts/reel-como-este-prueba.ts';
 import {
   aiBrandAccess,
   as,
@@ -1007,7 +1007,7 @@ describe('la estructura que sale del análisis', () => {
     cover: { at: 1.2, note: 'El producto' },
   });
   it('el esquema compartido deja la plantilla en su forma canónica y rechaza lo que no lo es', () => {
-    const parsed = parseBrandReelTemplate({
+    const parsed = parseReelStructure({
       ...spec(),
       totalSeconds: 999,
       pace: 'frenético',
@@ -1025,10 +1025,70 @@ describe('la estructura que sale del análisis', () => {
     // Los tiempos del texto salen de los planos, no de lo guardado.
     expect(parsed.texts[0]).toMatchObject({ fromShot: 's2', toShot: 's2', start: 2, end: 5, maxChars: 200 });
     expect(parsed.cover.at).toBe(5);
-    expect(parseBrandReelTemplate({ ...spec(), schemaVersion: 2 })).toBeNull();
-    expect(parseBrandReelTemplate({ ...spec(), name: '' })).toBeNull();
-    expect(parseBrandReelTemplate({ ...spec(), shots: [{ seconds: -1 }] })).toBeNull();
-    expect(parseBrandReelTemplate(null)).toBeNull();
+    expect(parseReelStructure({ ...spec(), schemaVersion: 2 })).toBeNull();
+    expect(parseReelStructure({ ...spec(), name: '' })).toBeNull();
+    expect(parseReelStructure({ ...spec(), shots: [{ seconds: -1 }] })).toBeNull();
+    expect(parseReelStructure(null)).toBeNull();
+  });
+
+  it('la plantilla del análisis se entrega a la marca en el formato compartido, con origen «reference»', async () => {
+    // El conversor y el validador son de la aplicación (zod, Vite): se cargan por ruta
+    // calculada, porque TypeScript revisa estas pruebas sin la configuración de la aplicación.
+    const app = <T>(file: string): Promise<T> =>
+      import(/* @vite-ignore */ pathToFileURL(path.resolve(process.cwd(), 'src/features/reels', file)).href) as Promise<T>;
+    type Checked = { ok: true; template: { slots: Array<{ seconds: number; shot?: string; kind: string }> } } | { ok: false };
+    const { REEL_TEMPLATES } = await app<{ REEL_TEMPLATES: Array<{ id: string }> }>('templates.ts');
+    const { validateReelTemplate } = await app<{ validateReelTemplate(raw: unknown, styleIds: string[]): Checked }>(
+      'reelTemplate.ts',
+    );
+    const { toReelTemplate, templateKey } = await app<{
+      toReelTemplate(result: unknown, options: { styles: unknown[]; origin: { kind: string } }): Json;
+      templateKey(name: string, suffix?: string): string;
+    }>('like/template.ts');
+    const t = await setup();
+    const other = await setup();
+    const fn = createFunction();
+    const done = await measured(t, fn.files);
+    await fn.call(login(t.editor), { action: 'create', brandId: t.brand, referenceId: done.id });
+    const result = parseReelLikeResult((await reference(done.id))!.result)!;
+    const document = toReelTemplate(result, { styles: REEL_TEMPLATES, origin: { kind: 'upload' } });
+    const deliver = (user: TestUser, brand: string, key: string) =>
+      as<{ data: Row }>(
+        db,
+        user,
+        `select to_jsonb(r) as data from public.deliver_reel_templates($1, $2::jsonb, 'reference') r`,
+        [brand, JSON.stringify([{ key, name: 'Gancho + 2 planos + cierre', document }])],
+      ).then((rows) => rows[0]!.data);
+
+    const key = templateKey('Gancho + 2 planos + cierre', 'ab12cd34');
+    const saved = await deliver(t.editor, t.brand, key);
+    expect(saved).toMatchObject({
+      brand_id: t.brand,
+      template_key: 'ref-gancho-2-planos-cierre-ab12cd34',
+      name: 'Gancho + 2 planos + cierre',
+      source: 'reference',
+      created_by: t.editor.id,
+    });
+    // Lo guardado es una plantilla de reel válida, con los planos medidos.
+    const stored = validateReelTemplate(
+      saved.document,
+      REEL_TEMPLATES.map((s) => s.id),
+    );
+    expect(stored.ok).toBe(true);
+    expect(stored.ok && stored.template.slots.map((slot) => [slot.seconds, slot.shot, slot.kind])).toEqual([
+      [2, 'detail', 'video'],
+      [1.5, 'wide', 'photo'],
+      [2.25, 'person', 'video'],
+      [1.75, 'detail', 'photo'],
+    ]);
+    // Quien solo ve la marca no la guarda; otra organización, ni la guarda aquí ni la ve.
+    await expect(deliver(t.viewer, t.brand, 'ref-otra-1')).rejects.toThrow(/Solo quien edita la marca/);
+    await expect(deliver(other.owner, t.brand, 'ref-otra-2')).rejects.toThrow(/Solo quien edita la marca/);
+    expect(await as(db, other.owner, `select 1 from public.brand_reel_templates where id = $1`, [saved.id])).toEqual([]);
+    expect(await as(db, t.viewer, `select 1 from public.brand_reel_templates where id = $1`, [saved.id])).toHaveLength(1);
+    // Descartar el análisis no borra la plantilla.
+    await as(db, t.editor, `select public.discard_reel_reference($1)`, [done.id]);
+    expect(await db.query(`select 1 from public.brand_reel_templates where id = $1`, [saved.id])).toHaveLength(1);
   });
 
   it('apunta la pieza que se abre en el editor a partir del análisis', async () => {
@@ -1173,6 +1233,77 @@ describe('de punta a punta con un vídeo de ejemplo', () => {
       } finally {
         await rm(bucket, { recursive: true, force: true });
         await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+});
+
+// ───────────────────────────── 5. La prueba real de un comando ─────────────────────────────
+
+describe('scripts/reel-como-este-prueba.ts', () => {
+  const openai = {
+    AI_TEXT_PROVIDER: 'openai',
+    AI_TEXT_MODEL: 'modelo-con-vision',
+    OPENAI_API_KEY: 'clave-de-mentira',
+    OPENAI_BASE_URL: 'https://eu.api.openai.com',
+    AI_PRICES: JSON.stringify({ 'openai/modelo-con-vision': { input_tokens: 1, output_tokens: 4, cache_read_input_tokens: 0.1 } }),
+  };
+
+  it('en seco dice el modelo, lo que falta y el coste máximo, sin llamar a nadie', () => {
+    const empty = planRealTest({});
+    expect(empty).toMatchObject({ ready: false, model: null, maxMicros: null });
+    expect(formatPlan(empty, false).join('\n')).toMatch(/Modelo: \(sin configurar\)[\s\S]*Falta: No hay modelo elegido[\s\S]*EN SECO: no se ha llamado a nadie/);
+
+    const plan = planRealTest(openai);
+    expect(plan).toMatchObject({ ready: true, provider: 'openai', model: 'modelo-con-vision', problems: [] });
+    // 4 fotogramas (820 tokens de cota cada uno) + el texto, a 1 micro; la salida, a 4.
+    expect(plan.maxMicros).toBeGreaterThan(4 * 820 + 3900 * 4);
+    expect(plan.maxMicros).toBeLessThan(60_000);
+    const lines = formatPlan(plan, false).join('\n');
+    expect(lines).toContain('Modelo: openai/modelo-con-vision');
+    expect(lines).toMatch(/Coste máximo estimado: 0,0\d+/);
+    // La clave no sale nunca.
+    expect(lines).not.toContain('clave-de-mentira');
+
+    // Sin precio, sin clave o fuera de la UE no está lista; con --voz hace falta la transcripción.
+    expect(planRealTest({ ...openai, AI_PRICES: undefined }).ready).toBe(false);
+    expect(planRealTest({ ...openai, OPENAI_API_KEY: undefined }).ready).toBe(false);
+    expect(planRealTest({ ...openai, OPENAI_BASE_URL: undefined }).ready).toBe(false);
+    expect(planRealTest({ ...openai, AI_TEXT_PROVIDER: 'mistral', MISTRAL_API_KEY: 'k' }).ready).toBe(false);
+    const withVoice = planRealTest(openai, { speech: true });
+    expect(withVoice.ready).toBe(true);
+    expect(withVoice.maxMicros).toBeGreaterThan(plan.maxMicros!);
+    expect(formatPlan(planRealTest({}), true).join('\n')).toContain('No se ha llamado a nadie');
+  });
+
+  it.skipIf(!WORKER_READY)(
+    'con --apply mide el vídeo de ejemplo con el trabajador, llama UNA vez al modelo y deja el resultado',
+    async () => {
+      const out = await mkdtemp(path.join(os.tmpdir(), 'rrss-reel-prueba-real-'));
+      const provider = createLocalTestProvider();
+      const lines: string[] = [];
+      try {
+        const run = await runRealTest({
+          env: {},
+          root: process.cwd(),
+          out,
+          speech: false,
+          idea: 'Cómo hacemos el pan',
+          profile: SAMPLE_PROFILE,
+          log: (line) => lines.push(line),
+          provider: { text: provider, model: LOCAL_TEST_MODEL, price: (usage) => priceUsage(TEXT_MODEL, usage).micros },
+        });
+        expect(provider.calls).toHaveLength(1);
+        expect(provider.calls[0]!.input.images).toHaveLength(4);
+        expect(run.result.template.shots.map((s) => Math.round(s.seconds * 4) / 4)).toEqual([2, 1.5, 2.25, 1.75]);
+        expect(run.costMicros).toBeGreaterThan(0);
+        const saved = JSON.parse(await readFile(run.file, 'utf8')) as { model: string; costMicros: number; result: Json };
+        expect(saved).toMatchObject({ model: LOCAL_TEST_MODEL, costMicros: run.costMicros });
+        expect(parseReelLikeResult(saved.result)).toEqual(run.result);
+        expect(lines.join('\n')).toMatch(/Medido sin IA: 4 planos[\s\S]*Consumo: [\s\S]*coste real/);
+      } finally {
+        await rm(out, { recursive: true, force: true });
       }
     },
     180_000,

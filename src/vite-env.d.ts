@@ -17,6 +17,8 @@ interface ImportMetaEnv {
   readonly VITE_MEDIA_WORKER_ENABLED?: string;
   /** `true` para ofrecer subtítulos automáticos en el editor de reels (además, OpenAI en el servidor). */
   readonly VITE_REEL_SUBTITLES_ENABLED?: string;
+  /** `true` para ofrecer «Hacer un reel como este» (además, trabajador de medios y un modelo con visión en el servidor). */
+  readonly VITE_REEL_LIKE_ENABLED?: string;
   /** `true` si hay aplicación de Meta y publicador configurados: enseña conectar cuentas y programar para publicar. */
   readonly VITE_SOCIAL_PUBLISHING_ENABLED?: string;
   /** `true` si hay cliente OAuth de Google y la función drive-media: enseña Google Drive en ajustes y biblioteca. */

@@ -1,7 +1,11 @@
 // Proyecto de reel del editor: lo que se guarda como versión de una pieza de
 // formato reel (`content_versions.data`) y lo que se encarga al trabajador.
 //
-//   { kind: 'reel', template: { id }, plan: <plan v2> }
+//   { kind: 'reel', template: { id }, plan: <plan v2>, guide?: <guion> }
+//
+// `guide` es opcional y solo vive en la versión guardada (nunca se manda al
+// trabajador): el guion de un reel hecho con «Hacer un reel como este», con los
+// planos que faltan por grabar (src/features/reels/like/draft.ts).
 //
 // El plan v2 es el mismo que valida el trabajador (worker/src/reel/schema.ts,
 // zod 4); aquí se repite con zod 3 y las mismas reglas, y un ejemplo
@@ -190,10 +194,56 @@ export type { TextAnimation };
 /** Plan en edición: puede no tener todavía ningún elemento. */
 export type DraftPlan = Omit<ReelPlan, 'clips'> & { clips: Clip[] };
 
+// ───────────────────────────── Guion («Hacer un reel como este») ─────────────────────────────
+
+export const GUIDE_SHOT_KINDS = ['detalle', 'general', 'persona', 'texto'] as const;
+export const GUIDE_TEXT_SIZES = ['grande', 'normal', 'pequeno'] as const;
+
+/** Un plano del guion. Sin `clipId` (o si ese clip ya no está en el reel), falta por grabar. */
+export const guideShotSchema = z
+  .object({
+    id: elementId,
+    /** Qué grabar (o qué foto usar). */
+    label: z.string().min(1).max(240),
+    tip: z.string().max(240).optional(),
+    kind: z.enum(GUIDE_SHOT_KINDS),
+    media: z.enum(['foto', 'video']),
+    seconds: z.number().min(0.1).max(180),
+    /** Cómo se entra desde el plano anterior. */
+    transition: transitionSchema.optional(),
+    clipId: elementId.optional(),
+  })
+  .strict();
+export type GuideShot = z.infer<typeof guideShotSchema>;
+
+/** Un texto en pantalla del guion: se ve durante los planos `fromShot`…`toShot`. */
+export const guideTextSchema = z
+  .object({
+    id: elementId,
+    text: z.string().min(1).max(REEL_TEXT_MAX_LENGTH),
+    position: z.enum(TEXT_POSITIONS),
+    size: z.enum(GUIDE_TEXT_SIZES),
+    fromShot: elementId,
+    toShot: elementId,
+  })
+  .strict();
+export type GuideText = z.infer<typeof guideTextSchema>;
+
+export const guideSchema = z
+  .object({
+    /** Análisis del que sale (`reel_references.id`). */
+    referenceId: z.string().uuid(),
+    shots: z.array(guideShotSchema).min(1).max(REEL_MAX_CLIPS),
+    texts: z.array(guideTextSchema).max(REEL_MAX_TEXTS).default([]),
+  })
+  .strict();
+export type ReelGuide = z.infer<typeof guideSchema>;
+
 export interface ReelProject {
   kind: typeof PROJECT_KIND;
   template: { id: string };
   plan: DraftPlan;
+  guide?: ReelGuide;
 }
 
 export const projectSchema = z
@@ -201,6 +251,7 @@ export const projectSchema = z
     kind: z.literal(PROJECT_KIND),
     template: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/) }).strict(),
     plan: planSchema,
+    guide: guideSchema.optional(),
   })
   .strict();
 
