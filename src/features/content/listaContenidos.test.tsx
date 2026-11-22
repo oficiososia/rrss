@@ -228,7 +228,37 @@ describe('Nueva idea con formato Reel', () => {
     await user.click(dialog.getByTestId('create-content-format-reel'));
     const like = await dialog.findByTestId('create-content-reel-like');
     expect(like).toHaveAttribute('href', `${BRAND_BASE}/biblioteca/reels/como-este`);
-    await waitFor(() => expect(like).toHaveTextContent('1 % del cupo de este mes'));
+    await waitFor(() => expect(like).toHaveTextContent('Gasta como mucho un 1 % del cupo de este mes.'));
     expect(like).not.toHaveTextContent('créditos');
+    // Antes, con un coste pequeño: «Gasta como mucho menos del 1 % del cupo de este mes».
+    expect(like).not.toHaveTextContent('como mucho menos');
+  });
+
+  it('en autogestión, «Hacer un reel como este» dice lo que cuesta en llano y no habla del cupo', async () => {
+    vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
+    vi.stubEnv('VITE_REEL_LIKE_ENABLED', 'true');
+    seed([]);
+    seedWorkspace({ orgRole: 'owner', workMode: 'self' });
+    fake.tables.brand_reel_templates = [];
+    fake.tables.usage_quotas = [
+      { organization_id: ORG_ID, metric: 'ai_cost_micros', limit_value: 5_200_000, period: 'month' },
+    ];
+    fake.fn('ai-reel-like', () => ({
+      status: 200,
+      body: {
+        available: true,
+        speechAvailable: false,
+        estimate: { textMicros: 40_000, speechMicros: 12_000, speechMicrosPerSecond: 100, maxMicros: 52_000 },
+        limits: { maxSeconds: 180, maxUploadBytes: 50 * 1024 * 1024, maxSpeechSeconds: 120, maxFrames: 12 },
+      },
+    }));
+    const { user } = renderApp(CONTENT);
+    await user.click(await screen.findByTestId('content-empty-new'));
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByTestId('create-content-format-reel'));
+    const cost = await dialog.findByTestId('create-content-reel-like-cost');
+    // 0,052 de coste máximo: sin moneda fijada se cuenta en créditos; nada de porcentajes ni cupos.
+    expect(cost.textContent?.replace(/\s/g, ' ').trim()).toBe('Cuesta unos 0,05 créditos.');
+    expect(dialog.getByTestId('create-content-reel-like')).not.toHaveTextContent(/cupo|%/);
   });
 });

@@ -5,10 +5,10 @@ import { Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, Field, Input } from '@/components/ui';
 import { reelLikeEnabled } from '@/config/app';
-import { quotaShareText } from '@/features/ai/cupo';
+import { costSentence } from '@/features/ai/cupo';
 import { useAiQuota } from '@/features/ai/api';
-import { formatMicros } from '@/features/ai/money';
 import { useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { describeNeeds } from '@/features/reels/reelTemplate';
 import { TemplateSample } from '@/features/reels/editor/TemplateCards';
 import { useBrandReelTemplates, type BrandReelTemplate } from '@/features/reels/editor/api';
@@ -69,6 +69,8 @@ export function CreateContentDialog({
       open={open}
       onOpenChange={onOpenChange}
       size="lg"
+      // Sin relleno abajo: la barra de botones llega hasta el borde del diálogo.
+      bodyClassName="pb-0"
       title="Nueva idea"
       description="Elige qué vas a publicar. Después la diseñas en el editor."
     >
@@ -113,7 +115,12 @@ function CreateForm({
   const { isAdmin } = useOrg();
   const reelTemplates = useBrandReelTemplates(brandId);
   const like = useReelLikeOptions(brandId, reelLikeEnabled());
-  const quota = useAiQuota(organizationId, isAdmin && Boolean(like.data?.available));
+  const { selfManaged } = useWorkMode();
+  // En autogestión el cupo no se enseña: ni se pregunta.
+  const quota = useAiQuota(organizationId, !selfManaged && isAdmin && Boolean(like.data?.available));
+  const likeCost = like.data?.estimate
+    ? costSentence(like.data.estimate.maxMicros, { selfManaged, limitMicros: quota.data?.limit_value })
+    : null;
   const brandReelTemplates = reelTemplates.data ?? [];
   const cards = cardsFor(network);
   const current = cards.find((c) => c.format === format);
@@ -291,15 +298,7 @@ function CreateForm({
             <span className="block font-medium">Hacer un reel como este</span>
             <span className="block text-xs text-muted">
               Sube un vídeo que te guste y lo rehacemos con tu material.
-              {like.data.estimate && (
-                <>
-                  {' '}
-                  Gasta como mucho{' '}
-                  {quotaShareText(like.data.estimate.maxMicros, quota.data?.limit_value) ??
-                    formatMicros(like.data.estimate.maxMicros)}
-                  .
-                </>
-              )}
+              {likeCost && <span data-testid="create-content-reel-like-cost"> {likeCost}</span>}
             </span>
           </span>
         </Link>
@@ -351,8 +350,15 @@ function CreateForm({
         </div>
       )}
 
-      {/* Los botones se quedan a la vista aunque la lista de plantillas sea larga. */}
-      <div className="sticky bottom-0 -mx-5 -mb-4 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
+      {/*
+        Los botones se quedan a la vista aunque la lista de plantillas sea larga. El cuerpo del diálogo va
+        sin relleno abajo (`bodyClassName="pb-0"`): con él, la barra pegada se quedaba 1rem por encima del
+        borde y por esa franja asomaban las miniaturas de las plantillas.
+      */}
+      <div
+        className="sticky bottom-0 -mx-5 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3"
+        data-testid="create-content-actions"
+      >
         <Button variant="secondary" onClick={onClose} disabled={create.isPending}>
           Cancelar
         </Button>
