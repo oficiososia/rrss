@@ -602,6 +602,25 @@ Con **2 GB la máquina se queda sin memoria** (pico 2,2–2,3 GB + el sistema): 
 (las pruebas usan dobles y el cliente de Supabase simulado); la prueba e2e (el recorte en e2e va
 simulado en el navegador y no pasa por esta cadena).
 
+**Cuando el servidor tarda (rama `f47/cutout-lento`, 23/11/2026).** En staging (22/11) el trabajo
+tardó 54 s una vez y más de 176 s otra; la causa más probable es la cuota de procesador de la
+máquina compartida de Fly, no el modelo (va dentro de la imagen). Diagnóstico, tiempos por fase,
+registro nuevo y opciones con su coste: `docs/alojamiento.md`, §3.1. En el panel:
+
+- **El plazo sigue en 3 minutos** (`JOB_TIMEOUT_MS`; los números para moverlo están en ese apartado).
+- **Al vencer, se pasa al navegador en el acto.** Antes `serverJob.ts` esperaba a que el servidor
+  confirmase la cancelación con la barra parada en «Recortando en el servidor…»; ahora la pide sin
+  esperarla (si el trabajo acababa de terminar, su PNG intermedio se borra igual, en segundo plano).
+- **La barra dice por qué cambia de motor.** `remover.ts` marca con `after` (`server-timeout` o
+  `server-failed`) el progreso de los motores que vienen después de un servidor que no pudo, y
+  `describeProgress` empieza la frase con «El servidor no ha respondido a tiempo; se termina con el
+  recorte de calidad básica.» (o «…no ha podido quitar el fondo…»). Se dice antes de que el motor
+  siguiente dé su primera señal, no cuando llega.
+- **Sin tocar:** el panel de fotos del editor de piezas (`content/editor/panels/PhotoPanel.tsx`) tiene
+  su propio texto de ocupado, que no cuenta las fases del servidor ni este aviso.
+- **Probado** con dobles (`cutout/chain.test.ts`, `fotosIa.test.ts`); **sin probar** en un navegador
+  real contra el trabajador de Fly.
+
 ## 6. Pruebas
 
 - Unitarias (`src/features/photo-edit/edicion.test.ts`): ajustes (sin cambio
