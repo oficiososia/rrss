@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
-import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { BRAND_BASE, BRAND_ID, brandRow, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
 
@@ -131,6 +131,33 @@ function fakeAiMedia(generate: (input: Record<string, unknown>) => { status: num
 
 afterEach(() => {
   vi.unstubAllEnvs();
+});
+
+describe('Editor: imagen con IA en modo agencia', () => {
+  it('si el servidor la cierra a la marca (modo agencia), no sale «Con IA» y se explica en una frase', async () => {
+    vi.stubEnv('VITE_AI_IMAGE_ENABLED', 'true');
+    fake.fn('ai-media', (body) => {
+      const { action } = body as { action: string };
+      return { status: 200, body: { action, models: [], agencyMode: true } };
+    });
+    seed(createEmptyDocument({ aspectRatio: '4:5' }));
+    fake.tables.brands = [brandRow({ ai_mode: 'agency' })];
+    renderApp(EDITOR);
+    await screen.findByTestId('canvas-stub');
+    expect(await screen.findByTestId('image-ai-agency-note')).toHaveTextContent(/solo el personal de la agencia/);
+    expect(screen.queryByTestId('add-image-ai')).not.toBeInTheDocument();
+  });
+
+  it('si el servidor la deja usar (personal de la agencia), el botón sale y no hay nota', async () => {
+    vi.stubEnv('VITE_AI_IMAGE_ENABLED', 'true');
+    fakeAiMedia(() => ({ status: 200, body: {} }));
+    seed(createEmptyDocument({ aspectRatio: '4:5' }));
+    fake.tables.brands = [brandRow({ ai_mode: 'agency' })];
+    renderApp(EDITOR);
+    await screen.findByTestId('canvas-stub');
+    expect(await screen.findByTestId('add-image-ai')).toBeInTheDocument();
+    expect(screen.queryByTestId('image-ai-agency-note')).not.toBeInTheDocument();
+  });
 });
 
 describe('Editor: imagen con IA', () => {

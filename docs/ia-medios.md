@@ -8,11 +8,11 @@ tabla `ai_media_models` (migración `20261117110000_ai_media_models.sql`).
 | Pieza                                     | Implementado            | Probado                                                     | Pendiente o bloqueado                                                                                   |
 | ----------------------------------------- | ----------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Contrato de medios, servicio, cupo y cola | Sí                      | Sí, contra las migraciones reales con proveedores simulados | —                                                                                                       |
-| Registro de modelos y precios             | Sí                      | Sí (RLS, privilegios, vuelta atrás)                         | Todas las filas están inactivas: falta que el dueño elija proveedor y que alguien contraste los precios |
+| Registro de modelos y precios             | Sí                      | Sí (RLS, privilegios, vuelta atrás)                         | Las filas sembradas nacen inactivas; en staging ya hay filas activas (auditoría del 21/11/2026). Una fila activa solo cuenta si su proveedor está configurado (§5) |
 | Adaptadores reales (6, con ComfyUI)       | Sí                      | **Solo con respuestas HTTP simuladas**                      | **Ninguno se ha probado contra el servicio real**: no hay cuentas ni claves                             |
 | Almacenamiento de resultados (§7)         | Sí, sobre Storage       | Contra la base de datos real (PGlite)                       | No se ha ejecutado contra un Storage de verdad: lo hará la prueba de extremo a extremo `10-…`           |
 | Funciones `ai-media`, `ai-media-poll` y `ai-media-webhook` (§8) | Sí | Su lógica, en Node con la base de datos real y la imagen simulada | Sin desplegar. La prueba de extremo a extremo `10-…` está escrita y sin ejecutar |
-| Seguimiento con pg_cron (§9)              | Sí (migración)          | El disparador, en PGlite (sin pg_cron: no hace nada)        | No se ha programado en ningún Supabase; faltan los secretos de Vault en cada entorno                    |
+| Seguimiento con pg_cron (§9)              | Sí (migración)          | El disparador, en PGlite (sin pg_cron: no hace nada)        | En staging está programado y los secretos de Vault del cron (`rrss_project_url`, `rrss_service_role_key`) ya existen; en producción, a crear (§9) |
 | Pantalla «Con IA» en el editor (§10)      | Sí                      | Pruebas de componentes                                      | Solo imagen: el vídeo generativo no se expone (nace apagado)                                            |
 
 No se ha elegido proveedor: están preparados todos detrás del mismo contrato
@@ -137,8 +137,25 @@ pide un token a Google (Vertex), el saldo a Black Forest Labs (`/v1/credits`) o
 el estado a ComfyUI (`/system_stats`); Ideogram no documenta ninguna llamada
 gratuita y se dice así. Nada de eso genera imágenes. El vídeo (Higgsfield,
 fal.ai) sigue apagado y solo por variables. La interfaz enseña la imagen con IA
-si `VITE_AI_IMAGE_ENABLED=true` **y** hay algún modelo de imagen activo con su
-adaptador configurado.
+si `VITE_AI_IMAGE_ENABLED=true` **y** hay algún modelo de imagen activo **cuyo
+proveedor está configurado** (credenciales y criterio de datos). Una fila activa
+del registro cuyo proveedor no se ha cargado NO cuenta como disponible: no
+enciende `aiImage`, no sale en el selector de modelos (`image.models`) ni en las
+ediciones de foto (`photo.options`); una prueba lo fija
+(`tests/db/ia-openai-imagen.test.ts`). Activar una fila no basta: hace falta
+también su clave.
+
+**Modo agencia.** En una marca con `ai_mode = 'agency'` la imagen con IA
+(`ai-media`: generar, estimar, editar fotos) la usa solo el personal de la
+agencia o de la plataforma, no los miembros de la marca (la IA de texto, en esas
+marcas, está cerrada para todos salvo el copiloto: `ai-generate`). Cuenta como
+personal: superadministrador de la plataforma, o propietario/administrador de
+la organización de la marca si esa organización es de tipo «agencia»
+(`public.ai_brand_access`, migración `20261216010000`). El resto recibe 409
+`agency_mode` antes de reservar cupo, y `image.models` y `photo.options` salen
+vacíos con `agencyMode: true`; en el editor se explica en una frase en vez del
+botón «Con IA». El superadministrador pasa esta puerta, pero el permiso de
+editar la marca lo sigue dando la base de datos al reservar el cupo.
 
 **O como variables** de las funciones del servidor (nunca `VITE_`). Las de este bloque
 (ComfyUI, pruebas locales) están documentadas aquí y todavía NO en
@@ -146,7 +163,8 @@ adaptador configurado.
 variable falta.
 
 En la interfaz, `VITE_AI_IMAGE_ENABLED=true` enseña «Con IA» en el editor; sin
-ella no aparece nada (igual que `VITE_AI_TEXT_ENABLED` con el texto).
+ella no aparece nada (igual que `VITE_AI_TEXT_ENABLED` con el texto, que además
+se decide tarea a tarea: `docs/ia-texto.md`).
 
 | Proveedor         | Variables                                                                                                                                       |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -176,7 +194,8 @@ registro diga otra cosa.
 3. Contrastar el precio en la página oficial, anotar fecha y fuente y marcarlo
    verificado; después, activar la fila.
 4. Desplegar `ai-media`, `ai-media-poll` y `ai-media-webhook`, crear los dos
-   secretos de Vault (§9) y poner `VITE_AI_IMAGE_ENABLED=true` en la aplicación.
+   secretos de Vault (§9; en staging ya existen) y poner
+   `VITE_AI_IMAGE_ENABLED=true` en la aplicación (en staging ya está en `true`).
 
 ## 7. Almacenamiento (`supabase-storage.ts`)
 
@@ -251,7 +270,8 @@ migración. Esas páginas traían una nota dirigida a asistentes automáticos
 pendientes, 2 invocaciones por minuto como mucho; el plan gratuito incluye
 500 000.
 
-En cada entorno, una vez (SQL Editor, como `postgres`):
+En cada entorno, una vez (SQL Editor, como `postgres`; **en staging ya están
+creados**, solo falta en los entornos nuevos):
 
 ```sql
 select vault.create_secret('https://<proyecto>.supabase.co', 'rrss_project_url');

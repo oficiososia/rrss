@@ -27,6 +27,7 @@ import {
 } from '../../supabase/functions/_shared/ai/media/models.ts';
 import { createMediaRuntime } from '../../supabase/functions/_shared/ai/media/runtime.ts';
 import { simulatedPng } from '../../supabase/functions/_shared/ai/media/simulated.ts';
+import { computeAvailability } from '../../supabase/functions/_shared/integrations/availability.ts';
 import { probeIntegration } from '../../supabase/functions/_shared/integrations/probes.ts';
 import { createDb, type Db, type Row } from './helpers';
 
@@ -371,6 +372,28 @@ describe('OpenAI imagen · configuración y elección', () => {
     });
     expect(eu.editChoices).toHaveLength(3);
     expect(eu.editChoices.every((c) => c.euProcessing)).toBe(true);
+  });
+
+  it('filas activas de un proveedor SIN configurar no cuentan como disponibles ni salen en los selectores', () => {
+    // Sin OPENAI_API_KEY el adaptador no se carga, aunque el registro tenga las cuatro filas activas
+    // y aunque se permita fuera de la UE o se fije el modelo a mano.
+    for (const extra of [{}, { AI_MEDIA_ALLOW_NON_EU: 'true' }, { AI_MEDIA_IMAGE_MODEL: 'openai:gpt-image-2.5-flare' }]) {
+      const runtime = createMediaRuntime({
+        env: extra,
+        fetch: deps.fetch,
+        rpc: async () => ({ data: null, error: null }),
+        reader: { getGeneration: async () => null, getJob: async () => null },
+        storage: { put: async () => ({ path: 'x' }) },
+        modelRows: rows,
+      });
+      expect(runtime.imageChoices, JSON.stringify(extra)).toEqual([]);
+      expect(runtime.editChoices, JSON.stringify(extra)).toEqual([]);
+      expect(computeAvailability(extra, rows).aiImage, JSON.stringify(extra)).toBe(false);
+    }
+    // Con la clave, sí (con el endpoint de la UE).
+    expect(
+      computeAvailability({ OPENAI_API_KEY: 'k', OPENAI_BASE_URL: 'https://eu.api.openai.com' }, rows).aiImage,
+    ).toBe(true);
   });
 });
 

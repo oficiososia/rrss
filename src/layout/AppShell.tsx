@@ -42,7 +42,7 @@ import { cn, initials } from '@/lib/utils';
 import { MobileNav } from './MobileNav';
 import { NavBadge, type NavItem } from './nav';
 import { useTheme, type ThemeChoice } from './theme';
-import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspace, WorkspaceProvider } from './workspace';
 
 interface AppShellProps {
@@ -256,7 +256,7 @@ function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: 
 
 function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
   const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
-  const aiText = useFeature('aiText');
+  const aiText = useTextTask('campaign.plan');
   const { working, collapsed, toggle } = useWorkspace();
   const items = navItems(org, brand, unread.data?.length ?? 0, aiText);
   return (

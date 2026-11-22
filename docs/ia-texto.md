@@ -205,6 +205,22 @@ Reglas:
   variables, nunca con valores. Al navegador solo llega «la IA no está
   disponible».
 
+### Disponibilidad por tarea
+
+La interfaz no pregunta «¿hay IA de texto?», sino «¿está lista ESTA tarea?».
+`platform-integrations` (acción `availability`) devuelve `aiText` (alguna tarea
+lista) y `aiTextTasks`, un booleano por tarea (`post.caption`,
+`profile.proposal`, `brand.check`, `campaign.plan`, `analytics.summary`,
+`editor.copilot`). Una tarea está lista si tiene ruta (la suya o la de por
+defecto `AI_TEXT_PROVIDER` y `AI_TEXT_MODEL`), su adaptador se ha cargado
+(credenciales y criterio de datos) y su modelo tiene el precio completo en
+`AI_PRICES`. Configurar una sola tarea no enciende las demás: cada botón sale
+solo si su tarea está lista. Para encenderlas todas basta el proveedor y el
+modelo por defecto (Plataforma → Integraciones → IA de texto → «Todo el
+texto»); la ruta propia de una tarea es una excepción y manda sobre la general
+campo a campo. Que esté lista no garantiza que la clave sea buena: eso lo dice
+«Probar conexión». Probado en `tests/db/integraciones.test.ts`.
+
 ## 4. Tareas
 
 Las instrucciones de cada tarea son texto fijo del producto. Todo lo que escribe

@@ -134,9 +134,9 @@ const KNOWN_CODES = new Set<string>([
 
 const MESSAGES: Record<AiErrorCode, string> = {
   quota_exhausted:
-    'El cupo de IA de este mes está agotado. Se renueva el día 1 del mes que viene; si hace falta antes, quien administra la organización puede pedir a la plataforma que lo amplíe.',
+    'El cupo de IA de este mes está agotado. Se renueva el día 1 del mes que viene; si hace falta antes, pídeselo a quien administra tu organización, que puede pedir a la plataforma que lo amplíe.',
   quota_missing:
-    'Esta organización todavía no tiene cupo de IA asignado. Quien administra la organización debe pedírselo a la plataforma.',
+    'Esta organización no tiene cupo de IA asignado (su plan no lo incluye o todavía no se ha activado). Pídelo a quien administra tu organización; si la administras tú, pídeselo a la plataforma para que lo asigne.',
   not_configured:
     'La IA no está disponible en este momento: falta configurarla en la plataforma. Avisa a quien la administra.',
   refused:

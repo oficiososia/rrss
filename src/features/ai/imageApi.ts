@@ -88,6 +88,7 @@ async function invokeAiMedia<T>(action: string, brandId: string, input?: unknown
 
 export const imageKeys = {
   models: (brandId: string) => ['ai-image', brandId, 'models'] as const,
+  access: (brandId: string) => ['ai-image', brandId, 'access'] as const,
   estimate: (brandId: string, input: ImageRequestInput) => ['ai-image', brandId, 'estimate', input] as const,
   generation: (generationId: string) => ['ai-image', 'generation', generationId] as const,
 };
@@ -101,6 +102,23 @@ export function useImageModels(brandId: string, enabled = true) {
     retry: false,
     queryFn: async () => (await invokeAiMedia<{ models: ImageModelChoice[] }>('image.models', brandId)).models ?? [],
   });
+}
+
+/**
+ * En una marca en modo agencia, ¿le está cerrada la imagen con IA a quien mira?
+ * Solo la usa el personal de la agencia o de la plataforma; lo decide el
+ * servidor (`image.models` responde `agencyMode`). Mientras no se sabe, o si
+ * falla, no se bloquea: el servidor lo impone igualmente.
+ */
+export function useImageAgencyBlock(brandId: string, enabled: boolean): boolean {
+  const query = useQuery<boolean, AiRequestError>({
+    queryKey: imageKeys.access(brandId),
+    enabled,
+    staleTime: 5 * 60_000,
+    retry: false,
+    queryFn: async () => (await invokeAiMedia<{ agencyMode?: boolean }>('image.models', brandId)).agencyMode === true,
+  });
+  return enabled && query.data === true;
 }
 
 /** Coste máximo de una petición, ANTES de generar. No reserva nada. */

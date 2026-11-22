@@ -60,7 +60,11 @@ describe('errores de ai-generate', () => {
     );
     expect(exhausted.code).toBe('quota_exhausted');
     expect(exhausted.message).toMatch(/cupo de IA de este mes está agotado/);
-    expect((await toAiError(http(402, { error: { code: 'quota_missing' } }))).message).toMatch(/no tiene cupo/);
+    const missing = await toAiError(http(402, { error: { code: 'quota_missing' } }));
+    expect(missing.message).toMatch(/no tiene cupo de IA asignado/);
+    // Dice a quién pedirlo: a quien administra la organización y, si es quien la administra, a la plataforma.
+    expect(missing.message).toMatch(/quien administra tu organización/);
+    expect(missing.message).toMatch(/pídeselo a la plataforma/);
     expect((await toAiError(http(503, { error: { code: 'not_configured' } }))).message).toMatch(/falta configurarla/);
     expect((await toAiError(http(422, { error: { code: 'refused' } }))).message).toMatch(/se ha negado/);
     const agency = await toAiError(http(409, { error: { code: 'agency_mode', message: 'del servidor' } }));

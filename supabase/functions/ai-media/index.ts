@@ -28,11 +28,14 @@ const handler = createAiMediaHandler({
     return error || !data.user ? null : { userId: data.user.id };
   },
 
-  // Con la identidad del usuario: la RLS decide qué marca ve.
-  async brandVisible(accessToken, brandId) {
-    const { data, error } = await asUser(accessToken).from('brands').select('id').eq('id', brandId).maybeSingle();
+  // Con la identidad del usuario: la base de datos decide si ve la marca, cómo
+  // trabaja (modo de IA) y si es personal de la agencia (`ai_brand_access`).
+  async brandAccess(accessToken, brandId) {
+    const { data, error } = await asUser(accessToken).rpc('ai_brand_access', { p_brand_id: brandId });
     if (error) throw new Error('No se ha podido leer la marca');
-    return Boolean(data);
+    const access = data as { ai_mode?: string; agency_staff?: boolean } | null;
+    if (!access) return null;
+    return { aiMode: access.ai_mode === 'agency' ? 'agency' : 'api', agencyStaff: access.agency_staff === true };
   },
 
   // Con la identidad del usuario: solo imágenes de la marca que ve.

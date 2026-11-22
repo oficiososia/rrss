@@ -55,7 +55,7 @@ import {
 import { ProfileProposalFromSources } from './ProfileProposalFromSources';
 import { BrandFontsCard } from './BrandFontsCard';
 import { SourcesCard } from './SourcesCard';
-import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useTextTask } from '@/features/platform/integrations/useFeature';
 
 const TABS = [
   { value: 'negocio', label: 'Negocio' },
@@ -207,7 +207,7 @@ function ProfileEditor({ active }: { active: BrandProfileRow | null }) {
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const canManage = can('manage');
-  const aiText = useFeature('aiText');
+  const aiText = useTextTask('profile.proposal');
   const save = useSaveProfile(brand.id);
   const [params, setParams] = useSearchParams();
 

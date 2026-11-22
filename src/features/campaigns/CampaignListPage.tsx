@@ -12,13 +12,13 @@ import { NewCampaignDialog } from './NewCampaignDialog';
 import { shortDay } from './plan';
 import { PiecePreview } from './PiecePreview';
 import { usePiecePreviews, type PreviewRequest } from './previews';
-import { useFeatureStatus } from '@/features/platform/integrations/useFeature';
+import { useTextTaskStatus } from '@/features/platform/integrations/useFeature';
 
 /** Campañas de la marca: pedir un plan y ver en qué punto está cada uno. */
 export function CampaignListPage() {
   const { org } = useOrg();
   const { brand } = useBrand();
-  const aiText = useFeatureStatus('aiText');
+  const aiText = useTextTaskStatus('campaign.plan');
   // Con la marca en modo agencia no hace falta esperar al servidor.
   if (aiText === undefined && brand.ai_mode !== 'agency') return <Spinner />;
   const available = campaignsAvailable(brand, aiText === true);

@@ -47,7 +47,7 @@ import {
   useRequestReport,
 } from './api';
 import { BarChart } from './BarChart';
-import { useFeature } from '@/features/platform/integrations/useFeature';
+import { useTextTask } from '@/features/platform/integrations/useFeature';
 
 type RangeKey = 'last7' | 'last28' | 'thisMonth' | 'lastMonth';
 const RANGES: Record<RangeKey, string> = {
@@ -90,7 +90,7 @@ const REPORT_STATUS: Record<
 export function AnalyticsPage() {
   const { org } = useOrg();
   const { brand, can } = useBrand();
-  const aiText = useFeature('aiText');
+  const aiText = useTextTask('analytics.summary');
   const [range, setRange] = useState<RangeKey>('last28');
   const period = useMemo(() => periodFor(range), [range]);
   const previous = useMemo(() => previousPeriod(period), [period]);

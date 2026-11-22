@@ -7,6 +7,17 @@
 //
 // Sin importaciones con «@/»: lo usan también las pruebas de base de datos.
 
+/** Tareas de texto de `ai-generate`; los mismos nombres que `purpose` en el servidor. */
+export const AI_TEXT_TASKS = [
+  'post.caption',
+  'profile.proposal',
+  'brand.check',
+  'campaign.plan',
+  'analytics.summary',
+  'editor.copilot',
+] as const;
+export type AiTextTask = (typeof AI_TEXT_TASKS)[number];
+
 export type IntegrationId =
   'meta' | 'comfyui' | 'ai_text' | 'ai_image' | 'stripe' | 'google_drive' | 'r2' | 'media_worker';
 
@@ -48,13 +59,14 @@ const YES_NO = [
   { value: 'true', label: 'Sí' },
 ];
 
-const TEXT_TASKS: Array<{ prefix: string; label: string }> = [
-  { prefix: 'AI_TEXT_POST_CAPTION', label: 'Textos de las piezas' },
-  { prefix: 'AI_TEXT_PROFILE_PROPOSAL', label: 'Propuesta de perfil de marca' },
-  { prefix: 'AI_TEXT_BRAND_CHECK', label: 'Verificador de marca' },
-  { prefix: 'AI_TEXT_CAMPAIGN_PLAN', label: 'Plan de campaña' },
-  { prefix: 'AI_TEXT_ANALYTICS_SUMMARY', label: 'Interpretación de la analítica' },
-  { prefix: 'AI_TEXT_EDITOR_COPILOT', label: 'Copiloto por voz del editor' },
+/** Tareas de texto: prefijo de sus ajustes, nombre de la tarea en el servidor y cómo se llama en la interfaz. */
+export const TEXT_TASKS: Array<{ prefix: string; task: AiTextTask; label: string }> = [
+  { prefix: 'AI_TEXT_POST_CAPTION', task: 'post.caption', label: 'Textos de las piezas' },
+  { prefix: 'AI_TEXT_PROFILE_PROPOSAL', task: 'profile.proposal', label: 'Propuesta de perfil de marca' },
+  { prefix: 'AI_TEXT_BRAND_CHECK', task: 'brand.check', label: 'Verificador de marca' },
+  { prefix: 'AI_TEXT_CAMPAIGN_PLAN', task: 'campaign.plan', label: 'Plan de campaña' },
+  { prefix: 'AI_TEXT_ANALYTICS_SUMMARY', task: 'analytics.summary', label: 'Interpretación de la analítica' },
+  { prefix: 'AI_TEXT_EDITOR_COPILOT', task: 'editor.copilot', label: 'Copiloto por voz del editor' },
 ];
 
 export const UI_INTEGRATIONS: UiIntegration[] = [
@@ -151,15 +163,18 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
       'Por cada proveedor elegido: lista los modelos (Anthropic, Mistral, OpenAI, Bedrock) o pide un token de acceso (Vertex). No genera texto ni gasta cupo.',
     groups: [
       {
-        title: 'Proveedor y modelo',
-        description: 'El de todas las tareas, salvo las que tengan uno propio más abajo.',
+        title: 'Todo el texto: proveedor y modelo por defecto',
+        description:
+          'Lo usan todas las tareas de texto que no tengan uno propio más abajo. Con esto, y la clave y los precios de ese proveedor, se encienden a la vez todos los botones de IA de texto. «Qué ve la gente», arriba, dice qué tarea está lista.',
         fields: [
           { key: 'AI_TEXT_PROVIDER', label: 'Proveedor', secret: false, input: 'select', options: TEXT_PROVIDERS },
           { key: 'AI_TEXT_MODEL', label: 'Modelo', secret: false },
         ],
       },
       {
-        title: 'Por tarea (opcional)',
+        title: 'Excepciones por tarea (opcional)',
+        description:
+          'Solo si una tarea debe usar otro proveedor o modelo que el de por defecto. Cada campo que dejes vacío usa el de por defecto.',
         fields: TEXT_TASKS.flatMap((t) => [
           {
             key: `${t.prefix}_PROVIDER`,
