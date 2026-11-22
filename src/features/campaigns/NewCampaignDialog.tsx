@@ -28,6 +28,7 @@ import {
 } from './brief';
 import { campaignPaths } from './labels';
 import { MAX_INSTRUCTION_CHARS, nextWeek, shortDay } from './plan';
+import { useWorkMode } from '@/features/orgs/workMode';
 
 /**
  * Pedir un plan: qué se quiere («prepárame la campaña del menú de otoño»), que
@@ -52,6 +53,7 @@ export function NewCampaignDialog({
   /** Fuentes de texto de la marca que se pueden enviar a la IA. */
   textSourceCount: number;
 }) {
+  const { selfManaged } = useWorkMode();
   const navigate = useNavigate();
   const { brand } = useBrand();
   const mutations = useCampaignMutations(brandId);
@@ -375,7 +377,8 @@ export function NewCampaignDialog({
                 <>
                   {' '}
                   <span data-testid="campaign-brief-cost">
-                    Esta propuesta ha costado {formatMicros(briefMeta.costMicros)} de tu cupo de IA.
+                    Esta propuesta ha costado {formatMicros(briefMeta.costMicros)}
+                    {selfManaged ? '' : ' de tu cupo de IA'}.
                   </span>
                 </>
               )}

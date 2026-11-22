@@ -1,5 +1,7 @@
 import { useContext } from 'react';
+import { useUser } from '@/features/auth/AuthProvider';
 import type { OrganizationRow, OrgWorkMode } from '@/lib/database.types';
+import { useMyOrganizations } from './api';
 import { OrgContext } from './context';
 
 // Cómo trabaja la organización (migración 20261227010000):
@@ -35,4 +37,21 @@ export function useWorkMode(): { mode: OrgWorkMode; selfManaged: boolean } {
   const ctx = useContext(OrgContext);
   const mode: OrgWorkMode = ctx ? workModeOf(ctx.org) : 'agency';
   return { mode, selfManaged: mode === 'self' };
+}
+
+/**
+ * Lo comercial (planes de pago, cupos, márgenes, precio de venta, cobros) solo tiene sentido con
+ * clientes de por medio. En autogestión estorba: las pantallas de la organización lo esconden con
+ * `useWorkMode().selfManaged`.
+ *
+ * Las de Plataforma no son de ninguna organización, así que miran las de quien las abre: si lleva
+ * alguna organización y TODAS son de autogestión, la instalación es de uso interno y lo comercial
+ * se guarda (plegado o fuera). En cuanto una pasa a «Nos lo lleva una agencia», vuelve a verse
+ * todo. Mientras no se sabe (cargando, o sin organizaciones), se enseña todo, como siempre.
+ */
+export function useInternalUse(): boolean {
+  const user = useUser();
+  const orgs = useMyOrganizations(user.id);
+  const mine = orgs.data ?? [];
+  return mine.length > 0 && mine.every((org) => workModeOf(org) === 'self');
 }

@@ -18,6 +18,7 @@ import { lastPeriods, periodStartOf } from '@/features/ai/api';
 import { formatMicros, moneyEstimateNote } from '@/features/ai/money';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
+import { useInternalUse } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { cn, formatBytes } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -70,6 +71,8 @@ export function GastoPage({ now = new Date() }: { now?: Date }) {
   const usage = usePlatformUsage(period, enabled);
   const storage = usePlatformStorage(enabled);
   const global = useAiGlobalStatus(enabled);
+  // Uso interno: se ve el gasto real; los cupos y los planes de cada organización, no.
+  const internal = useInternalUse();
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-10">
@@ -118,12 +121,12 @@ export function GastoPage({ now = new Date() }: { now?: Date }) {
                 </Field>
               }
             />
-            <GlobalCard status={global} />
+            <GlobalCard status={global} internal={internal} />
             <AlertsPanel />
-            <AiTable usage={usage} />
-            <PriceCard period={period} />
+            <AiTable usage={usage} internal={internal} />
+            <PriceCard period={period} internal={internal} />
             <MediaTable usage={usage} />
-            <StorageTable usage={usage} storage={storage} />
+            <StorageTable usage={usage} storage={storage} internal={internal} />
             <p className="text-xs text-muted">{moneyEstimateNote()}</p>
           </div>
         )}
@@ -132,7 +135,7 @@ export function GastoPage({ now = new Date() }: { now?: Date }) {
   );
 }
 
-function GlobalCard({ status }: { status: ReturnType<typeof useAiGlobalStatus> }) {
+function GlobalCard({ status, internal }: { status: ReturnType<typeof useAiGlobalStatus>; internal: boolean }) {
   return (
     <Card data-testid="gasto-global">
       <CardHeader
@@ -146,8 +149,8 @@ function GlobalCard({ status }: { status: ReturnType<typeof useAiGlobalStatus> }
           <ErrorState error={status.error} onRetry={() => void status.refetch()} />
         ) : status.data.cap_micros === null ? (
           <p className="text-sm text-muted" data-testid="gasto-global-none">
-            Sin tope: la plataforma lleva gastados {formatMicros(Number(status.data.cost_micros))} este mes y solo la
-            frena el cupo de cada organización.
+            Sin tope: la plataforma lleva gastados {formatMicros(Number(status.data.cost_micros))} este mes
+            {internal ? '.' : ' y solo la frena el cupo de cada organización.'}
           </p>
         ) : (
           <div className="space-y-2 text-sm">
@@ -173,12 +176,16 @@ function GlobalCard({ status }: { status: ReturnType<typeof useAiGlobalStatus> }
   );
 }
 
-function AiTable({ usage }: { usage: ReturnType<typeof usePlatformUsage> }) {
+function AiTable({ usage, internal }: { usage: ReturnType<typeof usePlatformUsage>; internal: boolean }) {
   return (
     <Card className="overflow-hidden">
       <CardHeader
         title="IA por organización"
-        description="Coste real del mes por tipo de generación y cupo comprometido (coste más reservas en curso)."
+        description={
+          internal
+            ? 'Coste real del mes por tipo de generación.'
+            : 'Coste real del mes por tipo de generación y cupo comprometido (coste más reservas en curso).'
+        }
       />
       {usage.isPending ? (
         <CardBody>
@@ -212,9 +219,11 @@ function AiTable({ usage }: { usage: ReturnType<typeof usePlatformUsage> }) {
                 <th scope="col" className="px-3 py-3 text-right font-medium">
                   Total
                 </th>
-                <th scope="col" className="px-5 py-3 font-medium">
-                  Cupo consumido
-                </th>
+                {!internal && (
+                  <th scope="col" className="px-5 py-3 font-medium">
+                    Cupo consumido
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -225,19 +234,23 @@ function AiTable({ usage }: { usage: ReturnType<typeof usePlatformUsage> }) {
                   <tr key={row.organization_id} data-testid={`gasto-ai-${row.organization_id}`}>
                     <th scope="row" className="px-5 py-3 font-medium">
                       {row.organization_name}
-                      <span className="block text-xs font-normal text-muted">{row.plan_name}</span>
-                      <span className="mt-1 flex flex-wrap gap-1">
-                        {row.ai_limit_overridden && (
-                          <span data-testid={`gasto-manual-${row.organization_id}`}>
-                            <Badge tone="warning">Cupo puesto a mano</Badge>
+                      {!internal && (
+                        <>
+                          <span className="block text-xs font-normal text-muted">{row.plan_name}</span>
+                          <span className="mt-1 flex flex-wrap gap-1">
+                            {row.ai_limit_overridden && (
+                              <span data-testid={`gasto-manual-${row.organization_id}`}>
+                                <Badge tone="warning">Cupo puesto a mano</Badge>
+                              </span>
+                            )}
+                            {row.plan_unlimited && (
+                              <span data-testid={`gasto-unlimited-${row.organization_id}`}>
+                                <Badge tone="warning">Plan sin límites</Badge>
+                              </span>
+                            )}
                           </span>
-                        )}
-                        {row.plan_unlimited && (
-                          <span data-testid={`gasto-unlimited-${row.organization_id}`}>
-                            <Badge tone="warning">Plan sin límites</Badge>
-                          </span>
-                        )}
-                      </span>
+                        </>
+                      )}
                     </th>
                     <td className="px-3 py-3 text-right tabular-nums">{formatMicros(Number(row.cost_text_micros))}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{formatMicros(Number(row.cost_image_micros))}</td>
@@ -248,24 +261,26 @@ function AiTable({ usage }: { usage: ReturnType<typeof usePlatformUsage> }) {
                     <td className="px-3 py-3 text-right font-medium tabular-nums">
                       {formatMicros(Number(row.ai_cost_micros))}
                     </td>
-                    <td className="px-5 py-3">
-                      {Number(row.ai_limit_micros) > 0 ? (
-                        <div className="space-y-1">
-                          <span className="tabular-nums" data-testid={`gasto-quota-${row.organization_id}`}>
-                            {formatMicros(Number(row.ai_committed_micros))} de{' '}
-                            {formatMicros(Number(row.ai_limit_micros))} · {percentText(ratio)}
-                          </span>
-                          <Bar ratio={ratio} label={`Cupo de ${row.organization_name}`} />
-                          {severity !== 'ok' && (
-                            <Badge tone={severity === 'danger' ? 'danger' : 'warning'}>
-                              {severity === 'danger' ? 'Agotado' : 'Más del 80 %'}
-                            </Badge>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-muted">Sin cupo</span>
-                      )}
-                    </td>
+                    {!internal && (
+                      <td className="px-5 py-3">
+                        {Number(row.ai_limit_micros) > 0 ? (
+                          <div className="space-y-1">
+                            <span className="tabular-nums" data-testid={`gasto-quota-${row.organization_id}`}>
+                              {formatMicros(Number(row.ai_committed_micros))} de{' '}
+                              {formatMicros(Number(row.ai_limit_micros))} · {percentText(ratio)}
+                            </span>
+                            <Bar ratio={ratio} label={`Cupo de ${row.organization_name}`} />
+                            {severity !== 'ok' && (
+                              <Badge tone={severity === 'danger' ? 'danger' : 'warning'}>
+                                {severity === 'danger' ? 'Agotado' : 'Más del 80 %'}
+                              </Badge>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted">Sin cupo</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -398,15 +413,21 @@ function MediaTable({ usage }: { usage: ReturnType<typeof usePlatformUsage> }) {
 function StorageTable({
   usage,
   storage,
+  internal,
 }: {
   usage: ReturnType<typeof usePlatformUsage>;
   storage: ReturnType<typeof usePlatformStorage>;
+  internal: boolean;
 }) {
   return (
     <Card className="overflow-hidden">
       <CardHeader
         title="Almacenamiento"
-        description="Por organización frente al límite de su plan, y por marca (biblioteca y fuentes)."
+        description={
+          internal
+            ? 'Por organización y por marca (biblioteca y fuentes).'
+            : 'Por organización frente al límite de su plan, y por marca (biblioteca y fuentes).'
+        }
       />
       {usage.isPending || storage.isPending ? (
         <CardBody>
@@ -460,7 +481,11 @@ function StorageTable({
                       data-testid={`gasto-storage-${org.organization_id}`}
                     >
                       {formatBytes(Number(org.storage_bytes))}
-                      {limit !== null ? ` de ${formatBytes(limit)} (${percentText(ratio)})` : ' (sin límite)'}
+                      {internal
+                        ? ''
+                        : limit !== null
+                          ? ` de ${formatBytes(limit)} (${percentText(ratio)})`
+                          : ' (sin límite)'}
                     </td>
                   </tr>,
                   ...brands.map((b) => (
@@ -504,14 +529,18 @@ const PRICE_LABEL: Record<PriceStatus, { text: string; tone: 'success' | 'warnin
   no_price: { text: 'Sin precio', tone: 'danger' },
 };
 
-function PriceCard({ period }: { period: string }) {
+function PriceCard({ period, internal }: { period: string; internal: boolean }) {
   const prices = usePriceReview(period);
   const bad = (prices.data ?? []).filter((r) => r.status !== 'verified');
   return (
     <Card className="overflow-hidden" data-testid="gasto-prices">
       <CardHeader
         title="Precios de IA"
-        description="El cupo solo protege si el precio cargado es el real. Aquí, los modelos usados este mes y si su precio es de fiar."
+        description={
+          internal
+            ? 'El gasto que se enseña solo es de fiar si el precio cargado es el real. Aquí, los modelos usados este mes y si su precio es de fiar.'
+            : 'El cupo solo protege si el precio cargado es el real. Aquí, los modelos usados este mes y si su precio es de fiar.'
+        }
       />
       {prices.isPending ? (
         <CardBody>
@@ -532,8 +561,10 @@ function PriceCard({ period }: { period: string }) {
               <Notice tone="warning">
                 <span data-testid="gasto-prices-warning">
                   {bad.length === 1 ? 'Hay 1 modelo' : `Hay ${bad.length} modelos`} con un precio que no está
-                  verificado: el cupo se calcula con una regla que puede no ser la real. Contrasta el precio con el
-                  proveedor y con su factura antes de fiarte del cupo.
+                  verificado:{' '}
+                  {internal
+                    ? 'el gasto se calcula con una regla que puede no ser la real. Contrasta el precio con el proveedor y con su factura.'
+                    : 'el cupo se calcula con una regla que puede no ser la real. Contrasta el precio con el proveedor y con su factura antes de fiarte del cupo.'}
                 </span>
               </Notice>
             </CardBody>

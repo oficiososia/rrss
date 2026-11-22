@@ -9,6 +9,7 @@ import {
   type BrandCheckVerdict,
   type CriterionVerdict,
 } from './api';
+import { useWorkMode } from '@/features/orgs/workMode';
 
 const MAX_TEXT_CHARS = 20_000;
 
@@ -52,6 +53,7 @@ export interface AiBrandCheckProps {
  * comprobación sin IA (reglas literales), que vive aparte.
  */
 export function AiBrandCheck({ brandId, text }: AiBrandCheckProps) {
+  const { selfManaged } = useWorkMode();
   const check = useBrandCheckAi(brandId);
   const [result, setResult] = useState<{ text: string; data: BrandCheckResult } | null>(null);
   const trimmed = text.trim();
@@ -85,7 +87,9 @@ export function AiBrandCheck({ brandId, text }: AiBrandCheckProps) {
             ? 'Escribe el texto para poder comprobarlo.'
             : tooLong
               ? 'El texto es demasiado largo para comprobarlo con IA.'
-              : 'Descuenta del cupo de IA de la organización.'}
+              : selfManaged
+                ? ''
+                : 'Descuenta del cupo de IA de la organización.'}
         </span>
       </div>
 

@@ -14,6 +14,7 @@ import {
   DOCUMENT_CAPTION_MAX,
   type CaptionLimits,
 } from './networkLimits';
+import { useWorkMode } from '@/features/orgs/workMode';
 
 export const MAX_BRIEF_CHARS = 2000;
 const MAX_VARIANTS = 5;
@@ -110,6 +111,7 @@ function CaptionGenerator({
   limits: CaptionLimits;
   onChoose: (variant: PostCaptionVariant) => void;
 }) {
+  const { selfManaged } = useWorkMode();
   const generate = useGeneratePostCaption(brandId);
   const [brief, setBrief] = useState('');
   const [variants, setVariants] = useState(3);
@@ -172,7 +174,11 @@ function CaptionGenerator({
             {result ? 'Generar otras' : 'Generar'}
           </Button>
         </div>
-        <p className="text-xs text-muted">Cada generación descuenta del cupo de IA de la organización.</p>
+        {!selfManaged && (
+          <p className="text-xs text-muted" data-testid="ai-quota-hint">
+            Cada generación descuenta del cupo de IA de la organización.
+          </p>
+        )}
       </form>
 
       {generate.isPending && <Spinner label="Redactando propuestas…" />}
