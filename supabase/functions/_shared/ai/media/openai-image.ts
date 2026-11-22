@@ -118,12 +118,32 @@ function settingString(model: MediaModel, name: string, allowed: readonly string
   return typeof value === 'string' && allowed.includes(value) ? value : undefined;
 }
 
-/** Texto que se manda al modelo para cada edición. El plato nunca se toca. */
+/** Lo que no se toca del primer plano, según lo que haya en la foto (sin suponer que es comida). */
+function keepFor(subject: ImageEditRequest['subject']): string {
+  if (subject === 'food') {
+    return (
+      'Keep the food and the dish in the foreground exactly as they are: same shape, plating, ingredients, ' +
+      'colours, textures, garnish and position. Do not add, remove, restyle or rearrange any food. ' +
+      'No text, logos, people or watermarks.'
+    );
+  }
+  if (subject === 'drink') {
+    return (
+      'Keep the drink, the glass and anything served with it in the foreground exactly as they are: same shape, ' +
+      'colours, ice, garnish, reflections and position. Do not add, remove, restyle or rearrange any part of them. ' +
+      'No text, logos, people or watermarks.'
+    );
+  }
+  return (
+    'Keep the main subject in the foreground (the product, object, person or equipment) exactly as it is: same ' +
+    'shape, details, colours, textures and position. Do not add, remove, restyle or rearrange any part of it. ' +
+    'No added text, logos or watermarks.'
+  );
+}
+
+/** Texto que se manda al modelo para cada edición. Lo principal de la foto nunca se toca. */
 export function editPromptFor(edit: ImageEditRequest): string {
-  const keep =
-    'Keep the food and the dish in the foreground exactly as they are: same shape, plating, ingredients, ' +
-    'colours, textures, garnish and position. Do not add, remove, restyle or rearrange any food. ' +
-    'No text, logos, people or watermarks.';
+  const keep = keepFor(edit.subject);
   if (edit.operation === 'remove_background') {
     return (
       'Remove the background completely and leave only the main subject, with clean, natural edges, on a ' +
@@ -131,13 +151,14 @@ export function editPromptFor(edit: ImageEditRequest): string {
     );
   }
   if (edit.operation === 'enhance') {
+    const look = edit.subject === 'food' || edit.subject === 'drink' ? 'natural and appetising colours' : 'natural colours';
     return (
-      'Improve the lighting and colour of this photo: balanced exposure, natural and appetising colours, ' +
+      `Improve the lighting and colour of this photo: balanced exposure, ${look}, ` +
       `gentle contrast, true white balance. Keep the composition and framing. ${keep}`
     );
   }
   const maskNote = edit.subjectMask
-    ? ' The opaque area of the mask is the dish and must not change; only the transparent area (the background) is repainted.'
+    ? ' The opaque area of the mask is the main subject and must not change; only the transparent area (the background) is repainted.'
     : '';
   return (
     `Replace ONLY the background of this photo with: ${(edit.prompt ?? '').trim()}. ` +

@@ -11,6 +11,7 @@ import type { Json, MediaAssetRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { EDIT_TAG, EDITS_FOLDER, sourceAssetIdOf } from './provenance';
+import type { AiSubject } from './sector';
 
 export type AiPhotoOperation = 'remove_background' | 'upscale' | 'replace_background' | 'enhance';
 
@@ -21,14 +22,6 @@ export const AI_OPERATION_LABEL: Record<AiPhotoOperation, string> = {
   enhance: 'Mejorar luz y color con IA',
 };
 
-/** Ideas de fondo para el plato, a un clic (el texto es libre). */
-export const BACKGROUND_SUGGESTIONS = [
-  'mesa de mármol blanco con luz cálida',
-  'mantel de lino beige',
-  'mesa de madera rústica',
-  'pizarra oscura',
-] as const;
-
 /** Una edición con IA que el servidor puede hacer ahora mismo. */
 export interface AiEditChoice {
   operation: AiPhotoOperation;
@@ -38,7 +31,7 @@ export interface AiEditChoice {
   euProcessing: boolean;
   trainsOnInputs: 'no' | 'yes' | 'unknown';
   untestedAdapter: boolean;
-  /** El modelo usa la máscara del sujeto para proteger el plato. */
+  /** El modelo usa la máscara del sujeto para proteger lo principal de la foto. */
   usesSubjectMask?: boolean;
 }
 
@@ -52,6 +45,8 @@ export interface AiEditInput {
   subjectMask?: string;
   /** Solo al estimar: habrá máscara (no se manda). */
   maskPresent?: boolean;
+  /** Qué hay en primer plano según el negocio (comida, bebida u otra cosa): la IA no debe tocarlo. */
+  subject?: AiSubject;
 }
 
 /** Pasa una máscara PNG a base64 para mandarla a `ai-media`. */
