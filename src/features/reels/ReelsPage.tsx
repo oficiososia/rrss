@@ -7,7 +7,7 @@
 // no existe todavía; cuando exista, podrá encargar reels con la misma función.
 import { ArrowDown, ArrowLeft, ArrowUp, Clapperboard, Film, Images, Plus, Sparkles, Trash2, XCircle } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -188,6 +188,27 @@ function ReelBuilder({ brandId }: { brandId: string }) {
       },
     ]);
   };
+  // «Usar en un reel» desde la ficha de la biblioteca (`?con=<id>`): ese archivo ya va como primera pieza.
+  const [searchParams] = useSearchParams();
+  const wanted = searchParams.get('con');
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && wanted && sources.data) {
+    setSeeded(true);
+    const found = sources.data.find((a) => a.id === wanted && a.kind !== 'audio');
+    if (found) {
+      setPieces([
+        {
+          key: nextKey(),
+          assetId: found.id,
+          path: found.storage_path,
+          fileName: found.file_name,
+          type: found.kind === 'video' ? 'video' : 'photo',
+          seconds: null,
+          clipSeconds: found.duration_ms !== null ? found.duration_ms / 1000 : null,
+        },
+      ]);
+    }
+  }
   const updatePiece = (key: string, patch: Partial<ReelPiece>) => {
     touch();
     setPieces((current) => current.map((p) => (p.key === key ? { ...p, ...patch } : p)));

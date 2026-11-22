@@ -138,6 +138,9 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   const kpis = page.getByTestId('analytics-kpis');
   await expect(kpis.getByTestId('kpi-instagram.account.reach')).toContainText('Estimación de Meta');
   await expect(page.getByTestId('analytics-chart')).toBeVisible();
+  await expect(page.getByTestId('analytics-sentence')).toContainText('llegaste a');
+  // Lo demás está plegado en «Más detalle».
+  await page.getByTestId('analytics-more').locator('summary').click();
   await expect(page.getByTestId('analytics-facts')).toContainText('Dato');
   await expect(page.getByTestId('analytics-facts')).toContainText('Alcance:');
   await expect(page.getByTestId('analytics-hypotheses')).toBeVisible();
@@ -192,6 +195,7 @@ test('el informe mensual se genera sin intervención y se abre desde el panel', 
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/analitica`);
+  await page.getByTestId('analytics-more').locator('summary').click();
   const lista = page.getByTestId('analytics-reports');
   await expect(lista).toContainText('Listo');
   // La descarga abre una pestaña con la dirección firmada (`download`): esa

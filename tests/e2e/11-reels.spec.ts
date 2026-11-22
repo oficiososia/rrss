@@ -184,7 +184,7 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   await expect(ventana.getByTestId('asset-name')).toHaveValue(recurso!.file_name);
   await expect(ventana.locator('video')).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByLabel('Filtrar por carpeta').selectOption('Reels');
+  await page.getByTestId('library-folder-Reels').click();
   await expect(page.getByTestId('library-asset').filter({ hasText: recurso!.file_name })).toBeVisible();
 
   sinErrores(s);
