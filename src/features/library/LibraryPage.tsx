@@ -393,8 +393,6 @@ export function LibraryPage() {
 
   const headerMore: MoreMenuItem[] = canEdit
     ? [
-        { id: 'new-folder', label: 'Nueva carpeta', icon: FolderPlus, onSelect: () => setCreatingFolder(true), testId: 'library-new-folder-more' },
-        null,
         canUseDrive
           ? { id: 'drive', label: 'Traer de Google Drive', icon: HardDrive, onSelect: () => setDrivePicking(true), testId: 'library-drive' }
           : null,
