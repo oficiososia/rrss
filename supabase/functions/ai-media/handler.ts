@@ -138,7 +138,7 @@ export const ANIMATE_ASPECT_RATIOS = [
 export const ANIMATE_DEFAULT_SECONDS = 5;
 export const MAX_MOTION_CHARS = 500;
 /** Frase fija: el plato, la comida y la vajilla no se tocan; solo se mueve la cámara o el ambiente. */
-const ANIMATE_GUARD =
+export const ANIMATE_GUARD =
   'Keep the dish, the food and the tableware exactly as in the photo: do not add, remove or change any food, text or object. Only subtle, natural motion.';
 
 /**
@@ -153,6 +153,11 @@ export function animateAspectFor(width: number, height: number): { ratio: Aspect
     if (Math.abs(Math.log(value / candidate.value)) < Math.abs(Math.log(value / best.value))) best = candidate;
   }
   return { ratio: best.ratio, exact: Math.abs(Math.log(value / best.value)) <= 0.04 };
+}
+
+/** El encargo que recibe el modelo: el movimiento y la frase fija que protege el plato. */
+export function buildAnimatePrompt(motion: string): string {
+  return `${motion.trim() || 'slow natural camera movement'}. ${ANIMATE_GUARD}`;
 }
 
 interface AnimateInput {
@@ -398,7 +403,7 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
           kind: 'video',
           operation: 'animate_photo',
           startImage: loaded.input,
-          prompt: `${animate.motion || 'slow natural camera movement'}. ${ANIMATE_GUARD}`,
+          prompt: buildAnimatePrompt(animate.motion),
           durationSeconds: animate.seconds,
           aspectRatio: aspect.ratio,
         };
