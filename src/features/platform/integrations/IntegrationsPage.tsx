@@ -20,7 +20,7 @@ import {
 import { useUser } from '@/features/auth/AuthProvider';
 import { billingEnabled } from '@/features/billing/labels';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
-import { useInternalUse } from '@/features/orgs/workMode';
+import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { formatDateTime } from '@/lib/utils';
 import { useIntegrationStatus, type AiTextTask, type IntegrationStatus } from './api';
@@ -81,8 +81,8 @@ export function IntegrationsPage() {
 
 function IntegrationsBody() {
   const status = useIntegrationStatus();
-  const internal = useInternalUse();
-  if (status.isPending) return <Spinner />;
+  const { internal, pending: modePending } = useInternalUseState();
+  if (status.isPending || modePending) return <Spinner />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => void status.refetch()} />;
   const data = status.data;
   return (

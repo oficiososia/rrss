@@ -47,11 +47,22 @@ export function useWorkMode(): { mode: OrgWorkMode; selfManaged: boolean } {
  * Las de Plataforma no son de ninguna organización, así que miran las de quien las abre: si lleva
  * alguna organización y TODAS son de autogestión, la instalación es de uso interno y lo comercial
  * se guarda (plegado o fuera). En cuanto una pasa a «Nos lo lleva una agencia», vuelve a verse
- * todo. Mientras no se sabe (cargando, o sin organizaciones), se enseña todo, como siempre.
+ * todo; sin organizaciones, o si no se pueden leer, también (como siempre).
+ *
+ * `pending`: todavía no se sabe. Las pantallas esperan a saberlo antes de pintar lo comercial,
+ * para que no asome un momento y desaparezca.
  */
-export function useInternalUse(): boolean {
+export function useInternalUseState(): { internal: boolean; pending: boolean } {
   const user = useUser();
   const orgs = useMyOrganizations(user.id);
   const mine = orgs.data ?? [];
-  return mine.length > 0 && mine.every((org) => workModeOf(org) === 'self');
+  return {
+    internal: mine.length > 0 && mine.every((org) => workModeOf(org) === 'self'),
+    pending: orgs.isPending,
+  };
+}
+
+/** Lo mismo, sin distinguir «todavía no se sabe» (vale donde solo cambia un texto). */
+export function useInternalUse(): boolean {
+  return useInternalUseState().internal;
 }

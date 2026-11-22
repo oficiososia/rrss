@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useAdminOrganizations, useIsPlatformAdmin } from '@/features/orgs/api';
-import { useInternalUse } from '@/features/orgs/workMode';
+import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { formatBytes, formatDate } from '@/lib/utils';
 import { AiQuotaPanel } from './AiQuotaPanel';
@@ -20,11 +20,11 @@ export function PlatformPage() {
   const openAlerts = alerts.data?.length ?? 0;
   // Uso interno (todas las organizaciones propias en autogestión): cupos, ingresos, margen y planes
   // no se enseñan; quedan plegados por si hay que subir un tope.
-  const internal = useInternalUse();
+  const { internal, pending: modePending } = useInternalUseState();
   const [commercialOpen, setCommercialOpen] = useState(false);
-  const commercial = orgs.data && (
+  const commercial = (
     <>
-      <AiQuotaPanel organizations={orgs.data} />
+      {orgs.data && <AiQuotaPanel organizations={orgs.data} />}
       <BillingPanel />
       <PlansEditor />
     </>
@@ -133,7 +133,7 @@ export function PlatformPage() {
                 </div>
               )}
             </Card>
-            {internal ? (
+            {modePending ? null : internal ? (
               <details
                 className="mt-6 rounded-xl border border-border bg-surface"
                 data-testid="platform-commercial"

@@ -18,7 +18,7 @@ import { lastPeriods, periodStartOf } from '@/features/ai/api';
 import { formatMicros, moneyEstimateNote } from '@/features/ai/money';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
-import { useInternalUse } from '@/features/orgs/workMode';
+import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { cn, formatBytes } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -72,7 +72,7 @@ export function GastoPage({ now = new Date() }: { now?: Date }) {
   const storage = usePlatformStorage(enabled);
   const global = useAiGlobalStatus(enabled);
   // Uso interno: se ve el gasto real; los cupos y los planes de cada organización, no.
-  const internal = useInternalUse();
+  const { internal, pending: modePending } = useInternalUseState();
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-10">
@@ -87,7 +87,7 @@ export function GastoPage({ now = new Date() }: { now?: Date }) {
         <UserMenu compact />
       </div>
       <main>
-        {admin.isPending ? (
+        {admin.isPending || modePending ? (
           <Spinner />
         ) : !enabled ? (
           <Card>
