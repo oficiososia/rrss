@@ -84,7 +84,15 @@ export interface ImageEditRequest {
    * retocar también el plato y la interfaz lo avisa.
    */
   subjectMask?: { mimeType: 'image/png'; bytes: Uint8Array };
+  /**
+   * Qué hay en primer plano, para decirle a la IA qué no tocar: comida, bebida u otra cosa
+   * (producto, persona, equipo…). Sin indicar es «otra cosa»: no se supone que sea comida.
+   */
+  subject?: ImageEditSubject;
 }
+
+export const IMAGE_EDIT_SUBJECTS = ['food', 'drink', 'other'] as const;
+export type ImageEditSubject = (typeof IMAGE_EDIT_SUBJECTS)[number];
 
 export type MediaRequest = ImageRequest | VideoRequest | ImageEditRequest;
 

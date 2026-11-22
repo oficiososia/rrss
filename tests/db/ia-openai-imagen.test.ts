@@ -135,8 +135,8 @@ describe('OpenAI imagen (HTTP simulado)', () => {
     expect(form.get('input_fidelity')).toBeNull();
     const prompt = String(form.get('prompt'));
     expect(prompt).toContain('mesa de mármol blanco con luz cálida');
-    expect(prompt).toMatch(/Keep the food and the dish/);
-    expect(prompt).toMatch(/opaque area of the mask is the dish/);
+    expect(prompt).toMatch(/Keep the main subject in the foreground/);
+    expect(prompt).toMatch(/opaque area of the mask is the main subject/);
     const image = form.get('image') as File;
     expect(image.type).toBe('image/jpeg');
     expect(image.name).toBe('foto-1.jpg');
@@ -287,8 +287,16 @@ describe('OpenAI imagen (HTTP simulado)', () => {
     });
   });
 
-  it('el prompt de cambiar el fondo siempre protege el plato', () => {
-    expect(editPromptFor(background())).toMatch(/Do not add, remove, restyle or rearrange any food/);
+  it('el prompt de cambiar el fondo siempre protege lo principal, sin suponer que es comida', () => {
+    const neutral = editPromptFor(background());
+    expect(neutral).toMatch(/Do not add, remove, restyle or rearrange any part of it/);
+    expect(neutral).not.toMatch(/food|dish|appetising/i);
+    expect(editPromptFor({ ...background(), subject: 'food' })).toMatch(
+      /Do not add, remove, restyle or rearrange any food/,
+    );
+    expect(editPromptFor({ ...background(), subject: 'drink' })).toMatch(/the drink, the glass/);
+    expect(editPromptFor({ ...background(), operation: 'enhance', subject: 'other' })).not.toMatch(/appetising/);
+    expect(editPromptFor({ ...background(), operation: 'enhance', subject: 'food' })).toMatch(/appetising/);
   });
 });
 
