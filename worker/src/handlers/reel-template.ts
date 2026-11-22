@@ -122,6 +122,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             motion: item.motion,
             motionAmount: item.motionAmount,
             transition: item.transition,
+            filter: item.filter,
           });
         } else {
           if (info.durationSeconds <= 0) throw new PermanentError(`La pieza ${index + 1} no es un vídeo`);
@@ -133,6 +134,8 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             in: item.in,
             out: item.out,
             volume: item.volume,
+            speed: item.speed,
+            filter: item.filter,
             transition: item.transition,
             subtitles: item.subtitles,
             durationSeconds: info.durationSeconds,

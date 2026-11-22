@@ -12,18 +12,29 @@
 //
 // La ruta JSON (la anterior) tiene sus pruebas en ia-copiloto.test.ts.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   copilotResponseSchema,
+  COPILOT_LAYOUTS,
+  COPILOT_MAX_BACKGROUND_PROMPT,
+  COPILOT_MAX_PHOTO_QUERY,
+  COPILOT_MAX_PLAN_PHOTOS,
   COPILOT_OPS as CLIENT_OPS,
+  COPILOT_PLAN_OPS,
   parseCopilotResponse,
 } from '../../src/features/content/copilot/operations';
-import type {
-  AiInput,
-  AiModelSpec,
-  AiProvider,
-  AiToolCall,
-  Json,
-  RpcClient,
+import {
+  BACKGROUND_ONLY_REASON as CLIENT_BACKGROUND_ONLY_REASON,
+  namesFoodOrProduct as clientNamesFoodOrProduct,
+} from '../../src/features/content/copilot/plan';
+import {
+  AiProviderFailure,
+  type AiInput,
+  type AiModelSpec,
+  type AiProvider,
+  type AiToolCall,
+  type Json,
+  type RpcClient,
 } from '../../supabase/functions/_shared/ai/contract.ts';
 import { validateJson } from '../../supabase/functions/_shared/ai/schema.ts';
 import { createAiService } from '../../supabase/functions/_shared/ai/service.ts';
@@ -36,6 +47,7 @@ import {
 } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
 import { buildMessagesBody, parseMessagesResponse } from '../../supabase/functions/_shared/ai/text/anthropic-messages.ts';
 import { createLocalTestProvider } from '../../supabase/functions/_shared/ai/text/local-test.ts';
+import { createAnthropicProvider } from '../../supabase/functions/_shared/ai/text/anthropic.ts';
 import { createMistralProvider } from '../../supabase/functions/_shared/ai/text/mistral.ts';
 import { buildChatBody, createOpenAiProvider, parseChatResponse } from '../../supabase/functions/_shared/ai/text/openai.ts';
 import { estimateTextUsage } from '../../supabase/functions/_shared/ai/text/prompt.ts';
@@ -43,11 +55,21 @@ import {
   compactBrand,
   compactDocument,
   compactPhotos,
+  closingNote,
+  DONE_TOOL,
   EDITOR_COPILOT_TOOL_INSTRUCTIONS,
   EDITOR_COPILOT_TOOLS,
+  MAX_BACKGROUND_PROMPT_CHARS,
+  MAX_PHOTO_QUERY_CHARS,
+  MAX_PLAN_PHOTOS,
+  TOOL_LAYOUTS,
+  TOOL_PLAN_STEPS,
 } from '../../supabase/functions/_shared/ai/text/tasks/editor-copilot-tools.ts';
 import {
+  BACKGROUND_ONLY_REASON,
   brandAllowance,
+  namesFoodOrProduct,
+  sanitizeOperations,
   COPILOT_LEGACY_OPS,
   COPILOT_OPS,
   EDITOR_COPILOT_INSTRUCTIONS,
@@ -55,7 +77,9 @@ import {
   effortParams,
   emptyOperation,
   MAX_OPERATIONS,
+  MAX_TOOL_TURNS,
   resolveCopilotMode,
+  runEditorCopilot,
   toResponseOperation,
   TOOLS_MAX_OUTPUT_TOKENS,
   type CopilotOperation,
@@ -209,8 +233,14 @@ function localOnlyKeywords(value: unknown, found: string[] = []): string[] {
 
 describe('adaptadores: herramientas (sin red)', () => {
   it('las herramientas cubren todas las operaciones, con esquema estricto y nombres válidos', () => {
-    expect(EDITOR_COPILOT_TOOLS).toHaveLength(23);
-    expect(EDITOR_COPILOT_TOOLS.map((tool) => tool.name).sort()).toEqual([...COPILOT_OPS].sort());
+    // 23 operaciones del editor + 3 pasos de plan (montar una pieza) + el cierre (`done`), que va el último.
+    expect(EDITOR_COPILOT_TOOLS).toHaveLength(27);
+    expect(EDITOR_COPILOT_TOOLS.slice(-4, -1).map((tool) => tool.name)).toEqual(TOOL_PLAN_STEPS);
+    expect(EDITOR_COPILOT_TOOLS[26]!.name).toBe(DONE_TOOL);
+    // El cierre no es una operación: ni el servidor ni el editor la conocen como tal.
+    expect(EDITOR_COPILOT_TOOLS.slice(0, -1).map((tool) => tool.name).sort()).toEqual([...COPILOT_OPS].sort());
+    expect([...COPILOT_OPS] as string[]).not.toContain(DONE_TOOL);
+    expect(EDITOR_COPILOT_TOOLS[26]!.parameters).toMatchObject({ properties: { note: { type: 'string', maxLength: 300 } }, required: ['note'] });
     // El servidor y el editor hablan de las mismas operaciones.
     expect([...COPILOT_OPS]).toEqual([...CLIENT_OPS]);
     for (const tool of EDITOR_COPILOT_TOOLS) {
@@ -300,11 +330,12 @@ describe('adaptadores: herramientas (sin red)', () => {
       text: '',
       finish_reason: 'stop',
       tool_calls: [
-        { name: 'move_layer', arguments: { target: 'c2', position: null, align: null, dx: null, dy: -2 } },
-        { name: 'resize_layer', arguments: { target: 'c3', steps: 1 } },
-        { name: 'remove_layer', arguments: null },
-        { name: 'remove_layer', arguments: null },
-        { name: 'editor', arguments: null },
+        // Cada llamada conserva su identificador: hace falta para devolverle su resultado en otra vuelta.
+        { id: 'a', name: 'move_layer', arguments: { target: 'c2', position: null, align: null, dx: null, dy: -2 } },
+        { id: 'b', name: 'resize_layer', arguments: { target: 'c3', steps: 1 } },
+        { id: 'c', name: 'remove_layer', arguments: null },
+        { id: 'd', name: 'remove_layer', arguments: null },
+        { id: 'e', name: 'editor', arguments: null },
       ],
     });
     expect(result.usage).toEqual({ input_tokens: 200, output_tokens: 40, cache_read_input_tokens: 1000 });
@@ -533,6 +564,10 @@ interface SetupOptions {
   withoutTools?: boolean;
   /** Identificador del adaptador (para el esfuerzo de razonamiento, que depende de él). */
   providerId?: string;
+  /** Adaptador al que se le pueden devolver resultados de herramientas para que siga (como OpenAI). */
+  toolTurns?: boolean;
+  /** Hace fallar la llamada número N al proveedor (desde 1). */
+  failWith?: SimulatedProviderOptions['failWith'];
 }
 
 async function setup(options: SetupOptions = {}) {
@@ -550,11 +585,14 @@ async function setup(options: SetupOptions = {}) {
     ? createLocalTestProvider()
     : createSimulatedProvider({
         respond: options.respond ?? (() => ({ text: options.text ?? '', tool_calls: options.calls ?? [] })),
+        ...(options.toolTurns ? { toolTurns: true } : {}),
+        ...(options.failWith ? { failWith: options.failWith } : {}),
       });
   // El mismo simulado, visto como otro adaptador: sin herramientas o con otro nombre.
   const provider: AiProvider = {
     id: options.providerId ?? simulated.id,
     ...(options.withoutTools ? {} : { supportsTools: true }),
+    ...(simulated.supportsToolTurns ? { supportsToolTurns: true } : {}),
     estimateUsage: (request) => simulated.estimateUsage(request),
     generate: (request) => simulated.generate(request),
   };
@@ -608,8 +646,8 @@ async function setup(options: SetupOptions = {}) {
 }
 
 const generations = async (org: string) =>
-  db.query<{ purpose: string; status: string; cost_micros: string; provider: string }>(
-    `select purpose, status, cost_micros, provider from public.ai_generations where organization_id = $1 order by created_at`,
+  db.query<{ id: string; purpose: string; status: string; cost_micros: string; provider: string }>(
+    `select id, purpose, status, cost_micros, provider from public.ai_generations where organization_id = $1 order by created_at`,
     [org],
   );
 const reasons = (body: Row) => (body.discarded as { reason: string }[]).map((item) => item.reason);
@@ -996,13 +1034,17 @@ describe('tarea editor.copilot por herramientas', () => {
       call('editor', { action: 'redo' }),
       call('editor', { action: 'save' }),
       call('editor', { action: 'template' }),
+      call('generate_background', { prompt: 'Mesa de madera con hojas secas', ratio: null }),
+      call('find_photos', { query: 'platos de otoño', count: 3 }),
+      call('place_photos', { layout: 'fan', cutout: true, on: false }),
     ];
     // Las llamadas de la prueba cumplen el esquema completo de su herramienta.
     for (const item of [...every, ...rest]) {
       const spec = EDITOR_COPILOT_TOOLS.find((tool) => tool.name === item.name)!;
       expect(validateJson(item.arguments, spec.parameters), item.name).toEqual([]);
     }
-    expect(new Set([...every, ...rest].map((item) => item.name)).size).toBe(EDITOR_COPILOT_TOOLS.length);
+    // Todas menos el cierre (`done`), que no es una operación.
+    expect(new Set([...every, ...rest].map((item) => item.name)).size).toBe(EDITOR_COPILOT_TOOLS.length - 1);
 
     const first = await setup({ calls: every });
     const a = await first.copilot();
@@ -1034,6 +1076,9 @@ describe('tarea editor.copilot por herramientas', () => {
       { op: 'editor', action: 'redo' },
       { op: 'editor', action: 'save' },
       { op: 'editor', action: 'template' },
+      { op: 'generate_background', prompt: 'Mesa de madera con hojas secas' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', on: false, layout: 'fan', cutout: true },
     ]);
     expect(parseCopilotResponse(b.body)).not.toBeNull();
   });
@@ -1080,7 +1125,9 @@ describe('tarea editor.copilot por herramientas', () => {
     expect(parseCopilotResponse(cut.body)).not.toBeNull();
     // Las instrucciones piden justo eso.
     expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/ninguna o varias encajan, no la toques y pregúntalo/);
-    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/Haz solo la intención FINAL/);
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/Si la persona se corrige, VALE LO ÚLTIMO QUE DIJO/);
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/UNA ORDEN PUEDE NECESITAR VARIAS HERRAMIENTAS: llámalas TODAS en esta misma respuesta/);
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/termina SIEMPRE con done/);
     expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toMatch(/ignora esa parte ENTERA/);
   });
 
@@ -1150,6 +1197,545 @@ describe('tarea editor.copilot por herramientas', () => {
   });
 });
 
+// ── 2 ter. Varias acciones en una orden: el cierre `done` y las vueltas ───
+
+/** El cierre con su nota. */
+const done = (note: string): AiToolCall => call(DONE_TOOL, { note });
+/** Cuántas vueltas lleva la petición (0 = la primera). */
+const turnOf = (request: { input: AiInput }) => request.input.toolTurns?.length ?? 0;
+
+describe('varias acciones en una orden: cierre `done` y vueltas de herramientas', () => {
+  const ORDEN_DOS = 'Quita la estrella y sube el título';
+
+  it('varias llamadas y el cierre en UNA vuelta: todas las operaciones en su orden, la nota de `done` y una sola generación', async () => {
+    const t = await setup({
+      toolTurns: true,
+      text: 'Texto suelto que no es la nota',
+      calls: [
+        call('remove_layer', { target: 'c5' }),
+        move('c2', { dy: -2 }),
+        call('resize_layer', { target: 'c3', steps: 1 }),
+        done('  He quitado la estrella,\nsubido el título y agrandado el subtítulo. '),
+      ],
+    });
+    const response = await t.copilot({ transcript: ORDEN_DOS });
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([
+      out({ op: 'remove_layer', target: 'forma' }),
+      out({ op: 'move_layer', target: 'titulo', dy: -2 }),
+      { op: 'resize_layer', target: 'sub', steps: 1 },
+    ]);
+    // La nota es la del cierre (en una línea), no el texto suelto; y `done` no es una operación ni un descarte.
+    expect(response.body.note).toBe('He quitado la estrella, subido el título y agrandado el subtítulo.');
+    expect(response.body.discarded).toEqual([]);
+    expect(parseCopilotResponse(response.body)).not.toBeNull();
+    // Cerrada a la primera: no hay segunda vuelta aunque el adaptador las admita.
+    expect(t.provider.calls).toHaveLength(1);
+    expect(await generations(t.org)).toHaveLength(1);
+    // Se obliga a llamar a algo (como mínimo, el cierre) y no viajan vueltas anteriores.
+    expect(t.sent().toolChoice).toBe('required');
+    expect(t.sent().toolTurns).toBeUndefined();
+  });
+
+  it('el cierre puede ir en cualquier puesto y sin nota: lo demás se hace igual y la nota es el texto, si lo hay', async () => {
+    const middle = await setup({ calls: [move('c2', { dy: -2 }), done(''), call('remove_layer', { target: 'c5' })], text: 'Hecho.' });
+    const response = await middle.copilot({ transcript: ORDEN_DOS });
+    expect((response.body.operations as Row[]).map((operation) => operation.op)).toEqual(['move_layer', 'remove_layer']);
+    expect(response.body.note).toBe('Hecho.');
+    // Los descartes cuentan la posición entre las operaciones, sin el cierre.
+    const bad = await setup({ calls: [done('Listo'), move('c99', { dy: -2 }), call('publish', {})] });
+    expect((await bad.copilot()).body).toMatchObject({
+      operations: [],
+      note: 'Listo',
+      discarded: [
+        { index: 0, op: 'move_layer', reason: 'Se refiere a una capa que no existe en el diseño.' },
+        { index: 1, op: 'publish', reason: 'La IA ha pedido una operación que no existe.' },
+      ],
+    });
+    // La nota de cierre: en una línea, recortada a 300; null si no se ha cerrado.
+    expect(closingNote([move('c2', { dy: -2 })])).toBeNull();
+    expect(closingNote([])).toBeNull();
+    expect(closingNote([done('x'.repeat(900))])).toHaveLength(300);
+    expect(closingNote([{ name: DONE_TOOL, arguments: null }])).toBe('');
+    expect(closingNote([{ name: DONE_TOOL, arguments: { note: 7 } }])).toBe('');
+    expect(closingNote([done('a\n b'), done('otra')])).toBe('a b');
+  });
+
+  it('solo el cierre, con una pregunta: no se hace nada y la pregunta llega como nota', async () => {
+    const t = await setup({ toolTurns: true, calls: [done('¿Qué texto es el título: «Antiguo» o «Solo este fin de semana»?')] });
+    const response = await t.copilot({ transcript: 'pon el título en crema' });
+    expect(response).toMatchObject({
+      status: 200,
+      body: { operations: [], discarded: [], note: '¿Qué texto es el título: «Antiguo» o «Solo este fin de semana»?' },
+    });
+    expect(t.provider.calls).toHaveLength(1);
+    expect(parseCopilotResponse(response.body)).not.toBeNull();
+  });
+
+  it('un modelo que llama de una en una: se le devuelve «hecho» y sigue; llegan todas las operaciones, la nota y la suma del consumo', async () => {
+    const respond: Respond = (request) =>
+      [
+        { text: '', tool_calls: [{ id: 'call_a', ...call('remove_layer', { target: 'c5' }) }] },
+        { text: '', tool_calls: [{ id: 'call_b', ...move('c2', { dy: -2 }) }] },
+        { text: '', tool_calls: [done('Quitada la estrella y subido el título.')] },
+      ][turnOf(request)];
+    const t = await setup({ toolTurns: true, respond });
+    expect(t.service.capabilities!('text', 'editor.copilot')).toMatchObject({ tools: true, toolTurns: true });
+    const response = await t.copilot({ transcript: ORDEN_DOS });
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([
+      out({ op: 'remove_layer', target: 'forma' }),
+      out({ op: 'move_layer', target: 'titulo', dy: -2 }),
+    ]);
+    expect(response.body.note).toBe('Quitada la estrella y subido el título.');
+    expect(response.body.discarded).toEqual([]);
+
+    // Tres vueltas = tres peticiones; a cada una le llegan las llamadas anteriores con su «hecho».
+    const sent = t.provider.calls.map((request) => request.input);
+    expect(sent).toHaveLength(3);
+    expect(sent[0]!.toolTurns).toBeUndefined();
+    expect(sent[1]!.toolTurns).toEqual([
+      { calls: [{ id: 'call_a', name: 'remove_layer', arguments: { target: 'c5' } }], results: ['hecho'] },
+    ]);
+    expect(sent[2]!.toolTurns).toEqual([
+      { calls: [{ id: 'call_a', name: 'remove_layer', arguments: { target: 'c5' } }], results: ['hecho'] },
+      {
+        calls: [{ id: 'call_b', name: 'move_layer', arguments: { target: 'c2', position: null, align: null, dx: null, dy: -2 } }],
+        results: ['hecho'],
+      },
+    ]);
+    // Lo demás de la petición no cambia de una vuelta a otra (así el prefijo se lee de caché).
+    for (const input of sent) {
+      expect(input.toolChoice).toBe('required');
+      expect(input.tools).toBe(EDITOR_COPILOT_TOOLS);
+      expect(input.instructions).toBe(EDITOR_COPILOT_TOOL_INSTRUCTIONS);
+      expect(input.cacheKey).toBe('editor.copilot:tools');
+      expect(input.context).toEqual(sent[0]!.context);
+    }
+    // Cada vuelta es una generación, con su cupo y su coste; la respuesta lleva la primera.
+    const rows = await generations(t.org);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.status === 'succeeded' && Number(row.cost_micros) > 0)).toBe(true);
+    expect(rows.map((row) => row.id)).toContain(response.body.generationId);
+
+    // La tarea suma el consumo, el coste y la latencia de las tres vueltas.
+    const direct = await setup({ toolTurns: true, respond });
+    const result = await runEditorCopilot(
+      direct.service,
+      { userId: direct.owner.id, brandId: direct.brand },
+      { brandProfile: PROFILE as Json, transcript: ORDEN_DOS, document: DOCUMENT as never },
+    );
+    const own = await generations(direct.org);
+    expect(own).toHaveLength(3);
+    expect(result.costMicros).toBe(own.reduce((sum, row) => sum + Number(row.cost_micros), 0));
+    const [first, second, third] = direct.provider.calls.map((request) => direct.provider.estimateUsage(request).input_tokens!);
+    expect(result.usage.input_tokens).toBe(first! + second! + third!);
+    // Las vueltas anteriores viajan: cada petición pesa un poco más que la anterior.
+    expect(second!).toBeGreaterThan(first!);
+    expect(third!).toBeGreaterThan(second!);
+    expect(result.usage.output_tokens).toBeGreaterThan(0);
+    expect(result.operations).toHaveLength(2);
+    expect(result.mode).toBe('tools');
+    expect(own.map((row) => row.id)).toContain(result.generationId);
+  });
+
+  it(`tope: un modelo que nunca cierra para a las ${MAX_TOOL_TURNS} vueltas, y se aprovecha lo que ha llamado`, async () => {
+    expect(MAX_TOOL_TURNS).toBe(5);
+    const t = await setup({
+      toolTurns: true,
+      respond: (request) => ({ text: '', tool_calls: [move('c2', { dy: turnOf(request) + 1 })] }),
+    });
+    const response = await t.copilot();
+    expect(response.status).toBe(200);
+    expect(t.provider.calls).toHaveLength(MAX_TOOL_TURNS);
+    expect(await generations(t.org)).toHaveLength(MAX_TOOL_TURNS);
+    // Una operación por vuelta, hasta el tope.
+    expect(response.body.operations).toEqual(
+      Array.from({ length: MAX_TOOL_TURNS }, (_, turn) => out({ op: 'move_layer', target: 'titulo', dy: turn + 1 })),
+    );
+    expect(response.body.note).toBe('');
+
+    // Una vuelta sin llamadas tampoco pide otra: se queda con lo que hay (y su texto, como nota).
+    const quiet = await setup({
+      toolTurns: true,
+      respond: (request) =>
+        turnOf(request) === 0 ? { text: '', tool_calls: [move('c2', { dy: -2 })] } : { text: 'Nada más.', tool_calls: [] },
+    });
+    const stopped = await quiet.copilot();
+    expect(quiet.provider.calls).toHaveLength(2);
+    expect(stopped.body).toMatchObject({ operations: [out({ op: 'move_layer', target: 'titulo', dy: -2 })], note: 'Nada más.' });
+    // Cortada por longitud: no se insiste (lo que venga después también se cortaría).
+    const cut = await setup({
+      toolTurns: true,
+      respond: () => ({ text: '', finish_reason: 'length', tool_calls: [move('c2', { dy: -2 })] }),
+    });
+    expect((await cut.copilot()).body.operations).toHaveLength(1);
+    expect(cut.provider.calls).toHaveLength(1);
+    // Con veinte operaciones ya no cabe ninguna más: tampoco se pide otra vuelta.
+    const many = await setup({
+      toolTurns: true,
+      respond: () => ({ text: '', tool_calls: Array.from({ length: MAX_OPERATIONS }, () => text('Menú de Navidad')) }),
+    });
+    expect((await many.copilot()).body.operations).toHaveLength(MAX_OPERATIONS);
+    expect(many.provider.calls).toHaveLength(1);
+  });
+
+  it('un adaptador al que no se le pueden devolver resultados hace una sola vuelta, cierre o no', async () => {
+    const t = await setup({ calls: [call('remove_layer', { target: 'c5' })] });
+    expect(t.service.capabilities!('text', 'editor.copilot')).toMatchObject({ tools: true, toolTurns: false });
+    const response = await t.copilot({ transcript: ORDEN_DOS });
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([out({ op: 'remove_layer', target: 'forma' })]);
+    expect(t.provider.calls).toHaveLength(1);
+    expect(await generations(t.org)).toHaveLength(1);
+  });
+
+  it('si la vuelta de más falla (proveedor saturado), vale lo de la primera: 200 con sus operaciones', async () => {
+    const t = await setup({
+      toolTurns: true,
+      calls: [call('remove_layer', { target: 'c5' })],
+      failWith: (_request, callNumber) =>
+        callNumber === 2 ? new AiProviderFailure('rate_limited', 'Límite de uso', { retryable: true }) : null,
+    });
+    const response = await t.copilot({ transcript: ORDEN_DOS });
+    expect(response.status).toBe(200);
+    expect(response.body.operations).toEqual([out({ op: 'remove_layer', target: 'forma' })]);
+    expect(response.body.note).toBe('');
+    expect(t.provider.calls).toHaveLength(2);
+    // La primera vuelta se cobró; la segunda devolvió su reserva.
+    const rows = await generations(t.org);
+    expect(rows.map((row) => row.status).sort()).toEqual(['failed', 'succeeded']);
+    expect(rows.find((row) => row.status === 'succeeded')!.id).toBe(response.body.generationId);
+    expect(Number(rows.find((row) => row.status === 'failed')!.cost_micros)).toBe(0);
+
+    // Si falla la PRIMERA vuelta, sí es un error (no hay nada que aprovechar).
+    const broken = await setup({
+      toolTurns: true,
+      failWith: () => new AiProviderFailure('overloaded', 'Saturado', { retryable: true }),
+    });
+    expect(await broken.copilot()).toMatchObject({ status: 502, body: { error: { code: 'provider_failed' } } });
+  });
+
+  it('OpenAI: `tool_choice: required` y las vueltas anteriores como mensajes assistant/tool con sus identificadores', () => {
+    const input: AiInput = {
+      ...TOOL_INPUT,
+      toolChoice: 'required',
+      toolTurns: [
+        { calls: [{ id: 'call_a', name: 'remove_layer', arguments: { target: 'c5' } }], results: ['hecho'] },
+        // Sin identificador (otro adaptador, o perdido): se genera uno; sin resultado: «hecho»; argumentos ilegibles: {}.
+        {
+          calls: [
+            { name: 'move_layer', arguments: { target: 'c2', dy: -2 } },
+            { name: 'editor', arguments: null },
+          ],
+          results: ['movida'],
+        },
+      ],
+    };
+    const body = buildChatBody({ task: 'text', model: 'gpt-prueba', input });
+    expect(body.tool_choice).toBe('required');
+    expect(body.parallel_tool_calls).toBe(true);
+    const messages = body.messages as Record<string, unknown>[];
+    expect(messages.map((message) => message.role)).toEqual(['system', 'user', 'assistant', 'tool', 'assistant', 'tool', 'tool']);
+    expect(messages[2]).toEqual({
+      role: 'assistant',
+      content: null,
+      tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'remove_layer', arguments: '{"target":"c5"}' } }],
+    });
+    expect(messages[3]).toEqual({ role: 'tool', tool_call_id: 'call_a', content: 'hecho' });
+    const generated = messages[4]!.tool_calls as { id: string; function: { name: string; arguments: string } }[];
+    expect(generated.map((item) => item.function)).toEqual([
+      { name: 'move_layer', arguments: '{"target":"c2","dy":-2}' },
+      { name: 'editor', arguments: '{}' },
+    ]);
+    // Identificadores generados: no vacíos, distintos entre sí y los mismos en el resultado que los contesta.
+    expect(new Set(['call_a', ...generated.map((item) => item.id)]).size).toBe(3);
+    for (const item of generated) expect(item.id).toMatch(/^call_\d+_\d+$/);
+    expect(messages.slice(5)).toEqual([
+      { role: 'tool', tool_call_id: generated[0]!.id, content: 'movida' },
+      { role: 'tool', tool_call_id: generated[1]!.id, content: 'hecho' },
+    ]);
+    // Lo de delante no cambia con las vueltas: el prefijo que se lee de caché es el mismo.
+    const firstTurn = buildChatBody({ task: 'text', model: 'gpt-prueba', input: { ...input, toolTurns: undefined } });
+    expect(messages.slice(0, 2)).toEqual(firstTurn.messages);
+    expect(body.tools).toEqual(firstTurn.tools);
+    // Sin pedirlo, sigue siendo «auto» y sin mensajes de más.
+    expect(buildChatBody({ task: 'text', model: 'm', input: TOOL_INPUT }).tool_choice).toBe('auto');
+    expect(buildChatBody({ task: 'text', model: 'm', input: { ...TOOL_INPUT, toolTurns: [] } }).messages).toHaveLength(2);
+    // Sin herramientas no hay nada que elegir.
+    expect(buildChatBody({ task: 'text', model: 'm', input: { prompt: 'Hola', toolChoice: 'required' } })).not.toHaveProperty(
+      'tool_choice',
+    );
+  });
+
+  it('quién admite vueltas: OpenAI sí; Claude y el simulado (por defecto) no, y Claude sigue con elección automática', () => {
+    expect(createOpenAiProvider({ apiKey: 'x' }).supportsToolTurns).toBe(true);
+    expect(createAnthropicProvider({ apiKey: 'x' }).supportsToolTurns).not.toBe(true);
+    expect(createAnthropicProvider({ apiKey: 'x' }).supportsTools).toBe(true);
+    expect(createMistralProvider({ apiKey: 'x' }).supportsToolTurns).not.toBe(true);
+    expect(createSimulatedProvider().supportsToolTurns).toBe(false);
+    expect(createSimulatedProvider({ toolTurns: true }).supportsToolTurns).toBe(true);
+    expect(createLocalTestProvider().supportsToolTurns).toBe(false);
+    // Claude: pedir «required» no cambia su cuerpo (forzar la elección da 400 en sus modelos actuales).
+    const claude = buildMessagesBody({ task: 'text', model: 'claude-prueba', input: { ...TOOL_INPUT, toolChoice: 'required' } });
+    expect(claude.tool_choice).toEqual({ type: 'auto' });
+    expect((claude.tools as unknown[]).length).toBe(EDITOR_COPILOT_TOOLS.length);
+    // Y sus vueltas no se reproducen: el cuerpo no las lleva.
+    const withTurns = buildMessagesBody({
+      task: 'text',
+      model: 'claude-prueba',
+      input: { ...TOOL_INPUT, toolTurns: [{ calls: [{ name: 'editor', arguments: { action: 'undo' } }], results: ['hecho'] }] },
+    });
+    expect(withTurns.messages).toEqual(claude.messages);
+  });
+
+  it('la reserva de cupo de cada vuelta cuenta lo que vuelve a viajar', () => {
+    const turns = [{ calls: [{ id: 'call_a', name: 'remove_layer', arguments: { target: 'c5' } }], results: ['hecho'] }];
+    const first = estimateTextUsage(TOOL_INPUT, { cacheWrites: false });
+    const second = estimateTextUsage({ ...TOOL_INPUT, toolTurns: turns }, { cacheWrites: false });
+    expect(second.input_tokens! - first.input_tokens!).toBeGreaterThanOrEqual(Math.ceil(JSON.stringify(turns).length / 4));
+    expect(countPromptTokens({ ...TOOL_INPUT, toolTurns: turns }).volatile).toBeGreaterThan(countPromptTokens(TOOL_INPUT).volatile);
+    expect(countPromptTokens({ ...TOOL_INPUT, toolTurns: turns }).stable).toBe(countPromptTokens(TOOL_INPUT).stable);
+  });
+});
+
+// ── 2 bis. Pasos de plan: montar una pieza ───────────────────────────────
+
+describe('pasos de plan: la IA solo crea el fondo; los platos y productos son fotos de la biblioteca', () => {
+  const MENU = 'Haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el centro. Título: Menú de otoño.';
+  const background = (prompt: string, ratio: string | null = null) => call('generate_background', { prompt, ratio });
+  const find = (query: string, count: number) => call('find_photos', { query, count });
+  const place = (layout: string, cutout = false, on = false) => call('place_photos', { layout, cutout, on });
+
+  it('la regla está en la herramienta y en las instrucciones, y las tres herramientas tienen su esquema', () => {
+    const spec = (name: string) => EDITOR_COPILOT_TOOLS.find((tool) => tool.name === name)!;
+    const rule = 'nunca comida, platos, bebidas, productos, personas ni texto';
+    expect(spec('generate_background').description).toContain(`SOLO el fondo: ${rule}`);
+    expect(spec('generate_background').description).toContain('fotos de la biblioteca (find_photos + place_photos)');
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toContain(`solo el fondo: ${rule}`);
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS).toContain('Los platos y productos son SIEMPRE fotos de la biblioteca: find_photos + place_photos.');
+    // Una sola regla (una línea) habla de montar una pieza.
+    expect(EDITOR_COPILOT_TOOL_INSTRUCTIONS.split('\n').filter((line) => line.includes('generate_background'))).toHaveLength(1);
+    expect(spec('generate_background').parameters.properties).toEqual({
+      prompt: { type: 'string', maxLength: 400 },
+      ratio: { type: ['string', 'null'], enum: ['1:1', '4:5', '9:16', '16:9', null] },
+    });
+    expect(spec('find_photos').parameters.properties).toEqual({
+      query: { type: 'string', maxLength: 80 },
+      count: { type: 'integer', minimum: 1, maximum: 6 },
+    });
+    expect(spec('place_photos').parameters.properties).toEqual({
+      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan'] },
+      cutout: { type: 'boolean' },
+      on: { type: 'boolean' },
+    });
+    // Los mismos topes y el mismo motivo en el servidor y en el editor.
+    expect([MAX_BACKGROUND_PROMPT_CHARS, MAX_PHOTO_QUERY_CHARS, MAX_PLAN_PHOTOS]).toEqual([
+      COPILOT_MAX_BACKGROUND_PROMPT,
+      COPILOT_MAX_PHOTO_QUERY,
+      COPILOT_MAX_PLAN_PHOTOS,
+    ]);
+    expect(TOOL_LAYOUTS).toEqual([...COPILOT_LAYOUTS]);
+    expect(TOOL_PLAN_STEPS).toEqual([...COPILOT_PLAN_OPS]);
+    expect(BACKGROUND_ONLY_REASON).toBe(CLIENT_BACKGROUND_ONLY_REASON);
+  });
+
+  it('«haz el menú de otoño…»: los pasos llegan al editor en su orden, compactos, y la tarea no genera ni busca nada', async () => {
+    const t = await setup({
+      calls: [
+        background('  Mesa de madera con   hojas secas y luz cálida, sin comida ni personas  '),
+        find(' platos de otoño ', 3),
+        place('center', true, true),
+        text('Menú de otoño', { style: 'title', position: 'top' }),
+      ],
+    });
+    const response = await t.copilot({ transcript: MENU });
+    expect(response.status).toBe(200);
+    expect(response.body.discarded).toEqual([]);
+    expect(response.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Mesa de madera con hojas secas y luz cálida, sin comida ni personas' },
+      { op: 'find_photos', query: 'platos de otoño', count: 3 },
+      { op: 'place_photos', on: true, layout: 'center', cutout: true },
+      out({ op: 'add_text', text: 'Menú de otoño', style: 'title', position: 'top' }),
+    ]);
+    // El editor acepta la respuesta (contrato estricto) con los campos nuevos.
+    const parsed = parseCopilotResponse(response.body)!;
+    expect(parsed.operations[0]).toMatchObject({ op: 'generate_background', prompt: expect.stringContaining('hojas secas'), ratio: null, text: null });
+    expect(parsed.operations[2]).toMatchObject({ op: 'place_photos', layout: 'center', cutout: true, on: true });
+    // Una sola llamada de texto: interpretar la orden. Nada de imagen: eso lo decide la persona después.
+    expect(await generations(t.org)).toEqual([expect.objectContaining({ purpose: 'editor.copilot', status: 'succeeded' })]);
+    expect(t.provider.calls).toHaveLength(1);
+  });
+
+  it('un fondo cuya indicación nombra comida o un producto se descarta con su motivo; lo demás de la orden sigue', async () => {
+    const t = await setup({
+      calls: [
+        background('Un plato de crema de calabaza humeante sobre una mesa'),
+        background('Hamburguesas y cócteles en una barra'),
+        background('Mesa con una botella de aceite y pan'),
+        background('Autumn table with a soup dish'),
+        find('platos de otoño', 2),
+        place('row'),
+      ],
+    });
+    const response = await t.copilot({ transcript: 'Genera un plato de crema de calabaza y pon los platos en fila' });
+    expect(response.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos de otoño', count: 2 },
+      { op: 'place_photos', on: false, layout: 'row', cutout: false },
+    ]);
+    expect(response.body.discarded).toEqual(
+      [0, 1, 2, 3].map((index) => ({
+        index,
+        op: 'generate_background',
+        reason: 'La IA solo crea el fondo: los platos y productos son fotos de la biblioteca.',
+      })),
+    );
+    expect(parseCopilotResponse(response.body)).not.toBeNull();
+  });
+
+  it('negar la comida no es pedirla: «sin comida, platos ni personas» pasa, igual en el servidor que en el editor', () => {
+    const asks = [
+      'Un plato de sopa sobre la mesa',
+      'Fondo otoñal con hamburguesas',
+      'Mesa de madera, sin personas, con un plato de sopa',
+      'Hojas secas. Un producto en el centro.',
+      'Bodegón de comida de temporada',
+      'Fondo cálido sin texto, plato de cerámica y cubiertos',
+      'Wooden table with a bottle and two drinks',
+    ];
+    const fine = [
+      'Mesa de madera con hojas secas y luz cálida de otoño',
+      'Textura de pizarra oscura con tonos vino y naranja',
+      'Fondo otoñal sin comida, platos ni personas',
+      'Hojas secas sobre lino. Sin comida, platos, bebidas, productos, personas ni texto.',
+      'Warm wooden table, no food, no people, no text',
+      'Interior de gimnasio vacío con luz de neón, sin personas ni botellas',
+      'Fondo para una pieza de redes sociales, sin comida, platos, bebidas, productos, personas, texto ni logotipos.',
+    ];
+    for (const prompt of asks) {
+      expect(namesFoodOrProduct(prompt), prompt).toBe(true);
+      expect(clientNamesFoodOrProduct(prompt), prompt).toBe(true);
+    }
+    for (const prompt of fine) {
+      expect(namesFoodOrProduct(prompt), prompt).toBe(false);
+      expect(clientNamesFoodOrProduct(prompt), prompt).toBe(false);
+    }
+  });
+
+  it('valores que no valen: `count` fuera de 1-6, disposición desconocida, indicación vacía o larguísima, búsqueda vacía', async () => {
+    const t = await setup({
+      calls: [
+        find('platos', 0),
+        find('platos', 7),
+        find('platos', 2.5),
+        place('circle'),
+        background('x'.repeat(401)),
+        background('   '),
+        find('   ', 2),
+        call('place_photos', { layout: 'grid', cutout: null, on: true }),
+        background('Madera clara', '3:2'),
+        // Los que sí valen, en los extremos.
+        find('platos', 1),
+        find('platos', 6),
+        background('Madera clara', '9:16'),
+        place('grid', false, true),
+      ],
+    });
+    const response = await t.copilot({ transcript: 'Pon los platos en rejilla con un fondo de madera clara' });
+    expect(response.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos', count: 1 },
+      { op: 'find_photos', query: 'platos', count: 6 },
+      { op: 'generate_background', ratio: '9:16', prompt: 'Madera clara' },
+      { op: 'place_photos', on: true, layout: 'grid', cutout: false },
+    ]);
+    const invalid = 'La IA ha pedido la operación con datos que no valen.';
+    expect((response.body.discarded as Row[]).map((item) => [item.index, item.op, item.reason])).toEqual([
+      [0, 'find_photos', invalid],
+      [1, 'find_photos', invalid],
+      [2, 'find_photos', invalid],
+      [3, 'place_photos', invalid],
+      [4, 'generate_background', invalid],
+      [5, 'generate_background', 'Falta la descripción del fondo.'],
+      [6, 'find_photos', 'No dice qué fotos buscar.'],
+      [7, 'place_photos', invalid],
+      [8, 'generate_background', invalid],
+    ]);
+  });
+
+  it('el saneado acota lo que el esquema no vio (por si llegase por otra vía) y limpia los campos que no tocan', () => {
+    const base = { transcript: 'x', document: DOCUMENT as never, assets: [], allowance: brandAllowance(PROFILE) };
+    const { operations, discarded } = sanitizeOperations(
+      [
+        { ...emptyOperation('find_photos'), query: ' platos ', count: 40 },
+        { ...emptyOperation('find_photos'), query: 'postres', count: null },
+        { ...emptyOperation('place_photos'), layout: 'espiral', cutout: null, on: null },
+        { ...emptyOperation('generate_background'), prompt: 'Madera clara', ratio: '3:2', query: 'no toca', layout: 'fan', cutout: true },
+        // Los campos de plan no cuelan en otra operación.
+        { ...emptyOperation('set_canvas_ratio'), ratio: '1:1', prompt: 'un plato', query: 'x', count: 3, layout: 'fan', cutout: true },
+      ],
+      base,
+    );
+    expect(discarded).toEqual([]);
+    expect(operations.map(toResponseOperation)).toEqual([
+      { op: 'find_photos', query: 'platos', count: 6 },
+      { op: 'find_photos', query: 'postres', count: 1 },
+      { op: 'place_photos', on: false, layout: 'center', cutout: false },
+      { op: 'generate_background', prompt: 'Madera clara' },
+      { op: 'set_canvas_ratio', ratio: '1:1' },
+    ]);
+  });
+
+  it('compatibilidad: las ocho operaciones de siempre no cambian, los pasos de plan van compactos y la ruta JSON no los conoce', async () => {
+    const t = await setup({
+      calls: [background('Pizarra oscura'), find('bolsas', 1), place('center'), text('Menú de Navidad', { style: 'title' })],
+    });
+    const response = await t.copilot();
+    const [first, second, third, title] = response.body.operations as Row[];
+    for (const operation of [first!, second!, third!]) expect(Object.values(operation).every((value) => value !== null)).toBe(true);
+    // El texto sigue llevando sus nueve campos de la primera versión.
+    expect(Object.keys(title!).sort()).toEqual(['align', 'assetId', 'blur', 'color', 'font', 'op', 'position', 'style', 'target', 'text']);
+    // Un editor anterior (esquema estricto, sin estas operaciones) rechaza la respuesta entera: no aplica nada a medias.
+    const legacyOps = z.object({ op: z.enum(COPILOT_LEGACY_OPS) });
+    expect(z.array(legacyOps).safeParse(response.body.operations).success).toBe(false);
+    expect(legacyOps.safeParse(title).success).toBe(true);
+    // Y la ruta JSON sigue con sus ocho operaciones y sus doce campos: no puede pedir un plan.
+    const jsonOperation = (EDITOR_COPILOT_SCHEMA.schema.properties as Record<string, { items: { properties: Record<string, { enum?: string[] }> } }>)
+      .operations!.items.properties;
+    expect(jsonOperation.op!.enum).toEqual([...COPILOT_LEGACY_OPS]);
+    for (const field of ['prompt', 'query', 'count', 'layout', 'cutout']) expect(jsonOperation).not.toHaveProperty(field);
+    expect(EDITOR_COPILOT_INSTRUCTIONS).not.toContain('generate_background');
+  });
+
+  it('el simulado local (el de la e2e): «crea un fondo… y pon los platos en el centro» devuelve los pasos de plan', async () => {
+    const t = await setup({ localTest: true });
+    const response = await t.copilot({
+      transcript: 'Crea un fondo que parezca otoñal y pon los platos en el centro. Título: Menú de otoño.',
+      assets: [],
+    });
+    expect(response.body.discarded).toEqual([]);
+    expect(response.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Fondo que parezca otoñal' },
+      { op: 'find_photos', query: 'platos', count: 3 },
+      { op: 'place_photos', on: false, layout: 'center', cutout: false },
+      out({ op: 'add_text', text: 'Menú de otoño', style: 'title', position: 'upper' }),
+    ]);
+    // Con recorte, sombra y otra disposición.
+    const fan = await t.copilot({ transcript: 'Genera un fondo de madera clara y pon las bolsas en abanico, recortadas y con sombra', assets: [] });
+    expect(fan.body.operations).toEqual([
+      { op: 'generate_background', prompt: 'Fondo de madera clara' },
+      { op: 'find_photos', query: 'bolsas', count: 3 },
+      { op: 'place_photos', on: true, layout: 'fan', cutout: true },
+    ]);
+    // Imita a un modelo que se salta la regla: pide generar comida, y el producto lo descarta.
+    const food = await t.copilot({ transcript: 'Genera un plato de paella y pon los platos en fila', assets: [] });
+    expect(food.body.operations).toEqual([
+      { op: 'find_photos', query: 'platos', count: 3 },
+      { op: 'place_photos', on: false, layout: 'row', cutout: false },
+    ]);
+    expect(reasons(food.body)).toEqual(['La IA solo crea el fondo: los platos y productos son fotos de la biblioteca.']);
+  });
+});
+
 // ── 3. Qué ruta se usa ───────────────────────────────────────────────────
 
 const JSON_ANSWER = JSON.stringify({ operations: [], note: 'Por JSON' });
@@ -1201,6 +1787,7 @@ describe('ruta del copiloto: herramientas o JSON', () => {
       provider: SIMULATED_PROVIDER_ID,
       model: 'sim-copiloto',
       tools: true,
+      toolTurns: false,
     });
     // Sin modelo para la tarea, o con un servicio que no dice qué sabe hacer: JSON.
     expect(able.service.capabilities!('text', 'post.caption')).toBeNull();
@@ -1290,7 +1877,10 @@ describe('simulado local (el de la e2e) por herramientas', () => {
       '45 euros por persona',
     ]);
     expect(response.body.discarded).toEqual([]);
+    expect(response.body.note).toBe('[simulado] 5 cambios a partir de la orden.');
     expect(parseCopilotResponse(response.body)).not.toBeNull();
+    // Todo en una vuelta (las cinco llamadas y el cierre): una sola generación.
+    expect(t.provider.calls).toHaveLength(1);
     const rows = await generations(t.org);
     expect(rows).toEqual([expect.objectContaining({ purpose: 'editor.copilot', status: 'succeeded' })]);
     expect(Number(rows[0]!.cost_micros)).toBeGreaterThan(0);
@@ -1315,6 +1905,10 @@ describe('simulado local (el de la e2e) por herramientas', () => {
     expect(more.body.operations).toEqual([out({ op: 'blur_image', blur: 70 })]);
     const nothing = await t.copilot({ transcript: 'Buenos días.' });
     expect(nothing.body).toMatchObject({ operations: [], note: '[simulado] No he entendido ningún cambio en la orden.' });
+    // El simulado cierra con `done`, como se le pide a un modelo: la nota llega también cuando hay cambios.
+    expect(more.body.note).toBe('[simulado] 1 cambio a partir de la orden.');
+    const closing = t.provider.calls.map((request) => request.input.toolChoice);
+    expect(closing).toEqual(['required', 'required']);
     // Sin foto elegida, «esta foto» queda pendiente: el editor la pide.
     const pending = await t.copilot({ transcript: DICTADO, assets: [] });
     expect((pending.body.operations as CopilotOperation[])[0]).toMatchObject({ op: 'set_background_image', assetId: null });

@@ -70,6 +70,8 @@ export interface AiToolSpec {
 
 /** Llamada a una herramienta tal como la devuelve el adaptador (`output.tool_calls`). */
 export type AiToolCall = {
+  /** Identificador de la llamada en el proveedor (hace falta para devolverle su resultado). */
+  id?: string;
   name: string;
   /** Argumentos ya leídos como JSON; `null` si el proveedor mandó algo ilegible. */
   arguments: Json;
@@ -114,6 +116,15 @@ export interface AiInput {
    * Solo en adaptadores con `supportsTools`.
    */
   tools?: AiToolSpec[];
+  /** `required` obliga a llamar al menos a una herramienta (donde el proveedor lo admite). Por defecto, `auto`. */
+  toolChoice?: 'auto' | 'required';
+  /**
+   * Vueltas anteriores de herramientas de esta misma petición: lo que el modelo
+   * llamó y el resultado que se le devuelve. Sirve para seguir cuando un modelo
+   * llama a una herramienta y se queda esperando su resultado antes de llamar a
+   * la siguiente. Solo en adaptadores con `supportsToolTurns`.
+   */
+  toolTurns?: { calls: AiToolCall[]; results: string[] }[];
   /**
    * Clave estable y sin datos sensibles (por ejemplo, marca y propósito) para
    * los proveedores cuya caché de prompts se orienta con una clave.
@@ -169,6 +180,8 @@ export interface AiProvider {
   readonly id: string;
   /** ¿Sabe servir `AiInput.tools` (function calling)? Si no, quien llama usa salida estructurada. */
   readonly supportsTools?: boolean;
+  /** ¿Sabe continuar con `AiInput.toolTurns` (devolver resultados de herramientas y seguir)? */
+  readonly supportsToolTurns?: boolean;
   /**
    * Cota superior del consumo de una petición, sin llamar al proveedor. Con
    * ella se reserva el cupo antes de gastar nada.
@@ -266,6 +279,8 @@ export interface AiCapabilities {
   provider: string;
   model: string;
   tools: boolean;
+  /** ¿Se le pueden devolver resultados de herramientas para que siga? */
+  toolTurns: boolean;
 }
 
 export interface AiService {

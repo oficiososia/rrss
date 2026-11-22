@@ -198,7 +198,11 @@ describe('copiloto por teclado: sin micrófono', () => {
     const host = makeHost();
     renderCopilot({ host });
     expect(screen.getByTestId('copilot-voice-notice')).toHaveTextContent('Google');
-    expect(screen.getByText('Sin dictar también funciona: escribe la orden aquí abajo.')).toBeInTheDocument();
+    // El aviso es una franja compacta: el texto, «No volver a mostrar» y el botón; el campo de texto está debajo.
+    expect(screen.getByTestId('copilot-voice-notice-ok')).toHaveTextContent('Entendido, dictar');
+    expect(screen.getByLabelText('No volver a mostrar')).toBe(screen.getByTestId('copilot-voice-notice-hide'));
+    expect(screen.getByRole('link', { name: 'Política de privacidad' })).toBeInTheDocument();
+    expect(input()).toBeEnabled();
     await order('deshaz');
     await lastOrder('nothing');
     expect(host.history).toHaveBeenCalledWith('undo');
@@ -222,7 +226,7 @@ describe('copiloto por teclado: sin micrófono', () => {
     expect(selector).toHaveValue('transcriber');
     const notice = screen.getByTestId('copilot-voice-notice');
     expect(notice).toHaveTextContent('OpenAI');
-    expect(notice).toHaveTextContent('cuenta para el cupo de IA');
+    expect(notice).toHaveTextContent('cada dictado cuenta para el cupo');
     expect(notice).not.toHaveTextContent('Google');
     // Al cambiar de motor, el aviso es el del otro (no vale haber leído uno para el otro).
     await userEvent.selectOptions(selector, 'browser');

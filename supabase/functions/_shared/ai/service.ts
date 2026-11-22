@@ -263,7 +263,12 @@ export function createAiService(config: AiServiceConfig): AiService {
     );
     const provider = spec ? providers.get(spec.provider) : undefined;
     return spec && provider
-      ? { provider: provider.id, model: spec.model, tools: provider.supportsTools === true }
+      ? {
+          provider: provider.id,
+          model: spec.model,
+          tools: provider.supportsTools === true,
+          toolTurns: provider.supportsToolTurns === true,
+        }
       : null;
   }
 

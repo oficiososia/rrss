@@ -88,6 +88,25 @@ export interface CopilotApplyContext {
   allowedRatios?: readonly AspectRatio[] | null;
 }
 
+/**
+ * Sitio exacto de una foto que coloca un plan (plan.ts): la caja donde debe
+ * caber, su giro y si lleva sombra. No viaja por el contrato del servidor: lo
+ * calcula el editor (`layoutBoxes`).
+ */
+export interface CopilotPlacement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Grados, en sentido horario. */
+  rotation?: number;
+  /** Sombra suave (la estándar del editor). */
+  shadow?: boolean;
+}
+
+/** Operación del copiloto; `add_image` puede traer el sitio que le ha dado un plan. */
+export type PlacedCopilotOperation = CopilotOperation & { place?: CopilotPlacement };
+
 /** Flujo del editor que una orden pide abrir para una foto («quita el fondo», «modo retrato»…). */
 export interface CopilotFlowRequest {
   flow: CopilotPhotoFlow;
@@ -144,7 +163,7 @@ export function needsPhotoPick(operations: CopilotOperation[]): boolean {
 }
 
 /** Rellena «esta foto» con la elegida. */
-export function withPickedPhoto(operations: CopilotOperation[], assetId: string | null): CopilotOperation[] {
+export function withPickedPhoto<T extends CopilotOperation>(operations: T[], assetId: string | null): T[] {
   return operations.flatMap((op) => {
     if (!wantsPhoto(op) || op.assetId !== null) return [op];
     return assetId ? [{ ...op, assetId }] : [];
@@ -246,7 +265,7 @@ const layerName = (layer: Layer) =>
  */
 export function applyCopilotOperations(
   input: ContentDocument,
-  operations: CopilotOperation[],
+  operations: PlacedCopilotOperation[],
   context: CopilotApplyContext,
 ): CopilotApplyResult {
   // El documento entero en curso y la página que se está cambiando. Las órdenes
@@ -272,6 +291,9 @@ export function applyCopilotOperations(
     };
   };
   load();
+  /** Página de la que parte la orden («esta») y páginas vacías añadidas en la propia orden. */
+  const originPageId = working.pages[pageIndex]!.id;
+  const addedPages = new Set<string>();
   const taken = () => [...otherLayers, ...document.layers];
   const changes: string[] = [];
   const skipped: string[] = [];
@@ -299,12 +321,23 @@ export function applyCopilotOperations(
     touched.add(next.id);
   };
   const patch = (layer: Layer, change: LayerPatch) => replaceLayer(applyLayerPatch(layer, change));
-  const add = (layer: Layer, atBottom = false) => {
+  /**
+   * Añade una capa: delante de todo, al fondo (`bottom`) o justo por debajo de
+   * los textos y logotipos (`under-texts`: las fotos que coloca un plan).
+   */
+  const add = (layer: Layer, where: boolean | 'under-texts' = false) => {
     if (document.layers.length >= MAX_LAYERS) {
       skipped.push(`No caben más capas (máximo ${MAX_LAYERS}).`);
       return false;
     }
-    document = { ...document, layers: atBottom ? [layer, ...document.layers] : [...document.layers, layer] };
+    const firstText = where === 'under-texts' ? document.layers.findIndex((l) => l.type === 'text' || l.type === 'logo') : -1;
+    const layers =
+      where === true
+        ? [layer, ...document.layers]
+        : firstText >= 0
+          ? [...document.layers.slice(0, firstText), layer, ...document.layers.slice(firstText)]
+          : [...document.layers, layer];
+    document = { ...document, layers };
     touched.add(layer.id);
     return true;
   };
@@ -731,19 +764,29 @@ export function applyCopilotOperations(
         const asset = context.assets.get(op.assetId);
         const name = asset?.name ?? 'Foto';
         const aspect = asset?.width && asset?.height ? asset.width / asset.height : 1;
-        const side = Math.min(canvas.width, canvas.height) * 0.6;
-        const box = {
-          width: Math.round(aspect >= 1 ? side : side * aspect),
-          height: Math.round(aspect >= 1 ? side / aspect : side),
-        };
+        // Con sitio dado por un plan: la foto, con sus proporciones, dentro de esa caja y centrada en ella.
+        const place = op.place;
+        const cell = place
+          ? { width: place.width, height: place.height }
+          : { width: Math.min(canvas.width, canvas.height) * 0.6, height: Math.min(canvas.width, canvas.height) * 0.6 };
+        const scale = Math.min(cell.width / aspect, cell.height);
+        const box = { width: Math.max(8, Math.round(scale * aspect)), height: Math.max(8, Math.round(scale)) };
         const layer: ImageLayer = {
           ...newImageLayer(canvas, taken(), { id: op.assetId, name }),
           ...box,
-          ...placeBox(canvas, box, op.position, op.align),
+          ...(place
+            ? {
+                x: Math.round(place.x + (place.width - box.width) / 2),
+                y: Math.round(place.y + (place.height - box.height) / 2),
+                rotation: place.rotation ?? 0,
+                ...(place.shadow ? { shadow: { ...DEFAULT_SHADOW } } : {}),
+              }
+            : placeBox(canvas, box, op.position, op.align)),
           anchor: { x: 'center', y: 'center' },
           fit: 'contain',
         };
-        if (add(layer)) changes.push(`Foto «${name}» añadida encima`);
+        // Las fotos de un plan van encima del fondo y por debajo de los textos y el logotipo.
+        if (add(layer, place ? 'under-texts' : false)) changes.push(`Foto «${name}» añadida encima`);
         break;
       }
       case 'adjust_image': {
@@ -880,10 +923,16 @@ export function applyCopilotOperations(
             break;
           }
           flush();
-          const change = op.action === 'add' ? addPage(working, pageIndex) : duplicatePage(working, pageIndex);
+          // «Añade una página y duplica esta»: «esta» es la página de la que se partía, no la
+          // recién añadida (vacía). Si la activa se ha creado en esta misma orden, se duplica la de origen.
+          const origin = working.pages.findIndex((page) => page.id === originPageId);
+          const source =
+            op.action === 'duplicate' && addedPages.has(working.pages[pageIndex]!.id) && origin >= 0 ? origin : pageIndex;
+          const change = op.action === 'add' ? addPage(working, pageIndex) : duplicatePage(working, source);
           if (!change) break;
+          if (op.action === 'add') addedPages.add(change.document.pages[change.index]!.id);
           // La copia conserva el orden de las capas: la primera de una es la primera de la otra.
-          const originals = working.pages[pageIndex]!.layers;
+          const originals = working.pages[source]!.layers;
           const copied = change.document.pages[change.index]!.layers;
           const copies =
             op.action === 'duplicate'
@@ -941,6 +990,14 @@ export function applyCopilotOperations(
       case 'editor': {
         // Deshacer y rehacer los ejecuta el editor antes de aplicar; aquí, lo que va después.
         if (op.action === 'save' || op.action === 'template') after.push(op.action);
+        break;
+      }
+      case 'generate_background':
+      case 'find_photos':
+      case 'place_photos': {
+        // Los pasos de plan no se aplican aquí: el copiloto los convierte antes en
+        // operaciones normales (plan.ts), con la confirmación de la persona.
+        skipped.push('Ese paso es de un plan: hay que confirmarlo en el copiloto.');
         break;
       }
     }

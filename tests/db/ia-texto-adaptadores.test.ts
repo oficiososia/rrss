@@ -233,8 +233,11 @@ describe.each(ADAPTERS)('$name', ({ name, model, make, prelude, ok, errorBody })
     expect(result.output).toEqual({
       text: '',
       finish_reason: 'stop',
-      tool_calls: [{ name: 'move_layer', arguments: { target: 'c2', dy: -2 } }],
+      // OpenAI conserva el identificador de la llamada (para devolverle su resultado en otra vuelta); Claude no lo usa.
+      tool_calls: [{ ...(claude ? {} : { id: 'c1' }), name: 'move_layer', arguments: { target: 'c2', dy: -2 } }],
     });
+    // Solo OpenAI sabe seguir tras devolver resultados de herramientas.
+    expect(provider.supportsToolTurns === true).toBe(name === 'OpenAI (endpoint UE)');
     const body = calls[calls.length - 1]!.body;
     const sent = JSON.stringify(body.tools);
     expect(sent).toContain('"strict":true');

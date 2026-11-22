@@ -34,9 +34,11 @@
 import { AiError, type AiErrorCode } from '../_shared/ai/contract.ts';
 import {
   IMAGE_EDIT_OPERATIONS,
+  IMAGE_EDIT_SUBJECTS,
   MediaRequestError,
   type AspectRatio,
   type ImageEditOperation,
+  type ImageEditSubject,
   type ImageEditRequest,
   type ImageRequest,
   type MediaInput,
@@ -217,6 +219,16 @@ interface PhotoInput {
   subjectMask?: Uint8Array;
   /** Solo al estimar: avisa de que habrá máscara, sin mandarla (el coste cuenta la máscara). */
   maskPresent?: boolean;
+  /** Qué hay en primer plano (comida, bebida u otra cosa); sin indicar, no se supone comida. */
+  subject?: ImageEditSubject;
+}
+
+function parseSubject(value: unknown): { subject?: ImageEditSubject } {
+  if (value === undefined) return {};
+  if (typeof value !== 'string' || !(IMAGE_EDIT_SUBJECTS as readonly string[]).includes(value)) {
+    throw new InputError(`Indica qué hay en la foto: ${IMAGE_EDIT_SUBJECTS.join(', ')}.`);
+  }
+  return { subject: value as ImageEditSubject };
 }
 
 function decodePng(base64: string): Uint8Array {
@@ -273,12 +285,13 @@ function parsePhotoInput(data: Record<string, unknown>): PhotoInput {
       prompt,
       ...(subjectMask ? { subjectMask } : {}),
       ...(data.maskPresent === true ? { maskPresent: true } : {}),
+      ...parseSubject(data.subject),
     };
   }
   if (data.prompt !== undefined || data.subjectMask !== undefined || data.maskPresent !== undefined) {
     throw new InputError('Esta edición no admite descripción ni máscara.');
   }
-  return { assetId: data.assetId, operation: op };
+  return { assetId: data.assetId, operation: op, ...parseSubject(data.subject) };
 }
 
 interface ParsedInput {
@@ -536,6 +549,7 @@ export function createAiMediaHandler(deps: AiMediaDeps): (request: Request) => P
           source: loaded.input,
           ...(photo.scale ? { scale: photo.scale } : {}),
           ...(photo.prompt ? { prompt: photo.prompt } : {}),
+          ...(photo.subject ? { subject: photo.subject } : {}),
         };
         if (photo.maskPresent && action === 'photo.estimate') {
           editRequest.subjectMask = { mimeType: 'image/png', bytes: new Uint8Array(0) };
