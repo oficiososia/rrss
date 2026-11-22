@@ -53,6 +53,13 @@ export type ReelTemplateSource = (typeof REEL_TEMPLATE_SOURCES)[number];
 /** Qué material le va mejor a un hueco. Es una pista para quien elige: no obliga. */
 export const SLOT_KINDS = ['any', 'photo', 'video'] as const;
 export type SlotKind = (typeof SLOT_KINDS)[number];
+/**
+ * Tipo de plano, cuando se sabe (lo apunta «Hacer un reel como este» al estudiar un
+ * vídeo de referencia): detalle, plano general, una persona o un rótulo a pantalla
+ * completa. Solo informa a quien elige el material; no cambia cómo se monta.
+ */
+export const SLOT_SHOTS = ['detail', 'wide', 'person', 'text'] as const;
+export type SlotShot = (typeof SLOT_SHOTS)[number];
 /** Papel de un texto: para que la interfaz diga qué es cada uno. */
 export const TEXT_ROLES = ['hook', 'title', 'step', 'detail', 'cta'] as const;
 export type TextRole = (typeof TEXT_ROLES)[number];
@@ -70,6 +77,8 @@ export const reelSlotSchema = z
     /** Cómo grabarlo o qué foto elegir. */
     hint: z.string().trim().max(160).optional(),
     kind: z.enum(SLOT_KINDS).default('any'),
+    /** Tipo de plano (opcional; ampliación compatible de la versión 1). */
+    shot: z.enum(SLOT_SHOTS).optional(),
     /** Lo que dura el plano. Una foto no pasa de 10 s; un clip puede llegar a 60 s. */
     seconds: z.number().min(MIN_SEGMENT_SECONDS).max(MAX_CLIP_SEGMENT_SECONDS),
     /** Si falta material, este plano es de los que se quitan. */
