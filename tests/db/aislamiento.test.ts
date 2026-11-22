@@ -936,6 +936,8 @@ describe('en qué piezas se usa un archivo (asset_usage)', () => {
     await as(db, ana, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 2, '')`, [pieza!.id]);
     expect(await usos(ana, marca)).toEqual([]);
     expect(libre!.id).toBeTruthy();
+    // La pieza no debe quedar: otras pruebas cuentan las piezas que ve Ana.
+    await db.query(`delete from public.content_items where id = $1`, [pieza!.id]);
   });
 
   it('una marca ajena o sin acceso devuelve cero filas, y sin sesión se deniega', async () => {
