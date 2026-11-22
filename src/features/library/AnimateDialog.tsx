@@ -1,6 +1,7 @@
 import { Clapperboard } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
-import { Button, Dialog, Field, Notice, Select, Spinner, Textarea } from '@/components/ui';
+import { Button, Dialog, Field, Notice, Select, Spinner } from '@/components/ui';
+import { DictableField } from '@/features/ai/DictableField';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { formatMicros, moneyEstimateNote } from '@/features/ai/money';
 import type { MediaAssetRow } from '@/lib/database.types';
@@ -153,12 +154,13 @@ function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: 
           error={free.length > MAX_MOTION_CHARS ? 'La indicación es demasiado larga.' : null}
         >
           {(p) => (
-            <Textarea
+            <DictableField
               {...p}
+              brandId={brandId}
               rows={2}
               value={free}
               disabled={busy || Boolean(finished)}
-              onChange={(e) => setFree(e.target.value)}
+              onValueChange={setFree}
               data-testid="animate-free"
             />
           )}
