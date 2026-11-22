@@ -163,6 +163,116 @@ export function nextMonday(today: number): number {
 /** Semanas (de siete días, la última puede ser más corta) que caben entre dos días, ambos incluidos. */
 export const weeksBetween = (start: number, end: number): number => Math.ceil((end - start + 1) / 7);
 
+// ── Reparto tolerante ────────────────────────────────────────────────────
+// Un modelo real no siempre copia al carácter los identificadores de la lista:
+// puede decir «Reels», «Instagram», «publicación», «2,0» o «2». Antes de
+// descartar nada se normaliza todo a los destinos que sí se enviaron.
+
+const canon = (value: unknown): string =>
+  typeof value === 'string'
+    ? value
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+    : '';
+
+const NETWORK_ALIASES: Record<string, string> = {
+  ig: 'instagram',
+  insta: 'instagram',
+  fb: 'facebook',
+  twitter: 'x',
+  google: 'google_business',
+  google_my_business: 'google_business',
+  perfil_de_empresa_de_google: 'google_business',
+  yt: 'youtube',
+};
+
+/** Grupos de nombres que significan lo mismo, y los formatos del catálogo a los que equivalen. */
+const FORMAT_GROUPS: Array<{ words: string[]; formats: string[] }> = [
+  { words: ['reel', 'reels', 'video', 'videos', 'short', 'shorts', 'clip', 'clips'], formats: ['reel', 'video', 'short'] },
+  {
+    words: ['post', 'posts', 'publicacion', 'publicaciones', 'foto', 'fotos', 'imagen', 'imagenes', 'page_post', 'photo', 'pin'],
+    formats: ['post', 'page_post', 'photo', 'pin'],
+  },
+  { words: ['carousel', 'carrusel', 'carruseles', 'carousels'], formats: ['carousel'] },
+  { words: ['story', 'stories', 'historia', 'historias'], formats: ['story'] },
+];
+
+/** La red del catálogo a la que se refiere `value` («Instagram», «ig»…), o null. */
+export function resolveNetwork(value: unknown, targets: CampaignTarget[]): string | null {
+  const key = canon(value);
+  if (!key) return null;
+  const wanted = NETWORK_ALIASES[key] ?? key;
+  return targets.find((t) => t.network === wanted)?.network ?? null;
+}
+
+/** El formato del catálogo (de esa red) al que se refiere `value` («Reels», «publicación»…), o null. */
+export function resolveFormat(network: string, value: unknown, targets: CampaignTarget[]): string | null {
+  const own = targets.filter((t) => t.network === network);
+  const key = canon(value);
+  if (!key) return null;
+  const exact = own.find((t) => canon(t.format) === key);
+  if (exact) return exact.format;
+  const group = FORMAT_GROUPS.find((g) => g.words.includes(key));
+  if (!group) return null;
+  return own.find((t) => group.formats.includes(t.format))?.format ?? null;
+}
+
+/** Un número de publicaciones por semana, venga como número o como texto («2», «2,5», «2 reels»); 0 si no es nada. */
+export function parsePerWeek(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : 0;
+  if (typeof value === 'string') {
+    const found = /\d+(?:[.,]\d+)?/.exec(value);
+    return found ? Math.round(Number(found[0].replace(',', '.'))) : 0;
+  }
+  return 0;
+}
+
+/** Reparte `total` en partes proporcionales a `weights` (método del mayor resto), cada una de al menos 1 si cabe. */
+export function apportion(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (sum <= 0 || weights.length === 0) return weights.map(() => 0);
+  const goal = Math.max(total, weights.length);
+  const exact = weights.map((w) => (w / sum) * goal);
+  const out = exact.map((x) => Math.max(1, Math.floor(x)));
+  let left = goal - out.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => ({ i, rest: x - Math.floor(x) })).sort((a, b) => b.rest - a.rest || a.i - b.i);
+  for (let k = 0; left > 0; k = (k + 1) % order.length, left -= 1) out[order[k]!.i]! += 1;
+  // Si el mínimo de 1 hizo pasar del total, se quita a los que más tienen.
+  while (out.reduce((a, b) => a + b, 0) > goal && out.some((n) => n > 1)) {
+    const max = Math.max(...out);
+    out[out.indexOf(max)]! -= 1;
+  }
+  return out;
+}
+
+/**
+ * Qué formatos pidió la persona con sus palabras («sobre todo reels y alguna
+ * foto»), en orden de aparición; el primero pesa el doble. Sirve para el
+ * reparto de respaldo cuando el del modelo no se puede usar.
+ */
+export function formatsAsked(text: string, targets: CampaignTarget[], networks: string[]): { network: string; format: string; weight: number }[] {
+  const plain = canon(text).split('_');
+  const found: { at: number; format: string[] }[] = [];
+  for (const group of FORMAT_GROUPS) {
+    const at = plain.findIndex((word) => group.words.includes(word));
+    if (at >= 0) found.push({ at, format: group.formats });
+  }
+  found.sort((a, b) => a.at - b.at);
+  const out: { network: string; format: string; weight: number }[] = [];
+  found.forEach((entry, order) => {
+    for (const network of networks) {
+      const target = targets.find((t) => t.network === network && entry.format.includes(t.format));
+      if (target && !out.some((o) => o.network === network && o.format === target.format)) {
+        out.push({ network, format: target.format, weight: order === 0 && found.length > 1 ? 2 : 1 });
+      }
+    }
+  });
+  return out;
+}
+
 // ── Saneado ──────────────────────────────────────────────────────────────
 
 interface RawBrief {
@@ -188,17 +298,18 @@ const whole = (value: unknown): number => (typeof value === 'number' && Number.i
  */
 export function sanitizeBrief(
   raw: RawBrief,
-  ctx: { today: string; targets: CampaignTarget[] },
-): { proposal: CampaignBriefProposal; notes: string[] } {
+  ctx: { today: string; targets: CampaignTarget[]; /** Lo que dijo la persona: guía el reparto de respaldo. */ hint?: string },
+): { proposal: CampaignBriefProposal; notes: string[]; diagnostic: string | null } {
   const notes: string[] = [];
   const today = dayNumber(ctx.today)!;
-  const networks = [...new Set(raw.networks.filter((n) => ctx.targets.some((t) => t.network === n)))];
+  const networks = [
+    ...new Set((Array.isArray(raw.networks) ? raw.networks : []).flatMap((n) => resolveNetwork(n, ctx.targets) ?? [])),
+  ];
   if (networks.length === 0) {
     const first = ctx.targets[0]!.network;
     networks.push(first);
     notes.push('La IA no eligió ninguna red de las de la marca: he dejado la primera.');
   }
-  const targetsOf = (network: string) => ctx.targets.filter((t) => t.network === network);
 
   // Fechas: reales, desde mañana, y de 1 a MAX_CAMPAIGN_DAYS días.
   let start = dayNumber(raw.startDate);
@@ -217,25 +328,60 @@ export function sanitizeBrief(
   }
   const weekCount = weeksBetween(start, end);
 
-  // Ritmo: solo formatos de la marca y de las redes elegidas, acotado.
-  const mix: BriefMixItem[] = [];
-  for (const item of raw.mix) {
-    if (!networks.includes(item.network)) continue;
-    if (!ctx.targets.some((t) => t.network === item.network && t.format === item.format)) continue;
-    const perWeek = Math.min(MAX_PER_WEEK_PER_TARGET, whole(item.perWeek));
-    if (perWeek < 1 || mix.some((m) => m.network === item.network && m.format === item.format)) continue;
-    mix.push({ network: item.network, format: item.format, perWeek });
+  // Ritmo: solo formatos de la marca y de las redes elegidas, acotado. Se normalizan los nombres
+  // («Reels», «Instagram», «publicación»), se leen números escritos como texto y las repeticiones se suman.
+  const sums = new Map<string, BriefMixItem>();
+  let normalized = false;
+  let diagnostic: string | null = null;
+  for (const item of Array.isArray(raw.mix) ? raw.mix : []) {
+    // «instagram/reel» en un solo campo, o la red sin decir.
+    const [maybeNetwork, maybeFormat] = typeof item?.format === 'string' && item.format.includes('/') ? item.format.split('/') : [item?.network, item?.format];
+    // Sin red dicha vale la única elegida; una red dicha que no es de la marca no se reasigna a otra.
+    const network = canon(maybeNetwork)
+      ? resolveNetwork(maybeNetwork, ctx.targets)
+      : networks.length === 1
+        ? networks[0]!
+        : null;
+    if (!network || !networks.includes(network)) continue;
+    const format = resolveFormat(network, maybeFormat, ctx.targets);
+    const perWeek = parsePerWeek(item?.perWeek);
+    if (!format || perWeek < 1) continue;
+    if (network !== item.network || format !== item.format || perWeek !== item.perWeek) normalized = true;
+    const key = `${network}/${format}`;
+    const had = sums.get(key);
+    sums.set(key, { network, format, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, (had?.perWeek ?? 0) + perWeek) });
   }
-  if (mix.length === 0) {
-    // Sin reparto utilizable: el total que dijo (o 3) entre las redes elegidas, en su primer formato.
-    const total = Math.min(MAX_PER_WEEK_TOTAL, Math.max(networks.length, whole(raw.perWeek) || 3));
-    networks.forEach((network, i) => {
-      const share = Math.floor(total / networks.length) + (i < total % networks.length ? 1 : 0);
-      const target = targetsOf(network)[0]!;
-      if (share >= 1) mix.push({ network, format: target.format, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, share) });
-    });
-    notes.push('El reparto por formato no era utilizable: lo he repartido a partes iguales.');
+  let mix = [...sums.values()];
+  const wanted = parsePerWeek(raw.perWeek);
+  if (mix.length > 0) {
+    // Si lo que suma el reparto no es el total que dijo, se ajusta proporcionalmente (no se tira el reparto).
+    const have = mix.reduce((sum, m) => sum + m.perWeek, 0);
+    if (wanted >= mix.length && wanted <= MAX_PER_WEEK_TOTAL && wanted !== have) {
+      const shares = apportion(wanted, mix.map((m) => m.perWeek));
+      mix = mix.map((m, i) => ({ ...m, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, shares[i]!) }));
+      notes.push(`He ajustado el reparto para que sume ${mix.reduce((sum, m) => sum + m.perWeek, 0)} a la semana.`);
+    }
+  } else {
+    // Sin reparto utilizable: según los formatos que pidió la persona y, si no dijo ninguno, entre todos los de las redes elegidas.
+    diagnostic = JSON.stringify({ mix: raw.mix, perWeek: raw.perWeek }).slice(0, 600);
+    let slots = formatsAsked(ctx.hint ?? '', ctx.targets, networks);
+    const askedSome = slots.length > 0;
+    if (!askedSome) {
+      slots = networks.flatMap((network) =>
+        ctx.targets.filter((t) => t.network === network).map((t) => ({ network, format: t.format, weight: 1 })),
+      );
+    }
+    slots = slots.slice(0, MAX_PER_WEEK_TOTAL);
+    const total = Math.min(MAX_PER_WEEK_TOTAL, Math.max(slots.length, wanted >= 1 ? wanted : Math.max(3, slots.length)));
+    const shares = apportion(total, slots.map((slot) => slot.weight));
+    mix = slots.map((slot, i) => ({ network: slot.network, format: slot.format, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, shares[i]!) }));
+    notes.push(
+      askedSome
+        ? 'El reparto de la IA no era utilizable: lo he rehecho con los formatos que pediste.'
+        : 'El reparto de la IA no era utilizable: lo he repartido a partes iguales entre los formatos.',
+    );
   }
+  if (normalized && diagnostic === null) diagnostic = JSON.stringify({ mix: raw.mix, perWeek: raw.perWeek }).slice(0, 600);
   // Tope total: se quita de los de más peso, de uno en uno.
   let total = mix.reduce((sum, m) => sum + m.perWeek, 0);
   while (total > MAX_PER_WEEK_TOTAL) {
@@ -267,6 +413,7 @@ export function sanitizeBrief(
       why,
     },
     notes,
+    diagnostic,
   };
 }
 
@@ -327,6 +474,7 @@ export async function proposeCampaignBrief(
   service: AiService,
   actor: TaskActor,
   request: CampaignBriefRequest,
+  log?: (event: string, data: Record<string, unknown>) => void,
 ): Promise<CampaignBriefResult> {
   const instruction = requireText(request.instruction, 'lo que quieres preparar', MAX_BRIEF_CHARS);
   const today = dayNumber(request.today);
@@ -386,6 +534,12 @@ export async function proposeCampaignBrief(
       generationId: meta.generationId,
     });
   }
-  const { proposal, notes } = sanitizeBrief(raw, { today: request.today, targets });
+  const { proposal, notes, diagnostic } = sanitizeBrief(raw, {
+    today: request.today,
+    targets,
+    hint: `${instruction} ${answer?.text ?? ''}`,
+  });
+  // Solo identificadores y números del reparto (nada de lo que escribió la persona): sirve para ver qué devuelve un modelo real.
+  if (diagnostic) log?.('brief_mix_normalized', { mix: diagnostic });
   return { ...meta, status: 'proposal', question: null, proposal, notes };
 }

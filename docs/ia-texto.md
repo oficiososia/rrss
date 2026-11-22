@@ -271,8 +271,13 @@ para que la persona cuente lo que quiere, hablando o escribiendo, y la IA propon
   y la explica. El producto lo sanea después sin IA: empieza como pronto mañana, fechas reales, 63 días como máximo,
   una fase descrita por semana como mucho.
 - **Ritmo.** `perWeek` (publicaciones por semana, 14 como mucho) y `mix` (por red y formato, 7 como mucho cada uno);
-  se descarta lo que no sea de los destinos enviados. Si el reparto no sirve, se reparte a partes iguales entre las
-  redes y se dice en `notes`.
+  se descarta lo que no sea de los destinos enviados. El saneado es tolerante con lo que escribe un modelo real:
+  normaliza red y formato («Reels», «Instagram», «publicación», «carrusel», `instagram/reel`), lee números escritos
+  como texto o con decimales, suma entradas repetidas y, si la suma no es el `perWeek` dicho, ajusta en proporción
+  (se avisa en `notes`). Solo si NADA del reparto sirve lo rehace con los formatos que pidió la persona («sobre todo
+  reels y alguna foto»: el primero pesa el doble) o, si no nombró ninguno, entre todos los de las redes elegidas. En
+  esos casos se escribe en el registro del servidor el reparto recibido (`brief_mix_normalized`, solo red, formato y
+  números) para ver qué devuelve el modelo real.
 - **Solo las redes de la marca.** El navegador envía únicamente los destinos de las redes con cuenta conectada o con
   plantillas de la marca (Instagram si no hay ninguna); lo demás que diga el modelo se descarta.
 - **Una pregunta, no un interrogatorio.** Si falta un dato imprescindible (casi siempre, de qué trata), devuelve
