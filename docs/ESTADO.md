@@ -453,6 +453,18 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 - **Sin probar:** el pellizco táctil y los gestos en un móvil real (solo emulación y pruebas); el editor contra un Supabase real en esta rama (no hay Docker aquí): componentes, base de datos y navegador con cliente simulado.
 - **Pendiente:** e2e del editor con Supabase local para guardar plantilla y exportar de verdad; una vista de gestión de plantillas en la marca (hoy solo se borran desde «Desde una plantilla»).
 
+### Quitar el fondo en el servidor con el trabajador de Fly (rama `f21/cutout-fly`, 22/11/2026)
+
+Decisión del dueño: BEN2 en el servidor con la máquina de Fly que ya existe (detalle en
+`docs/edicion-fotos.md`, §7). **Implementado y probado en local:** trabajo `media.cutout` en el
+trabajador (BEN2 fp16, `onnxruntime-node`, 2 hilos, arena desactivada, sesión liberada por trabajo);
+migración `20261214010000_media_cutout.sql` con vuelta atrás; cadena del panel (navegador con BEN2 →
+trabajador → IS-Net refinado; la función de Vercel de `f18` queda **apagada por defecto**).
+**Medido en escritorio:** ~17–18 s por foto, ~2,2–2,3 GB de pico (también con 12 MP), plato blanco
+del coulant conservado. **Sin probar:** imagen Docker (ahora Debian, modelo con sha256 fijado),
+tiempo y memoria reales en Fly, panel contra el trabajador real. **Pendiente del dueño:** aplicar la
+migración, desplegar el trabajador, subir la máquina a 4 GB (pasos en el informe de la rama).
+
 ### Recorte de fondo: refinado y servidor (rama `f18/recorte-refinado`, 22/11/2026)
 
 El dueño vio que «Quitar el fondo» sin WebGPU (IS-Net) recortaba mal un chuletón
