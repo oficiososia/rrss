@@ -47,7 +47,7 @@ export async function runQuickEdit(options: {
 }): Promise<MediaAssetRow> {
   const { asset, url, edit, save, onProgress } = options;
   const { pixels } = await loadPixels(url);
-  const cut = await removeBackground(pixels, onProgress);
+  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id });
   let result = cut.pixels;
   const steps: PhotoEditStep[] = [{ kind: 'remove_background', engine: 'browser', model: cut.model }];
   if (edit.kind === 'blur_background') {

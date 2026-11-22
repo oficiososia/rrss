@@ -3,23 +3,22 @@
 // No lleva nada de un cliente: el modelo es el mismo para todas las marcas.
 
 /**
- * Modelo por defecto: IS-Net «general use» (DIS) en ONNX, con los pesos en
- * float16 y entrada y salida en float32 (≈ 84 MB), de `imgly/isnet-general-onnx`
- * en Hugging Face (CORS abierto, sin clave). Se descarga EN EL NAVEGADOR la
- * primera vez y se guarda en Cache Storage; el repositorio no lleva el modelo.
- *
- * Se puede servir desde el propio despliegue (o cualquier sitio con CORS) con
- * `VITE_CUTOUT_MODEL_URL`; por ejemplo, la versión cuantizada a uint8 de 46,7 MB
- * que ya usa el panel del restaurante, copiada a `public/models/`.
+ * Modelo por defecto: IS-Net «general use» (DIS) en ONNX con los pesos de las
+ * convoluciones cuantizados a uint8 por canal (46 731 330 bytes ≈ 45 MiB) y el
+ * cómputo en float32, ALOJADO EN ESTE DESPLIEGUE (`public/models/`). Es el mismo
+ * fichero que usa el panel del restaurante y el que carga la función del servidor
+ * (`api/cutout-mask.ts`): salió de `imgly/isnet-general-onnx` con IoU 0,9997–0,9999
+ * frente al modelo original. Mismo origen = sin depender de Hugging Face ni de
+ * CORS, y la mitad de descarga que el fp16 de antes (88 MB). Con
+ * `VITE_CUTOUT_MODEL_URL` se puede servir de otro sitio (con CORS y `Content-Length`).
  */
-export const DEFAULT_CUTOUT_MODEL_URL =
-  'https://huggingface.co/imgly/isnet-general-onnx/resolve/main/onnx/model_fp16.onnx';
+export const DEFAULT_CUTOUT_MODEL_URL = '/models/isnet-general-use-u8.onnx';
 
-/** Tamaño aproximado (bytes), solo para el progreso si el servidor no dice la longitud. */
-export const DEFAULT_CUTOUT_MODEL_BYTES = 88_152_708;
+/** Tamaño exacto (bytes), para el progreso si el servidor no dice la longitud. */
+export const DEFAULT_CUTOUT_MODEL_BYTES = 46_731_330;
 
 /** Caché del navegador donde se guarda el modelo. Cambiarla obliga a descargarlo otra vez. */
-export const CUTOUT_MODEL_CACHE = 'rrss-cutout-model-v1';
+export const CUTOUT_MODEL_CACHE = 'rrss-cutout-model-v2';
 
 /** Lado fijo de la entrada del modelo (IS-Net: 1×3×1024×1024). */
 export const MODEL_SIDE = 1024;

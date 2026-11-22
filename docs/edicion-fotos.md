@@ -276,15 +276,15 @@ ningún cliente. Código en `src/features/photo-edit/cutout/`.
 Decisión del dueño tras comparar 12 fotos reales (botellas, cócteles, platos):
 el recorte pasa a **BEN2 base fp16**, con el IS-Net de antes como respaldo.
 
-|                     | BEN2 (principal)                                                                             | IS-Net (respaldo)                                                                 |
-| ------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Modelo              | `onnx-community/BEN2-ONNX`, `onnx/model_fp16.onnx`                                           | `imgly/isnet-general-onnx`, `onnx/model_fp16.onnx`                                |
-| Peso                | 219 121 675 bytes (**219 MB**)                                                               | 88 152 708 bytes (84 MB)                                                          |
-| Licencia            | **MIT** (ficha del modelo); `onnxruntime-web` MIT                                            | MIT (ficha) / Apache-2.0 (DIS)                                                    |
-| Entrada y salida    | `pixel_values` 1×3×1024×1024, normalización ImageNet · `alphas` 1×1×1024×1024 ya entre 0 y 1 | `input` 1×3×1024×1024 (÷ máximo − 0,5) · salida en cualquier rango (se normaliza) |
-| Dónde corre         | **Solo WebGPU**                                                                              | WebGPU o, si no, WASM (CPU)                                                       |
-| Calidad que se dice | Alta                                                                                         | «Calidad básica»                                                                  |
-| Dirección           | `VITE_CUTOUT_BEN2_URL` o Hugging Face                                                        | `VITE_CUTOUT_MODEL_URL` o Hugging Face                                            |
+| | BEN2 (principal) | IS-Net (respaldo) |
+| --- | --- | --- |
+| Modelo | `onnx-community/BEN2-ONNX`, `onnx/model_fp16.onnx` | IS-Net «general use» cuantizado a uint8 (`public/models/isnet-general-use-u8.onnx`, alojado en este despliegue) |
+| Peso | 219 121 675 bytes (**219 MB**) | 46 731 330 bytes (**45 MB**) |
+| Licencia | **MIT** (ficha del modelo); `onnxruntime-web` MIT | MIT (ficha) / Apache-2.0 (DIS) |
+| Entrada y salida | `pixel_values` 1×3×1024×1024, normalización ImageNet · `alphas` 1×1×1024×1024 ya entre 0 y 1 | `input` 1×3×1024×1024 (÷ máximo − 0,5, promediando el área al encoger) · salida en cualquier rango (se normaliza) |
+| Dónde corre | **Solo WebGPU** | WebGPU o, si no, WASM (CPU) |
+| Calidad que se dice | Alta | «Calidad básica» |
+| Dirección | `VITE_CUTOUT_BEN2_URL` o Hugging Face | `/models/isnet-general-use-u8.onnx` (mismo origen) o `VITE_CUTOUT_MODEL_URL` |
 
 - **Por qué solo WebGPU.** En CPU nativa BEN2 pide ~4,6 GB de memoria; en WASM de
   32 bits (el de los navegadores, máximo 4 GB) no cabe. Con WebGPU los pesos van a
@@ -346,9 +346,122 @@ el recorte pasa a **BEN2 base fp16**, con el IS-Net de antes como respaldo.
   `applyMask(…, 'none')` de `cutout/mask.ts` y compare con la máscara de
   referencia.
 
+### Por qué salía mal el recorte sin WebGPU, y cómo se arregla — rama `f18/recorte-refinado`, 22/11/2026
+
+El dueño vio (22/11/2026, Chrome sin WebGPU, así que IS-Net) un chuletón en
+bandeja con la bandeja cortada en diagonal por la derecha, bordes sucios a la
+izquierda y trozos del plato perdidos, mientras que en el panel del restaurante
+el mismo tipo de recorte sale bien, también en el móvil. Se comparó línea a línea
+con el panel (`admin-casatomas`, solo lectura).
+
+**Causa.** El modelo es el mismo; lo que cambiaba era lo de alrededor:
+
+| | rrss antes | panel del restaurante |
+| --- | --- | --- |
+| Entrada del modelo | encoge con interpolación bilinear de 2×2 vecinos (salta la mayoría de los píxeles en una foto de 12 MP: ruido y bordes sucios) | el lienzo del navegador promedia al encoger |
+| Máscara → alfa | escala la máscara de 1024² y le pasa una curva | limpia motas, islas y **agujeros** de la máscara; **filtro guiado** con la luminancia de la propia foto a resolución completa (pega el borde al borde real); curva suave |
+| Modelo | fp16 de 84 MB desde Hugging Face | uint8 de 45 MB alojado en el propio despliegue (IoU 0,9997–0,9999 con el original) |
+| Si el navegador no puede | nada (el botón no sale) | se manda a un servidor (Vercel) que devuelve la máscara |
+
+Medido en esta máquina con las 12 fotos de la comparativa: la diferencia entre
+fp16 y uint8 es de IoU 0,999 (no es el modelo) y el navegador real (WASM) da lo
+mismo que Node (IoU 0,99999). Con la **misma máscara cruda**, la limpieza y el
+guiado rellenan el agujero que se abría dentro del plato del chuletón y
+recomponen el borde de la bandeja. Lo que **no** se ha podido reproducir: el
+fallo exacto de la captura del dueño, porque no se tiene su foto; en las 12
+fotos de prueba (de 1152×1536 a 1479×1183, ya reducidas) el defecto es menor que
+en su captura, y el efecto de una foto grande (12 MP del móvil) se probó solo con
+una copia sintética con ruido (sin diferencia llamativa). La hoja comparativa
+(original | antes | ahora | panel) está en
+`rrss-recursos-comparativa/recorte-respaldo.jpg`, fuera del repositorio. Con el
+plato blanco del coulant sobre mantel claro, IS-Net pierde el plato en las tres
+versiones (también en el panel): es un límite del modelo; BEN2 sí lo recorta.
+
+**Qué se ha portado** (`cutout/refine.ts`, sin DOM y con una sola importación con
+extensión `.js`, porque el servidor lo carga en Node):
+
+- `isnetInput`: entrada con promedio de área (antes, bilinear).
+- `cleanMask`: motas, islas lejanas y agujeros (áreas relativas; una pata o una
+  antena unida al cuerpo se conserva; un hueco grande de verdad se conserva).
+- Filtro guiado «rápido»: coeficientes a ≤ 1600 px y alfa a resolución completa.
+- IS-Net: limpieza + guiado + curva (`applyMask(…, 'refined')`). **BEN2: solo la
+  limpieza** (`'clean'`): su alfa ya es fino y el guiado endurecería los medios
+  tonos. En las 12 fotos la limpieza cambia unos pocos píxeles (de 1 a 13 por
+  foto; 335 en la copia sintética de 12 MP): es una red de seguridad que no
+  empeora nada medible. No se probó el guiado sobre BEN2 con una referencia real,
+  solo se descartó por criterio.
+- Modelo uint8 alojado en `public/models/` (`/models/isnet-general-use-u8.onnx`,
+  46 731 330 bytes; es el fichero del panel, derivado del IS-Net de DIS,
+  Apache-2.0). La caché del navegador pasa a `rrss-cutout-model-v2`. El texto
+  previo dice «de 45 a 220 MB». El cálculo de BEN2 sigue en el hilo principal
+  (35–40 ms); el refinado de IS-Net también (≈ 0,2–0,5 s en una foto de 1,5 MP).
+
+**Cadena de motores** (`cutout/remover.ts`):
+
+1. Navegador con WebGPU y memoria → **BEN2** (calidad alta).
+2. Navegador sin WebGPU → **IS-Net** con el refinado nuevo (calidad básica).
+3. **Servidor** (`api/cutout-mask.ts`, el mismo IS-Net y el mismo refinado) si: el
+   navegador no puede (sin WebAssembly, menos de 2 GB), o falla (modelo, memoria,
+   red del modelo), o el dispositivo declara menos de 4 GB (se prueba primero el
+   servidor y, si falla, el navegador). Tras quedarse sin memoria, las fotos
+   siguientes van directas al servidor hasta recargar. Hace falta la marca (la
+   pasan el diálogo «Editar foto» y las ediciones rápidas).
+4. «Nada que recortar» y cancelar cortan la cadena.
+
+El botón «Quitar el fondo» sale si el navegador puede **o** hay servidor
+(`VITE_CUTOUT_SERVER_URL`; por defecto `/api/cutout-mask` solo en la compilación
+de producción; `off` lo apaga; en `vite dev` y en las pruebas e2e no hay
+servidor).
+
+**Servidor.**
+
+- `POST /api/cutout-mask` (`api/cutout-mask.ts`, `api/_lib/cutout/`): cuerpo =
+  foto JPEG/PNG/WebP (el navegador la manda reducida a ≤ 1600 px y ≤ 3,5 MB; la
+  función rechaza > 4 MB), `Authorization: Bearer <JWT>` y `X-Brand-Id`. Devuelve
+  un PNG gris de 1 canal con la máscara al tamaño de la foto. Errores: 400, 401,
+  403, 413, 415, 422, 429, 500 y 503 (ver la cabecera del archivo).
+- **Autorización:** el JWT se valida contra Auth y, con ese mismo JWT (nunca la
+  clave de servicio), se llama a `cutout_reserve(marca)`: exige poder **editar**
+  esa marca (la foto es de una marca suya) y mira los topes. Migración
+  `20261213120000_cutout_server_usage.sql` (tabla `cutout_usage` con RLS: la ve
+  quien gestiona la marca y no se escribe a mano; vuelta atrás en
+  `supabase/rollbacks/`): **60 recortes por persona y día** y **600 por marca y
+  mes** (constantes de la función; cambiarlos es otra migración). Al acabar,
+  `cutout_finish` anota la duración real. La migración **no está aplicada** en
+  ningún Supabase remoto. Limitación: la función comprueba que la persona puede
+  editar la marca que declara, no que los bytes de la foto estén en esa marca
+  (la foto que se recorta puede ser una versión sin guardar).
+- `GET /api/cutout-mask`: diagnóstico sin sesión (¿están el modelo,
+  onnxruntime-node y sharp?).
+- **Ficheros:** `vercel.json` incluye el modelo y el binario de linux-x64 de
+  `onnxruntime-node` y excluye los de Windows, macOS y arm64; la reescritura a
+  `index.html` ya no se come `/api/`. Dependencias nuevas: `onnxruntime-node`
+  1.30.0 y `sharp` 0.34.5; `.npmrc` con `onnxruntime-node-install=skip` (evita
+  bajar los binarios de CUDA).
+- **Viabilidad en Vercel (por la documentación y lo medido en local; sin
+  desplegar):** paquete de la función ≈ modelo 45 MB + onnxruntime-node linux-x64
+  45 MB + sharp con libvips ≈ 25 MB ≈ **115 MB frente al límite de 250 MB**;
+  memoria **≈ 290 MB** medidos con una foto de 1152×1536 (el plan Hobby da 2 GB);
+  tiempo **≈ 2,1 s por foto** en esta CPU de escritorio con 2 hilos (decodificar
+  0,08 s, inferencia 1,9 s, refinado 0,2 s), con `maxDuration` de 60 s; cuerpo
+  ≤ 4,5 MB (se limita a 4) y respuesta de ~40 KB. **Sin medir:** el arranque en
+  frío y la velocidad de la CPU de Vercel (puede ser 2–3 veces más lenta), y que
+  el despliegue incluya los binarios (comprobarlo tras el primer despliegue con el
+  GET de diagnóstico). El plan Hobby de Vercel da 4 h de CPU activa al mes **para
+  todo el equipo `casa-tomas`** y es solo para uso no comercial: con el tope de
+  600 recortes al mes por marca y ~2–6 s cada uno, son hasta 1–1,5 h por marca;
+  si el SaaS se vende, hace falta el plan Pro.
+- **Mismo resultado que en el navegador (medido):** máscara del servidor frente
+  a la del navegador con el mismo código, 2 fotos: IoU 1,000 y error medio del
+  alfa < 0,0001 sobre 255.
+- **Pruebas:** `cutout/refine.test.ts` (limpieza, guiado, entrada),
+  `cutout/chain.test.ts` (cadena de caídas, cliente del servidor y la función:
+  autorización, límites), `tests/db/recorte-servidor.test.ts` (permisos, topes,
+  tabla).
+
 El resto de esta sección describe IS-Net, que sigue siendo el respaldo.
 
-- **Modelo:** IS-Net «general use» (DIS), ONNX con pesos en float16 y entrada y
+- **Modelo (hasta `f18`; ahora es el uint8 alojado, ver arriba):** IS-Net «general use» (DIS), ONNX con pesos en float16 y entrada y
   salida en float32, de `imgly/isnet-general-onnx` en Hugging Face
   (`onnx/model_fp16.onnx`). **88 152 708 bytes (≈ 84 MiB)**. Licencia: el
   modelo declara **MIT** (ficha de Hugging Face) y la arquitectura y los pesos
@@ -387,7 +500,7 @@ El resto de esta sección describe IS-Net, que sigue siendo el respaldo.
   botón (si hay IA en el servidor, queda esa). Fallos al recortar (sin red,
   memoria, sin WebGPU ni WASM, nada que recortar) se explican en claro y se puede
   reintentar. WebGPU que falle o dé una máscara vacía se repite en WASM.
-- **Calidad de la máscara (IS-Net):** el alfa sale de la máscara del modelo escalada y una curva suave; **no** lleva el filtro guiado del
+- **Calidad de la máscara (IS-Net) — texto anterior a `f18`, ya NO vale: desde `f18` lleva limpieza y filtro guiado (ver arriba).** Antes: el alfa salía de la máscara del modelo escalada y una curva suave; **no** llevaba el filtro guiado del
   panel (que conserva mejor antenas, patas y cristal fino). Para platos y
   productos basta; si hiciera falta más, es el siguiente paso.
 - **Rendimiento (medido solo en CPU de Node, no en un navegador):** el modelo

@@ -186,6 +186,7 @@ const TENANT_TABLES = [
   'brand_fonts',
   'media_assets',
   'storage_cleanup_queue',
+  'cutout_usage',
   'invitations',
   'audit_logs',
   'usage_quotas',
