@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f32/operacion-gasto`; antes, `f27/calidad`).
+Última actualización: 22/11/2026 (rama `f33/integraciones-sencillas`; antes, `f32/operacion-gasto`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -805,3 +805,30 @@ atrás), **sin aplicar en staging**.
   imitados; la e2e 19 está actualizada pero no se ha ejecutado (sin Docker).
 - **Pendiente:** aviso hacia fuera (correo o Telegram), comprobación periódica de la máquina de Fly,
   cargar y verificar precios reales de IA, decidir si se activan los topes (apagados por defecto; los avisos y la pantalla son solo informativos).
+
+## Integraciones en dos niveles, precios al día y sugerencias de modelo (rama `f33/integraciones-sencillas`, 22/11/2026)
+
+Detalle en `docs/integraciones-sencillas.md`. Migración `20261222010000_precios_y_coste_real.sql`
+(con vuelta atrás), **sin aplicar en staging**.
+
+- **Implementado y probado en componentes y en base de datos (con fuentes y proveedores simulados):**
+  vista sencilla de «Plataforma → Integraciones» (una tarjeta por servicio, estado en una palabra,
+  la clave imprescindible, «Guardar», «Probar conexión» y «Con esto se enciende»; todo lo demás en
+  «Opciones avanzadas» de cada tarjeta); resumen «Qué funciona ahora» (8 funciones); OpenAI como una
+  sola tarjeta; al guardar la clave de OpenAI se aplican valores por defecto (servidor europeo,
+  modelo barato para el copiloto, modelo mejor para redactar, precios, modelos de imagen de OpenAI
+  activados) con «Deshacer»; «Usar la configuración recomendada»; sugerencia de modelo por tarea con
+  su precio por uso (OpenAI y, como tarjeta nueva y opcional, Claude); precios al día leídos por el
+  servidor desde LiteLLM (caché de 12 h, último valor guardado si la fuente falla) comparados con
+  los cargados, con «Usar estos precios»; coste real medio por operación del mes; si la clave de
+  OpenAI no es de un proyecto europeo, «Probar conexión» lo dice y ofrece el servidor general en un
+  clic (con el aviso de los datos fuera de la UE).
+- **Para llevar a staging:** migración `20261222010000`; redesplegar `platform-integrations` (hace
+  falta salida a `raw.githubusercontent.com` y a la API de OpenAI); la aplicación web.
+- **No probado:** nada contra OpenAI, Anthropic ni GitHub reales desde la aplicación (la fuente de
+  precios se leyó a mano el 22/11/2026 para elegirla); la pantalla no se ha visto en un navegador
+  ni a 375 px reales (maquetación con rejilla y `flex-wrap`, sin captura); la e2e 18 y la 21 están
+  adaptadas pero no se han ejecutado (sin Docker; corren en CI).
+- **Pendiente:** leer el gasto real del proveedor con una clave de administración (documentado, sin
+  implementar: `docs/integraciones-sencillas.md` §6); medir con nuestros casos los modelos que hoy
+  salen como «sin medir con nuestros casos»; precio por imagen (la fuente solo da precio por token de imagen).
