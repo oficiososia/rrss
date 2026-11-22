@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
+import { useIsPlatformAdmin } from '@/features/orgs/api';
 import { LEGAL_VERSIONS, legalPath } from '@/features/legal/legal';
 import { supabase } from '@/lib/supabase';
 import { translateError } from '@/lib/errors';
@@ -24,6 +25,7 @@ export function pendingDocuments(rows: { document: 'terms' | 'privacy'; version:
  * la política de privacidad. Deja pasar «Mi cuenta» (para descargar o borrar los
  * datos sin tener que aceptar nada) y cerrar sesión. La aceptación queda en
  * `legal_acceptances` con la hora del servidor (`accept_legal_documents`).
+ * No bloquea a los superadministradores (uso interno de la agencia).
  *
  * Es un bloqueo de la interfaz: la base de datos no impide usar la API a quien
  * no haya aceptado. Si no se puede leer el registro de aceptaciones, no se
@@ -34,10 +36,13 @@ export function LegalGate() {
   const location = useLocation();
   const acceptances = useLegalAcceptances(user.id);
   const accept = useAcceptLegal(user.id);
+  const platformAdmin = useIsPlatformAdmin(user.id);
   const [checked, setChecked] = useState(false);
 
   if (location.pathname === '/cuenta') return <Outlet />;
-  if (acceptances.isPending) return <Spinner className="min-h-dvh" />;
+  // Uso interno de la agencia: quien administra la plataforma no se bloquea.
+  if (platformAdmin.data === true) return <Outlet />;
+  if (acceptances.isPending || platformAdmin.isPending) return <Spinner className="min-h-dvh" />;
   if (acceptances.isError || acceptedCurrent(acceptances.data)) return <Outlet />;
 
   const rows = acceptances.data;

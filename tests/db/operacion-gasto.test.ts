@@ -534,9 +534,11 @@ describe('tope mensual de trabajos de medios por marca', () => {
       `clave-${randomUUID()}`,
     ]);
 
-  it('sin ajuste el tope es de 400 y 0 lo quita', async () => {
+  it('sin ajuste no hay tope (apagado por defecto), un número lo activa y 0 lo quita', async () => {
     await clearJobsCap();
-    expect((await db.query<{ c: number }>(`select private.media_jobs_monthly_max() as c`))[0]!.c).toBe(400);
+    expect((await db.query<{ c: number | null }>(`select private.media_jobs_monthly_max() as c`))[0]!.c).toBeNull();
+    await setJobsCap('250');
+    expect((await db.query<{ c: number }>(`select private.media_jobs_monthly_max() as c`))[0]!.c).toBe(250);
     await setJobsCap('0');
     expect((await db.query<{ c: number | null }>(`select private.media_jobs_monthly_max() as c`))[0]!.c).toBeNull();
     await clearJobsCap();

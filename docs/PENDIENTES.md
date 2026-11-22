@@ -93,7 +93,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P1 | Aviso hacia fuera (correo o Telegram) de los avisos de plataforma; hoy solo se ven en la pantalla | Desarrollo | No hay canal general de avisos ni SMTP |
 | P1 | Comprobación periódica de la máquina de Fly encendida demasiado tiempo (hoy, a mano desde «Gasto y uso») y alerta equivalente en el panel de Fly | Ambos | `docs/operacion-gasto.md` §6 |
 | P1 | Cargar precios reales de IA y marcarlos verificados; «Gasto y uso» enseña los que no lo están | Ambos | Sin ellos el cupo mide con una regla que puede ser falsa |
-| P2 | Revisar con el dueño el tope por defecto de 400 trabajos de medios al mes por marca y el reparto del cupo entre marcas | Dueño | Cifra de partida, no medida |
+| P2 | Decidir si se activan el tope global de IA y el de trabajos de medios por marca (hoy apagados) y el reparto del cupo entre marcas | Dueño | Apagados por defecto: hoy solo hay avisos |
 | P1 | Pasar las variables nuevas a `.env.example` (`VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `VITE_REEL_SUBTITLES_ENABLED`, `VITE_CUTOUT_*`, `AI_TEXT_EDITOR_COPILOT_*`, Drive) | Desarrollo | |
 | P2 | Tiempo real en los avisos de encargos (hoy sondeo de 60 s) | Desarrollo | |
 

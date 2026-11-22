@@ -47,6 +47,14 @@ describe('LegalGate', () => {
     expect(await screen.findAllByTestId('user-menu')).not.toHaveLength(0);
   });
 
+  it('un superadministrador no se bloquea aunque no haya aceptado (uso interno de la agencia)', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    fake.tables.legal_acceptances = [];
+    renderApp(BASE);
+    await screen.findAllByTestId('user-menu');
+    expect(screen.queryByTestId('legal-gate')).not.toBeInTheDocument();
+  });
+
   it('quien nunca ha aceptado también tiene que hacerlo', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'viewer' });
     fake.tables.legal_acceptances = [];

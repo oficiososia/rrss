@@ -87,8 +87,9 @@ cupo solo protege si el precio es real.
 
 ## 5. Tope mensual de trabajos de medios por marca
 
-- Ajuste `MEDIA_JOBS_MONTHLY_PER_BRAND` (Integraciones → Trabajador de medios). Por defecto **400**
-  (una cifra de partida, no medida); `0` = sin tope. Es por marca, no por plan: no se han tocado los
+- Ajuste `MEDIA_JOBS_MONTHLY_PER_BRAND` (Integraciones → Trabajador de medios). **Apagado por
+  defecto**: sin valor, o con `0`, no hay tope (decisión del dueño: de momento rrss es una
+  herramienta interna de la agencia y nada nuevo debe bloquear el trabajo). Con un número, se activa. Es por marca, no por plan: no se han tocado los
   planes ni sus cupos.
 - Lo impone `request_media_job` (reels, recortes e imagen del trabajador; no cuentan los
   cancelados): al llegar, falla con «Esta marca ha llegado a su tope mensual de N trabajos de
@@ -124,7 +125,9 @@ política (`LEGAL_VERSIONS` en `src/features/legal/legal.ts`) no consta como ace
 interfaz con un aviso que dice qué documento cambió, enlaza a los textos y pide marcar la casilla;
 «Aceptar y continuar» llama a `accept_legal_documents`, que registra la aceptación con la hora del
 servidor (`legal_acceptances`, origen `app`). Deja pasar «Mi cuenta» (descargar o borrar los datos
-sin aceptar) y cerrar sesión. Quien nunca aceptó también queda bloqueado. Si no se puede leer el
+sin aceptar) y cerrar sesión. Quien nunca aceptó también queda bloqueado, **salvo los superadministradores** (decisión más
+simple para el uso interno de la agencia: no se les bloquea; si hace falta, se puede ampliar a las
+organizaciones de tipo agencia). Si no se puede leer el
 registro, no bloquea. **Es un bloqueo de la interfaz**: la base de datos no impide usar la API a
 quien no ha aceptado. Para volver a pedir la aceptación a todos, basta subir la versión en `legal.ts`.
 
@@ -143,7 +146,7 @@ como secretos de las funciones con el mismo nombre). Para `.env.example` (no se 
 ```
 # Opcional, ajustes de Integraciones que también valen como variable de las funciones:
 # AI_GLOBAL_MONTHLY_CAP=50
-# MEDIA_JOBS_MONTHLY_PER_BRAND=400
+# MEDIA_JOBS_MONTHLY_PER_BRAND=400   (apagado si no se pone)
 ```
 
 ## Para desplegar
@@ -160,4 +163,5 @@ como secretos de las funciones con el mismo nombre). Para `.env.example` (no se 
 - La e2e completa (sin Docker en el PC de desarrollo): la 19 se ha actualizado, no ejecutado.
   `LegalGate` bloquea a quien no tenga aceptaciones; las e2e registran por la interfaz (con la
   casilla), pero las cuentas creadas por otros caminos quedarían bloqueadas.
-- El valor por defecto de 400 trabajos al mes por marca es una suposición.
+- Los dos topes (IA global y trabajos de medios) vienen **apagados**: hasta que se pongan, solo hay
+  avisos y la pantalla informativa.

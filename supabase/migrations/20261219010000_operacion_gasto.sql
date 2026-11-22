@@ -18,8 +18,8 @@
 --      (`media-storage/purge-cleanup`) y la tarea horaria las despacha.
 --
 --   5. Tope mensual de trabajos del trabajador de medios por marca (reels y
---      recortes), con ajuste MEDIA_JOBS_MONTHLY_PER_BRAND en Integraciones (por
---      defecto 400; 0 = sin tope). Se comprueba en `request_media_job`.
+--      recortes), con ajuste MEDIA_JOBS_MONTHLY_PER_BRAND en Integraciones
+--      (apagado por defecto: sin valor o 0 = sin tope). Se comprueba en `request_media_job`.
 --   6. Revisión de precios de IA sin verificar y marcas de «cupo a mano» y
 --      «plan sin límites» en «Gasto y uso».
 --
@@ -605,15 +605,16 @@ end $$;
 
 -- ─────────────── 5. Tope mensual de trabajos de medios por marca ───────────────
 
--- Trabajos al mes por marca (reels y recortes). Por defecto 400: es una cifra
--- de partida, no un dato medido; se cambia en Integraciones → Trabajador de
--- medios (MEDIA_JOBS_MONTHLY_PER_BRAND). 0 = sin tope (null).
+-- Trabajos al mes por marca (reels y recortes). SIN TOPE por defecto (decisión
+-- del dueño: uso interno de la agencia); se activa poniendo un número en
+-- Integraciones → Trabajador de medios (MEDIA_JOBS_MONTHLY_PER_BRAND). Vacío,
+-- 0 o un valor mal escrito = sin tope (null).
 create function private.media_jobs_monthly_max() returns integer
 language sql stable security definer set search_path = '' as $$
   select case
-    when s.plain_value is null then 400
+    when s.plain_value is null then null
     when btrim(s.plain_value) ~ '^[0-9]{1,6}$' then nullif(btrim(s.plain_value)::integer, 0)
-    else 400 end
+    else null end
   from (select 1) x left join private.integration_settings s on s.setting_key = 'MEDIA_JOBS_MONTHLY_PER_BRAND';
 $$;
 

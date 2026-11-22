@@ -738,12 +738,12 @@ atrás), **sin aplicar en staging**.
   límites marcados); avisos de plataforma (cupo al 80 % y 100 %, tope global, trabajos de medios
   que fallan, tope de trabajos por marca, tareas programadas, máquina de Fly); tope global
   mensual de IA (`AI_GLOBAL_MONTHLY_CAP`, error `AI003` → `ai_paused`); tope mensual de trabajos de
-  medios por marca (`MEDIA_JOBS_MONTHLY_PER_BRAND`, 400 por defecto); limpieza de
+  medios por marca (`MEDIA_JOBS_MONTHLY_PER_BRAND`, apagado por defecto, igual que el tope global); limpieza de
   `storage_cleanup_queue` de marcas borradas; aviso que bloquea hasta aceptar la versión vigente
-  de los documentos legales; aviso previo al primer dictado del copiloto.
+  de los documentos legales (no bloquea a superadministradores); aviso previo al primer dictado del copiloto.
 - **Para llevar a staging:** migración `20261219010000`; redesplegar `ai-generate`, `ai-media`,
   `ai-transcribe`, `media-storage` y `platform-integrations`; la aplicación web.
 - **No probado:** nada contra Supabase, Fly o proveedores reales; `pg_cron` y `pg_net` solo
   imitados; la e2e 19 está actualizada pero no se ha ejecutado (sin Docker).
 - **Pendiente:** aviso hacia fuera (correo o Telegram), comprobación periódica de la máquina de Fly,
-  cargar y verificar precios reales de IA, confirmar el tope por defecto de trabajos de medios.
+  cargar y verificar precios reales de IA, decidir si se activan los topes (apagados por defecto; los avisos y la pantalla son solo informativos).

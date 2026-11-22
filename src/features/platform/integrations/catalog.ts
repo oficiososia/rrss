@@ -512,9 +512,9 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
       {
         title: 'Tope mensual de trabajos por marca',
         description:
-          'Cuántos reels y recortes de fondo puede encargar cada marca al mes. Al llegar, la marca ve un aviso claro y no puede encargar más hasta el mes siguiente. Sin valor: 400. 0 = sin tope.',
+          'Cuántos reels y recortes de fondo puede encargar cada marca al mes. Al llegar, la marca ve un aviso claro y no puede encargar más hasta el mes siguiente. Apagado por defecto: sin valor, o 0, no hay tope.',
         fields: [
-          { key: 'MEDIA_JOBS_MONTHLY_PER_BRAND', label: 'Trabajos al mes por marca', secret: false, placeholder: '400' },
+          { key: 'MEDIA_JOBS_MONTHLY_PER_BRAND', label: 'Trabajos al mes por marca', secret: false, placeholder: 'sin tope' },
         ],
       },
     ],
