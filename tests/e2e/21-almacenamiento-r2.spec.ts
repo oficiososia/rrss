@@ -57,8 +57,8 @@ test('la superadministradora configura Cloudflare R2 (aquí, MinIO) y «Probar c
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto('/plataforma/integraciones');
-  await page.getByRole('tab', { name: 'Cloudflare R2 (almacenamiento)' }).click();
-  const r2 = page.getByTestId('integration-r2');
+  // Una tarjeta por servicio (ya no hay pestañas): los datos del cubo y su clave están a la vista.
+  const r2 = page.getByTestId('integration-storage');
   await r2.getByTestId('setting-R2_BUCKET').getByRole('textbox').fill(MINIO.cubo);
   await r2.getByLabel('Access Key ID').fill(MINIO.usuario);
   await r2.getByLabel('Secret Access Key').fill(MINIO.clave);
