@@ -68,7 +68,7 @@ function analysisOf(draft: PostDraft, document: ContentDocumentInput, theme: The
     `Cuándo: ${draft.whenToUse}`,
     `Material: ${draft.material}`,
     pages > 1 ? `${pages} páginas.` : '',
-    'Del catálogo de la agencia: los textos son de muestra y las fotos, marcadores.',
+    'Del catálogo de plantillas: los textos son de muestra y las fotos, marcadores.',
   ]
     .filter(Boolean)
     .join(' ')
@@ -123,7 +123,7 @@ export function buildPublications(set: CatalogSet, theme: Theme) {
     format: TEMPLATES_DELIVERY_FORMAT,
     version: TEMPLATES_DELIVERY_VERSION,
     source: 'manual' as const,
-    note: `Catálogo de la agencia · juego «${set.name}» (${set.id})`,
+    note: `Catálogo de plantillas · juego «${set.name}» (${set.id})`,
     templates: set.posts(theme).map((draft) => {
       const document = documentOf(draft, theme);
       return {
@@ -144,7 +144,7 @@ export function buildReels(set: CatalogSet, theme: Theme) {
   return {
     format: REEL_TEMPLATES_DELIVERY_FORMAT,
     version: REEL_TEMPLATES_DELIVERY_VERSION,
-    note: `Catálogo de la agencia · juego «${set.name}» (${set.id})`,
+    note: `Catálogo de plantillas · juego «${set.name}» (${set.id})`,
     templates: set.reels(theme),
   };
 }

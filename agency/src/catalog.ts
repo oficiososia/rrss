@@ -19,31 +19,18 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseProfile, type BrandProfileData } from '../../src/features/brand/profile.ts';
-import { validateTemplatesDelivery, type TemplateInput } from '../../src/features/brand/templates.ts';
+import { describeNeeds } from '../../src/features/reels/reelTemplate.ts';
+import { buildCatalogWith, CatalogError, type BuiltCatalog } from '../catalogo/construir.ts';
 import {
-  describeNeeds,
-  validateReelTemplatesDelivery,
-  type ReelTemplateEntry,
-} from '../../src/features/reels/reelTemplate.ts';
-import {
-  buildPublications,
-  buildReels,
   CATALOG_SETS,
-  findSet,
   themeFromProfile,
   themeOverridesSchema,
-  type CatalogSet,
   type Theme,
   type ThemeOverrides,
 } from '../catalogo/index.ts';
 import type { SupabaseClient } from './supabase.ts';
 
-export class CatalogError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'CatalogError';
-  }
-}
+export { CatalogError } from '../catalogo/construir.ts';
 
 export type CatalogPart = 'reels' | 'publicaciones';
 
@@ -56,39 +43,11 @@ export function reelStyleIds(): string[] {
     .sort();
 }
 
-export interface BuiltCatalog {
-  set: CatalogSet;
-  theme: Theme;
-  publications: { file: unknown; templates: TemplateInput[] };
-  reels: { file: unknown; templates: ReelTemplateEntry[] };
-}
+export type { BuiltCatalog } from '../catalogo/construir.ts';
 
 /** Arma un juego con el tema dado y lo valida con los mismos validadores que la entrega. Lanza `CatalogError`. */
 export function buildCatalog(setId: string, theme: Theme): BuiltCatalog {
-  const set = findSet(setId);
-  if (!set) {
-    throw new CatalogError(`No existe el juego «${setId}». Los que hay: ${CATALOG_SETS.map((s) => s.id).join(', ')}.`);
-  }
-  const publicationsFile = buildPublications(set, theme);
-  const publications = validateTemplatesDelivery(publicationsFile, { defaultSource: 'manual' });
-  if (!publications.ok) {
-    throw new CatalogError(
-      `Las publicaciones del juego «${set.id}» no son válidas:\n${publications.issues.map((i) => `  - ${i.path}: ${i.message}`).join('\n')}`,
-    );
-  }
-  const reelsFile = buildReels(set, theme);
-  const reels = validateReelTemplatesDelivery(reelsFile, reelStyleIds());
-  if (!reels.ok) {
-    throw new CatalogError(
-      `Los reels del juego «${set.id}» no son válidos:\n${reels.issues.map((i) => `  - ${i.path}: ${i.message}`).join('\n')}`,
-    );
-  }
-  return {
-    set,
-    theme,
-    publications: { file: publicationsFile, templates: publications.templates },
-    reels: { file: reelsFile, templates: reels.templates },
-  };
+  return buildCatalogWith(setId, theme, reelStyleIds());
 }
 
 async function readJson(file: string): Promise<unknown> {
