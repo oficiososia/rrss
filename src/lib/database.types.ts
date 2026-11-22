@@ -1625,6 +1625,17 @@ export type PlatformPriceRow = {
   status: PriceStatus;
 };
 
+/** Coste liquidado del mes por tipo de operación de IA (platform_cost_per_operation). */
+export type PlatformCostRow = {
+  task: AiTask;
+  purpose: string;
+  provider: string;
+  model: string;
+  operations: number;
+  cost_micros: number;
+  audio_seconds: number;
+};
+
 export type PlatformAiGlobalStatus = {
   period_start: string;
   cap_micros: number | null;
@@ -1666,6 +1677,7 @@ type OperationFunctions = {
   platform_storage_by_brand: { Args: Record<string, never>; Returns: PlatformStorageRow[] };
   platform_ai_global_status: { Args: Record<string, never>; Returns: PlatformAiGlobalStatus };
   platform_price_review: { Args: { p_period_start: string }; Returns: PlatformPriceRow[] };
+  platform_cost_per_operation: { Args: { p_period_start: string }; Returns: PlatformCostRow[] };
   platform_alerts_refresh: { Args: Record<string, never>; Returns: number };
   platform_alert_resolve: { Args: { p_id?: string | null }; Returns: number };
 };

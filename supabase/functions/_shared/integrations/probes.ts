@@ -52,12 +52,18 @@ export interface ProbeCheck {
   /** null = no se puede comprobar desde aquí (se dice por qué). */
   ok: boolean | null;
   message: string;
+  /** Arreglo de un clic que ofrece la pantalla (p. ej. usar el servidor general de OpenAI). */
+  fix?: ProbeFix;
 }
+
+/** Arreglos que la pantalla sabe ofrecer. */
+export type ProbeFix = 'openai_global';
 
 export interface ProbeResult {
   ok: boolean;
   message: string;
   checks: ProbeCheck[];
+  fix?: ProbeFix;
 }
 
 export interface ProbeDeps {
@@ -113,7 +119,8 @@ function summarize(checks: ProbeCheck[], empty: string): ProbeResult {
     : failed.length > 0
       ? failed.map((c) => c.message).join(' ')
       : checks.map((c) => c.message).join(' ');
-  return { ok, message, checks };
+  const fix = failed.find((c) => c.fix)?.fix;
+  return fix ? { ok, message, checks, fix } : { ok, message, checks };
 }
 
 // ─────────────────────────────── Meta ───────────────────────────────
@@ -323,7 +330,15 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
           ? { name: 'OpenAI', ok: false, message: unreachable('OpenAI', r) }
           : r.status === 200
             ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
-            : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
+            : r.status !== 200 && new URL(base).hostname === 'eu.api.openai.com'
+              ? {
+                  name: 'OpenAI',
+                  ok: false,
+                  message:
+                    'OpenAI no acepta esta clave en su servidor europeo. Lo más habitual es que la clave no sea de un proyecto con región Europa; también puede estar mal copiada. Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).',
+                  fix: 'openai_global',
+                }
+              : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
       );
       // Edición de fotos con IA: la misma lista dice si la clave ve un modelo de imagen.
       if (!('error' in r) && r.status === 200) {
@@ -735,6 +750,34 @@ async function probeMediaWorker(env: Env, deps: ProbeDeps): Promise<ProbeResult>
     });
   }
   return summarize(checks, '');
+}
+
+/**
+ * Modelos que lista la cuenta de OpenAI (gratis). `null` si no se puede mirar,
+ * con el motivo. Mismo servidor y mismas cabeceras que «Probar conexión».
+ */
+export async function listOpenAiModels(
+  env: Env,
+  deps: ProbeDeps,
+): Promise<{ models: string[] } | { problem: string }> {
+  const key = value(env, 'OPENAI_API_KEY');
+  if (!key) return { problem: 'Falta la clave de OpenAI.' };
+  const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
+  const headers: Record<string, string> = { Authorization: `Bearer ${key}`, Accept: 'application/json' };
+  const org = value(env, 'OPENAI_ORGANIZATION');
+  const project = value(env, 'OPENAI_PROJECT');
+  if (org) headers['OpenAI-Organization'] = org;
+  if (project) headers['OpenAI-Project'] = project;
+  const r = await call(deps, `${base}/v1/models`, { headers });
+  if ('error' in r) return { problem: unreachable('OpenAI', r) };
+  if (r.status !== 200) return { problem: rejected('OpenAI', r.status) };
+  const data = typeof r.body === 'object' && r.body !== null ? (r.body as { data?: unknown }).data : null;
+  if (!Array.isArray(data)) return { problem: 'OpenAI no devolvió la lista de modelos.' };
+  return {
+    models: data
+      .map((m) => (typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
+      .filter(Boolean),
+  };
 }
 
 export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeDeps): Promise<ProbeResult> {

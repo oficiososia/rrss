@@ -1,7 +1,7 @@
 // Lo que se enseña en «Plataforma → Integraciones»: cada integración, sus
 // apartados y sus campos, con el nombre de la variable de entorno que sustituye.
 // El catálogo que manda es el de la base de datos (migraciones 20261120010000,
-// 20261123010000, 20261124010000 y 20261208010000);
+// 20261123010000, 20261124010000, 20261208010000 y 20261222010000);
 // el del servidor está en supabase/functions/_shared/integrations/catalog.ts y
 // una prueba (tests/db/integraciones.test.ts) comprueba que los tres coinciden.
 //
@@ -30,6 +30,8 @@ export interface UiField {
   options?: Array<{ value: string; label: string }>;
   placeholder?: string;
   help?: string;
+  /** Lo guarda el servidor y no se edita a mano: no sale en la pantalla. */
+  hidden?: boolean;
 }
 
 export interface UiGroup {
@@ -257,6 +259,12 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
             secret: false,
             input: 'textarea',
             help: '{ "proveedor/modelo": { "input_tokens": micros, "output_tokens": …, "cache_read_input_tokens": …, "cache_write_input_tokens": … } }',
+          },
+          {
+            key: 'AI_PRICE_SNAPSHOT',
+            label: 'Última lectura de precios al día',
+            secret: false,
+            hidden: true,
           },
           {
             key: 'AI_ALLOW_NON_EU_PROCESSING',
