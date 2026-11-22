@@ -27,9 +27,9 @@ export interface AiAssetInfo {
 
 function isAiAsset(asset: AiAssetInfo | undefined): boolean {
   const provenance = asset?.provenance;
-  return (
-    typeof provenance === 'object' && provenance !== null && (provenance as { type?: unknown }).type === 'ai_generation'
-  );
+  const type = typeof provenance === 'object' && provenance !== null ? (provenance as { type?: unknown }).type : null;
+  // Imagen generada o vídeo animado con IA a partir de una foto.
+  return type === 'ai_generation' || type === 'ai_animation';
 }
 
 /** Por qué el documento lleva contenido generado con IA (vacío si no lo lleva). */

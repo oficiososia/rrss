@@ -46,6 +46,17 @@ export function aiPhotoEditEnabled(): boolean {
 }
 
 /**
+ * ¿Se puede animar una foto con IA («Animar con IA…» en la ficha de la
+ * biblioteca)? Interruptor propio, `VITE_AI_ANIMATE_ENABLED=true`; además la
+ * acción solo sale si el servidor tiene un modelo activo, su proveedor
+ * configurado, permiso, plan y cupo (`ai-media`, `video.options`). Sin eso no
+ * aparece nada.
+ */
+export function aiAnimateEnabled(): boolean {
+  return import.meta.env.VITE_AI_ANIMATE_ENABLED === 'true';
+}
+
+/**
  * ¿Hay un trabajador de medios (worker/) desplegado que vacíe la cola? Sin él,
  * un reel encargado se quedaría «en cola» para siempre: la pantalla de reels no
  * se enseña (lo que no funciona no sale en la interfaz). Se activa con
