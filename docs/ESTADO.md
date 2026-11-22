@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f37/copiloto-herramientas`; antes, `f33/integraciones-sencillas`).
+Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,7 +15,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v5, páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz | Unitarias, componentes, base de datos, `test:layout` en Chromium real y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migración `20261220010000` (renombrar y duplicar plantillas) sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
@@ -174,6 +174,44 @@ Reels, `provenance.role = 'cover'`) pero **la publicación todavía no la envía
 reordenar con el dedo con agarre largo, asas de 24 px y recorte con teclado. Probado: unitarias, componentes, trabajador
 con FFmpeg real (posición del texto en fotogramas), base de datos. Sin probar: análisis de música real y agarre largo en un
 móvil real, FFmpeg 6 de Alpine (`fontsize` como expresión), migración en staging. Detalle y despliegue en `docs/editor-reels.md` §8.
+
+### Catálogo de plantillas y plantillas de reel por marca (rama `f35/catalogo-plantillas`, 22/11/2026)
+
+Hasta ahora una marca tenía las plantillas de publicación que alguien le entregara a mano y, para los reels,
+solo los tres estilos del trabajador. Detalle: `docs/plantillas-competencia.md` (estudio y por qué cada
+plantilla), `docs/editor-reels.md` §9 (formato de la plantilla de reel) y `agency/README.md` (cómo se carga).
+
+- **Estudio de la competencia** (restaurantes y asadores, bares de cócteles, gimnasios), con fuentes
+  enlazadas y cada afirmación marcada como dato, consejo, inferencia o sin verificar. Límite importante:
+  Instagram y TikTok no se dejan leer sin sesión, así que **no se ha visto por dentro ningún reel real**; las
+  duraciones de plano son una propuesta razonada, no una medición.
+- **Plantillas de reel con estructura** (`src/features/reels/reelTemplate.ts`): planos con duración,
+  movimiento y transición, textos de muestra con su animación, música sugerida (solo escrita) y portada.
+  Tabla `brand_reel_templates` con RLS, `deliver_reel_templates` y `delete_reel_template` (**migración
+  `20261224010000_reel_templates.sql`**, con vuelta atrás y casos en `tests/db/aislamiento.test.ts`).
+  **No aplicada en staging ni en producción.** Al usar una plantilla sale un proyecto de reel normal (plan
+  v2): el trabajador, `request_media_job` y la publicación no cambian.
+- **«Empieza tu reel»** ofrece las plantillas de la marca encima de los tres pasos: se elige una, el selector
+  enseña los planos en orden y, al confirmar, el reel queda montado con sus textos de muestra. Sin
+  plantillas, la pantalla es la de antes.
+- **Catálogo** en `agency/catalogo/`: cuatro juegos (`restaurante`, `cocteleria`, `gimnasio`, `generico`)
+  con 10 plantillas de reel y 10 de publicación o carrusel cada uno (80 en total). Sin nada de ningún
+  cliente: nombres neutros, textos de muestra y colores y tipografías por papeles, que se llenan con el
+  perfil de la marca al cargar. Órdenes nuevas `catalogo` y `cargar-catalogo` (**en seco por defecto**;
+  `--cargar` guarda). El archivo de entrega de plantillas de publicación admite ya documentos v5.
+- **Probado:** unitarias y componentes del formato y de la pantalla de salida; base de datos (aislamiento,
+  permisos, rechazos, tope, vuelta atrás); `agency/tests/catalogo.test.ts` recorre las 80 plantillas con
+  tres temas y las pasa por los validadores de la aplicación (documento v5 y análisis; plantilla de reel y
+  plan v2 con el mínimo y con todo el material), y prueba la carga en seco y la de verdad contra el
+  Supabase simulado. Las publicaciones del juego de restaurante y del de gimnasio se miraron dibujadas en
+  un navegador (una hoja de contactos hecha para la ocasión, no el editor).
+- **Sin probar:** nada cargado en staging; **ningún reel de plantilla montado con el trabajador ni visto en
+  la vista previa real**; las publicaciones dentro del editor de verdad (tipografías de la marca, textos
+  largos); el reparto automático de colores con perfiles distintos de los tres de prueba y los dos reales
+  que se usaron en seco.
+- **Pendiente:** pantalla para borrar o renombrar plantillas de reel; «Guardar como plantilla» desde el
+  editor de reels (el origen `editor` ya existe); que «un reel como este» (rama `f36`) guarde en este
+  formato; medir con la analítica qué plantillas funcionan y ajustar duraciones.
 
 ### Fase 4 · Campañas (primera parte)
 
@@ -878,3 +916,33 @@ herramientas para ver si sale mejor».
   `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13).
 - **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
   política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.
+
+## «Hacer un reel como este» (rama `f36/reel-como-este`, 22/11/2026)
+
+Una persona sube un reel que le gusta (o pega su enlace) y el sistema lo estudia y lo rehace con las
+ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs/reel-como-este.md`.
+
+- **Implementado**: trabajo `media.reel.analyze` en el trabajador (mide sin IA: cortes, planos, compás,
+  fotogramas; enlaces sin trucos, con `robots.txt`); migración `20261223010000_reel_like.sql` (tabla
+  `reel_references`, el tipo nuevo en `request_media_job`, borrado y caducidad de los archivos del
+  análisis); visión en los adaptadores de texto (`AiInput.images`: OpenAI y Anthropic); función
+  `ai-reel-like` (coste máximo antes, cupo, registro, modo agencia como la imagen); pantalla en
+  Biblioteca → Reels con progreso por pasos y las cuatro salidas (plantilla, guion, borrador con la
+  biblioteca y textos); el editor de reels abre el borrador con sus huecos «Falta grabar: …»;
+  «Guardar como plantilla» entrega en el formato compartido de plantillas de reel (`rrss.reel-template`,
+  origen `reference`, con el tipo de plano como campo opcional nuevo); script de prueba real de un comando.
+- **Probado**: trabajador con FFmpeg real y un vídeo de 4 planos generado (cortes y duraciones a menos de
+  0,1 s); base de datos, aislamiento y función con proveedores **simulados**; de punta a punta en local
+  (vídeo → trabajador → cola → función → plantilla, sin rastro del vídeo); componentes; maquetación en
+  Chromium a 375 px.
+- **Cifras en local** (22/11/2026, PC de desarrollo, tras unir `f35/catalogo-plantillas`): `npm test` 1311,
+  `npm run test:db` 1082 (2 omitidas), `worker/` 154, `npm run test:layout` 33 y `agency/` 125, todas en
+  verde; `typecheck`, `lint` y `build` también. El CI de GitHub no se ha ejecutado con esta rama (sin subir).
+- **Sin probar**: ningún proveedor de IA real (visión ni transcripción), el trabajador en Fly con este
+  trabajo, la función desplegada, enlaces reales de redes y vídeos reales de móvil.
+- **Bloqueado**: la clave de OpenAI de staging (401: proyecto no europeo contra el endpoint de la UE).
+- **Decisión del dueño pendiente**: en marcas en modo agencia lo usa solo el personal de la agencia
+  (regla de la IA de imagen), no «cerrado para todos» como el texto.
+- **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
+  `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
+  `VITE_REEL_LIKE_ENABLED=true`.

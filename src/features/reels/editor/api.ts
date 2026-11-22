@@ -4,11 +4,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { contentKeys } from '@/features/content/api';
 import { assetKeys } from '@/features/library/api';
-import type { ContentVersionRow, Json } from '@/lib/database.types';
+import type { BrandReelTemplateRow, ContentVersionRow, Json } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { JOB_POLL_MS, REEL_KIND } from '../api';
 import { describeJob, isActive, type MediaJobSummary } from '../plan';
+import { validateReelTemplate, type ReelTemplate } from '../reelTemplate';
+import { REEL_TEMPLATES } from '../templates';
 import { finalizeProject, REEL_PLAN_VERSION, type ReelProject } from './project';
 
 export interface SaveReelInput {
@@ -90,4 +92,55 @@ export function renderOfVersion(jobs: MediaJobSummary[], version: number): strin
     if (view.assetId) return view.assetId;
   }
   return null;
+}
+
+// ───────────────────────────── Plantillas de reel de la marca ─────────────────────────────
+
+/** Una plantilla de reel de la marca, ya validada (ver ../reelTemplate.ts). */
+export interface BrandReelTemplate {
+  id: string;
+  key: string;
+  name: string;
+  source: BrandReelTemplateRow['source'];
+  template: ReelTemplate;
+}
+
+export const reelTemplateKeys = {
+  all: (brandId: string) => ['brand', brandId, 'reel-templates'] as const,
+};
+
+/** Las filas que la aplicación sabe montar: las mal formadas o de un estilo que no existe se dejan fuera. */
+export function readBrandReelTemplates(
+  rows: Pick<BrandReelTemplateRow, 'id' | 'template_key' | 'name' | 'source' | 'document'>[],
+  styleIds: readonly string[],
+): BrandReelTemplate[] {
+  const out: BrandReelTemplate[] = [];
+  for (const row of rows) {
+    const parsed = validateReelTemplate(row.document, styleIds);
+    if (parsed.ok) {
+      out.push({ id: row.id, key: row.template_key, name: row.name, source: row.source, template: parsed.template });
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+/** Plantillas de reel de la marca (la RLS deja verlas a quien ve la marca). */
+export function useBrandReelTemplates(brandId: string) {
+  return useQuery({
+    queryKey: reelTemplateKeys.all(brandId),
+    queryFn: async (): Promise<BrandReelTemplate[]> => {
+      const rows: Pick<BrandReelTemplateRow, 'id' | 'template_key' | 'name' | 'source' | 'document'>[] = unwrap(
+        await supabase
+          .from('brand_reel_templates')
+          .select('id, template_key, name, source, document')
+          .eq('brand_id', brandId)
+          .order('name')
+          .limit(60),
+      );
+      return readBrandReelTemplates(
+        rows,
+        REEL_TEMPLATES.map((t) => t.id),
+      );
+    },
+  });
 }

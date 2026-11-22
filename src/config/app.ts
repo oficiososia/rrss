@@ -67,6 +67,17 @@ export function mediaWorkerEnabled(): boolean {
 }
 
 /**
+ * ¿Se ofrece «Hacer un reel como este» (estudiar un vídeo de referencia y
+ * rehacerlo para la marca)? Interruptor propio, `VITE_REEL_LIKE_ENABLED=true`, y
+ * necesita el trabajador de medios (que mide el vídeo). Además, el servidor
+ * tiene que tener un modelo con visión para la marca (`ai-reel-like`, acción
+ * `options`): sin él, el botón no sale (docs/reel-como-este.md).
+ */
+export function reelLikeEnabled(): boolean {
+  return mediaWorkerEnabled() && import.meta.env.VITE_REEL_LIKE_ENABLED === 'true';
+}
+
+/**
  * ¿Se ofrecen subtítulos automáticos en el editor de reels? Interruptor propio,
  * `VITE_REEL_SUBTITLES_ENABLED=true`; además, el servidor tiene que tener
  * OpenAI configurado (`ai-transcribe`, disponibilidad `reelSubtitles`). Sin

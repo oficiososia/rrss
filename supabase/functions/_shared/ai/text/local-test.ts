@@ -425,7 +425,69 @@ function editorCopilotTools(request: AiProviderRequest): { text: string; tool_ca
   };
 }
 
+/**
+ * «Hacer un reel como este», determinista: NO mira los fotogramas. Lee la
+ * medición (cuántos planos y si son imagen fija) y reparte tipos de plano en
+ * orden; los textos salen del perfil y de la idea de la marca. Sirve para
+ * probar el circuito entero (cupo, registro, guardado, borrador) sin un modelo.
+ */
+function reelLike(request: AiProviderRequest): string {
+  const profile = profileOf(request);
+  let shots: Array<{ plano: number; imagen_fija?: boolean }> = [];
+  try {
+    const parsed = JSON.parse(material(request, 'medición del vídeo de referencia') ?? '{}') as {
+      planos?: Array<{ plano: number; imagen_fija?: boolean }>;
+    };
+    shots = parsed.planos ?? [];
+  } catch {
+    shots = [];
+  }
+  let library: { carpetas?: string[]; etiquetas?: string[] } = {};
+  try {
+    library = JSON.parse(material(request, 'biblioteca de la marca') ?? '{}') as typeof library;
+  } catch {
+    library = {};
+  }
+  const vocabulary = [...(library.etiquetas ?? []), ...(library.carpetas ?? [])].map((w) => w.toLowerCase());
+  const idea = withoutVetoes(material(request, 'idea de la marca para su reel') ?? '', profile);
+  const spoken = material(request, 'lo que se dice en el vídeo de referencia');
+  const message = profile.voice?.keyMessages?.[0] ?? profile.business?.description ?? 'Lo que hacemos';
+  const cta = profile.voice?.callsToAction?.[0] ?? (formal(profile) ? 'Le esperamos' : 'Te esperamos');
+  const kinds = ['detalle', 'general', 'persona', 'detalle'];
+  const count = Math.max(1, shots.length);
+  const hashtags = [...(profile.voice?.hashtags?.required ?? []), ...(profile.voice?.hashtags?.recommended ?? [])];
+  return JSON.stringify({
+    name: `[simulado] Gancho + ${Math.max(0, count - 2)} planos + cierre`,
+    summary: `[simulado] Estructura de ${count} planos${spoken ? ', con voz' : ''}; ${request.input.images?.length ?? 0} fotogramas recibidos.`,
+    pace: 'medio',
+    audioKind: spoken ? 'voz-y-musica' : 'musica',
+    title: sentence(idea || message).replace(/\.$/, ''),
+    idea: sentence(idea || message),
+    shots: shots.map((shot, i) => ({
+      index: shot.plano,
+      kind: kinds[i % kinds.length],
+      media: shot.imagen_fija ? 'foto' : 'video',
+      description: `[simulado] Plano ${shot.plano} de la referencia`,
+      what: `[simulado] ${sentence(message)} (plano ${shot.plano})`,
+      tip: formal(profile) ? 'Grabe con luz natural y el móvil en vertical.' : 'Graba con luz natural y el móvil en vertical.',
+      search: vocabulary.length ? [vocabulary[i % vocabulary.length]!] : ['plano'],
+    })),
+    texts: [
+      { role: 'gancho', position: 'top', size: 'grande', fromShot: 1, toShot: 1, value: sentence(idea || message).slice(0, 60) },
+      ...(count > 1
+        ? [{ role: 'llamada', position: 'center', size: 'normal', fromShot: count, toShot: count, value: sentence(cta).slice(0, 60) }]
+        : []),
+    ],
+    hook: sentence(idea || message),
+    caption: [sentence(message), sentence(cta)].filter(Boolean).join(' '),
+    hashtags: hashtags.map((tag) => tag.replace(/^#+/, '')),
+    coverShot: 1,
+    coverNote: '[simulado] El primer plano con el gancho.',
+  });
+}
+
 const RESPONDERS: Record<string, (request: AiProviderRequest) => string> = {
+  reel_like: reelLike,
   editor_copilot: editorCopilot,
   analytics_summary: analyticsSummary,
   post_copy: postCopy,

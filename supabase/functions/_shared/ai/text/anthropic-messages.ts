@@ -32,6 +32,7 @@ import {
 import { toProviderSchema } from '../schema.ts';
 import { field, tokenCount } from './http.ts';
 import { maxOutputTokens, orderedContext, renderContextPart, TEXT_UNITS } from './prompt.ts';
+import { base64 } from './vision.ts';
 
 /** Versión de la API que se declara en la cabecera `anthropic-version`. */
 export const ANTHROPIC_API_VERSION = '2026-10-21';
@@ -44,14 +45,25 @@ interface TextBlock {
   cache_control?: { type: 'ephemeral' };
 }
 
+interface ImageBlock {
+  type: 'image';
+  source: { type: 'base64'; media_type: string; data: string };
+}
+
 export function buildMessagesBody(request: Omit<AiProviderRequest, 'signal'>): Record<string, unknown> {
   const { input } = request;
   const { cacheable, volatile } = orderedContext(input);
 
-  const content: TextBlock[] = cacheable.map((part) => ({ type: 'text', text: renderContextPart(part) }));
-  const lastStable = content[content.length - 1];
+  const stable: TextBlock[] = cacheable.map((part) => ({ type: 'text', text: renderContextPart(part) }));
+  const lastStable = stable[stable.length - 1];
   if (lastStable) lastStable.cache_control = { type: 'ephemeral' };
+  const content: Array<TextBlock | ImageBlock> = [...stable];
   for (const part of volatile) content.push({ type: 'text', text: renderContextPart(part) });
+  // Visión: cada imagen con su etiqueta, antes de la petición.
+  for (const image of input.images ?? []) {
+    if (image.label) content.push({ type: 'text', text: image.label });
+    content.push({ type: 'image', source: { type: 'base64', media_type: image.mimeType, data: base64(image.data) } });
+  }
   content.push({ type: 'text', text: input.prompt });
 
   const body: Record<string, unknown> = {
