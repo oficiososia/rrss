@@ -77,6 +77,8 @@ export interface ImageStats {
   muted: [number, number, number] | null;
   /** Detalle: media del valor absoluto del laplaciano de la luminancia (cuanto menor, más blanda). */
   detail: number;
+  /** Qué parte de la foto es «sujeto» (0–1): con 1, todo cuenta igual (o hay recorte). */
+  subject: number;
   /** Algún píxel no es opaco. */
   transparent: boolean;
 }
@@ -92,78 +94,111 @@ export function hasTransparency(image: Pixels): boolean {
   return false;
 }
 
+/** Cuadrícula (celdas por lado) con la que se localiza el sujeto. */
+const SUBJECT_GRID = 12;
+
+/**
+ * Cuánto pesa cada celda de la foto como «sujeto» (el plato y la comida) frente
+ * al fondo: las celdas con más detalle (bordes, textura de la comida, filo del
+ * plato) pesan más y las lisas (un cartón, un mantel, la pared) casi nada; algo
+ * más si están hacia el centro. Se extiende a las celdas vecinas para no dejar
+ * fuera el interior liso de un plato blanco.
+ */
+function subjectWeights(cellDetail: number[]): number[] {
+  const n = SUBJECT_GRID;
+  const sorted = cellDetail.filter((d) => d > 0).sort((a, b) => a - b);
+  const reference = Math.max(
+    2,
+    sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))]! : 2,
+  );
+  const floor = Math.min(reference * 0.6, (sorted[Math.floor(sorted.length / 2)] ?? 0) * 1.3);
+  const base = cellDetail.map((d, c) => {
+    const cx = ((c % n) + 0.5) / n - 0.5;
+    const cy = (Math.floor(c / n) + 0.5) / n - 0.5;
+    const center = 0.7 + 0.3 * (1 - Math.min(1, Math.hypot(cx, cy) / 0.7));
+    // Se resta el «ruido de fondo» (la textura del cartón o del mantel, que es la mediana).
+    const relative = clamp((d - floor) / Math.max(1, reference - floor), 0, 1);
+    return (0.05 + 0.95 * Math.pow(relative, 1.2)) * center;
+  });
+  return base.map((w, c) => {
+    const x = c % n;
+    const y = Math.floor(c / n);
+    let near = 0;
+    for (let dy = -1; dy <= 1; dy += 1)
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < n && ny < n) near = Math.max(near, base[ny * n + nx]!);
+      }
+    return Math.max(w, near * 0.8);
+  });
+}
+
 /**
  * Estadísticas para «Mejorar automáticamente». En fotos grandes se mira una
  * muestra (como mucho ~250 000 píxeles): el resultado apenas cambia y es
  * inmediato. Los píxeles transparentes no cuentan.
+ *
+ * Lo que decide la luz, el balance de blancos y el color (`p10`, `p50`, `p90`,
+ * `spread`, `vividness`, `neutral`, `muted`) se mide sobre el **sujeto** y no
+ * sobre el fondo: con la máscara del recorte si la foto ya tiene transparencia
+ * y, si no, por el detalle de cada zona (ver `subjectWeights`). Lo que protege
+ * de quemar o hundir (`black`, `white`, `p99`) se mide en toda la foto.
  */
 export function analyzeImage(image: Pixels): ImageStats {
   const { data, width, height } = image;
   const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 250_000)));
-  const histogram = new Uint32Array(256);
+  const n = SUBJECT_GRID;
+  const at = (x: number, y: number) => {
+    const i = (y * width + x) * 4;
+    return luma(data[i]!, data[i + 1]!, data[i + 2]!);
+  };
+  const cellOf = (x: number, y: number) =>
+    Math.min(n - 1, Math.floor((y * n) / height)) * n + Math.min(n - 1, Math.floor((x * n) / width));
+  // Pasada 1: detalle por celda, transparencia y totales de toda la foto.
+  const cellSum = new Array<number>(n * n).fill(0);
+  const cellCount = new Array<number>(n * n).fill(0);
+  const full = new Uint32Array(256);
   let count = 0;
   let sumR = 0;
   let sumG = 0;
   let sumB = 0;
   let sumSat = 0;
   let sumLuma = 0;
-  let sumLumaSq = 0;
   let detail = 0;
   let detailCount = 0;
   let transparent = false;
-  let midSat = 0;
-  let midCount = 0;
-  const neutral = [0, 0, 0];
-  let neutralCount = 0;
-  const muted = [0, 0, 0];
-  let mutedCount = 0;
-  const at = (x: number, y: number) => {
-    const i = (y * width + x) * 4;
-    return luma(data[i]!, data[i + 1]!, data[i + 2]!);
-  };
+  let clear = 0;
+  let sampled = 0;
   for (let y = 0; y < height; y += step) {
     for (let x = 0; x < width; x += step) {
       const i = (y * width + x) * 4;
       const a = data[i + 3]!;
+      sampled += 1;
       if (a < 255) transparent = true;
-      if (a < 128) continue;
+      if (a < 128) {
+        clear += 1;
+        continue;
+      }
       const r = data[i]!;
       const g = data[i + 1]!;
       const b = data[i + 2]!;
       const l = luma(r, g, b);
-      histogram[Math.round(l)]! += 1;
+      full[Math.round(l)]! += 1;
       sumLuma += l;
-      sumLumaSq += l * l;
       sumR += r;
       sumG += g;
       sumB += b;
       const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const sat = max === 0 ? 0 : (max - min) / max;
-      sumSat += sat;
+      sumSat += max === 0 ? 0 : (max - Math.min(r, g, b)) / max;
       count += 1;
-      if (l >= 40 && l <= 220) {
-        midSat += sat;
-        midCount += 1;
-      }
-      // Referencias de blanco: casi grises, ni oscuros (el color no es fiable) ni quemados.
-      if (l >= 30 && l <= 235) {
-        if (sat < 0.2) {
-          neutral[0]! += r;
-          neutral[1]! += g;
-          neutral[2]! += b;
-          neutralCount += 1;
-        }
-        if (sat < 0.5) {
-          muted[0]! += r;
-          muted[1]! += g;
-          muted[2]! += b;
-          mutedCount += 1;
-        }
-      }
       if (x > 0 && y > 0 && x < width - 1 && y < height - 1) {
-        detail += Math.abs(4 * l - at(x - 1, y) - at(x + 1, y) - at(x, y - 1) - at(x, y + 1));
+        const d = Math.abs(4 * l - at(x - 1, y) - at(x + 1, y) - at(x, y - 1) - at(x, y + 1));
+        detail += d;
         detailCount += 1;
+        const c = cellOf(x, y);
+        cellSum[c]! += d;
+        cellCount[c]! += 1;
       }
     }
   }
@@ -184,35 +219,89 @@ export function analyzeImage(image: Pixels): ImageStats {
       neutral: null,
       muted: null,
       detail: 0,
+      subject: 1,
       transparent,
     };
   }
-  const percentile = (fraction: number) => {
-    const target = count * fraction;
+  // Con recorte, el sujeto es lo que no es transparente; si no, las celdas con detalle.
+  const cutout = clear > sampled * 0.02;
+  const weights = subjectWeights(cellSum.map((s, c) => (cellCount[c]! > 0 ? s / cellCount[c]! : 0)));
+  // Pasada 2: estadísticas del sujeto (cada píxel pesa lo que su celda).
+  const histogram = new Float64Array(256);
+  let total = 0;
+  let sumLumaSq = 0;
+  let sumLumaW = 0;
+  let midSat = 0;
+  let midTotal = 0;
+  const neutral = [0, 0, 0];
+  let neutralTotal = 0;
+  const muted = [0, 0, 0];
+  let mutedTotal = 0;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const i = (y * width + x) * 4;
+      if (data[i + 3]! < 128) continue;
+      const w = cutout ? 1 : weights[cellOf(x, y)]!;
+      const r = data[i]!;
+      const g = data[i + 1]!;
+      const b = data[i + 2]!;
+      const l = luma(r, g, b);
+      histogram[Math.round(l)]! += w;
+      total += w;
+      sumLumaW += l * w;
+      sumLumaSq += l * l * w;
+      const max = Math.max(r, g, b);
+      const sat = max === 0 ? 0 : (max - Math.min(r, g, b)) / max;
+      if (l >= 40 && l <= 220) {
+        midSat += sat * w;
+        midTotal += w;
+      }
+      // Referencias de blanco: casi grises, ni oscuros (el color no es fiable) ni quemados.
+      if (l >= 30 && l <= 235) {
+        if (sat < 0.2) {
+          neutral[0]! += r * w;
+          neutral[1]! += g * w;
+          neutral[2]! += b * w;
+          neutralTotal += w;
+        }
+        if (sat < 0.5) {
+          muted[0]! += r * w;
+          muted[1]! += g * w;
+          muted[2]! += b * w;
+          mutedTotal += w;
+        }
+      }
+    }
+  }
+  const percentile = (hist: ArrayLike<number>, sum: number, fraction: number) => {
+    const target = sum * fraction;
     let seen = 0;
     for (let v = 0; v < 256; v += 1) {
-      seen += histogram[v]!;
+      seen += hist[v]!;
       if (seen >= target) return v;
     }
     return 255;
   };
-  const meanLuma = sumLuma / count;
-  const mean = (sum: number[], n: number): [number, number, number] => [sum[0]! / n, sum[1]! / n, sum[2]! / n];
+  const meanW = sumLumaW / total;
+  const mean = (sum: number[], w: number): [number, number, number] => [sum[0]! / w, sum[1]! / w, sum[2]! / w];
+  const subject = cutout ? 1 : weights.reduce((acc, w, c) => acc + w * cellCount[c]!, 0) / Math.max(1, detailCount);
   return {
-    black: percentile(0.005),
-    white: percentile(0.995),
-    p10: percentile(0.1),
-    p50: percentile(0.5),
-    p90: percentile(0.9),
-    p99: percentile(0.99),
-    spread: Math.sqrt(Math.max(0, sumLumaSq / count - meanLuma * meanLuma)),
-    meanLuma,
+    black: percentile(full, count, 0.005),
+    white: percentile(full, count, 0.995),
+    p10: percentile(histogram, total, 0.1),
+    p50: percentile(histogram, total, 0.5),
+    p90: percentile(histogram, total, 0.9),
+    p99: percentile(full, count, 0.99),
+    spread: Math.sqrt(Math.max(0, sumLumaSq / total - meanW * meanW)),
+    meanLuma: sumLuma / count,
     mean: [sumR / count, sumG / count, sumB / count],
     saturation: sumSat / count,
-    vividness: midCount ? midSat / midCount : sumSat / count,
-    neutral: neutralCount ? { rgb: mean(neutral, neutralCount), fraction: neutralCount / count } : null,
-    muted: mutedCount >= count * 0.05 ? mean(muted, mutedCount) : null,
+    vividness: midTotal ? midSat / midTotal : sumSat / count,
+    // Fracción respecto al peso total del sujeto.
+    neutral: neutralTotal ? { rgb: mean(neutral, neutralTotal), fraction: neutralTotal / total } : null,
+    muted: mutedTotal >= total * 0.05 ? mean(muted, mutedTotal) : null,
     detail: detailCount ? detail / detailCount : 0,
+    subject,
     transparent,
   };
 }
@@ -224,37 +313,46 @@ const WARMTH_GAIN = 0.002;
 /** Escala de la luz: con el deslizador a 100 el gamma de los tonos medios es 2^(-100/70). */
 const EXPOSURE_SCALE = 70;
 
+/** Intensidades de «Mejorar automáticamente»: cuánto de lo calculado se aplica (normal = lo calculado). */
+export const AUTO_INTENSITIES = { soft: 0.6, normal: 1, strong: 1.5 } as const;
+export type AutoIntensity = keyof typeof AUTO_INTENSITIES;
+
 /**
- * «Mejorar automáticamente» para fotos de restaurante y producto. Nada de
- * inventar contenido ni de efectos fuertes: cada ajuste se calcula del
- * histograma y de las medias de la foto, y se queda quieto si la foto ya está
- * bien (todos tienen una zona «correcta» donde valen 0).
+ * «Mejorar automáticamente» para fotos de restaurante y producto, con aspecto
+ * de foto de carta: se nota, sin efectos exagerados. Cada ajuste se calcula del
+ * histograma y de las medias **del sujeto** (el plato y la comida, no el
+ * fondo; ver `analyzeImage`), y los que dependen de un defecto (niveles,
+ * balance, luz, contraste) se quedan quietos si la foto ya está bien.
  *
- * 1. Niveles: negro y blanco por percentiles, con recorte suave (se deja
- *    margen arriba para no quemar) y sin estirar más de ×1,7.
- * 2. Balance de blancos: se mide en lo casi gris de la foto (plato, mantel,
- *    servilleta). Si no hay, vale la media de lo poco saturado. Se corrige solo
- *    una parte, y menos hacia el frío, para no teñir la carne ni quitar el
- *    calor natural de la comida. Va al deslizador de Temperatura.
- * 3. Luz: lleva la «clave» (mezcla de mediana y tonos altos, para que un fondo
- *    oscuro no cuente tanto) a una zona cómoda.
- * 4. Sombras y luces: levanta un poco lo hundido y recupera lo quemado.
- * 5. Contraste solo si la foto está plana; Claridad suave siempre.
- * 6. Color: viveza (lo poco saturado, sin pasarse en rojos y naranjas) y un
- *    toque de saturación si está apagada. Nitidez según lo blanda que esté.
+ * 1. Niveles: negro y blanco por percentiles con recorte suave (margen arriba
+ *    para no quemar), como mucho ×1,45 (un fondo liso no debe quemarse).
+ * 2. Balance de blancos: sobre lo casi gris del sujeto (plato, mantel,
+ *    servilleta; si no hay, lo poco saturado). Se corrige casi todo, menos
+ *    hacia el frío para no quitar el calor a la comida; va a Temperatura. Las
+ *    carnes y salsas, muy saturadas, no cuentan como referencia.
+ * 3. Luz: lleva la «clave» del sujeto (mediana y, menos, tonos altos) a una
+ *    zona cómoda y algo luminosa.
+ * 4. Sombras y luces: siempre un poco (relieve en lo oscuro, lo quemado
+ *    contenido), más si hace falta.
+ * 5. Contraste y claridad (contraste local) para dar volumen a la textura.
+ * 6. Viveza (lo poco saturado, la mitad en rojos y naranjas, sin quemarlos),
+ *    algo de Color, y nitidez de detalle para costra, carne y salsas.
+ *
+ * `intensity` (0–1,5; ver `AUTO_INTENSITIES`) escala todo: 1 es lo calculado.
  */
-export function autoAdjustments(stats: ImageStats): Adjustments {
+export function autoAdjustments(stats: ImageStats, intensity: number = AUTO_INTENSITIES.normal): Adjustments {
+  const k = clamp(intensity, 0, 2);
   // 1. Niveles con recorte suave.
   let levels: Adjustments['levels'] = null;
   if (stats.white - stats.black > 20) {
-    let black = Math.min(70, Math.round(stats.black * 0.85));
-    let white = Math.round(stats.white + (255 - stats.white) * 0.12);
-    white = Math.max(white, black + 150); // como mucho ×1,7; el resto lo hace el contraste
+    let black = Math.min(70, Math.round(stats.black));
+    let white = Math.round(stats.white + (255 - stats.white) * 0.06);
+    white = Math.max(white, black + 176);
     if (white > 255) {
       black = Math.max(0, black - (white - 255));
       white = 255;
     }
-    if (255 / (white - black) >= 1.1) levels = { black, white };
+    if (255 / (white - black) >= 1.08) levels = { black, white };
   }
   const level = (v: number) => (levels ? clamp(((v - levels.black) * 255) / (levels.white - levels.black), 0, 255) : v);
 
@@ -265,64 +363,70 @@ export function autoAdjustments(stats: ImageStats): Adjustments {
   if (reference) {
     const [r, g, b] = reference.rgb;
     gains = [g / Math.max(1, r), g / Math.max(1, b)];
-    strength = 0.6 + 0.3 * clamp(reference.fraction / 0.1, 0, 1);
+    strength = 0.65 + 0.3 * clamp(reference.fraction / 0.1, 0, 1);
   } else if (stats.muted) {
     const [r, g, b] = stats.muted;
     gains = [g / Math.max(1, r), g / Math.max(1, b)];
-    strength = 0.35;
+    strength = 0.4;
   }
   let warmth = 0;
-  let balance: [number, number, number] = [1, 1, 1];
+  let tint = 1;
   if (gains) {
-    // Se corrige solo una parte y, hacia el frío, menos aún: la comida es cálida.
+    // Se corrige casi todo y, hacia el frío, un poco menos: la comida es cálida.
     const ratio = gains[0] / gains[1];
     const full = (500 * (ratio - 1)) / (ratio + 1);
-    warmth = Math.round(clamp(full * strength * (full < 0 ? 0.85 : 1), -45, 45));
-    const wr = 1 + WARMTH_GAIN * warmth;
-    // Lo que sobra (verde–magenta) va en el tinte.
+    warmth = clamp(full * strength * (full < 0 ? 0.85 : 1), -45, 45);
+    const wr = 1 + WARMTH_GAIN * Math.round(warmth);
     const gr = 1 + (gains[0] - 1) * strength;
-    const tint = clamp(wr / gr, 0.93, 1.07);
-    balance = [1, Math.abs(tint - 1) < 0.01 ? 1 : Math.round(tint * 1000) / 1000, 1];
+    tint = clamp(wr / gr, 0.93, 1.07);
   }
 
   // 3. Luz: la «clave» pesa la mediana y, menos, los tonos altos (un plato blanco no es un exceso de luz).
   const key = (0.7 * level(stats.p50) + 0.3 * level(stats.p90)) / 255;
-  const target = clamp(key, 0.4, 0.62);
+  const target = clamp(key, 0.44, 0.7);
   let exposure = 0;
   if (target !== key && key > 0.02) {
     const gamma = Math.log(target) / Math.log(key);
-    exposure = Math.round(clamp(-EXPOSURE_SCALE * Math.log2(gamma) * 0.85, -15, 35));
+    exposure = clamp(-EXPOSURE_SCALE * Math.log2(gamma) * 0.9, -10, 40);
   }
 
   // 4. Sombras y luces, sobre la foto ya estirada y con la luz puesta.
   const toned = (v: number) => 255 * Math.pow(level(v) / 255, Math.pow(2, -exposure / EXPOSURE_SCALE));
-  const shadows = Math.round(clamp((0.17 - toned(stats.p10) / 255) * 160, 0, 25));
-  const highlights = -Math.round(clamp(toned(stats.p99) - 232, 0, 30));
+  const shadows = clamp((0.2 - toned(stats.p10) / 255) * 220, 6, 35);
+  const highlights = -clamp((toned(stats.p99) - 225) * 1.2, 6, 32);
 
-  // 5. Contraste (solo si está plana) y claridad.
+  // 5. Contraste y claridad.
   const spread = (stats.spread * (levels ? 255 / (levels.white - levels.black) : 1)) / 255;
-  const contrast = Math.round(clamp((0.2 - spread) * 90, 0, 14));
-  const clarity = stats.detail > 16 ? 10 : stats.detail < 5 ? 26 : 20;
+  const contrast = clamp((0.24 - spread) * 100, 6, 18);
+  const clarity = stats.detail > 16 ? 16 : stats.detail < 5 ? 36 : 30;
 
-  // 6. Color y nitidez.
-  // La viveza solo actúa sobre lo poco saturado, así que vale siempre un mínimo: un fondo muy
-  // naranja no debe impedir que el plato, más apagado, se avive.
-  const vibrance = Math.round(clamp((0.55 - stats.vividness) * 90, 20, 50));
-  const saturation = Math.round(clamp((0.4 - stats.vividness) * 45, 3, 14));
-  const sharpness = stats.detail < 6 ? 35 : stats.detail < 12 ? 22 : 12;
+  // 6. Color y nitidez. La viveza solo actúa sobre lo poco saturado, así que vale siempre un
+  // mínimo: un fondo muy naranja no debe impedir que el plato, más apagado, se avive.
+  const vibrance = clamp((0.6 - stats.vividness) * 90, 28, 55);
+  const saturation = clamp((0.42 - stats.vividness) * 50, 6, 16);
+  const sharpness = stats.detail < 6 ? 45 : stats.detail < 12 ? 34 : 26;
 
+  // Intensidad: todo se acerca a «sin cambio» (menos de 1) o se aleja de él (más de 1).
+  const scale = (value: number, limit = 100) => Math.round(clamp(value * k, -limit, limit));
+  let scaled: Adjustments['levels'] = null;
+  if (levels) {
+    const black = Math.round(levels.black * Math.min(k, 1.5));
+    const white = Math.round(255 - (255 - levels.white) * Math.min(k, 1.5));
+    if (white - black > 20 && 255 / (white - black) >= 1.02) scaled = { black, white: Math.min(255, white) };
+  }
+  const tintScaled = 1 + (tint - 1) * k;
   return {
-    exposure,
-    contrast,
-    saturation,
-    warmth,
-    sharpness,
-    shadows,
-    highlights,
-    clarity,
-    vibrance,
-    levels,
-    balance,
+    exposure: scale(exposure),
+    contrast: scale(contrast),
+    saturation: scale(saturation),
+    warmth: scale(warmth),
+    sharpness: scale(sharpness),
+    shadows: scale(shadows),
+    highlights: scale(highlights),
+    clarity: scale(clarity),
+    vibrance: scale(vibrance),
+    levels: scaled,
+    balance: [1, Math.abs(tintScaled - 1) < 0.01 ? 1 : Math.round(tintScaled * 1000) / 1000, 1],
   };
 }
 
@@ -493,9 +597,20 @@ export function applyAdjustments(image: Pixels, adjustments: Adjustments): Pixel
       }
     }
     if (factor !== 1) {
-      r = l + (r - l) * factor;
-      g = l + (g - l) * factor;
-      b = l + (b - l) * factor;
+      let nr = l + (r - l) * factor;
+      let ng = l + (g - l) * factor;
+      let nb = l + (b - l) * factor;
+      // Sin quemar: si un canal se pasa de 255, se frena el color (no el tono) hasta que quepa.
+      const top = Math.max(nr, ng, nb);
+      if (top > 255 && top > l) {
+        const keep = (255 - l) / (top - l);
+        nr = l + (nr - l) * keep;
+        ng = l + (ng - l) * keep;
+        nb = l + (nb - l) * keep;
+      }
+      r = nr;
+      g = ng;
+      b = nb;
     }
     out[i] = r;
     out[i + 1] = g;
@@ -512,7 +627,7 @@ export function applyAdjustments(image: Pixels, adjustments: Adjustments): Pixel
       return 0.25 + 0.75 * (1 - x * x);
     });
   }
-  const amount = (clamp(adjustments.sharpness, 0, 100) / 100) * 1.2;
+  const amount = (clamp(adjustments.sharpness, 0, 100) / 100) * 1.5;
   if (amount > 0 && width * height > 1) {
     // Máscara de enfoque sobre la luminancia: suma el detalle sin cambiar el color.
     addLocalContrast(out, width, height, Math.max(1, Math.round(side / 1500)), amount, 1);

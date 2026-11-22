@@ -69,7 +69,9 @@ import {
 import {
   analyzeImage,
   applyAdjustments,
+  AUTO_INTENSITIES,
   autoAdjustments,
+  type AutoIntensity,
   cropPixels,
   downscale,
   isNeutral,
@@ -656,6 +658,8 @@ function EnhanceTab({
   const [auto, setAuto] = useState(false);
   /** Lo que había antes de pulsar «Mejorar automáticamente», para volver en un clic. */
   const [beforeAuto, setBeforeAuto] = useState<Adjustments | null>(null);
+  /** Cuánto de lo calculado se aplica: suave, normal o fuerte. */
+  const [intensity, setIntensity] = useState<AutoIntensity>('normal');
   const [framing, setFraming] = useState<NetworkAspect | ''>('');
   const [busy, setBusy] = useState(false);
   // Los controles responden al instante; la foto grande se rehace en cuanto puede.
@@ -681,6 +685,12 @@ function EnhanceTab({
     setFraming('');
   }, []);
 
+  /** Cambia la intensidad; si la mejora automática está puesta, se recalcula al momento. */
+  function chooseIntensity(next: AutoIntensity) {
+    setIntensity(next);
+    if (auto) setAdjustments(autoAdjustments(stats, AUTO_INTENSITIES[next]));
+  }
+
   function toggleAuto() {
     if (auto) {
       setAdjustments(beforeAuto ?? NEUTRAL_ADJUSTMENTS);
@@ -688,7 +698,7 @@ function EnhanceTab({
       setAuto(false);
     } else {
       setBeforeAuto(adjustments);
-      setAdjustments(autoAdjustments(stats));
+      setAdjustments(autoAdjustments(stats, AUTO_INTENSITIES[intensity]));
       setAuto(true);
     }
   }
@@ -728,6 +738,28 @@ function EnhanceTab({
         {auto ? <Undo2 className="h-4 w-4" aria-hidden /> : <Wand2 className="h-4 w-4" aria-hidden />}
         {auto ? 'Quitar la mejora automática' : 'Mejorar automáticamente'}
       </Button>
+      <div role="radiogroup" aria-label="Intensidad de la mejora" className="flex items-center gap-1 text-sm">
+        <span className="mr-1 text-muted">Intensidad</span>
+        {(
+          [
+            ['soft', 'Suave'],
+            ['normal', 'Normal'],
+            ['strong', 'Fuerte'],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            size="sm"
+            variant={intensity === value ? 'primary' : 'secondary'}
+            role="radio"
+            aria-checked={intensity === value}
+            onClick={() => chooseIntensity(value)}
+            data-testid={`photo-edit-intensity-${value}`}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
       {auto && (
         <p className="text-xs text-muted">
           Los deslizadores muestran lo que se ha ajustado; puedes retocarlos. Además se han ajustado los negros y
