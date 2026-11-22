@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f33/integraciones-sencillas`; antes, `f32/operacion-gasto`).
+Última actualización: 22/11/2026 (rama `f37/copiloto-herramientas`; antes, `f33/integraciones-sencillas`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -838,3 +838,43 @@ Detalle en `docs/integraciones-sencillas.md`. Migración `20261222010000_precios
 - **Pendiente:** leer el gasto real del proveedor con una clave de administración (documentado, sin
   implementar: `docs/integraciones-sencillas.md` §6); medir con nuestros casos los modelos que hoy
   salen como «sin medir con nuestros casos»; precio por imagen (la fuente solo da precio por token de imagen).
+
+## Copiloto del editor por herramientas, teclado y transcriptor (rama `f37/copiloto-herramientas`, 22/11/2026)
+
+Detalle en `docs/copiloto-voz.md`. Decisión del dueño: «vamos con luna y todo con
+herramientas para ver si sale mejor».
+
+- **Antes:** el copiloto solo admitía voz (dictado del navegador), devolvía un JSON con 8
+  operaciones, mandaba el perfil de marca entero en cada orden y «deshaz» contestaba «No
+  puedo deshacer desde aquí». «Probar conexión» de IA de texto solo listaba modelos.
+- **Ahora:**
+  - **Herramientas** (function calling) por defecto: 23 herramientas, una por operación, con
+    todo lo que el editor hace a mano (textos y efectos, capas, figuras, fotos, lienzo,
+    páginas, deshacer, guardar, plantillas y los flujos de foto). Adaptadores de OpenAI y de
+    Claude por la misma interfaz (`AiInput.tools`). La ruta JSON sigue detrás de
+    `AI_TEXT_EDITOR_COPILOT_MODE=json`.
+  - **Órdenes frecuentes sin IA** (intérprete local): «deshaz», «guarda», «más grande»,
+    «siguiente página»… coste cero y respuesta inmediata.
+  - **Órdenes por teclado**: campo de texto en el panel; el copiloto sale y funciona sin
+    micrófono.
+  - **Dos motores de voz**: dictado del navegador o transcriptor de OpenAI (`ai-transcribe`,
+    con cupo), a elegir; aviso de privacidad por motor.
+  - **Prompt compacto**: herramientas e instrucciones comunes delante (cacheables), marca en
+    tres líneas, documento en una línea por capa.
+  - **«Probar conexión» de IA de texto hace una generación mínima real** (1 token de salida
+    por modelo configurado) con el mismo endpoint que las tareas: una clave que lista modelos
+    pero no puede generar ya no da «Funciona».
+  - **Banco** `scripts/copiloto-banco.ts`: 75 órdenes; en seco por defecto.
+- **Probado:** unitarias, componentes y base de datos (proveedores y micrófono simulados);
+  e2e 19 adaptada (compila; **sin ejecutar en local**, corre en CI).
+- **Sin probar contra nada real:** la ruta de herramientas con OpenAI o Claude (formato,
+  `strict`, `reasoning_effort: "none"`, caché), el transcriptor, el micrófono, la sonda de
+  generación y el banco con `--apply`. Los objetivos de latencia (< 1,5 s) y de tokens sin
+  caché (< 1.500) **no están medidos**: con el contador del simulado el total por orden sube
+  de 2.455 a 3.122 tokens y lo no compartible entre marcas baja de 1.065 a 149; que se cumpla
+  depende de que el proveedor lea de caché el prefijo común.
+- **Para llevar a staging (en este orden):** aplicación → migración `20261226010000` (dos
+  ajustes de Integraciones, con vuelta atrás) → funciones `ai-generate`, `ai-transcribe` y
+  `platform-integrations`. Después, el banco real (`docs/copiloto-voz.md`, apartado 13).
+- **Pendiente:** precio de la escritura de caché de OpenAI (se cuenta como entrada normal);
+  política de privacidad con el motor transcriptor; elegir plantilla concreta por voz.
