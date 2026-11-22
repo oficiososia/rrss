@@ -379,6 +379,104 @@ describe('editor de reels', () => {
     expect(screen.getByTestId('reel-version')).toHaveTextContent('cambios sin guardar');
   });
 
+  it('con plantillas de reel de la marca: se elige una, pide el material de sus planos y deja el reel montado', async () => {
+    seed({ data: { schemaVersion: 4, canvas: {}, pages: [] } });
+    const row = (key: string, name: string, document: unknown) => ({
+      id: `plantilla-${key}`,
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      template_key: key,
+      name,
+      source: 'catalog',
+      document,
+    });
+    fake.tables.brand_reel_templates = [
+      row('asi-se-hace', 'Así se hace', {
+        kind: 'rrss.reel-template',
+        schemaVersion: 1,
+        purpose: 'Enseñar un producto con el resultado como gancho.',
+        whenToUse: 'Para el producto estrella.',
+        material: '2 a 3 fotos o clips: resultado, proceso y cierre.',
+        style: { id: 'corte-ritmico' },
+        slots: [
+          { id: 'resultado', label: 'Resultado', kind: 'any', seconds: 1.8, motion: 'zoom-in', motionAmount: 0.15 },
+          { id: 'proceso', label: 'Proceso', kind: 'video', seconds: 2, volume: 0.7, optional: true },
+          { id: 'final', label: 'Cierre', kind: 'any', seconds: 3, transition: { type: 'fade', seconds: 0.3 } },
+        ],
+        texts: [
+          {
+            id: 'gancho',
+            role: 'hook',
+            text: 'Así se hace',
+            from: 'resultado',
+            position: 'center',
+            animation: { in: 'zoom', out: 'fade' },
+          },
+          {
+            id: 'cierre',
+            role: 'cta',
+            text: 'Ven a probarlo',
+            from: 'final',
+            offset: 0.4,
+            position: 'bottom',
+            style: { marginRatio: 0.37 },
+          },
+        ],
+        music: { suggestion: 'Instrumental con el pulso marcado.' },
+        cover: { slot: 'resultado', offset: 0.9 },
+      }),
+      // Una fila que la aplicación no sabe montar (estilo que no existe) no se ofrece.
+      row('rota', 'Rota', { kind: 'rrss.reel-template', schemaVersion: 1, style: { id: 'no-existe' }, slots: [] }),
+    ];
+    await open();
+    const cards = await screen.findAllByTestId('reel-brand-template');
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveTextContent('Así se hace');
+    expect(cards[0]).toHaveTextContent('Necesita: 2 a 3 fotos o clips · unos 6,8 s');
+    expect(cards[0]).toHaveTextContent('Instrumental con el pulso marcado.');
+    // Los tres pasos de siempre siguen debajo.
+    expect(screen.getByTestId('reel-starter-pick')).toBeInTheDocument();
+
+    fireEvent.click(cards[0]!);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('reel-media-guide')).toHaveTextContent('1. Resultado2. Proceso3. Cierre');
+    fireEvent.click(within(dialog).getByRole('button', { name: /«plato.jpg»/ }));
+    expect(within(dialog).getByTestId('reel-media-count')).toHaveTextContent('faltan 1 para la plantilla entera');
+    fireEvent.click(within(dialog).getByRole('button', { name: /«cocina.mp4»/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /«local.jpg»/ }));
+    expect(within(dialog).getByTestId('reel-media-count')).toHaveTextContent('3 elegidas (todos los planos)');
+    expect(within(dialog).getByTestId('reel-media-confirm')).toHaveTextContent('Montar el reel con 3');
+    fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
+
+    // Cada pieza en su plano, con la duración de la plantilla, y los dos textos de muestra.
+    await waitFor(() =>
+      expect(clipLabels()).toEqual(['1. Foto plato.jpg, 1,8 s', '2. Clip cocina.mp4, 2 s', '3. Foto local.jpg, 3 s']),
+    );
+    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual([
+      'Así se hace',
+      'Ven a probarlo',
+    ]);
+    expect(screen.getByTestId('reel-version')).toHaveTextContent('cambios sin guardar');
+    expect(await screen.findByText(/Reel montado con «Así se hace»/)).toBeInTheDocument();
+
+    // Se guarda como un reel normal: plan v2 sobre el estilo de la plantilla, con portada y sin música.
+    fireEvent.click(screen.getByTestId('reel-save'));
+    const saveDialog = await screen.findByRole('dialog');
+    fireEvent.click(within(saveDialog).getByRole('button', { name: /Guardar/ }));
+    await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
+    const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {
+      p_data: {
+        template: { id: string };
+        plan: { clips: unknown[]; cover: unknown; music?: unknown; texts: Array<{ style: { marginRatio: number } }> };
+      };
+    };
+    expect(saved.p_data.template).toEqual({ id: 'corte-ritmico' });
+    expect(saved.p_data.plan.clips).toHaveLength(3);
+    expect(saved.p_data.plan.cover).toEqual({ type: 'frame', at: 0.9 });
+    expect(saved.p_data.plan.music).toBeUndefined();
+    expect(saved.p_data.plan.texts[1]!.style.marginRatio).toBe(0.37);
+  });
+
   it('el selector filtra por fotos y vídeos', async () => {
     seed();
     await open();

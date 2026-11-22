@@ -74,7 +74,16 @@ import { cn, formatDateTime } from '@/lib/utils';
 import { useRequestReel, useReelSources, type ReelSourceAsset } from '../api';
 import { describeJob, isActive } from '../plan';
 import { REEL_TEMPLATES, type ReelTemplateSummary } from '../templates';
-import { jobContentVersion, pieceJobKeys, renderOfVersion, usePieceJobs, useSaveReelVersion } from './api';
+import { buildReelFromTemplate, reelTemplateNeeds } from '../reelTemplate';
+import {
+  jobContentVersion,
+  pieceJobKeys,
+  renderOfVersion,
+  useBrandReelTemplates,
+  usePieceJobs,
+  useSaveReelVersion,
+  type BrandReelTemplate,
+} from './api';
 import { previewWarnings } from './compose';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
@@ -216,6 +225,8 @@ function Editor({
   const [confirmArchive, setConfirmArchive] = useState(false);
   /** Texto de apertura escrito en la pantalla de salida, para ponerlo al elegir las fotos. */
   const [openingText, setOpeningText] = useState('');
+  /** Plantilla de reel elegida en la pantalla de salida: el selector pide el material de sus planos. */
+  const [startTemplate, setStartTemplate] = useState<BrandReelTemplate | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const template = REEL_TEMPLATES.find((t) => t.id === project.template.id) ?? defaultTemplate();
@@ -281,6 +292,7 @@ function Editor({
   const publishingOn = useFeature('publishing');
   const worker = mediaWorkerEnabled();
   const jobs = usePieceJobs(brand.id, item.id);
+  const brandTemplates = useBrandReelTemplates(brand.id);
   const request = useRequestReel(brand.id);
   const saveReel = useSaveReelVersion(brand.id);
   const mutations = useContentMutations(org.id, brand.id);
@@ -453,6 +465,27 @@ function Editor({
   /** Las piezas elegidas entran en el orden de la elección; en un reel vacío, con el estilo y el texto de partida. */
   const addMedia = (assets: ReelSourceAsset[]) => {
     if (assets.length === 0) return;
+    if (project.plan.clips.length === 0 && startTemplate) {
+      // Con una plantilla: cada pieza ocupa un plano, con su duración, su movimiento y sus textos de muestra.
+      const chosen = startTemplate;
+      const style = REEL_TEMPLATES.find((t) => t.id === chosen.template.style.id) ?? template;
+      const font = fonts.find((f) => reelFont.data && f.family === reelFont.data.family);
+      dispatch({
+        type: 'change',
+        change: () =>
+          buildReelFromTemplate(chosen.template, assets, style, {
+            ...(font ? { font: { path: font.path, family: font.family } } : {}),
+          }),
+        select: { kind: 'clip', id: 'c1' },
+      });
+      const music = chosen.template.music?.suggestion;
+      toast.success(
+        `Reel montado con «${chosen.name}». Cambia los textos de muestra por los tuyos.${music ? ` Música que le va: ${music}` : ''}`,
+      );
+      setStartTemplate(null);
+      setOpeningText('');
+      return;
+    }
     if (project.plan.clips.length === 0) {
       dispatch({
         type: 'change',
@@ -791,7 +824,13 @@ function Editor({
                   if (next) apply((p) => applyTemplate(p, next));
                 }}
                 onPickMedia={(text) => {
+                  setStartTemplate(null);
                   setOpeningText(text);
+                  setMediaOpen(true);
+                }}
+                brandTemplates={brandTemplates.data ?? []}
+                onBrandTemplate={(chosen) => {
+                  setStartTemplate(chosen);
                   setMediaOpen(true);
                 }}
               />
@@ -1024,12 +1063,38 @@ function Editor({
       {mediaOpen && (
         <MediaPicker
           open={mediaOpen}
-          onOpenChange={setMediaOpen}
+          onOpenChange={(open) => {
+            setMediaOpen(open);
+            if (!open) setStartTemplate(null);
+          }}
           sources={(sources.data ?? []).filter((a) => a.kind === 'image' || a.kind === 'video')}
           loading={sources.isPending}
           error={sources.error}
-          room={REEL_MAX_CLIPS - project.plan.clips.length}
-          confirmLabel={(n) => (empty ? (n === 0 ? 'Crear el reel' : `Crear el reel con ${n}`) : `Añadir ${n}`)}
+          room={
+            empty && startTemplate
+              ? reelTemplateNeeds(startTemplate.template).max
+              : REEL_MAX_CLIPS - project.plan.clips.length
+          }
+          {...(empty && startTemplate
+            ? {
+                title: `«${startTemplate.name}»: elige el material`,
+                description:
+                  'Toca las fotos y los clips en el orden de los planos. Si eliges menos, se quitan los planos que sobran.',
+                guide: {
+                  steps: startTemplate.template.slots.map((slot) => slot.label),
+                  wanted: reelTemplateNeeds(startTemplate.template).min,
+                },
+              }
+            : {})}
+          confirmLabel={(n) =>
+            empty
+              ? n === 0
+                ? startTemplate
+                  ? 'Montar el reel'
+                  : 'Crear el reel'
+                : `${startTemplate ? 'Montar' : 'Crear'} el reel con ${n}`
+              : `Añadir ${n}`
+          }
           onConfirm={addMedia}
         />
       )}
