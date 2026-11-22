@@ -287,7 +287,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
           current: data.current as BriefProposal | undefined,
           adjust: data.adjust as BriefAdjustment | undefined,
           answer: data.answer as CampaignBriefRequest['answer'],
-        });
+        }, deps.log);
         // Aquí sí se dice lo que ha costado: la pantalla lo enseña en pequeño junto a la propuesta.
         result = { ...strip(brief), costMicros: brief.costMicros };
       } else if (action === 'campaign.plan') {
