@@ -73,6 +73,26 @@ export interface ProbeResult {
   fix?: ProbeFix;
 }
 
+/**
+ * Tarjetas de la pantalla que comparten integración («IA de texto» son OpenAI
+ * y Claude; «IA de imagen», fal.ai y los demás proveedores): cada una prueba y
+ * enseña SOLO lo suyo. El valor es la fila de `integration_tests` donde queda
+ * su última prueba (la primera de cada integración conserva la de siempre).
+ */
+export const PROBE_SCOPES = {
+  ai_text: { openai: 'ai_text', claude: 'ai_text_claude' },
+  ai_image: { images_other: 'ai_image', fal: 'ai_image_fal' },
+} as const;
+
+export type ProbeScope = 'openai' | 'claude' | 'images_other' | 'fal';
+
+/** Dónde se anota la prueba de esa tarjeta, o `null` si la tarjeta no es de esa integración. */
+export function probeRecordId(id: IntegrationId, scope: unknown): string | null {
+  const scopes = (PROBE_SCOPES as Partial<Record<IntegrationId, Record<string, string>>>)[id];
+  if (!scopes || typeof scope !== 'string' || !Object.hasOwn(scopes, scope)) return null;
+  return scopes[scope]!;
+}
+
 export interface ProbeDeps {
   fetch: ProbeFetch;
   /** Graph API para la prueba de Meta (en la prueba local, la simulada). */
@@ -539,7 +559,136 @@ async function probeGeneration(
   };
 }
 
-async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+type TextScope = 'openai' | 'claude';
+
+/** ¿Es ese adaptador de la tarjeta que se prueba? Sin tarjeta, todos (la prueba completa de siempre). */
+const inTextScope = (providerId: string, scope: TextScope | undefined) =>
+  !scope || (scope === 'openai' ? providerId === 'openai' : providerId !== 'openai');
+
+/** Comprobación gratuita de un adaptador de texto (listar modelos o pedir un token). No genera nada. */
+async function freeTextChecks(providerId: string, env: Env, deps: ProbeDeps): Promise<ProbeCheck[]> {
+  const checks: ProbeCheck[] = [];
+  if (providerId === 'anthropic') {
+    const r = await call(deps, 'https://api.anthropic.com/v1/models?limit=1', {
+      headers: { 'x-api-key': value(env, 'ANTHROPIC_API_KEY') ?? '', 'anthropic-version': ANTHROPIC_API_VERSION },
+    });
+    checks.push(
+      'error' in r
+        ? { name: 'Anthropic', ok: false, message: unreachable('Anthropic', r) }
+        : r.status === 200
+          ? { name: 'Anthropic', ok: true, message: 'Anthropic acepta la clave.' }
+          : { name: 'Anthropic', ok: false, message: rejected('Anthropic', r.status) },
+    );
+  } else if (providerId === 'mistral') {
+    const r = await call(deps, 'https://api.mistral.ai/v1/models', {
+      headers: { Authorization: `Bearer ${value(env, 'MISTRAL_API_KEY') ?? ''}`, Accept: 'application/json' },
+    });
+    checks.push(
+      'error' in r
+        ? { name: 'Mistral', ok: false, message: unreachable('Mistral', r) }
+        : r.status === 200
+          ? { name: 'Mistral', ok: true, message: 'Mistral acepta la clave.' }
+          : { name: 'Mistral', ok: false, message: rejected('Mistral', r.status) },
+    );
+  } else if (providerId === 'openai') {
+    // Listar modelos es gratuito. Con el endpoint de la UE comprueba además
+    // que la clave pertenece a un proyecto con residencia en Europa.
+    const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${value(env, 'OPENAI_API_KEY') ?? ''}`,
+      Accept: 'application/json',
+    };
+    const org = value(env, 'OPENAI_ORGANIZATION');
+    const project = value(env, 'OPENAI_PROJECT');
+    if (org) headers['OpenAI-Organization'] = org;
+    if (project) headers['OpenAI-Project'] = project;
+    const r = await call(deps, `${base}/v1/models`, { headers });
+    checks.push(
+      'error' in r
+        ? { name: 'OpenAI', ok: false, message: unreachable('OpenAI', r) }
+        : r.status === 200
+          ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
+          : r.status !== 200 && new URL(base).hostname === 'eu.api.openai.com'
+            ? {
+                name: 'OpenAI',
+                ok: false,
+                message:
+                  'OpenAI no acepta esta clave en su servidor europeo. Lo más habitual es que la clave no sea de un proyecto con región Europa; también puede estar mal copiada. Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).',
+                fix: 'openai_global',
+              }
+            : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
+    );
+    // Edición de fotos con IA: la misma lista dice si la clave ve un modelo de imagen.
+    if (!('error' in r) && r.status === 200) {
+      const ids =
+        typeof r.body === 'object' && r.body !== null && Array.isArray((r.body as { data?: unknown }).data)
+          ? ((r.body as { data: unknown[] }).data as unknown[]).map((m) =>
+              typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string'
+                ? (m as { id: string }).id
+                : '',
+            )
+          : [];
+      const images = ids.filter((id) => id.startsWith('gpt-image'));
+      checks.push(
+        images.length > 0
+          ? {
+              name: 'OpenAI imagen',
+              ok: true,
+              message: `La clave ve ${images.length} modelo(s) de imagen (${images.slice(0, 3).join(', ')}). Editar fotos con IA está disponible.`,
+            }
+          : {
+              name: 'OpenAI imagen',
+              ok: null,
+              message:
+                'La clave funciona, pero no lista ningún modelo de imagen (gpt-image…). Para editar fotos con IA puede hacer falta verificar la organización en OpenAI o dar acceso al proyecto.',
+            },
+      );
+    }
+  } else if (providerId === 'anthropic-vertex') {
+    checks.push(await googleToken(value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON') ?? '', deps));
+  } else if (providerId === 'anthropic-bedrock') {
+    const region = value(env, 'AI_BEDROCK_REGION') ?? '';
+    const url = `https://bedrock.${region}.amazonaws.com/foundation-models?byProvider=anthropic`;
+    const accessKeyId = value(env, 'AI_BEDROCK_ACCESS_KEY_ID');
+    const secretAccessKey = value(env, 'AI_BEDROCK_SECRET_ACCESS_KEY');
+    const headers: Record<string, string> =
+      accessKeyId && secretAccessKey
+        ? await signAwsRequest({
+            method: 'GET',
+            url,
+            headers: { accept: 'application/json' },
+            body: '',
+            region,
+            service: 'bedrock',
+            credentials: { accessKeyId, secretAccessKey },
+          })
+        : { accept: 'application/json', authorization: `Bearer ${value(env, 'AI_BEDROCK_BEARER_TOKEN') ?? ''}` };
+    const r = await call(deps, url, { headers });
+    checks.push(
+      'error' in r
+        ? { name: 'Amazon Bedrock', ok: false, message: unreachable('Amazon Bedrock', r) }
+        : r.status === 200
+          ? { name: 'Amazon Bedrock', ok: true, message: `Amazon Bedrock acepta las credenciales en ${region}.` }
+          : { name: 'Amazon Bedrock', ok: false, message: rejected('Amazon Bedrock', r.status) },
+    );
+  }
+  return checks;
+}
+
+/** Accesos de la tarjeta de Claude que tienen credenciales aunque ninguna tarea los use todavía. */
+function idleClaudeProviders(env: Env): string[] {
+  const out: string[] = [];
+  if (value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON')) out.push('anthropic-vertex');
+  if (value(env, 'ANTHROPIC_API_KEY')) out.push('anthropic');
+  const bedrockKeys = value(env, 'AI_BEDROCK_ACCESS_KEY_ID') && value(env, 'AI_BEDROCK_SECRET_ACCESS_KEY');
+  if (value(env, 'AI_BEDROCK_REGION') && (bedrockKeys || value(env, 'AI_BEDROCK_BEARER_TOKEN'))) {
+    out.push('anthropic-bedrock');
+  }
+  if (value(env, 'MISTRAL_API_KEY')) out.push('mistral');
+  return out;
+}
+
+async function probeAiText(env: Env, deps: ProbeDeps, scope?: TextScope): Promise<ProbeResult> {
   const local = loadLocalTestTextConfig(env);
   if (local) {
     return summarize(
@@ -549,125 +698,24 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   }
   const traces: GenerationTraces = new WeakMap();
   const config = loadAiTextConfig(env, { fetch: tracingFetch(deps, traces) });
+  // Con tarjeta (OpenAI o Claude), solo sus adaptadores: ni se llama ni se enseña a los del otro.
+  const providers = config.providers.filter((p) => inTextScope(p.id, scope));
   const checks: ProbeCheck[] = [];
   for (const [id, reason] of Object.entries(config.unavailable)) {
-    checks.push({ name: id, ok: false, message: reason });
+    if (inTextScope(id, scope)) checks.push({ name: id, ok: false, message: reason });
   }
   /** Adaptadores cuya comprobación gratuita ha ido bien: solo con esos se prueba a generar. */
   const ready = new Set<string>();
-  for (const provider of config.providers) {
-    const before = checks.length;
-    if (provider.id === 'anthropic') {
-      const r = await call(deps, 'https://api.anthropic.com/v1/models?limit=1', {
-        headers: { 'x-api-key': value(env, 'ANTHROPIC_API_KEY') ?? '', 'anthropic-version': ANTHROPIC_API_VERSION },
-      });
-      checks.push(
-        'error' in r
-          ? { name: 'Anthropic', ok: false, message: unreachable('Anthropic', r) }
-          : r.status === 200
-            ? { name: 'Anthropic', ok: true, message: 'Anthropic acepta la clave.' }
-            : { name: 'Anthropic', ok: false, message: rejected('Anthropic', r.status) },
-      );
-    } else if (provider.id === 'mistral') {
-      const r = await call(deps, 'https://api.mistral.ai/v1/models', {
-        headers: { Authorization: `Bearer ${value(env, 'MISTRAL_API_KEY') ?? ''}`, Accept: 'application/json' },
-      });
-      checks.push(
-        'error' in r
-          ? { name: 'Mistral', ok: false, message: unreachable('Mistral', r) }
-          : r.status === 200
-            ? { name: 'Mistral', ok: true, message: 'Mistral acepta la clave.' }
-            : { name: 'Mistral', ok: false, message: rejected('Mistral', r.status) },
-      );
-    } else if (provider.id === 'openai') {
-      // Listar modelos es gratuito. Con el endpoint de la UE comprueba además
-      // que la clave pertenece a un proyecto con residencia en Europa.
-      const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${value(env, 'OPENAI_API_KEY') ?? ''}`,
-        Accept: 'application/json',
-      };
-      const org = value(env, 'OPENAI_ORGANIZATION');
-      const project = value(env, 'OPENAI_PROJECT');
-      if (org) headers['OpenAI-Organization'] = org;
-      if (project) headers['OpenAI-Project'] = project;
-      const r = await call(deps, `${base}/v1/models`, { headers });
-      checks.push(
-        'error' in r
-          ? { name: 'OpenAI', ok: false, message: unreachable('OpenAI', r) }
-          : r.status === 200
-            ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
-            : r.status !== 200 && new URL(base).hostname === 'eu.api.openai.com'
-              ? {
-                  name: 'OpenAI',
-                  ok: false,
-                  message:
-                    'OpenAI no acepta esta clave en su servidor europeo. Lo más habitual es que la clave no sea de un proyecto con región Europa; también puede estar mal copiada. Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).',
-                  fix: 'openai_global',
-                }
-              : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
-      );
-      // Edición de fotos con IA: la misma lista dice si la clave ve un modelo de imagen.
-      if (!('error' in r) && r.status === 200) {
-        const ids =
-          typeof r.body === 'object' && r.body !== null && Array.isArray((r.body as { data?: unknown }).data)
-            ? ((r.body as { data: unknown[] }).data as unknown[]).map((m) =>
-                typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string'
-                  ? (m as { id: string }).id
-                  : '',
-              )
-            : [];
-        const images = ids.filter((id) => id.startsWith('gpt-image'));
-        checks.push(
-          images.length > 0
-            ? {
-                name: 'OpenAI imagen',
-                ok: true,
-                message: `La clave ve ${images.length} modelo(s) de imagen (${images.slice(0, 3).join(', ')}). Editar fotos con IA está disponible.`,
-              }
-            : {
-                name: 'OpenAI imagen',
-                ok: null,
-                message:
-                  'La clave funciona, pero no lista ningún modelo de imagen (gpt-image…). Para editar fotos con IA puede hacer falta verificar la organización en OpenAI o dar acceso al proyecto.',
-              },
-        );
-      }
-    } else if (provider.id === 'anthropic-vertex') {
-      checks.push(await googleToken(value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON') ?? '', deps));
-    } else if (provider.id === 'anthropic-bedrock') {
-      const region = value(env, 'AI_BEDROCK_REGION') ?? '';
-      const url = `https://bedrock.${region}.amazonaws.com/foundation-models?byProvider=anthropic`;
-      const accessKeyId = value(env, 'AI_BEDROCK_ACCESS_KEY_ID');
-      const secretAccessKey = value(env, 'AI_BEDROCK_SECRET_ACCESS_KEY');
-      const headers: Record<string, string> =
-        accessKeyId && secretAccessKey
-          ? await signAwsRequest({
-              method: 'GET',
-              url,
-              headers: { accept: 'application/json' },
-              body: '',
-              region,
-              service: 'bedrock',
-              credentials: { accessKeyId, secretAccessKey },
-            })
-          : { accept: 'application/json', authorization: `Bearer ${value(env, 'AI_BEDROCK_BEARER_TOKEN') ?? ''}` };
-      const r = await call(deps, url, { headers });
-      checks.push(
-        'error' in r
-          ? { name: 'Amazon Bedrock', ok: false, message: unreachable('Amazon Bedrock', r) }
-          : r.status === 200
-            ? { name: 'Amazon Bedrock', ok: true, message: `Amazon Bedrock acepta las credenciales en ${region}.` }
-            : { name: 'Amazon Bedrock', ok: false, message: rejected('Amazon Bedrock', r.status) },
-      );
-    }
-    if (!checks.slice(before).some((c) => c.ok === false)) ready.add(provider.id);
+  for (const provider of providers) {
+    const found = await freeTextChecks(provider.id, env, deps);
+    checks.push(...found);
+    if (!found.some((c) => c.ok === false)) ready.add(provider.id);
   }
 
   // Generación mínima real: una por par adaptador/modelo distinto de las tareas
   // (ver arriba). Si la comprobación gratuita del adaptador ya falló, no se
   // gasta nada: ese fallo ya dice qué pasa.
-  const loaded = new Map(config.providers.map((p) => [p.id, p] as const));
+  const loaded = new Map(providers.map((p) => [p.id, p] as const));
   const pairs = new Map<string, { provider: AiProvider; model: string }>();
   for (const spec of config.models) {
     const provider = loaded.get(spec.provider);
@@ -690,17 +738,46 @@ async function probeAiText(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
     });
   }
 
-  const priceProblems = config.problems.filter((p) => p.startsWith('AI_PRICES'));
-  if (priceProblems.length > 0 && config.providers.length > 0) {
+  // Un precio que falta es de su adaptador («adaptador/modelo»); los avisos generales valen para todos.
+  const priceProblems = config.problems
+    .filter((p) => p.startsWith('AI_PRICES'))
+    .filter((p) => {
+      const owner = /«([a-z0-9-]+)\/[^»]*»/.exec(p)?.[1];
+      return !owner || inTextScope(owner, scope);
+    });
+  if (priceProblems.length > 0 && providers.length > 0) {
     checks.push({
       name: 'Precios',
       ok: false,
       message: `${priceProblems.join(' ')} Sin precio completo no se genera.`,
     });
   }
-  const routeProblems = config.problems.filter((p) => p.startsWith('La tarea'));
+  // Las tareas a medias (adaptador sin modelo o al revés) se eligen en la tarjeta de OpenAI.
+  const routeProblems = scope === 'claude' ? [] : config.problems.filter((p) => p.startsWith('La tarea'));
   for (const p of routeProblems) checks.push({ name: 'Tareas', ok: false, message: p });
-  return summarize(checks, 'No hay ninguna tarea de texto con proveedor y modelo elegidos.');
+
+  // Claude con credenciales pero sin ninguna tarea que lo use: se comprueba el
+  // acceso (gratis) y se dice que no se ha probado a generar.
+  if (scope === 'claude' && checks.length === 0) {
+    const idle = idleClaudeProviders(env);
+    for (const id of idle) checks.push(...(await freeTextChecks(id, env, deps)));
+    if (idle.length > 0) {
+      checks.push({
+        name: 'Tareas',
+        ok: null,
+        message:
+          'Ninguna tarea de texto usa todavía este acceso: no se ha probado a generar. Se elige para una tarea en «Opciones avanzadas» de OpenAI.',
+      });
+    }
+  }
+  return summarize(
+    checks,
+    scope === 'openai'
+      ? 'No hay ninguna tarea de texto con OpenAI y un modelo elegidos.'
+      : scope === 'claude'
+        ? 'No hay ningún acceso de Claude configurado: no hay nada que probar.'
+        : 'No hay ninguna tarea de texto con proveedor y modelo elegidos.',
+  );
 }
 
 // ─────────────────────────────── IA de imagen ───────────────────────────────
@@ -720,10 +797,14 @@ function falPrices(body: unknown): string {
     .join('; ');
 }
 
-async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+type ImageScope = 'images_other' | 'fal';
+
+async function probeAiImage(env: Env, deps: ProbeDeps, scope?: ImageScope): Promise<ProbeResult> {
   const checks: ProbeCheck[] = [];
-  const vertexJson = value(env, MEDIA_ENV.vertexServiceAccount);
-  if (vertexJson || value(env, MEDIA_ENV.vertexProject)) {
+  // Con tarjeta, solo lo suyo: fal.ai (animar fotos) o los proveedores de crear imágenes.
+  const others = scope !== 'fal';
+  const vertexJson = others ? value(env, MEDIA_ENV.vertexServiceAccount) : undefined;
+  if (others && (vertexJson || value(env, MEDIA_ENV.vertexProject))) {
     if (!vertexJson || !value(env, MEDIA_ENV.vertexProject)) {
       checks.push({
         name: 'Google Vertex AI',
@@ -734,7 +815,7 @@ async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       checks.push(await googleToken(vertexJson, deps));
     }
   }
-  const bflKey = value(env, MEDIA_ENV.bflKey);
+  const bflKey = others ? value(env, MEDIA_ENV.bflKey) : undefined;
   if (bflKey) {
     const base = value(env, MEDIA_ENV.bflBaseUrl) ?? BFL_DEFAULT_BASE_URL;
     if (!isBflBaseUrl(base)) {
@@ -754,7 +835,7 @@ async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       );
     }
   }
-  if (value(env, MEDIA_ENV.ideogramKey)) {
+  if (others && value(env, MEDIA_ENV.ideogramKey)) {
     checks.push({
       name: 'Ideogram',
       ok: null,
@@ -762,7 +843,7 @@ async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
         'Ideogram no documenta ninguna llamada gratuita para comprobar la clave: se comprobará con la primera imagen.',
     });
   }
-  const falKey = value(env, MEDIA_ENV.falKey);
+  const falKey = scope === 'images_other' ? undefined : value(env, MEDIA_ENV.falKey);
   if (falKey) {
     // GET /v1/models/pricing (documentado en fal.ai/docs/platform-apis): exige la clave y devuelve el
     // precio por unidad. No genera nada. La documentación no dice que se cobre la consulta.
@@ -782,7 +863,14 @@ async function probeAiImage(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
       checks.push({ name: 'fal.ai', ok: false, message: rejected('fal.ai', r.status) });
     }
   }
-  return summarize(checks, 'No hay ningún proveedor de imagen configurado (ComfyUI se prueba en su propio apartado).');
+  return summarize(
+    checks,
+    scope === 'fal'
+      ? 'Falta la clave de fal.ai.'
+      : scope === 'images_other'
+        ? 'No hay ningún proveedor de imagen configurado (Google, Black Forest Labs o Ideogram).'
+        : 'No hay ningún proveedor de imagen configurado (ComfyUI se prueba en su propio apartado).',
+  );
 }
 
 // ─────────────────────────────── Stripe ───────────────────────────────
@@ -1075,16 +1163,25 @@ export async function listOpenAiModels(
   };
 }
 
-export async function probeIntegration(id: IntegrationId, env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+/**
+ * `scope` (opcional): la tarjeta que prueba, cuando la integración la comparten
+ * varias (ver PROBE_SCOPES). Sin él, la prueba completa de la integración.
+ */
+export async function probeIntegration(
+  id: IntegrationId,
+  env: Env,
+  deps: ProbeDeps,
+  scope?: ProbeScope,
+): Promise<ProbeResult> {
   switch (id) {
     case 'meta':
       return probeMeta(env, deps);
     case 'comfyui':
       return probeComfyUi(env, deps);
     case 'ai_text':
-      return probeAiText(env, deps);
+      return probeAiText(env, deps, scope === 'openai' || scope === 'claude' ? scope : undefined);
     case 'ai_image':
-      return probeAiImage(env, deps);
+      return probeAiImage(env, deps, scope === 'images_other' || scope === 'fal' ? scope : undefined);
     case 'stripe':
       return probeStripe(env, deps);
     case 'google_drive':

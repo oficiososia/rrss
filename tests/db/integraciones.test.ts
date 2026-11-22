@@ -1063,6 +1063,148 @@ describe('Probar conexión de la IA de texto: generación mínima real (proveedo
     expect(JSON.stringify([good, bad])).not.toContain('ya29.token-de-prueba');
   });
 
+  describe('por tarjeta: cada una prueba solo lo suyo', () => {
+    // Clave generada para estas pruebas: no es la de ninguna cuenta.
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const vertex = {
+      AI_VERTEX_PROJECT_ID: 'proyecto-prueba',
+      AI_VERTEX_LOCATION: 'eu',
+      AI_VERTEX_SERVICE_ACCOUNT_JSON: JSON.stringify({
+        client_email: 'rrss@proyecto-prueba.iam.gserviceaccount.com',
+        private_key: privateKey,
+      }),
+    };
+    /** OpenAI para todo y Claude (Vertex) para el copiloto: las dos tarjetas tienen algo que probar. */
+    const both = {
+      ...openaiEnv(),
+      ...vertex,
+      AI_TEXT_EDITOR_COPILOT_PROVIDER: 'anthropic-vertex',
+      AI_TEXT_EDITOR_COPILOT_MODEL: 'claude-x',
+      AI_PRICES: JSON.stringify({
+        'openai/gpt-x': { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 },
+        'anthropic-vertex/claude-x': {
+          input_tokens: 1,
+          output_tokens: 2,
+          cache_read_input_tokens: 0.1,
+          cache_write_input_tokens: 1,
+        },
+      }),
+    };
+    const everything = () =>
+      server((c) => {
+        if (c.url.startsWith('https://oauth2.googleapis.com/token')) return json(200, { access_token: 'ya29.x', expires_in: 3600 });
+        if (c.url.endsWith('/v1/models')) return json(200, { data: [{ id: 'gpt-x' }] });
+        return c.url.includes('aiplatform') ? messagesOk() : chatOk();
+      });
+    const toOpenAi = (calls: Call[]) => calls.filter((c) => c.url.includes('openai.com'));
+    const toGoogle = (calls: Call[]) => calls.filter((c) => c.url.includes('googleapis.com'));
+
+    it('la tarjeta de Claude no llama a OpenAI ni enseña nada suyo', async () => {
+      const s = everything();
+      const r = await probeIntegration('ai_text', both, { fetch: s.fetch }, 'claude');
+      expect(r.ok).toBe(true);
+      expect(toOpenAi(s.calls)).toEqual([]);
+      expect(toGoogle(s.calls).length).toBeGreaterThan(0);
+      expect(JSON.stringify(r)).not.toMatch(/OpenAI|openai|gpt-x/);
+      expect(generation(r, 'anthropic-vertex/claude-x')).toMatchObject({ ok: true });
+      // Una sola generación: la de Claude.
+      expect(s.generations()).toHaveLength(1);
+      expect(r.checks.find((c) => c.name === 'Coste de la prueba')?.message).toMatch(/1 generación mínima real/);
+    });
+
+    it('la tarjeta de OpenAI no llama a Google ni enseña nada de Claude', async () => {
+      const s = everything();
+      const r = await probeIntegration('ai_text', both, { fetch: s.fetch }, 'openai');
+      expect(r.ok).toBe(true);
+      expect(toGoogle(s.calls)).toEqual([]);
+      expect(JSON.stringify(r)).not.toMatch(/Google|Vertex|claude/i);
+      expect(generation(r, 'openai/gpt-x')).toMatchObject({ ok: true });
+      expect(s.generations()).toHaveLength(1);
+    });
+
+    it('sin tarjeta, la prueba completa de siempre: las dos', async () => {
+      const s = everything();
+      const r = await probeIntegration('ai_text', both, { fetch: s.fetch });
+      expect(generation(r, 'openai/gpt-x')).toMatchObject({ ok: true });
+      expect(generation(r, 'anthropic-vertex/claude-x')).toMatchObject({ ok: true });
+      expect(s.generations()).toHaveLength(2);
+    });
+
+    it('un fallo de OpenAI no deja en rojo a Claude, ni al revés', async () => {
+      const s = server((c) => {
+        if (c.url.startsWith('https://oauth2.googleapis.com/token')) return json(200, { access_token: 'ya29.x', expires_in: 3600 });
+        if (c.url.endsWith('/v1/models')) return json(401, { error: { message: 'no' } });
+        return messagesOk();
+      });
+      expect((await probeIntegration('ai_text', both, { fetch: s.fetch }, 'claude')).ok).toBe(true);
+      const openai = await probeIntegration('ai_text', both, { fetch: s.fetch }, 'openai');
+      expect(openai.ok).toBe(false);
+      expect(openai.fix).toBe('openai_global');
+    });
+
+    it('el precio que le falta a un modelo solo sale en la tarjeta de su proveedor', async () => {
+      const s = everything();
+      const env = {
+        ...both,
+        AI_PRICES: JSON.stringify({ 'openai/gpt-x': { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0.1 } }),
+      };
+      const claude = await probeIntegration('ai_text', env, { fetch: s.fetch }, 'claude');
+      expect(claude.checks.find((c) => c.name === 'Precios')?.message).toMatch(/anthropic-vertex\/claude-x/);
+      const openai = await probeIntegration('ai_text', env, { fetch: s.fetch }, 'openai');
+      expect(openai.checks.find((c) => c.name === 'Precios')).toBeUndefined();
+      expect(openai.ok).toBe(true);
+    });
+
+    it('Claude con credenciales pero sin ninguna tarea que lo use: comprueba el acceso, no genera y lo dice', async () => {
+      const s = everything();
+      const r = await probeIntegration('ai_text', { ...openaiEnv(), ...vertex }, { fetch: s.fetch }, 'claude');
+      expect(r.ok).toBe(true);
+      expect(r.message).toMatch(/^Google da acceso a la cuenta de servicio/);
+      expect(r.checks.find((c) => c.name === 'Tareas')).toMatchObject({ ok: null });
+      expect(r.checks.find((c) => c.name === 'Tareas')?.message).toMatch(/no se ha probado a generar/);
+      expect(s.generations()).toEqual([]);
+      expect(toOpenAi(s.calls)).toEqual([]);
+    });
+
+    it('Claude sin nada configurado: no hay nada que probar y no llama a nadie', async () => {
+      const s = everything();
+      const r = await probeIntegration('ai_text', openaiEnv(), { fetch: s.fetch }, 'claude');
+      expect(r).toMatchObject({ ok: false, checks: [] });
+      expect(r.message).toMatch(/ningún acceso de Claude/);
+      expect(s.calls).toEqual([]);
+    });
+
+    it('IA de imagen: fal.ai y los demás proveedores, cada uno en su tarjeta', async () => {
+      const s = server((c) =>
+        c.url.includes('fal.ai')
+          ? json(200, { prices: [{ endpoint_id: 'minimax/h3/image-to-video', unit_price: 0.06, unit: 'video', currency: 'USD' }] })
+          : json(200, { credits: 10 }),
+      );
+      const env = { BFL_API_KEY: 'clave-bfl-0123', FAL_KEY: 'clave-fal-0123', IDEOGRAM_API_KEY: 'clave-ideogram' };
+      const fal = await probeIntegration('ai_image', env, { fetch: s.fetch }, 'fal');
+      expect(fal.ok).toBe(true);
+      expect(fal.checks.map((c) => c.name)).toEqual(['fal.ai']);
+      expect(s.calls.map((c) => new URL(c.url).hostname)).toEqual(['api.fal.ai']);
+
+      s.calls.length = 0;
+      const others = await probeIntegration('ai_image', env, { fetch: s.fetch }, 'images_other');
+      expect(others.checks.map((c) => c.name)).toEqual(['Black Forest Labs', 'Ideogram']);
+      expect(s.calls.map((c) => new URL(c.url).hostname)).toEqual(['api.eu.bfl.ai']);
+
+      // Sin tarjeta, todo junto como siempre.
+      const all = await probeIntegration('ai_image', env, { fetch: s.fetch });
+      expect(all.checks.map((c) => c.name)).toEqual(['Black Forest Labs', 'Ideogram', 'fal.ai']);
+      // Cada tarjeta sin su clave lo dice con su nombre.
+      expect((await probeIntegration('ai_image', { BFL_API_KEY: 'x' }, { fetch: s.fetch }, 'fal')).message).toBe(
+        'Falta la clave de fal.ai.',
+      );
+    });
+  });
+
   it('el proveedor simulado de las pruebas locales sigue sin llamar a nadie', async () => {
     const s = server(() => json(500, {}));
     const r = await probeIntegration(
@@ -1077,7 +1219,7 @@ describe('Probar conexión de la IA de texto: generación mínima real (proveedo
 
 describe('función platform-integrations', () => {
   const tokens = new Map<string, TestUser>();
-  let probed: Array<{ id: string; env: Record<string, string | undefined> }> = [];
+  let probed: Array<{ id: string; env: Record<string, string | undefined>; scope?: string }> = [];
   const loaderEnv = { COMFYUI_BASE_URL: 'https://desde-el-entorno.test' };
   let machine: { state: string; startedAt: string | null } | { problem: string } = { problem: 'sin configurar' };
 
@@ -1099,9 +1241,9 @@ describe('función platform-integrations', () => {
       settings,
       baseEnv: loaderEnv,
       imageModelRows: async () => [],
-      probe: async (id, env) => {
-        probed.push({ id, env });
-        return { ok: true, message: 'Simulado: responde.', checks: [] };
+      probe: async (id, env, scope) => {
+        probed.push({ id, env, scope });
+        return { ok: true, message: `Simulado: responde${scope ? ` (${scope})` : ''}.`, checks: [] };
       },
       workerMachine: async () => machine,
       randomKey: () => Buffer.alloc(32, 9).toString('base64'),
@@ -1220,6 +1362,56 @@ describe('función platform-integrations', () => {
     probed = [];
     await post('t-root', { action: 'test', integration: 'comfyui' });
     expect(probed[0]!.env.COMFYUI_BASE_URL).toBe('https://desde-el-entorno.test');
+  });
+
+  it('con `service`, prueba solo esa tarjeta y anota el resultado en su propia fila (20270105010000)', async () => {
+    probed = [];
+    expect((await post('t-root', { action: 'test', integration: 'ai_text', service: 'openai' })).status).toBe(200);
+    const claude = await post('t-root', { action: 'test', integration: 'ai_text', service: 'claude' });
+    expect(claude.body).toMatchObject({ ok: true, message: 'Simulado: responde (claude).' });
+    await post('t-root', { action: 'test', integration: 'ai_image', service: 'fal' });
+    expect(probed.map((p) => [p.id, p.scope])).toEqual([
+      ['ai_text', 'openai'],
+      ['ai_text', 'claude'],
+      ['ai_image', 'fal'],
+    ]);
+    const status = await post('t-root', { action: 'status' });
+    const tests = Object.fromEntries(
+      (status.body.tests as Array<{ integration: string; message: string }>).map((t) => [t.integration, t.message]),
+    );
+    // La fila de siempre es la de OpenAI; Claude y fal.ai tienen la suya.
+    expect(tests.ai_text).toBe('Simulado: responde (openai).');
+    expect(tests.ai_text_claude).toBe('Simulado: responde (claude).');
+    expect(tests.ai_image_fal).toBe('Simulado: responde (fal).');
+    expect(tests.ai_image).toBeUndefined();
+    // Una tarjeta que no es de esa integración (o inventada) no se prueba.
+    probed = [];
+    for (const body of [
+      { action: 'test', integration: 'ai_text', service: 'fal' },
+      { action: 'test', integration: 'stripe', service: 'openai' },
+      { action: 'test', integration: 'ai_image', service: 'constructor' },
+      { action: 'test', integration: 'ai_text', service: 7 },
+    ]) {
+      expect((await post('t-root', body)).status).toBe(400);
+    }
+    expect(probed).toEqual([]);
+    // Y sigue siendo solo para superadministradores.
+    expect((await post('t-ana', { action: 'test', integration: 'ai_text', service: 'claude' })).status).toBe(403);
+  });
+
+  it('las filas por tarjeta solo las admite la base de datos con la migración; una inventada, no', async () => {
+    await asService(db, `select public.integration_record_test($1, 'ai_text_claude', false, 'Google no da acceso')`, [
+      root.id,
+    ]);
+    const [row] = await as<{ ok: boolean; message: string }>(
+      db,
+      root,
+      `select * from public.admin_integration_tests() where integration = 'ai_text_claude'`,
+    );
+    expect(row).toMatchObject({ ok: false, message: 'Google no da acceso' });
+    await expect(
+      asService(db, `select public.integration_record_test($1, 'ai_text_mistral', true, 'x')`, [root.id]),
+    ).rejects.toThrow(/no existe/);
   });
 
   it('rechaza ajustes de otra integración, valores mal formados y las claves de cifrado a mano', async () => {

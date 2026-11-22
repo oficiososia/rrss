@@ -128,10 +128,20 @@ export function useSaveIntegration() {
   });
 }
 
+/**
+ * «Probar conexión». `service` es la tarjeta que prueba cuando varias comparten
+ * integración (OpenAI y Claude; fal.ai y las demás de imagen): el servidor
+ * prueba, devuelve y anota solo lo de esa tarjeta.
+ */
 export function useTestIntegration() {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (integration: IntegrationId) => callIntegrations<ProbeResult>({ action: 'test', integration }),
+    mutationFn: (input: { integration: IntegrationId; service?: string }) =>
+      callIntegrations<ProbeResult>({
+        action: 'test',
+        integration: input.integration,
+        ...(input.service ? { service: input.service } : {}),
+      }),
     onSettled: invalidate,
   });
 }

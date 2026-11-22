@@ -25,7 +25,7 @@ import { formatDateTime } from '@/lib/utils';
 import { useIntegrationStatus, type AiTextTask, type IntegrationStatus } from './api';
 import { TEXT_TASKS, UI_INTEGRATIONS } from './catalog';
 import { ServiceCard } from './ServiceCard';
-import { SERVICES, SERVICE_BY_ID, SUMMARY } from './services';
+import { SERVICES, SERVICE_BY_ID, SUMMARY, TEST_RECORD_TITLE } from './services';
 
 const ACTION_LABEL: Record<string, string> = { set: 'Guardó', delete: 'Borró', test: 'Probó la conexión de' };
 const TITLE: Record<string, string> = Object.fromEntries(UI_INTEGRATIONS.map((i) => [i.id, i.title]));
@@ -242,7 +242,7 @@ function Activity({ status }: { status: IntegrationStatus }) {
                 <span className="text-muted">{formatDateTime(a.created_at)}</span> · {a.actor_email ?? 'alguien'}{' '}
                 {ACTION_LABEL[a.action] ?? a.action} {a.setting_key ? <code>{a.setting_key}</code> : null}
                 {a.setting_key ? ' en ' : ' '}
-                {TITLE[a.integration] ?? a.integration}
+                {TITLE[a.integration] ?? TEST_RECORD_TITLE[a.integration] ?? a.integration}
                 {a.action === 'test' && typeof a.data === 'object' && a.data && 'ok' in a.data
                   ? (a.data as { ok: boolean }).ok
                     ? ': funcionaba'
