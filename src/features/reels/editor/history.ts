@@ -8,7 +8,13 @@ import type { ReelProject } from './project';
 export const HISTORY_LIMIT = 100;
 
 export type Selection =
-  { kind: 'clip'; id: string } | { kind: 'text'; id: string } | { kind: 'music' } | { kind: 'subtitles' } | null;
+  | { kind: 'clip'; id: string }
+  | { kind: 'text'; id: string }
+  /** La transición con la que entra el clip `id` (el corte entre él y el anterior). */
+  | { kind: 'transition'; id: string }
+  | { kind: 'music' }
+  | { kind: 'subtitles' }
+  | null;
 
 export interface EditorState {
   project: ReelProject;
@@ -38,6 +44,8 @@ function validSelection(selection: Selection, project: ReelProject): Selection {
   if (!selection) return null;
   if (selection.kind === 'clip') return project.plan.clips.some((c) => c.id === selection.id) ? selection : null;
   if (selection.kind === 'text') return project.plan.texts.some((t) => t.id === selection.id) ? selection : null;
+  if (selection.kind === 'transition')
+    return project.plan.clips.findIndex((c) => c.id === selection.id) > 0 ? selection : null;
   if (selection.kind === 'music') return project.plan.music ? selection : null;
   return selection;
 }

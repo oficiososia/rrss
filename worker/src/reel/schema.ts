@@ -232,6 +232,20 @@ export const cueSchema = z
   .refine((c) => c.end > c.start, 'El subtítulo debe terminar después de empezar');
 export type ReelCue = z.output<typeof cueSchema>;
 
+/**
+ * Filtros de color de un clip o una foto: los mismos nombres que los filtros rápidos de
+ * las fotos del editor de piezas. El motor los aproxima con filtros de FFmpeg (build.ts).
+ */
+export const CLIP_FILTERS = ['bw', 'sepia', 'vivid', 'warm', 'cool', 'fade', 'drama'] as const;
+export const clipFilterSchema = z.enum(CLIP_FILTERS);
+export type ClipFilter = z.output<typeof clipFilterSchema>;
+
+/** Desplazamiento de un texto desde su sitio, como fracción del ancho y del alto del lienzo. */
+export const textOffsetSchema = z.strictObject({
+  x: z.number().min(-0.5).max(0.5),
+  y: z.number().min(-0.5).max(0.5),
+});
+
 /** Movimientos de cámara de una foto. «alternate» solo existe en la plantilla. */
 export const clipMotionSchema = z.enum(['none', 'zoom-in', 'zoom-out', 'pan-right', 'pan-left', 'pan-up', 'pan-down']);
 
@@ -262,6 +276,8 @@ const clipBase = {
   blur: blurSchema,
   /** Transición que entra desde el elemento anterior (en el primero no cuenta). Por defecto, la de la plantilla. */
   transition: transitionSchema.optional(),
+  /** Filtro de color; sin él, la imagen tal cual. */
+  filter: clipFilterSchema.optional(),
 };
 
 export const clipV2Schema = z.discriminatedUnion('type', [
@@ -285,6 +301,11 @@ export const clipV2Schema = z.discriminatedUnion('type', [
     /** Volumen del sonido del clip: 0 = silenciado, 1 = original. */
     volume: z.number().min(0).max(1),
     subtitles: z.array(cueSchema).max(REEL_PLAN_V2_MAX_CUES).optional(),
+    /**
+     * Velocidad del clip (0,5 a 2): el tramo dura (out − in) / speed y el sonido se acelera
+     * o se frena igual, sin cambiar de tono. Sin el campo, 1.
+     */
+    speed: z.number().min(0.5).max(2).optional(),
   }),
 ]);
 export type ReelClipV2 = z.output<typeof clipV2Schema>;
@@ -299,6 +320,8 @@ export const textV2Schema = z
     style: textStyleSchema,
     /** Entrada y salida; sin ella, fundido (como siempre). */
     animation: textAnimationSchema.optional(),
+    /** Colocado a mano en la vista previa: desplazamiento desde `position`. */
+    offset: textOffsetSchema.optional(),
   })
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
 export type ReelTextV2 = z.output<typeof textV2Schema>;
