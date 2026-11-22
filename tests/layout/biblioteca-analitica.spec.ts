@@ -37,6 +37,62 @@ const spilling = (page: Page) =>
       .slice(0, 5);
   });
 
+/** La fila de filtros rápidos: si se desplaza de lado, si enseñaría barra y si algún chip se sale de ella. */
+const chipRow = (page: Page) =>
+  page.getByTestId('library-chips').evaluate((row) => {
+    const box = row.getBoundingClientRect();
+    const chips = [...row.querySelectorAll('button')].map((b) => b.getBoundingClientRect());
+    return {
+      scrolls: row.scrollWidth > row.clientWidth + 1,
+      // El navegador de las pruebas no pinta barras: se mira el estilo que las quita.
+      barHidden:
+        getComputedStyle(row).scrollbarWidth === 'none' && getComputedStyle(row, '::-webkit-scrollbar').display === 'none',
+      rows: new Set(chips.map((c) => Math.round(c.top))).size,
+      outside: chips.filter((c) => c.left < box.left - 1 || c.right > box.right + 1).length,
+      beyondPage: chips.filter((c) => c.right > window.innerWidth + 1).length,
+    };
+  });
+
+// El defecto: entre 800 y 1024 px la fila de filtros no cabía y enseñaba una barra de scroll nativa.
+for (const width of [800, 900, 1024, 1180]) {
+  test(`biblioteca a ${width} px: los filtros saltan de línea, sin barra de scroll ni desbordar`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 768 });
+    await open(page, 'biblioteca');
+    await expect(page.getByTestId('chip-photos')).toBeVisible();
+    const row = await chipRow(page);
+    expect(row.scrolls, 'la fila no se desplaza de lado').toBe(false);
+    expect(row.outside).toBe(0);
+    expect(row.beyondPage).toBe(0);
+    expect(row.rows).toBeLessThanOrEqual(2);
+    // Todos los filtros se ven y se pueden pulsar sin desplazar nada.
+    for (const id of ['chip-photos', 'chip-videos', 'chip-logos', 'chip-cutout', 'chip-ai', 'chip-recent']) {
+      await expect(page.getByTestId(id)).toBeInViewport({ ratio: 1 });
+    }
+    await page.getByTestId('chip-recent').click();
+    await expect(page.getByTestId('chip-recent')).toHaveAttribute('aria-pressed', 'true');
+    // Y la página sigue sin scroll propio.
+    expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
+    expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+    expect(await spilling(page)).toEqual([]);
+  });
+}
+
+test('biblioteca en móvil: los filtros se desplazan con el dedo, sin barra visible ni desbordar la página', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await open(page, 'biblioteca');
+  await expect(page.getByTestId('chip-photos')).toBeVisible();
+  const row = await chipRow(page);
+  expect(row.rows).toBe(1);
+  expect(row.scrolls).toBe(true);
+  expect(row.barHidden, 'la barra de scroll de la fila está oculta').toBe(true);
+  expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+  // El último filtro se alcanza desplazando la fila.
+  await page.getByTestId('chip-recent').scrollIntoViewIfNeeded();
+  await expect(page.getByTestId('chip-recent')).toBeInViewport({ ratio: 1 });
+});
+
 for (const size of SIZES) {
   test.describe(size.name, () => {
     test.beforeEach(async ({ page }) => {
