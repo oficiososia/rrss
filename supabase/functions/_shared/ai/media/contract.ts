@@ -51,6 +51,11 @@ export interface VideoRequest {
   prompt?: string;
   durationSeconds: number;
   aspectRatio: AspectRatio;
+  /**
+   * `animate_photo`: animar una foto real de la biblioteca (el modelo se elige
+   * entre los de esa operación). Sin el campo, vídeo generado suelto.
+   */
+  operation?: 'animate_photo';
 }
 
 /**
@@ -123,7 +128,7 @@ export interface MediaModel {
    * Qué hace el modelo: generar (por defecto) o una edición de foto. Un modelo
    * de edición nunca se elige para generar, ni al revés.
    */
-  operation?: 'generate' | ImageEditOperation;
+  operation?: 'generate' | ImageEditOperation | 'animate_photo';
   /** Ajustes del modelo para su adaptador (nombres de campos, límites…). */
   settings: { [key: string]: Json | undefined };
   priority: number;
@@ -149,7 +154,8 @@ export interface ProviderJobRef {
 }
 
 export type MediaOutcome =
-  | { status: 'pending' }
+  /** Sigue en curso. `progress`, si el proveedor lo dice: esperando turno o generándose. */
+  | { status: 'pending'; progress?: 'queued' | 'running' }
   | {
       status: 'completed';
       outputs: MediaOutputRef[];
@@ -284,6 +290,18 @@ export interface MediaProvenance {
   untestedAdapter: boolean;
   /** Si es una edición de una foto: cuál, de qué recurso sale y con qué factor. */
   edit?: MediaEditOrigin;
+  /** Si es una foto animada: de qué recurso sale y con qué ajustes. */
+  animate?: MediaAnimateOrigin;
+}
+
+/** Foto de la biblioteca animada con IA: el vídeo apunta a su foto (que no se modifica). */
+export interface MediaAnimateOrigin {
+  /** `media_assets.id` de la foto original. */
+  sourceAssetId: string;
+  sourceName?: string;
+  seconds: number;
+  /** Proporción del vídeo (la de la foto). */
+  aspectRatio: string;
 }
 
 /** Edición de una foto de la biblioteca: el resultado apunta a su original. */
@@ -315,6 +333,8 @@ export interface MediaStorage {
     bytes: Uint8Array;
     /** Procedencia, para el recurso de la biblioteca. */
     provenance?: MediaProvenance;
+    /** Duración del vídeo en milisegundos, si se conoce. */
+    durationMs?: number;
   }): Promise<{ path: string; assetId?: string }>;
 }
 
@@ -340,6 +360,8 @@ export interface MediaGenerateParams {
   request: MediaRequest;
   /** Solo en ediciones: la foto de la biblioteca de la que sale el resultado. */
   edit?: Omit<MediaEditOrigin, 'operation' | 'scale'>;
+  /** Solo al animar una foto: la foto de la biblioteca de la que sale el vídeo. */
+  animate?: { sourceAssetId: string; sourceName?: string; /** Lo que pidió la persona, sin las frases fijas que se añaden al encargo. */ motion?: string };
 }
 
 /** Lo que se sabe del tratamiento de datos del modelo usado: viaja con cada resultado. */

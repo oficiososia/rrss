@@ -231,6 +231,8 @@ export const INTEGRATION_SETTINGS: IntegrationSettingSpec[] = [
     validate: oneOf(['https://api.eu.bfl.ai', 'https://api.us.bfl.ai', 'https://api.bfl.ai']),
   },
   { key: 'IDEOGRAM_API_KEY', integration: 'ai_image', secret: true },
+  // Vídeo: animar una foto con IA (fal.ai, no garantiza la UE).
+  { key: 'FAL_KEY', integration: 'ai_image', secret: true },
   // Stripe
   {
     key: 'STRIPE_SECRET_KEY',

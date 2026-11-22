@@ -261,7 +261,7 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
     description:
       'Las credenciales de cada proveedor de imagen y, si se quiere, el modelo fijo. Qué modelos se ofrecen lo decide el registro de modelos; ComfyUI tiene su propio apartado.',
     testDescription:
-      'Pide un token a Google (Vertex) o el saldo a Black Forest Labs. Ideogram no tiene una llamada gratuita. No genera imágenes.',
+      'Pide un token a Google (Vertex) o el saldo a Black Forest Labs; con fal.ai consulta el precio de sus dos modelos de animar fotos. Ideogram no tiene una llamada gratuita. No genera nada.',
     groups: [
       {
         title: 'Modelo',
@@ -311,6 +311,12 @@ export const UI_INTEGRATIONS: UiIntegration[] = [
           },
           { key: 'IDEOGRAM_API_KEY', label: 'Clave de Ideogram', secret: true },
         ],
+      },
+      {
+        title: 'fal.ai (animar fotos con IA)',
+        description:
+          'Vídeo corto a partir de una foto real. fal.ai no garantiza que los datos se traten en la UE y reenvía la foto a un tercero (MiniMax o Kuaishou): solo se ofrece si arriba se admiten los modelos que no procesan en la UE. Los modelos y su precio se activan en el registro de modelos.',
+        fields: [{ key: 'FAL_KEY', label: 'Clave de fal.ai', secret: true }],
       },
     ],
   },

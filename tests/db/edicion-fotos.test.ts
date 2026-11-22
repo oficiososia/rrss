@@ -291,7 +291,7 @@ describe('migración de la edición de fotos', () => {
     ]);
     // Los demás modelos siguen siendo de generar.
     const [other] = await db.query<{ n: number }>(
-      `select count(*)::int as n from public.ai_media_models where provider not in ('comfyui', 'openai') and operation <> 'generate'`,
+      `select count(*)::int as n from public.ai_media_models where provider not in ('comfyui', 'openai') and operation not in ('generate', 'animate_photo')`,
     );
     expect(other!.n).toBe(0);
   });

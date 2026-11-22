@@ -22,12 +22,13 @@ import {
   mediaModelsFromRows,
   operationOf,
   regionOf,
+  resolveAnimateModel,
   resolveEditModel,
   resolveMediaModel,
   type MediaModelRow,
   type ModelSelection,
 } from './models.ts';
-import { createMediaService, type MediaServiceConfig } from './service.ts';
+import { ANIMATE_MAX_SECONDS, createMediaService, type MediaServiceConfig } from './service.ts';
 
 /** Un modelo de imagen que la interfaz puede ofrecer. */
 export interface ImageModelChoice {
@@ -57,7 +58,33 @@ export interface EditChoice {
   usesSubjectMask: boolean;
 }
 
+/** Un modelo para animar fotos que la interfaz puede ofrecer. */
+export interface AnimateChoice {
+  /** `proveedor:modelo`. */
+  id: string;
+  displayName: string;
+  /** Precio por segundo en millonésimas de la moneda del proveedor. */
+  pricePerSecondMicros: number;
+  priceVerified: boolean;
+  minSeconds: number;
+  maxSeconds: number;
+  dataRegion: DataRegion;
+  euProcessing: boolean;
+  trainsOnInputs: TrainsOnInputs;
+  untestedAdapter: boolean;
+  /** El que se usa si no se elige ninguno. */
+  default: boolean;
+}
+
 export interface MediaRuntime {
+  /**
+   * Modelos para animar fotos: activos, con su adaptador configurado y
+   * permitidos por el criterio de datos (fuera de la UE solo con
+   * AI_MEDIA_ALLOW_NON_EU). Sin proveedor, vacío y la interfaz no lo ofrece.
+   */
+  animateChoices: AnimateChoice[];
+  /** Servicio para animar con el modelo elegido (uno de `animateChoices`) o el de por defecto. */
+  animateServiceFor(choice?: string): MediaService;
   /** Modelos de imagen activos cuyo adaptador está configurado y que el criterio de datos permite. */
   imageChoices: ImageModelChoice[];
   /**
@@ -163,6 +190,38 @@ export function createMediaRuntime(deps: MediaRuntimeDeps): MediaRuntime {
     }
   }
 
+  const animateChoices: AnimateChoice[] = [];
+  const animateAllowed = (m: MediaModel) =>
+    selection.allowNonEu === true || regionOf(m, providers.get(m.provider)) === 'eu';
+  let animateDefault: string | undefined;
+  try {
+    animateDefault = modelKey(resolveAnimateModel(models, availability, selection).model);
+  } catch {
+    animateDefault = undefined;
+  }
+  for (const m of models
+    .filter((x) => x.kind === 'video' && operationOf(x) === 'animate_photo' && x.active)
+    .sort((a, b) => b.priority - a.priority)) {
+    const provider = providers.get(m.provider);
+    if (!provider?.kinds.includes('video') || !animateAllowed(m)) continue;
+    const region = regionOf(m, provider);
+    const min = typeof m.settings.min_seconds === 'number' ? m.settings.min_seconds : 1;
+    const max = Math.min(typeof m.settings.max_seconds === 'number' ? m.settings.max_seconds : ANIMATE_MAX_SECONDS, ANIMATE_MAX_SECONDS);
+    animateChoices.push({
+      id: modelKey(m),
+      displayName: m.displayName,
+      pricePerSecondMicros: m.priceMicros,
+      priceVerified: m.priceVerified,
+      minSeconds: min,
+      maxSeconds: max,
+      dataRegion: region,
+      euProcessing: region === 'eu',
+      trainsOnInputs: m.trainsOnInputs,
+      untestedAdapter: !provider.testedAgainstRealService,
+      default: modelKey(m) === animateDefault,
+    });
+  }
+
   const base: MediaServiceConfig = {
     rpc: deps.rpc,
     reader: deps.reader,
@@ -177,6 +236,11 @@ export function createMediaRuntime(deps: MediaRuntimeDeps): MediaRuntime {
   return {
     imageChoices,
     editChoices,
+    animateChoices,
+    animateServiceFor(choice) {
+      const chosen = choice && animateChoices.some((c) => c.id === choice) ? choice : undefined;
+      return createMediaService({ ...base, selection: { ...selection, preferredAnimate: chosen } });
+    },
     problems,
     serviceFor(choice) {
       // Solo se puede fijar un modelo de los que se ofrecen: así nadie salta el

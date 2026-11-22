@@ -23,6 +23,7 @@ import {
   MediaProviderFailure,
   MediaRequestError,
   type ClaimedJob,
+  type MediaAnimateOrigin,
   type MediaEditOrigin,
   type MediaEstimate,
   type MediaGenerateParams,
@@ -47,6 +48,7 @@ import { download, isRecord, type FetchLike } from './http.ts';
 import {
   dataHandlingOf,
   priceMediaUsage,
+  resolveAnimateModel,
   resolveEditModel,
   resolveMediaModel,
   type ModelSelection,
@@ -100,6 +102,8 @@ const DEFAULTS = {
 /** Margen entre el tiempo máximo y la caducidad de la reserva de cupo. */
 const RESERVATION_MARGIN_SECONDS = 300;
 const MAX_RESERVATION_SECONDS = 86_400;
+/** Tope de segundos al animar una foto, por encima de lo que admita el modelo. */
+export const ANIMATE_MAX_SECONDS = 10;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const POLL_TIMEOUT_MS = 30_000;
 
@@ -120,6 +124,17 @@ interface JobPayload {
   user_id?: string;
   /** Si es una edición de foto: de qué recurso sale (procedencia del resultado). */
   edit?: MediaEditOrigin;
+  /** Si es una foto animada: de qué recurso sale (procedencia del vídeo). */
+  animate?: MediaAnimateOrigin;
+}
+
+function parseAnimate(value: unknown): MediaAnimateOrigin | undefined {
+  if (!isRecord(value)) return undefined;
+  const { sourceAssetId, sourceName, seconds, aspectRatio } = value;
+  if (typeof sourceAssetId !== 'string' || typeof seconds !== 'number' || typeof aspectRatio !== 'string') {
+    return undefined;
+  }
+  return { sourceAssetId, seconds, aspectRatio, ...(typeof sourceName === 'string' ? { sourceName } : {}) };
 }
 
 function parseEdit(value: unknown): MediaEditOrigin | undefined {
@@ -161,6 +176,7 @@ function parsePayload(value: unknown): JobPayload | null {
     prompt: text(value.prompt),
     user_id: text(value.user_id),
     edit: parseEdit(value.edit),
+    animate: parseAnimate(value.animate),
   };
 }
 
@@ -247,15 +263,21 @@ function validate(request: MediaRequest, model: MediaModel, maxVideoSeconds: num
     }
     return;
   }
-  if (!request.startImage.url && !request.startImage.bytes) {
+  // Al animar una foto, la dirección firmada solo hace falta al generar (al estimar no hay): `generate` la exige.
+  if (request.operation !== 'animate_photo' && !request.startImage.url && !request.startImage.bytes) {
     throw new MediaRequestError('Falta la imagen de la que parte el vídeo.');
   }
   const setting = (name: string) => {
     const value = model.settings[name];
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
   };
+  const animating = request.operation === 'animate_photo';
+  if (animating && (request.prompt?.trim() ?? '') === '') {
+    throw new MediaRequestError('Describe el movimiento que quieres darle a la foto.');
+  }
   const min = setting('min_seconds') ?? 1;
-  const max = Math.min(setting('max_seconds') ?? maxVideoSeconds, maxVideoSeconds);
+  // Animar una foto tiene un tope propio, más bajo: el vídeo se paga por segundo.
+  const max = Math.min(setting('max_seconds') ?? maxVideoSeconds, maxVideoSeconds, animating ? ANIMATE_MAX_SECONDS : maxVideoSeconds);
   if (!Number.isInteger(request.durationSeconds) || request.durationSeconds < min || request.durationSeconds > max) {
     throw new MediaRequestError(`La duración del vídeo debe estar entre ${min} y ${max} segundos enteros.`);
   }
@@ -287,7 +309,9 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
     const { model, provider } =
       request.kind === 'image_edit'
         ? resolveEditModel(request.operation, config.models, config.providers, config.selection)
-        : resolveMediaModel(request.kind, config.models, config.providers, config.selection);
+        : request.kind === 'video' && request.operation === 'animate_photo'
+          ? resolveAnimateModel(config.models, config.providers, config.selection)
+          : resolveMediaModel(request.kind, config.models, config.providers, config.selection);
     validate(request, model, options.maxVideoSeconds);
     const usage = provider.estimateUsage(request, model);
     const priced = priceMediaUsage(model, usage);
@@ -308,6 +332,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       generationId: string;
       kind: 'image' | 'video';
       provenance?: MediaProvenance;
+      durationMs?: number;
     },
     provider: MediaProvider,
     outputs: MediaOutputRef[],
@@ -336,6 +361,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
         generationId: target.generationId,
         kind: target.kind,
         provenance: target.provenance,
+        ...(target.durationMs ? { durationMs: target.durationMs } : {}),
         index,
         mimeType,
         bytes,
@@ -364,7 +390,13 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
     startedAt: number;
     providerRequestId: string | undefined;
     /** Para qué se pidió, el encargo, quién lo pidió y, si es una edición, de qué foto (procedencia del recurso). */
-    origin?: { purpose?: string; prompt?: string; requestedBy?: string; edit?: MediaEditOrigin };
+    origin?: {
+      purpose?: string;
+      prompt?: string;
+      requestedBy?: string;
+      edit?: MediaEditOrigin;
+      animate?: MediaAnimateOrigin;
+    };
   }): Promise<{ assets: StoredMedia[]; usage: MediaUsage; costMicros: number }> {
     const provenance: MediaProvenance = {
       provider: context.provider.id,
@@ -374,7 +406,8 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       trainsOnInputs: context.model?.trainsOnInputs ?? 'unknown',
       untestedAdapter: !context.provider.testedAgainstRealService,
     };
-    const assets = await store({ ...context, provenance }, context.provider, context.outputs);
+    const durationMs = context.origin?.animate ? Math.round(context.origin.animate.seconds * 1000) : undefined;
+    const assets = await store({ ...context, provenance, durationMs }, context.provider, context.outputs);
 
     const usage = context.usage ?? context.estimatedUsage;
     let costMicros = context.reserveMicros;
@@ -436,7 +469,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
   async function generate(params: MediaGenerateParams): Promise<MediaGenerateResult> {
     const { request } = params;
     const kind = mediaKindOf(request);
-    const prompt = request.prompt;
+    let prompt = request.prompt;
     let edit: MediaEditOrigin | undefined;
     if (request.kind === 'image_edit') {
       // Para estimar basta con las medidas; para editar hace falta la foto.
@@ -449,6 +482,19 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
         ...(params.edit.sourceName ? { sourceName: params.edit.sourceName.slice(0, 120) } : {}),
         ...(request.scale ? { scale: request.scale } : {}),
       };
+    }
+    let animate: MediaAnimateOrigin | undefined;
+    if (request.kind === 'video' && request.operation === 'animate_photo') {
+      if (!request.startImage.url) throw new MediaRequestError('Falta la foto que hay que animar.');
+      if (!params.animate?.sourceAssetId) throw new MediaRequestError('Falta la foto de la biblioteca que se anima.');
+      animate = {
+        sourceAssetId: params.animate.sourceAssetId,
+        ...(params.animate.sourceName ? { sourceName: params.animate.sourceName.slice(0, 120) } : {}),
+        seconds: request.durationSeconds,
+        aspectRatio: request.aspectRatio,
+      };
+      // En la procedencia va lo que pidió la persona, no las frases fijas del encargo.
+      if (params.animate.motion) prompt = params.animate.motion;
     }
     const { model, provider, usage: estimatedUsage, costMicros: reserveMicros } = plan(request);
     const asynchronous = typeof provider.poll === 'function';
@@ -564,7 +610,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
           outputs: started.outputs,
           startedAt,
           providerRequestId: started.providerRequestId,
-          origin: { purpose: params.purpose, prompt, requestedBy: params.userId, edit },
+          origin: { purpose: params.purpose, prompt, requestedBy: params.userId, edit, animate },
         });
         return { ...base, status: 'completed', ...settled };
       } catch (error) {
@@ -601,6 +647,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       prompt,
       user_id: params.userId,
       ...(edit ? { edit } : {}),
+      ...(animate ? { animate } : {}),
     };
     const queued = await rpc('enqueue_job', {
       p_organization_id: organizationId,
@@ -675,6 +722,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       return requeue(`El adaptador «${payload.provider}» no está disponible para consultar el trabajo`);
     }
 
+    let waiting = 'El proveedor todavía no ha terminado';
     for (let attempt = 1; attempt <= options.pollsPerClaim; attempt += 1) {
       let outcome;
       try {
@@ -712,6 +760,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
               prompt: payload.prompt,
               requestedBy: payload.user_id,
               edit: payload.edit,
+              animate: payload.animate,
             },
           });
           await finishJob({ status: 'completed', cost_micros: settled.costMicros });
@@ -732,6 +781,9 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
         return { status: 'failed', generationId, code: outcome.code };
       }
 
+      // Lo que dice el proveedor queda en el trabajo (`last_error`): la interfaz lo enseña como «en cola» o «generando».
+      if (outcome.progress === 'queued') waiting = 'En cola en el proveedor';
+      else if (outcome.progress === 'running') waiting = 'Generándose en el proveedor';
       if (now() >= payload.deadline_at) {
         // Trabajo que nunca termina: no se espera para siempre.
         const result = await giveUp('never_finished', 'El proveedor no terminó el trabajo en el tiempo máximo');
@@ -740,7 +792,7 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       }
       if (attempt < options.pollsPerClaim) await sleep(options.pollIntervalMs);
     }
-    return requeue('El proveedor todavía no ha terminado');
+    return requeue(waiting);
   }
 
   /** Modelo mínimo para consultar un trabajo cuyo modelo ya no está en el registro. */
@@ -818,7 +870,13 @@ export function createMediaService(config: MediaServiceConfig): MediaService {
       outputs: event.outcome.outputs,
       startedAt: payload.started_at,
       providerRequestId: payload.job.id,
-      origin: { purpose: payload.purpose, prompt: payload.prompt, requestedBy: payload.user_id, edit: payload.edit },
+      origin: {
+        purpose: payload.purpose,
+        prompt: payload.prompt,
+        requestedBy: payload.user_id,
+        edit: payload.edit,
+        animate: payload.animate,
+      },
     });
     return { status: 'completed', generationId };
   }
