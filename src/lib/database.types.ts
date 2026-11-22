@@ -1572,6 +1572,104 @@ type Table<Row, Insert = never, Update = never> = {
   Relationships: [];
 };
 
+// ───────────── Operación y control de gasto (migración 20261219010000) ─────────────
+
+export type PlatformUsageRow = {
+  organization_id: string;
+  organization_name: string;
+  kind: OrgKind;
+  plan_name: string;
+  plan_code: string;
+  /** El plan no limita marcas, personas o almacenamiento (Heredado, Enterprise…). */
+  plan_unlimited: boolean;
+  ai_limit_micros: number;
+  ai_limit_overridden: boolean;
+  ai_committed_micros: number;
+  ai_cost_micros: number;
+  cost_text_micros: number;
+  cost_image_micros: number;
+  cost_video_micros: number;
+  cost_transcription_micros: number;
+  generations: number;
+  media_jobs: number;
+  media_jobs_succeeded: number;
+  media_jobs_failed: number;
+  media_jobs_active: number;
+  media_machine_seconds: number;
+  media_jobs_without_timings: number;
+  storage_bytes: number;
+  storage_limit_bytes: number | null;
+};
+
+export type PlatformStorageRow = {
+  organization_id: string;
+  organization_name: string;
+  brand_id: string;
+  brand_name: string;
+  assets: number;
+  bytes: number;
+  r2_bytes: number;
+  media_jobs_month: number;
+  /** Tope mensual de trabajos de medios por marca; `null` = sin tope. */
+  media_jobs_cap: number | null;
+};
+
+export type PriceStatus = 'verified' | 'unverified' | 'unknown' | 'simulated' | 'unconfirmed' | 'no_price';
+
+export type PlatformPriceRow = {
+  task: AiTask;
+  provider: string;
+  model: string;
+  generations: number;
+  cost_micros: number;
+  status: PriceStatus;
+};
+
+export type PlatformAiGlobalStatus = {
+  period_start: string;
+  cap_micros: number | null;
+  committed_micros: number;
+  cost_micros: number;
+  paused: boolean;
+};
+
+export type PlatformAlertKind =
+  | 'ai_quota_80'
+  | 'ai_quota_100'
+  | 'ai_global_cap_80'
+  | 'ai_global_cap_reached'
+  | 'media_jobs_failing'
+  | 'media_jobs_cap_reached'
+  | 'worker_machine_long'
+  | 'scheduled_job_failed'
+  | 'scheduled_http_failed';
+
+export type PlatformAlertRow = {
+  id: string;
+  kind: PlatformAlertKind;
+  dedupe_key: string;
+  organization_id: string | null;
+  title: string;
+  detail: string;
+  data: Json;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+};
+
+type OperationTables = {
+  platform_alerts: Table<PlatformAlertRow>;
+};
+
+type OperationFunctions = {
+  platform_usage_overview: { Args: { p_period_start: string }; Returns: PlatformUsageRow[] };
+  platform_storage_by_brand: { Args: Record<string, never>; Returns: PlatformStorageRow[] };
+  platform_ai_global_status: { Args: Record<string, never>; Returns: PlatformAiGlobalStatus };
+  platform_price_review: { Args: { p_period_start: string }; Returns: PlatformPriceRow[] };
+  platform_alerts_refresh: { Args: Record<string, never>; Returns: number };
+  platform_alert_resolve: { Args: { p_id?: string | null }; Returns: number };
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -1656,7 +1754,8 @@ export type Database = {
       CampaignTables &
       RgpdTables &
       AnalyticsTables &
-      DriveTables;
+      DriveTables &
+      OperationTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1694,7 +1793,8 @@ export type Database = {
       AnalyticsFunctions &
       IntegrationFunctions &
       DriveFunctions &
-      ImportFunctions;
+      ImportFunctions &
+      OperationFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

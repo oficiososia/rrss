@@ -11,6 +11,9 @@
 //                                subió y se quedó sin recurso (el alta falló)
 //   POST …/media-storage/purge-orphans  solo clave de servicio (tarea programada) →
 //                                borra de R2 lo apuntado sin recurso tras 24 h
+//   POST …/media-storage/purge-cleanup  solo clave de servicio (tarea programada) →
+//                                borra los archivos de la cola de limpieza cuya marca
+//                                ya no existe (marcas y organizaciones borradas)
 //
 // Las credenciales de R2 nunca salen de aquí: hacia fuera solo van URL firmadas
 // de corta duración, y solo después de que la base de datos haya dicho que la
@@ -208,17 +211,20 @@ export function createMediaStorageHandler(deps: MediaStorageDeps): (request: Req
   }
 
   /** Borra del almacén las rutas huérfanas que da la base de datos y las olvida. */
-  async function removeOrphans(rows: { storage_path: string; backend: StorageBackend }[]) {
+  async function removeOrphans(
+    rows: { storage_path: string; backend: StorageBackend }[],
+    backends: readonly StorageBackend[] = ['r2'],
+  ) {
     const removed: string[] = [];
     const failed: string[] = [];
-    for (const backend of ['r2'] as const) {
+    for (const backend of backends) {
       const keys = rows.filter((r) => r.backend === backend).map((r) => r.storage_path);
       if (keys.length === 0) continue;
       let result: { failed: string[] };
       try {
         result = await store(backend).remove(keys);
       } catch (e) {
-        if (e instanceof HttpError) throw e;
+        if (e instanceof HttpError && backends.length === 1) throw e;
         result = { failed: keys };
       }
       for (const key of keys) (result.failed.includes(key) ? failed : removed).push(key);
@@ -252,6 +258,15 @@ export function createMediaStorageHandler(deps: MediaStorageDeps): (request: Req
     return json(200, await removeOrphans(rows));
   }
 
+  async function purgeCleanup(request: Request): Promise<Response> {
+    const who = await caller(request);
+    if (!who.service) throw new HttpError(403, 'forbidden', 'Solo para el servidor.');
+    const { data, error } = await deps.rpc('storage_cleanup_orphans', { p_min_age: '1 hour', p_limit: 200 });
+    if (error) throw new HttpError(400, 'refused', error.message);
+    const rows = (data ?? []) as { storage_path: string; backend: StorageBackend }[];
+    return json(200, await removeOrphans(rows, ['supabase', 'r2']));
+  }
+
   return async (request) => {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
@@ -263,6 +278,7 @@ export function createMediaStorageHandler(deps: MediaStorageDeps): (request: Req
       if (route === '/delete') return await remove(request);
       if (route === '/discard') return await discard(request);
       if (route === '/purge-orphans') return await purgeOrphans(request);
+      if (route === '/purge-cleanup') return await purgeCleanup(request);
       return json(404, { error: { code: 'not_found' } });
     } catch (e) {
       if (e instanceof HttpError) return json(e.status, { error: { code: e.code, message: e.message } });

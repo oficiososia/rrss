@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f27/calidad`: revisión de calidad, CI y de este documento).
+Última actualización: 22/11/2026 (rama `f32/operacion-gasto`; antes, `f27/calidad`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -785,3 +785,23 @@ aplicación de Meta). Detalle en `docs/publicacion.md`.
   ampliada (plan sin publicación), **sin ejecutar** (solo CI).
 - **Para llevarlo a staging:** aplicar `20261218010000`, `20261218020000` y
   `20261218030000` (con el «sí» del dueño); redesplegar `social-publish`; después, la web.
+## Operación y control de gasto (rama `f32/operacion-gasto`, 22/11/2026)
+
+Detalle en `docs/operacion-gasto.md`. Migración `20261219010000_operacion_gasto.sql` (con vuelta
+atrás), **sin aplicar en staging**.
+
+- **Implementado y probado en base de datos y componentes:** pantalla de superadministrador «Gasto
+  y uso» (IA por organización y tipo, trabajador de medios con segundos de máquina estimados,
+  almacenamiento por marca, cupo consumido, precios de IA sin verificar, cupos a mano y planes sin
+  límites marcados); avisos de plataforma (cupo al 80 % y 100 %, tope global, trabajos de medios
+  que fallan, tope de trabajos por marca, tareas programadas, máquina de Fly); tope global
+  mensual de IA (`AI_GLOBAL_MONTHLY_CAP`, error `AI003` → `ai_paused`); tope mensual de trabajos de
+  medios por marca (`MEDIA_JOBS_MONTHLY_PER_BRAND`, apagado por defecto, igual que el tope global); limpieza de
+  `storage_cleanup_queue` de marcas borradas; aviso que bloquea hasta aceptar la versión vigente
+  de los documentos legales (no bloquea a superadministradores); aviso previo al primer dictado del copiloto.
+- **Para llevar a staging:** migración `20261219010000`; redesplegar `ai-generate`, `ai-media`,
+  `ai-transcribe`, `media-storage` y `platform-integrations`; la aplicación web.
+- **No probado:** nada contra Supabase, Fly o proveedores reales; `pg_cron` y `pg_net` solo
+  imitados; la e2e 19 está actualizada pero no se ha ejecutado (sin Docker).
+- **Pendiente:** aviso hacia fuera (correo o Telegram), comprobación periódica de la máquina de Fly,
+  cargar y verificar precios reales de IA, decidir si se activan los topes (apagados por defecto; los avisos y la pantalla son solo informativos).

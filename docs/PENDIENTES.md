@@ -62,7 +62,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P1 | Valorar el modo retrato y la mejora automática con fotos de platos reales de los clientes (los números actuales salen de 12 fotos) | Ambos | |
 | P2 | Vídeo con IA: sigue apagado por criterio de datos; decidir si se activa | Dueño | |
 | P2 | Copiloto por voz en modo agencia: mantener, quitar o hacerlo configurable por marca | Dueño | `docs/copiloto-voz.md` §4 |
-| P2 | Aviso dentro del copiloto antes del primer dictado (el audio va a Google o Microsoft) | Desarrollo | La política ya lo dice |
+| ~~P2~~ | ~~Aviso dentro del copiloto antes del primer dictado~~ | Hecho | `f32/operacion-gasto`: aviso con «No volver a mostrar» (`docs/operacion-gasto.md` §9) |
 
 ## 5. Facturación y planes
 
@@ -85,7 +85,11 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P0 | Secretos de Vault `rrss_project_url` y `rrss_service_role_key` en staging y producción, para que los trabajos programados (publicador, analítica, huérfanos, despertador del trabajador) hagan algo | Ambos | Sin ellos solo dejan un aviso |
 | P1 | Cloudflare R2: cuenta, cubo en la UE, CORS, token solo del cubo y DPA; después recuento y migración de ~3 GB (`scripts/migrar-a-r2.ts`, `scripts/alta-biblioteca.ts`) | Dueño | **Bloqueado** hasta la cuenta. Probado solo con MinIO |
 | P1 | Google Drive: cliente OAuth (Drive API, pantalla de consentimiento en producción sin verificar) y las 371 HEIC pendientes de convertir | Dueño | **Bloqueado**; HEIC aún no se pueden usar |
-| P1 | Vigilancia: alertas de errores de funciones, de cupo y del coste de IA; la limpieza de `storage_cleanup_queue` de organizaciones borradas | Desarrollo | |
+| ~~P1~~ | ~~Vigilancia: avisos de cupo y de errores; limpieza de `storage_cleanup_queue`~~ | Hecho (sin probar en real) | `f32/operacion-gasto`: pantalla «Gasto y uso», avisos de plataforma, tope global de IA, tope mensual de trabajos de medios y limpieza de la cola. Falta aplicar la migración `20261219010000` y redesplegar funciones; ver `docs/operacion-gasto.md` |
+| P1 | Aviso hacia fuera (correo o Telegram) de los avisos de plataforma; hoy solo se ven en la pantalla | Desarrollo | No hay canal general de avisos ni SMTP |
+| P1 | Comprobación periódica de la máquina de Fly encendida demasiado tiempo (hoy, a mano desde «Gasto y uso») y alerta equivalente en el panel de Fly | Ambos | `docs/operacion-gasto.md` §6 |
+| P1 | Cargar precios reales de IA y marcarlos verificados; «Gasto y uso» enseña los que no lo están | Ambos | Sin ellos el cupo mide con una regla que puede ser falsa |
+| P2 | Decidir si se activan el tope global de IA y el de trabajos de medios por marca (hoy apagados) y el reparto del cupo entre marcas | Dueño | Apagados por defecto: hoy solo hay avisos |
 | P1 | Pasar las variables nuevas a `.env.example` (`VITE_AI_VOICE_COPILOT_ENABLED`, `VITE_DRIVE_LIBRARY_ENABLED`, `VITE_REEL_SUBTITLES_ENABLED`, `VITE_CUTOUT_*`, `AI_TEXT_EDITOR_COPILOT_*`, Drive) | Desarrollo | |
 | P2 | Tiempo real en los avisos de encargos (hoy sondeo de 60 s) | Desarrollo | |
 
@@ -97,7 +101,7 @@ cómo está probado, mira `docs/ESTADO.md`; aquí solo lo que **falta**.
 | P0 | Contrato de encargo del tratamiento con cada cliente y registro como encargado | Dueño | `docs/rgpd.md` §7 |
 | P0 | DPA con Supabase, Vercel, Fly, Cloudflare, Google/OpenAI y Meta según lo que se active, y confirmar regiones UE | Dueño | |
 | P1 | Decidir los plazos de conservación (marcados «a decidir») | Dueño | |
-| P1 | Pedir que se vuelvan a aceptar los documentos cuando cambie su versión (hoy no bloquea el uso) | Desarrollo | |
+| ~~P1~~ | ~~Pedir que se vuelvan a aceptar los documentos cuando cambie su versión~~ | Hecho en la interfaz | `f32/operacion-gasto`: bloquea hasta aceptar y registra la aceptación; la base de datos no impide usar la API sin aceptar (`docs/operacion-gasto.md` §8) |
 | P2 | Exportar organizaciones muy grandes como trabajo en segundo plano; exportación RGPD de lo importado de Instagram | Desarrollo | |
 
 ## 8. Calidad y pruebas (lo que queda por cerrar)

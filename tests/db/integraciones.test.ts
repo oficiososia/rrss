@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { computeAvailability, textTaskReadiness } from '../../supabase/functions/_shared/integrations/availability.ts';
 import { INTEGRATION_SETTINGS, validateSetting } from '../../supabase/functions/_shared/integrations/catalog.ts';
-import { probeIntegration, type ProbeFetch } from '../../supabase/functions/_shared/integrations/probes.ts';
+import { flyWorkerUptime, probeIntegration, type ProbeFetch } from '../../supabase/functions/_shared/integrations/probes.ts';
 import {
   createSettingsLoader,
   memoByEnv,
@@ -689,6 +689,7 @@ describe('función platform-integrations', () => {
   const tokens = new Map<string, TestUser>();
   let probed: Array<{ id: string; env: Record<string, string | undefined> }> = [];
   const loaderEnv = { COMFYUI_BASE_URL: 'https://desde-el-entorno.test' };
+  let machine: { state: string; startedAt: string | null } | { problem: string } = { problem: 'sin configurar' };
 
   function handler() {
     const settings = createSettingsLoader({
@@ -712,6 +713,7 @@ describe('función platform-integrations', () => {
         probed.push({ id, env });
         return { ok: true, message: 'Simulado: responde.', checks: [] };
       },
+      workerMachine: async () => machine,
       randomKey: () => Buffer.alloc(32, 9).toString('base64'),
       now: () => new Date('2026-11-20T10:11:12Z'),
     });
@@ -730,6 +732,54 @@ describe('función platform-integrations', () => {
   beforeAll(() => {
     tokens.set('t-root', root);
     tokens.set('t-ana', ana);
+  });
+
+  it('worker_check: solo el superadministrador; una máquina encendida demasiado tiempo deja un aviso (una vez al día)', async () => {
+    expect((await post('t-ana', { action: 'worker_check' })).status).toBe(403);
+    machine = { problem: 'Falta configurar la máquina de Fly en Integraciones.' };
+    expect((await post('t-root', { action: 'worker_check' })).body).toMatchObject({ known: false });
+
+    // Encendida desde hace 1 h: normal. No hay aviso.
+    machine = { state: 'started', startedAt: '2026-11-20T09:11:12Z' };
+    expect((await post('t-root', { action: 'worker_check' })).body).toMatchObject({ known: true, tooLong: false });
+    // Parada: bien.
+    machine = { state: 'stopped', startedAt: '2026-11-19T01:00:00Z' };
+    expect((await post('t-root', { action: 'worker_check' })).body).toMatchObject({ known: true, tooLong: false });
+    expect(await db.query(`select 1 from public.platform_alerts where kind = 'worker_machine_long'`)).toEqual([]);
+
+    // Encendida desde hace 8 h: aviso, y repetir la comprobación no lo duplica.
+    machine = { state: 'started', startedAt: '2026-11-20T02:11:12Z' };
+    const r = await post('t-root', { action: 'worker_check' });
+    expect(r.body).toMatchObject({ known: true, state: 'started', tooLong: true });
+    await post('t-root', { action: 'worker_check' });
+    const alerts = await db.query<{ title: string; detail: string }>(
+      `select title, detail from public.platform_alerts where kind = 'worker_machine_long'`,
+    );
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]!.detail).toContain('8 horas');
+  });
+
+  it('flyWorkerUptime lee el estado y el último arranque de la máquina de Fly', async () => {
+    const env = { FLY_API_TOKEN: 'FlyV1 fm2_x', FLY_APP: 'mi-app', FLY_MACHINE_ID: '148e21dc7d0189' };
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          state: 'started',
+          events: [
+            { type: 'start', timestamp: Date.parse('2026-11-20T08:00:00Z') },
+            { type: 'launch', timestamp: Date.parse('2026-11-20T07:59:00Z') },
+            { type: 'start', timestamp: Date.parse('2026-11-19T08:00:00Z') },
+          ],
+        }),
+        { status: 200 },
+      )) as unknown as ProbeFetch;
+    expect(await flyWorkerUptime(env, { fetch: fetcher })).toEqual({
+      state: 'started',
+      startedAt: '2026-11-20T08:00:00.000Z',
+    });
+    expect(await flyWorkerUptime({}, { fetch: fetcher })).toHaveProperty('problem');
+    const rejected = (async () => new Response('{}', { status: 401 })) as unknown as ProbeFetch;
+    expect(await flyWorkerUptime(env, { fetch: rejected })).toHaveProperty('problem');
   });
 
   it('sin sesión, 401; cualquiera con sesión pregunta la disponibilidad (solo booleanos)', async () => {

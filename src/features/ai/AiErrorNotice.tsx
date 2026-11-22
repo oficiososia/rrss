@@ -9,6 +9,7 @@ import { AiRequestError, isQuotaError } from './api';
 export function AiErrorNotice({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   if (isQuotaError(error)) {
     const exhausted = error.code === 'quota_exhausted';
+    const paused = error.code === 'ai_paused';
     return (
       <div
         role="alert"
@@ -18,7 +19,11 @@ export function AiErrorNotice({ error, onRetry }: { error: unknown; onRetry?: ()
         <Gauge className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
         <div>
           <p className="font-medium">
-            {exhausted ? 'El cupo de IA de este mes está agotado' : 'Esta organización no tiene cupo de IA'}
+            {paused
+              ? 'La IA de pago está en pausa'
+              : exhausted
+                ? 'El cupo de IA de este mes está agotado'
+                : 'Esta organización no tiene cupo de IA'}
           </p>
           <p className="mt-1">{error.message}</p>
           <p className="mt-1">Mientras tanto, puedes seguir escribiendo y editando a mano.</p>

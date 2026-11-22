@@ -7,6 +7,7 @@
 // registra la respuesta (estado HTTP y cuerpo) con `fake.fn(nombre, …)`.
 import { FunctionsFetchError, FunctionsHttpError, type Session, type User } from '@supabase/supabase-js';
 import { vi } from 'vitest';
+import { LEGAL_VERSIONS } from '@/features/legal/legal';
 
 type Row = Record<string, unknown>;
 interface QueryResult {
@@ -377,6 +378,21 @@ export class FakeSupabase {
   }
 
   private emit(event: string) {
+    // Quien entra ya tiene aceptadas las versiones vigentes (si no, `LegalGate` bloquearía todas las pruebas);
+    // las pruebas del bloqueo reescriben la tabla después.
+    const userId = this.session?.user.id;
+    if (userId && !this.rows('legal_acceptances').some((r) => r.user_id === userId)) {
+      (['terms', 'privacy'] as const).forEach((document, i) =>
+        this.rows('legal_acceptances').push({
+          id: 9000 + this.rows('legal_acceptances').length + i,
+          user_id: userId,
+          document,
+          version: LEGAL_VERSIONS[document],
+          accepted_at: '2026-10-01T09:00:00Z',
+          source: 'signup',
+        }),
+      );
+    }
     for (const listener of this.listeners) listener(event, this.session);
   }
 

@@ -620,6 +620,40 @@ export const FLY_MACHINES_API = 'https://api.machines.dev';
 /** Cabecera de autorización de Fly: los tokens «FlyV1 …» van tal cual; los demás, como Bearer. */
 export const flyAuthorization = (token: string) => (token.startsWith('FlyV1 ') ? token : `Bearer ${token}`);
 
+/** Horas que la máquina del trabajador puede estar encendida antes de avisar (se apaga sola al vaciar la cola). */
+export const WORKER_MAX_UPTIME_HOURS = 3;
+
+/**
+ * Estado de la máquina de Fly y desde cuándo está encendida (el último evento
+ * «start» de su historial). Solo lectura. `problem` explica por qué no se sabe.
+ */
+export async function flyWorkerUptime(
+  env: Env,
+  deps: ProbeDeps,
+): Promise<{ state: string; startedAt: string | null } | { problem: string }> {
+  const token = value(env, 'FLY_API_TOKEN');
+  const app = value(env, 'FLY_APP');
+  const machine = value(env, 'FLY_MACHINE_ID');
+  if (!token || !app || !machine || !FLY_APP_PATTERN.test(app) || !FLY_MACHINE_PATTERN.test(machine)) {
+    return { problem: 'Falta configurar la máquina de Fly en Integraciones.' };
+  }
+  const r = await call(deps, `${FLY_MACHINES_API}/v1/apps/${app}/machines/${machine}`, {
+    headers: { Authorization: flyAuthorization(token), Accept: 'application/json' },
+  });
+  if ('error' in r) return { problem: unreachable('Fly.io', r) };
+  if (r.status !== 200) return { problem: rejected('Fly.io', r.status) };
+  const body = (r.body ?? {}) as { state?: unknown; events?: unknown };
+  const state = typeof body.state === 'string' ? body.state : 'desconocido';
+  let startedAt: string | null = null;
+  if (Array.isArray(body.events)) {
+    const starts = (body.events as { type?: unknown; timestamp?: unknown }[])
+      .filter((e) => e?.type === 'start' && typeof e.timestamp === 'number')
+      .map((e) => e.timestamp as number);
+    if (starts.length > 0) startedAt = new Date(Math.max(...starts)).toISOString();
+  }
+  return { state, startedAt };
+}
+
 async function probeMediaWorker(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
   const checks: ProbeCheck[] = [];
   const token = value(env, 'FLY_API_TOKEN');

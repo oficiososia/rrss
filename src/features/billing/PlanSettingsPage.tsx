@@ -213,7 +213,15 @@ function Usage({ data }: { data: OrganizationPlanUsage }) {
           }
           ratio={aiLimit > 0 ? usageRatio(usage.ai_committed_micros, aiLimit) : null}
           testId="plan-usage-ai"
-          hint={data.ai_limit_overridden ? 'Cupo asignado por la plataforma (sustituye al del plan).' : undefined}
+          hint={
+            aiLimit > 0 && usageRatio(usage.ai_committed_micros, aiLimit)! >= 0.8
+              ? usageRatio(usage.ai_committed_micros, aiLimit)! >= 1
+                ? 'Cupo de IA agotado: no se puede generar hasta el mes que viene.'
+                : 'Ya has usado más del 80 % del cupo de IA de este mes.'
+              : data.ai_limit_overridden
+                ? 'Cupo asignado por la plataforma (sustituye al del plan).'
+                : undefined
+          }
         />
       </CardBody>
     </Card>

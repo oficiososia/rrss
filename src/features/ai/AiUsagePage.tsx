@@ -125,6 +125,15 @@ function Figures({ ledger, limit }: { ledger: MonthLedger; limit: number | null 
           </p>
         </div>
       )}
+      {!exhausted && limit !== null && ratio >= 0.8 && (
+        <Notice tone="warning">
+          <span data-testid="ai-quota-near">
+            Ya habéis usado el {Math.round(ratio * 100)} % del cupo de IA de este mes. Cuando se agote, nadie podrá
+            generar hasta el mes que viene, salvo que la plataforma lo amplíe: si lo vais a necesitar, pedidlo con
+            tiempo.
+          </span>
+        </Notice>
+      )}
       {exhausted && (
         <Notice tone="warning">
           <span data-testid="ai-quota-exhausted">
