@@ -11,6 +11,18 @@ export default defineConfig({
   plugins: [
     react(),
     {
+      // «Editar foto → Fondo con IA» (fotos-ia.html) necesita la edición de fotos con IA encendida, pero
+      // encenderla para todos los bancos cambia el panel de fotos del editor. Solo se enciende si el banco
+      // lo pide (`window.__AI_PHOTO_EDIT__ = true` antes de pintar).
+      name: 'edicion-de-fotos-con-ia-a-peticion',
+      transform(code, id) {
+        if (!id.split('\\').join('/').endsWith('/src/config/app.ts')) return null;
+        // (El código ya llega con comillas dobles: se aceptan las dos.)
+        const reads = /import\.meta\.env\.VITE_AI_PHOTO_EDIT_ENABLED === (["'])true\1/;
+        return code.replace(reads, (found) => `(${found} || globalThis.__AI_PHOTO_EDIT__ === true)`);
+      },
+    },
+    {
       // Cualquier ruta de la aplicación (recargas incluidas) sirve el banco, no el index.html real.
       name: 'banco-de-maquetacion',
       configureServer(server) {

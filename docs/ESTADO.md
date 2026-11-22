@@ -540,6 +540,16 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
 - **Sin probar:** el pellizco táctil y los gestos en un móvil real (solo emulación y pruebas); el editor contra un Supabase real en esta rama (no hay Docker aquí): componentes, base de datos y navegador con cliente simulado.
 - **Pendiente:** e2e del editor con Supabase local para guardar plantilla y exportar de verdad; una vista de gestión de plantillas en la marca (hoy solo se borran desde «Desde una plantilla»).
 
+### «Fondo con IA» claro (rama `f45/fotos-ia`, 22/11/2026)
+
+- Implementado: un solo recorte por foto (reutiliza el de la sesión o el alfa de la foto), resultado
+  a la vista con Antes/Después, «Usar esta», «Probar otra vez» y coste de cada intento, progreso por
+  fases del recorte con tiempo y cancelar, un texto de privacidad según el motor, términos neutros
+  y fondos/avisos según el sector de la marca. Detalle en `docs/edicion-fotos.md` §14.
+- Probado: unitarias, componentes y `test:layout` (375 y 1366 px, IA simulada). **No probado**: IA
+  real, recorte real con BEN2 o con Fly, y el aviso neutro contra OpenAI (solo respuestas simuladas).
+- Pendiente: el aviso de «Animar con IA» sigue hablando de comida (zona de la biblioteca).
+
 ### Quitar el fondo en el servidor con el trabajador de Fly (rama `f21/cutout-fly`, 22/11/2026)
 
 Decisión del dueño: BEN2 en el servidor con la máquina de Fly que ya existe (detalle en
