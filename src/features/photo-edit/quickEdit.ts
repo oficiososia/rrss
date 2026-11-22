@@ -28,9 +28,7 @@ export function backgroundBlurRadius(image: Pixels, amount: number): number {
   return (Math.min(100, Math.max(1, amount)) / 100) * 0.04 * Math.max(image.width, image.height);
 }
 
-export type QuickEdit =
-  | { kind: 'cutout' }
-  | { kind: 'blur_background'; amount: number; shadow: boolean };
+export type QuickEdit = { kind: 'cutout' } | { kind: 'blur_background'; amount: number; shadow: boolean };
 
 type Saver = (input: SaveEditInput) => Promise<MediaAssetRow>;
 
@@ -47,7 +45,7 @@ export async function runQuickEdit(options: {
 }): Promise<MediaAssetRow> {
   const { asset, url, edit, save, onProgress } = options;
   const { pixels } = await loadPixels(url);
-  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id });
+  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id, source: asset });
   let result = cut.pixels;
   const steps: PhotoEditStep[] = [{ kind: 'remove_background', engine: 'browser', model: cut.model }];
   if (edit.kind === 'blur_background') {

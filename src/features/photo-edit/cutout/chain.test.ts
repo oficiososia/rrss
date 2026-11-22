@@ -14,6 +14,7 @@ import {
   type RemovalDeps,
 } from './remover';
 import { CutoutServerError, removeBackgroundOnServer, shrinkPixels } from './server';
+import { removeBackgroundByJob, type JobDeps, type JobStatus } from './serverJob';
 
 const BRAND = '11111111-2222-4333-8444-555555555555';
 const image = (w = 8, h = 6): Pixels => ({ data: new Uint8ClampedArray(w * h * 4).fill(200), width: w, height: h });
@@ -26,21 +27,29 @@ const browserResult = (): CutoutResult => ({
   fromCache: true,
 });
 
+const SOURCE = { storage_path: 'org/brand/media/plato.jpg', mime_type: 'image/jpeg', kind: 'image' };
+const OPTS = { brandId: BRAND, source: SOURCE };
+
 function deps(over: Partial<RemovalDeps> = {}): RemovalDeps & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     browserSupport: () => ({ ok: true }),
-    browser: vi.fn(async () => {
-      calls.push('browser');
-      return browserResult();
+    ben2Capable: async () => true,
+    browser: vi.fn(async (_image, engine) => {
+      calls.push(`browser-${engine}`);
+      return engine === 'ben2' ? browserResult() : { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
     }),
-    serverAvailable: () => true,
-    server: vi.fn(async () => {
-      calls.push('server');
+    jobEnabled: () => true,
+    job: vi.fn(async () => {
+      calls.push('job');
       return image();
     }),
-    deviceMemory: () => 8,
+    serverAvailable: () => false,
+    server: vi.fn(async () => {
+      calls.push('vercel');
+      return image();
+    }),
     ...over,
   };
 }
@@ -50,101 +59,141 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 });
 
-describe('cadena: navegador → servidor', () => {
-  it('con un navegador capaz, recorta en el navegador y no toca el servidor', async () => {
+describe('cadena: BEN2 en el navegador → trabajador → (Vercel apagada) → IS-Net', () => {
+  it('con WebGPU recorta en el navegador con BEN2 y no toca el servidor', async () => {
     const d = deps();
-    const r = await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d);
-    expect(d.calls).toEqual(['browser']);
+    const r = await removeBackground(image(), undefined, undefined, OPTS, d);
+    expect(d.calls).toEqual(['browser-ben2']);
     expect(r).toMatchObject({ where: 'browser', quality: 'high', model: 'ben2-base-fp16' });
   });
 
-  it('si el navegador falla (modelo, red…), sigue en el servidor y lo dice como calidad básica', async () => {
+  it('sin WebGPU va al trabajador del servidor (BEN2, calidad alta) y no gasta IS-Net', async () => {
+    const d = deps({ ben2Capable: async () => false });
+    const onProgress = vi.fn();
+    const r = await removeBackground(image(), onProgress, undefined, OPTS, d);
+    expect(d.calls).toEqual(['job']);
+    expect(r).toMatchObject({ where: 'server', quality: 'high', model: 'ben2-base-fp16' });
+    // Le pasa la foto de la biblioteca (no sube nada) y deja que la interfaz cuente el progreso.
+    expect(d.job).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ brandId: BRAND, sourcePath: SOURCE.storage_path }),
+    );
+    (d.job as ReturnType<typeof vi.fn>).mock.calls[0]![1].onProgress('running');
+    expect(onProgress).toHaveBeenCalledWith({ phase: 'server-job', state: 'running' });
+  });
+
+  it('si BEN2 falla en el navegador, sigue en el servidor', async () => {
     const d = deps({
       browser: vi.fn(async () => {
         throw new Error('sesión sin soporte');
       }),
     });
-    const r = await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d);
-    expect(r).toMatchObject({ where: 'server', quality: 'basic', model: 'isnet-general-use' });
-    expect(d.server).toHaveBeenCalledTimes(1);
+    const r = await removeBackground(image(), undefined, undefined, OPTS, d);
+    expect(r).toMatchObject({ where: 'server', quality: 'high' });
+    expect(d.job).toHaveBeenCalledTimes(1);
   });
 
-  it('si el navegador no puede (sin WebAssembly o poca memoria), va directo al servidor', async () => {
+  it('si el servidor también falla (o no hay trabajador), último recurso: IS-Net en el navegador, calidad básica', async () => {
+    const d = deps({
+      ben2Capable: async () => false,
+      job: vi.fn(async () => {
+        throw new CutoutServerError('la máquina no arranca', 'timeout');
+      }),
+    });
+    const r = await removeBackground(image(), undefined, undefined, OPTS, d);
+    expect(r).toMatchObject({ where: 'browser', quality: 'basic', model: 'isnet-general-use' });
+    expect(d.calls).toEqual(['browser-isnet']);
+
+    const sin = deps({ ben2Capable: async () => false, jobEnabled: () => false });
+    const r2 = await removeBackground(image(), undefined, undefined, OPTS, sin);
+    expect(r2).toMatchObject({ where: 'browser', quality: 'basic' });
+    expect(sin.job).not.toHaveBeenCalled();
+  });
+
+  it('el servidor solo se usa con una foto de la biblioteca en JPEG, PNG o WebP y con marca', async () => {
+    const base = { ben2Capable: async () => false };
+    for (const options of [
+      { brandId: BRAND },
+      { source: SOURCE },
+      { brandId: BRAND, source: { ...SOURCE, mime_type: 'image/gif' } },
+      { brandId: BRAND, source: { ...SOURCE, kind: 'video' } },
+    ]) {
+      const d = deps(base);
+      await removeBackground(image(), undefined, undefined, options, d);
+      expect(d.job).not.toHaveBeenCalled();
+    }
+  });
+
+  it('si el navegador no puede nada (sin WebAssembly), va directo al servidor', async () => {
     const d = deps({ browserSupport: () => ({ ok: false, reason: 'sin memoria' }) });
-    const r = await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d);
+    const r = await removeBackground(image(), undefined, undefined, OPTS, d);
     expect(d.browser).not.toHaveBeenCalled();
     expect(r.where).toBe('server');
   });
 
-  it('un dispositivo con menos de 4 GB prueba primero el servidor, y si falla, el navegador', async () => {
-    const d = deps({
-      deviceMemory: () => 2,
-      server: vi.fn(async () => {
-        throw new CutoutServerError('sin red', 'network');
+  it('la función de Vercel está apagada salvo que se encienda, y va después del trabajador', async () => {
+    const off = deps({
+      ben2Capable: async () => false,
+      jobEnabled: () => false,
+      browserSupport: () => ({ ok: false, reason: 'x' }),
+    });
+    await expect(removeBackground(image(), undefined, undefined, OPTS, off)).rejects.toThrow('x');
+    expect(off.server).not.toHaveBeenCalled();
+
+    const on = deps({
+      ben2Capable: async () => false,
+      serverAvailable: () => true,
+      job: vi.fn(async () => {
+        throw new CutoutServerError('x', 'server');
       }),
     });
-    const r = await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d);
-    expect(r.where).toBe('browser');
-    expect(d.server).toHaveBeenCalledTimes(1);
+    const r = await removeBackground(image(), undefined, undefined, OPTS, on);
+    expect(r).toMatchObject({ where: 'server', quality: 'basic', model: 'isnet-general-use' });
+    expect(on.server).toHaveBeenCalledTimes(1);
   });
 
-  it('tras quedarse sin memoria en el navegador, las fotos siguientes van directas al servidor', async () => {
+  it('tras quedarse sin memoria con BEN2 en el navegador, las fotos siguientes van directas al servidor', async () => {
     const d = deps({
       browser: vi.fn(async () => {
         throw new RangeError('Array buffer allocation failed');
       }),
     });
-    await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d);
+    await removeBackground(image(), undefined, undefined, OPTS, d);
     const d2 = deps();
-    const r = await removeBackground(image(), undefined, undefined, { brandId: BRAND }, d2);
+    const r = await removeBackground(image(), undefined, undefined, OPTS, d2);
     expect(r.where).toBe('server');
     expect(d2.browser).not.toHaveBeenCalled();
   });
 
-  it('sin marca o sin servidor no hay respaldo: se devuelve el error del navegador', async () => {
-    const boom = new Error('fallo del modelo');
-    const failing = { browser: vi.fn(async () => Promise.reject(boom)) };
-    await expect(removeBackground(image(), undefined, undefined, {}, deps(failing))).rejects.toBe(boom);
-    await expect(
-      removeBackground(
-        image(),
-        undefined,
-        undefined,
-        { brandId: BRAND },
-        deps({ ...failing, serverAvailable: () => false }),
-      ),
-    ).rejects.toBe(boom);
-  });
-
-  it('si fallan los dos, se enseña el primer error', async () => {
+  it('si fallan todos, se enseña el primer error', async () => {
     const first = new Error('primero');
     const d = deps({
       browser: vi.fn(async () => Promise.reject(first)),
-      server: vi.fn(async () => Promise.reject(new CutoutServerError('segundo', 'server'))),
+      job: vi.fn(async () => Promise.reject(new CutoutServerError('segundo', 'server'))),
     });
-    await expect(removeBackground(image(), undefined, undefined, { brandId: BRAND }, d)).rejects.toBe(first);
+    await expect(removeBackground(image(), undefined, undefined, OPTS, d)).rejects.toBe(first);
   });
 
   it('«nada que recortar» y cancelar cortan la cadena: no se prueba otro motor', async () => {
     const none = deps({ browser: vi.fn(async () => Promise.reject(new NoSubjectError())) });
-    await expect(removeBackground(image(), undefined, undefined, { brandId: BRAND }, none)).rejects.toBeInstanceOf(
-      NoSubjectError,
-    );
-    expect(none.server).not.toHaveBeenCalled();
+    await expect(removeBackground(image(), undefined, undefined, OPTS, none)).rejects.toBeInstanceOf(NoSubjectError);
+    expect(none.job).not.toHaveBeenCalled();
     const abort = Object.assign(new Error('cancelado'), { name: 'AbortError' });
-    const cancelled = deps({ browser: vi.fn(async () => Promise.reject(abort)) });
-    await expect(removeBackground(image(), undefined, undefined, { brandId: BRAND }, cancelled)).rejects.toBe(abort);
-    expect(cancelled.server).not.toHaveBeenCalled();
+    const cancelled = deps({ ben2Capable: async () => false, job: vi.fn(async () => Promise.reject(abort)) });
+    await expect(removeBackground(image(), undefined, undefined, OPTS, cancelled)).rejects.toBe(abort);
+    expect(cancelled.browser).not.toHaveBeenCalled();
   });
 
-  it('el botón sale si el navegador puede o si hay servidor', () => {
-    expect(removalSupport({ browserSupport: () => ({ ok: false, reason: 'x' }), serverAvailable: () => true }).ok).toBe(
-      true,
-    );
-    expect(
-      removalSupport({ browserSupport: () => ({ ok: false, reason: 'x' }), serverAvailable: () => false }).ok,
-    ).toBe(false);
-    expect(removalSupport({ browserSupport: () => ({ ok: true }), serverAvailable: () => false }).ok).toBe(true);
+  it('el botón sale si el navegador puede o si hay algún servidor', () => {
+    const no = {
+      browserSupport: () => ({ ok: false as const, reason: 'x' }),
+      serverAvailable: () => false,
+      jobEnabled: () => false,
+    };
+    expect(removalSupport(no).ok).toBe(false);
+    expect(removalSupport({ ...no, serverAvailable: () => true }).ok).toBe(true);
+    expect(removalSupport({ ...no, jobEnabled: () => true }).ok).toBe(true);
+    expect(removalSupport({ ...no, browserSupport: () => ({ ok: true }) }).ok).toBe(true);
   });
 
   it('los fallos del servidor se explican en claro', () => {
@@ -153,6 +202,90 @@ describe('cadena: navegador → servidor', () => {
     );
     expect(describeRemovalError(new CutoutServerError('x', 'session', 401))).toMatch(/sesión/i);
     expect(describeRemovalError(new CutoutServerError('x', 'permission', 403))).toMatch(/permiso/i);
+  });
+});
+
+describe('trabajo media.cutout del servidor (serverJob)', () => {
+  const alpha = (w: number, h: number, value = 255) => ({
+    data: new Uint8Array(w * h).fill(value),
+    width: w,
+    height: h,
+  });
+  const jobDeps = (over: Partial<JobDeps> = {}): JobDeps & { states: string[] } => {
+    const states = ['queued', 'running', 'succeeded'];
+    return {
+      states,
+      request: vi.fn(async () => ({ id: 'job-1' })),
+      status: vi.fn(async () => ({
+        status: (states.shift() ?? 'succeeded') as JobStatus['status'],
+        last_error: null,
+        result: { output: { path: 'org/brand/ediciones/x.png' } },
+      })),
+      cancel: vi.fn(async () => undefined),
+      loadAlpha: vi.fn(async () => alpha(8, 6)),
+      sleep: vi.fn(async () => undefined),
+      ...over,
+    };
+  };
+  const run = (deps: JobDeps, extra: Partial<Parameters<typeof removeBackgroundByJob>[1]> = {}) =>
+    removeBackgroundByJob(image(), { brandId: BRAND, sourcePath: SOURCE.storage_path, deps, ...extra });
+
+  it('encarga el trabajo con la ruta de la foto, espera y aplica el alfa del PNG', async () => {
+    const d = jobDeps({ loadAlpha: vi.fn(async () => alpha(8, 6, 128)) });
+    const seen: string[] = [];
+    const out = await run(d, { onProgress: (s) => seen.push(s) });
+    expect(d.request).toHaveBeenCalledWith(BRAND, SOURCE.storage_path, expect.any(String));
+    expect(seen).toEqual(['queued', 'running']);
+    expect(out.data[3]).toBe(100); // 200 × 128/255
+    expect([out.width, out.height]).toEqual([8, 6]);
+  });
+
+  it('reescala el alfa si la foto de la biblioteca tiene otras medidas (misma forma)', async () => {
+    const out = await run(jobDeps({ loadAlpha: vi.fn(async () => alpha(16, 12)) }));
+    expect([out.width, out.height]).toEqual([8, 6]);
+    expect(out.data[3]).toBe(200);
+  });
+
+  it('una foto de otra forma, sin sujeto o con el trabajo fallido da error claro', async () => {
+    await expect(run(jobDeps({ loadAlpha: vi.fn(async () => alpha(6, 12)) }))).rejects.toBeInstanceOf(
+      CutoutServerError,
+    );
+    await expect(run(jobDeps({ loadAlpha: vi.fn(async () => alpha(8, 6, 0)) }))).rejects.toBeInstanceOf(NoSubjectError);
+    const sinSujeto = jobDeps({
+      status: vi.fn(async () => ({
+        status: 'failed' as const,
+        last_error: 'No se ha encontrado nada que recortar en la foto.',
+        result: null,
+      })),
+    });
+    await expect(run(sinSujeto)).rejects.toBeInstanceOf(NoSubjectError);
+    const roto = jobDeps({
+      status: vi.fn(async () => ({ status: 'failed' as const, last_error: 'onnxruntime sin memoria', result: null })),
+    });
+    await expect(run(roto)).rejects.toMatchObject({ name: 'CutoutServerError', failure: 'server' });
+  });
+
+  it('cancelar pide cancel_media_job y corta; sin permiso se dice', async () => {
+    const control = new AbortController();
+    const d = jobDeps({
+      sleep: vi.fn(async () => {
+        control.abort();
+        throw Object.assign(new Error('Recorte cancelado.'), { name: 'AbortError' });
+      }),
+    });
+    await expect(run(d, { signal: control.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(d.cancel).toHaveBeenCalledWith('job-1');
+
+    const sinPermiso = jobDeps({
+      request: vi.fn(async () => Promise.reject(new Error('No tienes permiso para crear medios en esta marca'))),
+    });
+    await expect(run(sinPermiso)).rejects.toMatchObject({ failure: 'permission' });
+  });
+
+  it('si no termina en el plazo, lo cancela y da error de tiempo', async () => {
+    const d = jobDeps({ status: vi.fn(async () => ({ status: 'queued' as const, last_error: null, result: null })) });
+    await expect(run(d, { timeoutMs: 0 })).rejects.toMatchObject({ failure: 'timeout' });
+    expect(d.cancel).toHaveBeenCalledWith('job-1');
   });
 });
 

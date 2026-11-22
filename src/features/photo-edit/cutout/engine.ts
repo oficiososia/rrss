@@ -26,8 +26,10 @@ export type CutoutProgress =
   | { phase: 'downloading'; received: number; total: number; engine?: CutoutEngineId }
   | { phase: 'loading' }
   | { phase: 'running' }
-  /** Se está quitando el fondo en el servidor (respaldo del navegador). */
-  | { phase: 'server' };
+  /** Se está quitando el fondo en la función de Vercel (apagada por defecto). */
+  | { phase: 'server' }
+  /** Se está quitando el fondo en el trabajador de medios (trabajo `media.cutout`). */
+  | { phase: 'server-job'; state: 'queued' | 'running' };
 
 export interface CutoutResult {
   pixels: Pixels;
@@ -59,6 +61,11 @@ export interface CutoutDeps {
 }
 
 export interface CutoutOptions {
+  /**
+   * `auto` (por defecto): BEN2 si se puede y, si no, IS-Net. `ben2` / `isnet`: solo ese motor
+   * (la cadena de `remover.ts` los pide por separado: BEN2, luego el servidor, IS-Net al final).
+   */
+  engine?: 'auto' | 'ben2' | 'isnet';
   /** Para cancelar (descarga o recorte en marcha). */
   signal?: AbortSignal;
   /** Solo pruebas. */
@@ -112,6 +119,13 @@ export function describeCutoutError(error: unknown): string {
 
 /** BEN2 ya falló en esta sesión (operadores sin soporte, sin memoria…): se usa IS-Net hasta recargar. */
 let ben2Failed = false;
+
+/** ¿Puede este navegador ejecutar BEN2 ahora (WebGPU con adaptador, memoria y sin fallos previos)? */
+export async function browserCanRunBen2(deps: Pick<CutoutDeps, 'probe'> = defaultDeps): Promise<boolean> {
+  // Simulado (e2e): `removeBackgroundInBrowser` responde sin motor, vale cualquiera.
+  if (cutoutSimulated()) return true;
+  return (await chooseEngine(deps.probe(ben2Failed))).engine === 'ben2';
+}
 
 /** Olvida que BEN2 falló (solo para las pruebas). */
 export function resetCutoutSession(): void {
@@ -308,7 +322,11 @@ export async function removeBackgroundInBrowser(
     };
   }
   const deps = options.deps ?? defaultDeps;
+  if (options.engine === 'isnet') return runEngine('isnet', image, onProgress, options);
   const choice = await chooseEngine(deps.probe(ben2Failed));
+  if (options.engine === 'ben2' && choice.engine !== 'ben2') {
+    throw new Error('Este navegador no puede ejecutar BEN2 (hace falta WebGPU y memoria).');
+  }
   if (choice.engine === 'ben2') {
     try {
       return await runEngine('ben2', image, onProgress, options);
@@ -318,8 +336,10 @@ export async function removeBackgroundInBrowser(
       if ((error as Error)?.name !== 'ModelDownloadError' && !(error instanceof ModelDownloadError)) {
         ben2Failed = true;
       }
-      console.warn('[recorte] BEN2 no ha funcionado, se usa IS-Net', error);
+      console.warn('[recorte] BEN2 no ha funcionado', error);
       if (!options.deps) releaseCutoutWorker();
+      // Con `engine: 'ben2'` quien llama decide qué sigue (el servidor, antes que IS-Net).
+      if (options.engine === 'ben2') throw error;
     }
   }
   return runEngine('isnet', image, onProgress, options);
