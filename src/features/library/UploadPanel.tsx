@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Loader2, UploadCloud, X } from 'lucide-react';
-import { useCallback, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { Button } from '@/components/ui';
 import { ALLOWED_MIME_TYPES, MAX_FILE_BYTES } from '@/config/app';
 import { translateError } from '@/lib/errors';
@@ -16,6 +16,8 @@ interface Item {
   status: Status;
   message?: string;
   sha256?: string;
+  /** Carpeta a la que va (la que se estaba viendo al añadirlo). */
+  folder: string;
   /** Porcentaje real de bytes subidos (solo mientras se sube). */
   progress?: number;
 }
@@ -30,12 +32,23 @@ const STATUS_TEXT: Record<Status, string> = {
   skipped: 'Omitido',
 };
 
+/** Archivos soltados sobre la página o sobre una carpeta, para añadirlos a la cola. */
+export interface IncomingFiles {
+  /** Cambia con cada tanda: así la misma lista soltada dos veces se sube dos veces. */
+  key: number;
+  files: File[];
+  folder: string;
+}
+
 interface UploadPanelProps {
   organizationId: string;
   brandId: string;
+  /** Carpeta a la que van los archivos que se elijan con el botón o se suelten aquí. */
+  folder?: string;
+  incoming?: IncomingFiles | null;
 }
 
-export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
+export function UploadPanel({ organizationId, brandId, folder = '', incoming }: UploadPanelProps) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -54,6 +67,7 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
           brandId,
           file: item.file,
           sha256,
+          folder: item.folder,
           onProgress: (progress) => patch(item.id, { progress }),
         });
         patch(item.id, { status: 'done' });
@@ -85,8 +99,13 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
   );
 
   const addFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const added: Item[] = Array.from(files).map((file) => ({ id: crypto.randomUUID(), file, status: 'queued' }));
+    async (files: FileList | File[], target: string) => {
+      const added: Item[] = Array.from(files).map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        status: 'queued',
+        folder: target,
+      }));
       if (added.length === 0) return;
       setItems((current) => [...added, ...current]);
       // De uno en uno: evita saturar la conexión y mantiene el orden.
@@ -95,10 +114,19 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
     [process],
   );
 
+  // Lo soltado sobre la página o sobre una carpeta llega desde fuera.
+  const lastIncoming = useRef<number | null>(null);
+  useEffect(() => {
+    if (!incoming || lastIncoming.current === incoming.key) return;
+    lastIncoming.current = incoming.key;
+    void addFiles(incoming.files, incoming.folder);
+  }, [incoming, addFiles]);
+
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    event.stopPropagation();
     setDragging(false);
-    void addFiles(event.dataTransfer.files);
+    void addFiles(event.dataTransfer.files, folder);
   }
 
   const busy = items.some((i) => i.status === 'queued' || i.status === 'hashing' || i.status === 'uploading');
@@ -115,7 +143,7 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
         onDrop={onDrop}
         data-testid="library-dropzone"
         className={cn(
-          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors',
+          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors',
           dragging ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
         )}
       >
@@ -123,6 +151,7 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
         <p className="text-sm font-medium">Arrastra aquí tus archivos</p>
         <p className="text-xs text-muted">
           Imágenes, vídeos, audio y documentos, hasta {formatBytes(MAX_FILE_BYTES)} cada uno.
+          {folder ? ` Irán a «${folder}».` : ''}
         </p>
         <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()}>
           Elegir archivos
@@ -136,7 +165,7 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
           aria-label="Elegir archivos para subir"
           data-testid="library-file-input"
           onChange={(e) => {
-            if (e.target.files) void addFiles(e.target.files);
+            if (e.target.files) void addFiles(e.target.files, folder);
             e.target.value = '';
           }}
         />
@@ -158,7 +187,7 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
               </Button>
             )}
           </div>
-          <ul className="max-h-72 divide-y divide-border overflow-y-auto">
+          <ul className="max-h-40 divide-y sm:max-h-56 divide-border overflow-y-auto">
             {items.map((item) => (
               <li
                 key={item.id}
@@ -203,6 +232,17 @@ export function UploadPanel({ organizationId, brandId }: UploadPanelProps) {
                     </div>
                   )}
                 </div>
+                {item.status === 'error' && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void process(item)}
+                    data-testid="upload-retry"
+                    aria-label={`Reintentar ${item.file.name}`}
+                  >
+                    Reintentar
+                  </Button>
+                )}
                 {item.status === 'duplicate' && (
                   <div className="flex gap-2">
                     <Button

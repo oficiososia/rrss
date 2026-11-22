@@ -95,6 +95,17 @@ export type KnowledgeSourceRow = {
   updated_at: string;
 };
 
+/** Una pieza (vigente) donde se usa un archivo de la biblioteca (`asset_usage`, migración 20270101010000). */
+export type AssetUsageRow = {
+  asset_id: string;
+  content_id: string;
+  title: string;
+  network: string;
+  format: string;
+  status: ContentStatus;
+  archived: boolean;
+};
+
 export type MediaAssetRow = {
   id: string;
   brand_id: string;
@@ -1861,6 +1872,7 @@ export type Database = {
         Returns: BrandProfileRow;
       };
       asset_facets: { Args: { p_brand_id: string }; Returns: { tags: string[]; folders: string[] }[] };
+      asset_usage: { Args: { p_brand_id: string }; Returns: AssetUsageRow[] };
       admin_list_organizations: { Args: Record<string, never>; Returns: AdminOrganizationRow[] };
     } & Phase2Functions &
       ContentFunctions &

@@ -906,6 +906,45 @@ describe('filtros de la biblioteca', () => {
   });
 });
 
+describe('en qué piezas se usa un archivo (asset_usage)', () => {
+  const insertAsset = `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+     values ($1::uuid, $2::uuid, 'image', $2::text || '/' || $1::text || '/media/' || gen_random_uuid() || '.jpg', 'uso.jpg', 'image/jpeg', 1)
+     returning id::text as id`;
+  type Uso = { asset_id: string; content_id: string; title: string; archived: boolean };
+  const usos = (user: TestUser, brand: string) =>
+    as<Uso>(db, user, `select asset_id::text, content_id::text, title, archived from public.asset_usage($1)`, [brand]);
+
+  it('devuelve las piezas vigentes que citan el archivo, y nada de los que no se usan', async () => {
+    const marca = await createBrand(db, ana, orgA, 'Marca de usos');
+    const [usado] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [libre] = await as<{ id: string }>(db, ana, insertAsset, [marca, orgA]);
+    const [pieza] = await as<{ id: string }>(
+      db,
+      ana,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Chuletón', 'instagram', 'post') returning id::text as id`,
+      [marca, orgA],
+    );
+    // Versión 1 cita el archivo; la vigente (2) ya no: no cuenta como uso.
+    await as(db, ana, `select public.save_content_version($1, $2::jsonb, 1)`, [
+      pieza!.id,
+      JSON.stringify({ schemaVersion: 1, layers: [{ assetId: usado!.id }] }),
+    ]);
+    expect(await usos(ana, marca)).toEqual([
+      { asset_id: usado!.id, content_id: pieza!.id, title: 'Chuletón', archived: false },
+    ]);
+    await as(db, ana, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 2, '')`, [pieza!.id]);
+    expect(await usos(ana, marca)).toEqual([]);
+    expect(libre!.id).toBeTruthy();
+  });
+
+  it('una marca ajena o sin acceso devuelve cero filas, y sin sesión se deniega', async () => {
+    expect(await usos(ana, marcaB1)).toEqual([]);
+    expect(await usos(sinMarcaA, marcaA1)).toEqual([]);
+    await denied(db, null, `select * from public.asset_usage($1)`, [marcaA1]);
+  });
+});
+
 describe('IA y cola de trabajos', () => {
   // Las fuentes de conocimiento encolan su propia extracción (`source.extract`):
   // aquí cuentan solo los trabajos que crea la prueba.
