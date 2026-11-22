@@ -696,6 +696,24 @@ El dueño no quiere `SUPABASE_SERVICE_ROLE_KEY` en Fly. Implementado y probado e
 2. El dueño crea la aplicación de Meta, la cuenta de correo y, si quiere IA por API, Google Cloud.
 3. Con la aplicación de Meta: conectar la cuenta de Instagram de Casa Tomás en staging y publicar una pieza aprobada.
 
+## Estudio de costes y margen por plan (rama `f29/costes`, 22/11/2026)
+
+**Solo documentación** (sin código, sin configuración, sin llamadas de pago): `docs/costes.md` y la
+hoja editable `rrss-recursos-comparativa/costes-rrss.xlsx` (fuera del repositorio).
+
+- **Hecho:** costes fijos para lanzar (unos 47 € al mes lo mínimo, unos 108 € lo recomendado), coste
+  variable por marca en tres perfiles (0,37 / 2,17 / 9,20 € al mes; más del 95 % es IA), margen por
+  plan con los precios propuestos, punto de equilibrio, topes que existen y que faltan, y tres
+  escenarios (5, 20 y 50 marcas). Precios de infraestructura consultados el 22/11/2026 en las páginas
+  oficiales; los de IA salen de `docs/modelos-ia-comparativa.md`.
+- **Sin confirmar:** todo lo marcado NO CONFIRMADO en `docs/costes.md` §7 (precio de la máquina de
+  4 GB de Fly en Fráncfort, dominio, tarifas de imagen de OpenAI y de fal.ai…). Los perfiles de uso y
+  el reparto de clientes son supuestos: no hay datos reales.
+- **Sin comprobar en Excel:** la hoja no se ha podido abrir con Excel desde la sesión; sus fórmulas
+  se han verificado con un evaluador aparte.
+- **Decisiones que deja al dueño:** bajar el cupo de IA de Agencia (100 → 50) y de Profesional
+  (25 → 20), descontar el cupo con recargo, y dejar el vídeo con IA fuera de los planes base.
+
 ## Coherencia de la IA (f26, 22/11/2026)
 
 Cierra los fallos de la auditoría de staging del 21/11/2026. Rama `f26/ia-coherente`.
