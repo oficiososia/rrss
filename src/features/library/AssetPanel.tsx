@@ -264,9 +264,9 @@ export function AssetPanel({
             </p>
           )}
 
-          {canEdit && url && (
+          {canEdit && (
             <div className="flex flex-wrap gap-2" data-testid="asset-actions">
-              {canEditPhoto(asset) && (
+              {url && canEditPhoto(asset) && (
                 <Button variant="secondary" onClick={() => setEditingPhoto(true)} data-testid="asset-edit-photo">
                   <SlidersHorizontal className="h-4 w-4" aria-hidden />
                   Editar foto

@@ -10,7 +10,7 @@ interface Point {
 const MARGIN = { top: 14, right: 12, bottom: 24, left: 40 };
 
 /** Ancho real del contenedor (el gráfico se dibuja a tamaño de pantalla, sin deformar el texto). */
-function useWidth(fallback = 640) {
+function useWidth(fallback = 320) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(fallback);
   useEffect(() => {
@@ -109,7 +109,7 @@ export function TrendChart({
   const label = `${title}: ${values.length} días con cifra${missing ? `, ${missing} sin cifra` : ''}; máximo ${formatNumber(max)}.`;
 
   return (
-    <figure data-testid={testId} className="w-full">
+    <figure data-testid={testId} className="w-full min-w-0">
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <p className="text-sm font-medium">{title}</p>
         <p className="text-sm tabular-nums text-muted" role="status" aria-live="polite" data-testid="chart-readout">
@@ -123,10 +123,11 @@ export function TrendChart({
         aria-label={`${label} Usa las flechas para recorrer los días.`}
         onKeyDown={onKey}
         onBlur={() => setActive(null)}
-        className="rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+        className="relative w-full min-w-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+        style={{ height }}
         data-testid="chart-area"
       >
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden className="block">
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden className="absolute left-0 top-0 block">
           {ticks.map((tick) => (
             <g key={tick}>
               <line

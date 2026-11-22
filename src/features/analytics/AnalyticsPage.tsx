@@ -322,8 +322,8 @@ function Overview({
           );
         })}
       </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <Card className="p-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Card className="min-w-0 p-4">
           <TrendChart
             title={selected.plainLabel}
             points={dailySeries(points, selected.metricId, analysis.period)}

@@ -906,3 +906,37 @@ ideas y el material de la marca. Detalle, costes, límites y despliegue en `docs
 - **Para llevarlo a staging**: las dos migraciones (`20261223010000` y `20261224010000`), la función
   `ai-reel-like`, redesplegar el trabajador de Fly, un modelo con visión con precio y
   `VITE_REEL_LIKE_ENABLED=true`.
+
+## Biblioteca y Analítica más claras (rama `f43/biblioteca-analitica`, 22/11/2026)
+
+Petición del dueño: «un producto de calidad» con menos carga visual.
+
+- **Implementado (Biblioteca)**: barra lateral de carpetas en árbol con contadores (selector en móvil)
+  y migas de pan; mover arrastrando o con «Mover a…»; crear, renombrar y eliminar carpeta vacía; rejilla
+  con miniaturas (`thumb_path`) de tamaño ajustable, pintada por tandas; selección con casillas y Mayús
+  con barra de acciones (mover, etiquetar, descargar hasta 20, eliminar con confirmación); chips Fotos,
+  Vídeos, Logotipos, Con fondo quitado, Hechas con IA, Sin usar y Recientes; orden por fecha, nombre o uso;
+  búsqueda sin distinguir tildes por nombre, etiqueta y carpeta; ficha como panel lateral con ← y →,
+  «Dónde se usa», «Editar foto», «Usar en una publicación» (crea la idea con la foto), «Usar en un reel»
+  (`reels?con=<id>`) y «Animar con IA…» si está disponible; subir arrastrando a la página o a una
+  carpeta, con progreso, error claro y «Reintentar» por archivo; `PhotoPanel` reutilizable
+  (`docs/panel-de-fotos.md`), sin conectar a ningún editor.
+- **Implementado (Analítica)**: frase del periodo con la variación en palabras, de 3 a 4 cifras grandes
+  (elegir una la lleva al gráfico), gráfico de línea con guía por puntero y teclado y tabla día a día,
+  «Lo que mejor funcionó» con miniaturas, y el resto plegado en «Más detalle». Estados honestos sin
+  cuenta, sin cifras y con la cuenta por reconectar. Ambas pantallas son pantallas de trabajo: la página
+  no se desplaza (y no llevan el pie legal, como el editor).
+- **Migración** `20270101010000_asset_usage.sql` (función de lectura `asset_usage`, con la RLS de quien
+  pregunta; vuelta atrás en `supabase/rollbacks/`). Sin aplicar en staging. Sin ella, la pantalla no
+  inventa usos: oculta «Sin usar» y «Más usadas».
+- **Limitación conocida**: una carpeta vacía creada desde la pantalla solo existe en ese navegador hasta
+  que se mueve un archivo dentro (en la base de datos una carpeta es el texto de `media_assets.folder`).
+  La biblioteca lee de una vez hasta 5.000 archivos por marca (avisa si hay más).
+- **Probado**: componentes (`biblioteca.test.tsx`, `photoPanel.test.tsx`, `analitica.test.tsx`), unitarias
+  (`carpetas.test.ts`, `resumen.test.ts`), base de datos (`aislamiento.test.ts`, `asset_usage`) y
+  maquetación en Chromium real a 375, 768 y 1366 px (`tests/layout/biblioteca-analitica.spec.ts`).
+  e2e 04, 11, 15 y 24 adaptadas a la interfaz nueva (la 04 con un caso nuevo) **sin ejecutar**: necesitan
+  el stack local.
+- **Sin probar**: descarga de varios archivos a la vez (los navegadores pueden pedir permiso),
+  arrastrar desde el escritorio con archivos reales, miniaturas reales (el banco no firma URL) y el
+  móvil real.
