@@ -1238,3 +1238,106 @@ describe('publicar ahora', () => {
     expect(graph.published).toHaveLength(1);
   });
 });
+
+// ───────────────────────── Pendientes de Instagram (f30) ─────────────────────────
+
+describe('portada del reel', () => {
+  const coverOf = async (brand: string, videoId: string, extra: Record<string, unknown> = {}, mime = 'image/jpeg') => {
+    const [video] = await db.query<{ storage_path: string }>(`select storage_path from public.media_assets where id = $1`, [
+      videoId,
+    ]);
+    const [row] = await db.query<{ id: string; storage_path: string }>(
+      `insert into public.media_assets (brand_id, organization_id, kind, origin, storage_path, file_name, mime_type, bytes, provenance)
+       values ($1, $2, 'image', 'generated', $3, 'portada.jpg', $4, 100, $5::jsonb) returning id, storage_path`,
+      [
+        brand,
+        org,
+        assetPath(org, brand, `${crypto.randomUUID()}-cover.jpg`),
+        mime,
+        JSON.stringify({ type: 'media_job', role: 'cover', cover_of_path: video!.storage_path, ...extra }),
+      ],
+    );
+    return row!;
+  };
+  const publishReel = async (p: { contentId: string; assets: string[] }) => {
+    const pub = await schedule(p.contentId, p.assets);
+    await makeDue(pub.id);
+    const r = (await tick()).find((x) => x.publicationId === pub.id);
+    expect(r?.outcome).toBe('published');
+  };
+
+  it('un reel con portada la manda a Instagram (cover_url, sin thumb_offset)', async () => {
+    graph = createSimulatedGraph();
+    const p = await piece({ format: 'reel' });
+    const cover = await coverOf(marca, p.assets[0]!, { cover_source: 'frame', cover_at_seconds: 2 });
+    await publishReel(p);
+    const reel = graph.published.find((m) => m.kind === 'REELS')!;
+    expect(reel.coverUrl).toContain(cover.storage_path);
+    expect(reel.thumbOffset).toBeNull();
+  });
+
+  it('sin portada, el reel sale igual y sin cover_url', async () => {
+    graph = createSimulatedGraph();
+    const p = await piece({ format: 'reel' });
+    await publishReel(p);
+    expect(graph.published.find((m) => m.kind === 'REELS')).toMatchObject({ coverUrl: null, thumbOffset: null });
+  });
+
+  it('no usa la portada de otro vídeo, de otra marca ni una que no sea JPEG', async () => {
+    graph = createSimulatedGraph();
+    const p = await piece({ format: 'reel' });
+    const otro = await piece({ format: 'reel' });
+    await coverOf(marca, otro.assets[0]!);
+    await coverOf(marca, p.assets[0]!, {}, 'image/png');
+    const pub = await schedule(p.contentId, p.assets);
+    expect(await serviceCall('social_publication_cover', { p_publication_id: pub.id })).toBeNull();
+    // Una portada de otra marca con la ruta del vídeo tampoco vale.
+    const [video] = await db.query<{ storage_path: string }>(`select storage_path from public.media_assets where id = $1`, [
+      p.assets[0],
+    ]);
+    await db.query(
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes, provenance)
+       values ($1, $2, 'image', $3, 'x.jpg', 'image/jpeg', 100, $4::jsonb)`,
+      [marca2, org, assetPath(org, marca2), JSON.stringify({ type: 'media_job', role: 'cover', cover_of_path: video!.storage_path })],
+    );
+    expect(await serviceCall('social_publication_cover', { p_publication_id: pub.id })).toBeNull();
+  });
+
+  it('solo la clave de servicio la lee, y si falla la lectura el reel sale igualmente', async () => {
+    const p = await piece({ format: 'reel' });
+    const pub = await schedule(p.contentId, p.assets);
+    await denied(db, editor, `select public.social_publication_cover($1)`, [pub.id], /permission denied/);
+    graph = createSimulatedGraph();
+    await makeDue(pub.id);
+    await serviceCall('social_enqueue_due_publications', { p_limit: 100 });
+    const failing: RpcClient = (fn, args) =>
+      fn === 'social_publication_cover'
+        ? Promise.resolve({ data: null, error: { code: 'XX000', message: 'boom', details: null } })
+        : rpc(fn, args);
+    const jobs = (await serviceCall('claim_jobs', {
+      p_worker: WORKER,
+      p_kinds: ['social.publish'],
+      p_limit: 20,
+      p_lease_seconds: 300,
+    })) as ClaimedSocialJob[];
+    for (const job of jobs) await processPublishJob(job, publisherDeps({ rpc: failing }));
+    expect((await pubOf(pub.id)).status).toBe('published');
+    expect(graph.published.find((m) => m.kind === 'REELS')?.coverUrl).toBeNull();
+  });
+
+  it('el adaptador manda thumb_offset solo si no hay cover_url, y cover_url gana si van los dos', async () => {
+    graph = createSimulatedGraph();
+    const api = createMetaGraph({ fetch: graph.fetch });
+    const a = await api.createReelContainer(SIMULATED_IG_USER_ID, TOKEN, {
+      videoUrl: 'https://x/v.mp4',
+      thumbOffsetMs: 2500,
+    });
+    const b = await api.createReelContainer(SIMULATED_IG_USER_ID, TOKEN, {
+      videoUrl: 'https://x/v.mp4',
+      coverUrl: 'https://x/c.jpg',
+      thumbOffsetMs: 2500,
+    });
+    expect(graph.containers.get(a)).toMatchObject({ thumbOffset: '2500', coverUrl: null });
+    expect(graph.containers.get(b)).toMatchObject({ coverUrl: 'https://x/c.jpg', thumbOffset: null });
+  });
+});
