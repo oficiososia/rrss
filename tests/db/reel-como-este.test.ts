@@ -4,7 +4,8 @@
 //      lo que pasa al terminar el trabajo y qué ocurre con los archivos.
 //   2. La función `ai-reel-like` (handler.ts) con el servicio de IA de siempre
 //      (cupo, permiso, coste, modo agencia) y proveedores SIMULADOS.
-//   3. Las plantillas de reel de marca.
+//   3. La estructura que sale del análisis y la pieza que se abre con él (la plantilla
+//      reutilizable se guarda en el formato compartido: src/features/reels/like/template.test.ts).
 //   4. DE PUNTA A PUNTA: un vídeo de 4 planos con rótulos generado con FFmpeg
 //      → el trabajador de verdad lo mide → la función lo estudia → la
 //      plantilla tiene los cortes y las duraciones del vídeo. Necesita FFmpeg y
@@ -988,9 +989,9 @@ describe('visión en los adaptadores de texto (sin llamar a nadie)', () => {
   });
 });
 
-// ───────────────────────────── 3. Plantillas de reel de marca ─────────────────────────────
+// ───────────────────────────── 3. La estructura del análisis y su pieza ─────────────────────────────
 
-describe('plantillas de reel de la marca', () => {
+describe('la estructura que sale del análisis', () => {
   const spec = (name = 'Gancho + pasos + cierre') => ({
     schemaVersion: 1,
     name,
@@ -1005,67 +1006,6 @@ describe('plantillas de reel de la marca', () => {
     texts: [{ id: 't1', role: 'gancho', position: 'top', size: 'grande', fromShot: 's1', toShot: 's1', start: 0, end: 2, maxChars: 40 }],
     cover: { at: 1.2, note: 'El producto' },
   });
-  const save = (user: TestUser, brand: string, name: string, value: unknown, ref: string | null = null) =>
-    as<{ data: Row }>(
-      db,
-      user,
-      `select to_jsonb(t) as data from public.save_brand_reel_template($1, $2, $3::jsonb, $4) t`,
-      [brand, name, JSON.stringify(value), ref],
-    ).then((rows) => rows[0]!.data);
-
-  it('quien edita guarda la plantilla de un análisis; la clave sale del nombre y no pisa otra', async () => {
-    const t = await setup();
-    const fn = createFunction();
-    const done = await measured(t, fn.files);
-    await fn.call(login(t.editor), { action: 'create', brandId: t.brand, referenceId: done.id });
-    const result = parseReelLikeResult((await reference(done.id))!.result) as ReelLikeResult;
-
-    const first = await save(t.editor, t.brand, '  Gancho + 3 pasos (versión Ñ)  ', result.template, done.id);
-    expect(first).toMatchObject({
-      brand_id: t.brand,
-      organization_id: t.org,
-      template_key: 'gancho-3-pasos-version-n',
-      name: 'Gancho + 3 pasos (versión Ñ)',
-      source: 'reel_reference',
-      reference_id: done.id,
-      created_by: t.editor.id,
-    });
-    // Lo guardado se vuelve a leer con el esquema compartido, igual que salió.
-    expect(parseBrandReelTemplate(first.spec)).toEqual(result.template);
-    const second = await save(t.editor, t.brand, 'Gancho + 3 pasos (versión Ñ)', spec());
-    expect(second).toMatchObject({ template_key: 'gancho-3-pasos-version-n-2', source: 'manual', reference_id: null });
-    expect((await save(t.editor, t.brand, '¡¡¡', spec())).template_key).toBe('plantilla');
-
-    // Borrar el análisis no borra la plantilla.
-    await as(db, t.editor, `select public.discard_reel_reference($1)`, [done.id]);
-    const [kept] = await as<Row>(db, t.viewer, `select reference_id from public.brand_reel_templates where id = $1`, [first.id]);
-    expect(kept).toEqual({ reference_id: null });
-  });
-
-  it('valida la forma, el permiso y que el análisis sea de la marca', async () => {
-    const t = await setup();
-    const other = await setup();
-    const theirs = await measured(other, new Map());
-    const bad = (value: unknown, name = 'Plantilla') => expect(save(t.editor, t.brand, name, value)).rejects.toThrow(/forma esperada|nombre/);
-    await bad({ ...spec(), schemaVersion: 2 });
-    await bad({ ...spec(), shots: [] });
-    await bad({ ...spec(), shots: 'no' });
-    await bad(spec(), '   ');
-    await bad(spec(), 'x'.repeat(121));
-    await expect(save(t.viewer, t.brand, 'Plantilla', spec())).rejects.toThrow(/No tienes permiso/);
-    await expect(save(other.owner, t.brand, 'Plantilla', spec())).rejects.toThrow(/No tienes permiso/);
-    await expect(save(t.editor, t.brand, 'Plantilla', spec(), theirs.id)).rejects.toThrow(/no es de esta marca/);
-
-    const row = await save(t.editor, t.brand, 'Plantilla', spec());
-    expect(await as(db, other.owner, `select id from public.brand_reel_templates where id = $1`, [row.id])).toEqual([]);
-    await denied(db, t.owner, `update public.brand_reel_templates set name = 'otra' where id = $1`, [row.id]);
-    await denied(db, t.owner, `delete from public.brand_reel_templates where id = $1`, [row.id]);
-    await denied(db, t.viewer, `select public.delete_brand_reel_template($1)`, [row.id]);
-    await denied(db, other.owner, `select public.delete_brand_reel_template($1)`, [row.id]);
-    await as(db, t.editor, `select public.delete_brand_reel_template($1)`, [row.id]);
-    expect(await db.query(`select 1 from public.brand_reel_templates where id = $1`, [row.id])).toEqual([]);
-  });
-
   it('el esquema compartido deja la plantilla en su forma canónica y rechaza lo que no lo es', () => {
     const parsed = parseBrandReelTemplate({
       ...spec(),

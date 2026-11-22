@@ -1,6 +1,6 @@
 -- Vuelta atrás de 20261223010000_reel_like.sql: quita «Hacer un reel como este».
--- Los análisis en marcha se cancelan; se BORRAN los análisis (reel_references) y las
--- plantillas de reel de marca (brand_reel_templates). Antes, los archivos de los análisis
+-- Los análisis en marcha se cancelan y se BORRAN los análisis (reel_references); las plantillas
+-- de reel guardadas a partir de ellos (brand_reel_templates, migración 20261224010000) se quedan. Antes, los archivos de los análisis
 -- que quedaran (vídeos de referencia, fotogramas, sonido) pasan a la cola de limpieza para
 -- que no se queden huérfanos. Las piezas de reel creadas a partir de un análisis se quedan.
 
@@ -13,8 +13,6 @@ where r.files_released_at is null or r.source_path is not null;
 
 drop trigger if exists jobs_sync_reel_reference on public.jobs;
 drop function if exists private.jobs_sync_reel_reference();
-drop function if exists public.delete_brand_reel_template(uuid);
-drop function if exists public.save_brand_reel_template(uuid, text, jsonb, uuid);
 drop function if exists public.set_reel_reference_content(uuid, uuid);
 drop function if exists public.discard_reel_reference(uuid);
 drop function if exists public.reel_references_expire(uuid);
@@ -144,7 +142,6 @@ drop function if exists private.reel_references_expire(uuid);
 drop function if exists private.reel_reference_release_files(uuid, boolean);
 drop function if exists private.reel_reference_file_paths(public.reel_references, boolean);
 
-drop table if exists public.brand_reel_templates;
 drop table if exists public.reel_references;
 
 revoke all on function private.media_jobs_this_month(uuid) from public, anon, authenticated;

@@ -1580,7 +1580,8 @@ type Table<Row, Insert = never, Update = never> = {
 // ───────────── «Hacer un reel como este» (migración 20261223010000) ─────────────
 // El cliente solo LEE estas tablas (RLS: quien ve la marca); todo se escribe por
 // funciones. `measurement` es lo que mide el trabajador sin IA y `result`, la
-// plantilla, el guion y los textos (supabase/functions/_shared/reels/like.ts).
+// estructura, el guion y los textos (supabase/functions/_shared/reels/like.ts).
+// La plantilla reutilizable se guarda en `brand_reel_templates` (formato compartido).
 
 export type ReelReferenceStatus = 'analyzing' | 'measured' | 'ready' | 'failed' | 'expired';
 
@@ -1611,34 +1612,13 @@ export type ReelReferenceRow = {
   updated_at: string;
 };
 
-export type BrandReelTemplateRow = {
-  id: string;
-  brand_id: string;
-  organization_id: string;
-  template_key: string;
-  name: string;
-  /** `BrandReelTemplate` (esquema 1). */
-  spec: Json;
-  source: 'reel_reference' | 'manual';
-  reference_id: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
 type ReelLikeTables = {
   reel_references: Table<ReelReferenceRow>;
-  brand_reel_templates: Table<BrandReelTemplateRow>;
 };
 
 type ReelLikeFunctions = {
   discard_reel_reference: { Args: { p_reference_id: string }; Returns: string[] };
   set_reel_reference_content: { Args: { p_reference_id: string; p_content_id: string }; Returns: ReelReferenceRow };
-  save_brand_reel_template: {
-    Args: { p_brand_id: string; p_name: string; p_spec: Json; p_reference_id?: string | null };
-    Returns: BrandReelTemplateRow;
-  };
-  delete_brand_reel_template: { Args: { p_template_id: string }; Returns: undefined };
 };
 
 // ───────────── Operación y control de gasto (migración 20261219010000) ─────────────

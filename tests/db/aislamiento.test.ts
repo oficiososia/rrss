@@ -222,9 +222,8 @@ const TENANT_TABLES = [
   'brand_design_templates',
   // Operación y control de gasto (avisos solo para superadministradores).
   'platform_alerts',
-  // «Hacer un reel como este»: análisis de vídeos de referencia y plantillas de reel de marca.
+  // «Hacer un reel como este»: análisis de vídeos de referencia.
   'reel_references',
-  'brand_reel_templates',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -2992,32 +2991,17 @@ describe('«Hacer un reel como este» (20261223010000)', () => {
       `select to_jsonb(j) as data from public.request_media_job($1, 'media.reel.analyze', $2::jsonb, $3) j`,
       [brand, JSON.stringify({ source: { path: `${org}/${brand}/referencias/${randomUUID()}.mp4` } }), key],
     ).then((rows) => rows[0]!.data);
-  const plantilla = JSON.stringify({
-    schemaVersion: 1,
-    name: 'Plantilla',
-    shots: [
-      { id: 's1', seconds: 2, kind: 'detalle', media: 'video', description: '', transition: { type: 'cut', seconds: 0 } },
-    ],
-    texts: [],
-  });
-  const guardar = (user: TestUser, brand: string) =>
-    as<{ id: string }>(db, user, `select id from public.save_brand_reel_template($1, 'Plantilla', $2::jsonb)`, [
-      brand,
-      plantilla,
-    ]).then((rows) => rows[0]!.id);
   let refA1: string;
   let refB1: string;
   let jobRefA1: string;
 
-  it('una organización no ve los análisis ni las plantillas de reel de otra', async () => {
+  it('una organización no ve los análisis de vídeos de referencia de otra', async () => {
     const a = await analizar(editorA, marcaA1, orgA, 'aislamiento-reel-como-este-a1');
     const b = await analizar(berta, marcaB1, orgB, 'aislamiento-reel-como-este-b1');
     refA1 = a.payload.reference.id;
     refB1 = b.payload.reference.id;
     jobRefA1 = a.id;
-    await guardar(editorA, marcaA1);
-    await guardar(berta, marcaB1);
-    for (const table of ['reel_references', 'brand_reel_templates']) {
+    for (const table of ['reel_references']) {
       const deB = await as(db, berta, `select distinct organization_id::text as org from public.${table}`);
       expect(
         deB.map((r) => r.org),
@@ -3071,17 +3055,14 @@ describe('«Hacer un reel como este» (20261223010000)', () => {
     }
   });
 
-  it('nadie escribe estas tablas desde la API, ni descarta, enlaza o guarda en lo de otro', async () => {
-    for (const table of ['reel_references', 'brand_reel_templates']) {
-      await denied(db, ana, `delete from public.${table}`, [], /permission denied/);
-      await denied(db, ana, `update public.${table} set id = id`, [], /permission denied/);
-    }
+  it('nadie escribe la tabla desde la API, ni descarta o enlaza lo de otro', async () => {
+    await denied(db, ana, `delete from public.reel_references`, [], /permission denied/);
+    await denied(db, ana, `update public.reel_references set id = id`, [], /permission denied/);
     await denied(
       db,
       ana,
-      `insert into public.brand_reel_templates (brand_id, organization_id, template_key, name, spec)
-       values ($1, $2, 'x', 'x', $3::jsonb)`,
-      [marcaA1, orgA, plantilla],
+      `insert into public.reel_references (id, brand_id, organization_id, source_kind) values ($1, $2, $3, 'link')`,
+      [randomUUID(), marcaA1, orgA],
       /permission denied/,
     );
     for (const user of [berta, clienteA, sinMarcaA, ajeno]) {
@@ -3093,22 +3074,15 @@ describe('«Hacer un reel como este» (20261223010000)', () => {
         [refA1, contentA1],
         /No tienes permiso/,
       );
-      await denied(
-        db,
-        user,
-        `select public.save_brand_reel_template($1, 'Otra', $2::jsonb)`,
-        [marcaA1, plantilla],
-        /No tienes permiso/,
-      );
       await denied(db, user, `select public.cancel_media_job($1)`, [jobRefA1], /No tienes permiso/);
     }
-    // El análisis de otra organización no vale como origen de una plantilla propia.
+    // Ni se enlaza el análisis propio con la pieza de otra organización.
     await denied(
       db,
       editorA,
-      `select public.save_brand_reel_template($1, 'Otra', $2::jsonb, $3)`,
-      [marcaA1, plantilla, refB1],
-      /no es de esta marca/,
+      `select public.set_reel_reference_content($1, $2)`,
+      [refA1, contentB1],
+      /no es un reel de esta marca/,
     );
     await denied(db, null, `select public.discard_reel_reference($1)`, [refA1], /permission denied/);
   });

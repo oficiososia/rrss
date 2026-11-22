@@ -8,12 +8,9 @@
 --      el trabajo `media.reel.analyze` (que mide el vídeo SIN IA en el
 --      trabajador de medios), recibe la medición al terminar el trabajo y el
 --      resultado de la IA por la función `ai-reel-like` (clave de servicio).
---   2. `brand_reel_templates`: plantillas de reel reutilizables POR MARCA
---      (estructura: planos, duraciones, textos, ritmo, portada). Esquema mínimo
---      propio (`spec.schemaVersion` = 1, validado en
---      supabase/functions/_shared/reels/like.ts) hasta que converja con el
---      catálogo de plantillas de reel (rama f35/catalogo-plantillas): ver
---      docs/reel-como-este.md, «Convergencia».
+--   2. La PLANTILLA reutilizable que sale del análisis NO se guarda aquí: va a
+--      `brand_reel_templates` (migración 20261224010000, formato compartido
+--      `rrss.reel-template`), con `deliver_reel_templates(…, 'reference')`.
 --   3. `request_media_job`, `cancel_media_job`, `jobs_plan_limit` y la cuenta
 --      mensual admiten el tipo nuevo. `worker-gateway` no cambia: el tipo
 --      `media.%` ya pasa (`private.is_media_worker_kind`).
@@ -25,7 +22,7 @@
 --
 -- Vuelta atrás: supabase/rollbacks/20261223010000_reel_like.sql
 
--- ───────────────────────────── Tablas ─────────────────────────────
+-- ───────────────────────────── Tabla ─────────────────────────────
 
 create table public.reel_references (
   id uuid primary key,
@@ -68,41 +65,15 @@ create index reel_references_brand_idx on public.reel_references (brand_id, crea
 create index reel_references_content_idx on public.reel_references (content_id) where content_id is not null;
 create unique index reel_references_source_path_idx on public.reel_references (source_path) where source_path is not null;
 
-create table public.brand_reel_templates (
-  id uuid primary key default gen_random_uuid(),
-  brand_id uuid not null,
-  organization_id uuid not null,
-  -- Clave estable dentro de la marca (como `brand_design_templates.template_key`).
-  template_key text not null check (template_key ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
-  name text not null check (char_length(name) between 1 and 120),
-  -- La plantilla (la validación completa es la del esquema compartido de la aplicación).
-  spec jsonb not null check (jsonb_typeof(spec) = 'object' and (spec ->> 'schemaVersion') = '1'
-                             and jsonb_typeof(spec -> 'shots') = 'array'
-                             and pg_column_size(spec) <= 65536),
-  source text not null default 'reel_reference' check (source in ('reel_reference', 'manual')),
-  reference_id uuid references public.reel_references (id) on delete set null,
-  created_by uuid references auth.users (id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  foreign key (brand_id, organization_id) references public.brands (id, organization_id) on delete cascade,
-  unique (brand_id, template_key)
-);
-create index brand_reel_templates_brand_idx on public.brand_reel_templates (brand_id, created_at desc);
-
 -- ───────────────────────── Seguridad a nivel de fila ─────────────────────────
 
 alter table public.reel_references enable row level security;
-alter table public.brand_reel_templates enable row level security;
 
 -- Lo ve quien ve la marca. No hay políticas de escritura: todo entra por funciones.
 create policy reel_references_select on public.reel_references for select to authenticated
   using (brand_id in (select private.brand_ids_with('view')));
-create policy brand_reel_templates_select on public.brand_reel_templates for select to authenticated
-  using (brand_id in (select private.brand_ids_with('view')));
 
 create trigger reel_references_touch before update on public.reel_references
-  for each row execute function private.touch_updated_at();
-create trigger brand_reel_templates_touch before update on public.brand_reel_templates
   for each row execute function private.touch_updated_at();
 
 -- ───────────────────────── Archivos del análisis ─────────────────────────
@@ -556,80 +527,11 @@ begin
   return v_ref;
 end $$;
 
--- Guarda una plantilla de reel de la marca. La clave sale del nombre; si ya
--- existe, se le añade un número (no se pisa una plantilla con otra).
-create function public.save_brand_reel_template(
-  p_brand_id uuid,
-  p_name text,
-  p_spec jsonb,
-  p_reference_id uuid default null
-) returns public.brand_reel_templates
-language plpgsql security definer set search_path = '' as $$
-declare
-  v_user uuid := (select auth.uid());
-  v_org uuid;
-  v_name text := btrim(coalesce(p_name, ''));
-  v_base text;
-  v_key text;
-  v_n integer := 1;
-  v_row public.brand_reel_templates;
-begin
-  if v_user is null then
-    raise exception 'Inicia sesión para guardar plantillas' using errcode = '42501';
-  end if;
-  if p_brand_id is null or p_brand_id not in (select private.brand_ids_with('edit')) then
-    raise exception 'No tienes permiso para guardar plantillas en esta marca' using errcode = '42501';
-  end if;
-  if char_length(v_name) not between 1 and 120 then
-    raise exception 'Ponle un nombre a la plantilla (hasta 120 caracteres)' using errcode = '22023';
-  end if;
-  if jsonb_typeof(p_spec) is distinct from 'object' or (p_spec ->> 'schemaVersion') is distinct from '1'
-     or jsonb_typeof(p_spec -> 'shots') is distinct from 'array'
-     or jsonb_array_length(p_spec -> 'shots') not between 1 and 30
-     or pg_column_size(p_spec) > 65536 then
-    raise exception 'La plantilla no tiene la forma esperada' using errcode = '22023';
-  end if;
-  if p_reference_id is not null and not exists (
-    select 1 from public.reel_references r where r.id = p_reference_id and r.brand_id = p_brand_id
-  ) then
-    raise exception 'Ese análisis no es de esta marca' using errcode = '22023';
-  end if;
-  select b.organization_id into v_org from public.brands b where b.id = p_brand_id for update;
-
-  v_base := btrim(regexp_replace(lower(translate(v_name, 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunaeiouun')), '[^a-z0-9]+', '-', 'g'), '-');
-  v_base := left(case when v_base = '' then 'plantilla' else v_base end, 56);
-  v_key := v_base;
-  while exists (select 1 from public.brand_reel_templates t where t.brand_id = p_brand_id and t.template_key = v_key) loop
-    v_n := v_n + 1;
-    v_key := v_base || '-' || v_n;
-  end loop;
-
-  insert into public.brand_reel_templates (brand_id, organization_id, template_key, name, spec, source,
-                                           reference_id, created_by)
-  values (p_brand_id, v_org, v_key, v_name, p_spec,
-          case when p_reference_id is null then 'manual' else 'reel_reference' end, p_reference_id, v_user)
-  returning * into v_row;
-  return v_row;
-end $$;
-
-create function public.delete_brand_reel_template(p_template_id uuid) returns void
-language plpgsql security definer set search_path = '' as $$
-begin
-  if (select auth.uid()) is null then
-    raise exception 'Inicia sesión para borrar plantillas' using errcode = '42501';
-  end if;
-  delete from public.brand_reel_templates t
-  where t.id = p_template_id and t.brand_id in (select private.brand_ids_with('edit'));
-  if not found then
-    raise exception 'No tienes permiso para borrar esta plantilla' using errcode = '42501';
-  end if;
-end $$;
-
 -- ───────────────────────────── Privilegios ─────────────────────────────
 
-revoke all on public.reel_references, public.brand_reel_templates from anon, authenticated, public;
-grant select on public.reel_references, public.brand_reel_templates to authenticated;
-grant all on public.reel_references, public.brand_reel_templates to service_role;
+revoke all on public.reel_references from anon, authenticated, public;
+grant select on public.reel_references to authenticated;
+grant all on public.reel_references to service_role;
 
 revoke all on function private.reel_reference_file_paths(public.reel_references, boolean) from public, anon, authenticated;
 revoke all on function private.reel_reference_release_files(uuid, boolean) from public, anon, authenticated;
@@ -654,7 +556,3 @@ revoke all on function public.discard_reel_reference(uuid) from public, anon;
 grant execute on function public.discard_reel_reference(uuid) to authenticated;
 revoke all on function public.set_reel_reference_content(uuid, uuid) from public, anon;
 grant execute on function public.set_reel_reference_content(uuid, uuid) to authenticated;
-revoke all on function public.save_brand_reel_template(uuid, text, jsonb, uuid) from public, anon;
-grant execute on function public.save_brand_reel_template(uuid, text, jsonb, uuid) to authenticated;
-revoke all on function public.delete_brand_reel_template(uuid) from public, anon;
-grant execute on function public.delete_brand_reel_template(uuid) to authenticated;
