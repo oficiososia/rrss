@@ -28,7 +28,15 @@ import { z } from 'zod';
 //      Un documento de la 4 se lee igual. Se sube la versión por la misma
 //      razón que en la 3: una aplicación anterior no debe abrir (y al guardar
 //      perder) lo que no sabe dibujar.
-export const DOCUMENT_SCHEMA_VERSION = 5;
+//   6  marcos de foto: una imagen puede ser un hueco todavía sin foto
+//      (`source: { kind: 'empty' }`) y llevar la marca `frame` (es un hueco de
+//      una plantilla: una foto que se suelta encima la rellena en vez de
+//      añadirse aparte); `zoom` amplía la foto dentro de su caja. El texto de
+//      la publicación gana `captionHint`: el pie de ejemplo de una plantilla,
+//      que se enseña en gris y nunca se publica. Un documento de la 5 se lee
+//      igual, salvo los marcadores de foto del catálogo (una forma llamada
+//      «… (sustituir)»), que pasan a ser marcos vacíos (ver migrate.ts).
+export const DOCUMENT_SCHEMA_VERSION = 6;
 
 /** Desenfoque máximo de una imagen (intensidad, en %). */
 export const MAX_IMAGE_BLUR = 100;
@@ -131,11 +139,20 @@ const layerBase = {
   aiGenerated: z.boolean().optional(),
 };
 
-/** De dónde sale una imagen: un recurso de la biblioteca o una generación de IA. Nunca la imagen incrustada. */
+/**
+ * De dónde sale una imagen: un recurso de la biblioteca o una generación de IA.
+ * Nunca la imagen incrustada. `empty` (versión 6) es un marco que todavía no
+ * tiene foto: en el editor se ve como un hueco con «Poner foto» y no sale en la
+ * imagen exportada.
+ */
 export const imageSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('asset'), assetId: z.string().uuid() }),
   z.object({ kind: z.literal('generation'), generationId: z.string().uuid() }),
+  z.object({ kind: z.literal('empty') }),
 ]);
+
+/** Cuánto se puede ampliar una foto dentro de su marco. */
+export const MAX_FRAME_ZOOM = 5;
 
 
 // ── Ediciones sencillas (versión 5) ──────────────────────────────────────
@@ -257,6 +274,16 @@ const imageLayerSchema = z.object({
   backdrop: backdropSchema.optional(),
   /** Sombra de lo que se ve de la foto (útil en un recorte sin fondo). */
   shadow: shadowSchema.optional(),
+  /**
+   * Es un marco de foto (versión 6): el hueco de una plantilla. Una foto que se
+   * suelta encima, o que se añade con él elegido, lo rellena. Sin marca, el campo no está.
+   */
+  frame: z.literal(true).optional(),
+  /**
+   * Ampliación de la foto dentro de su caja con el encaje `cover` (versión 6):
+   * 1 = justo lo que hace falta para llenarla. Sin ampliar, el campo no está.
+   */
+  zoom: z.number().finite().min(1).max(MAX_FRAME_ZOOM).optional(),
 });
 
 /**
@@ -368,6 +395,11 @@ const tag = (prefix: string, pattern: RegExp, message: string) =>
 export const postCopySchema = z.object({
   /** Pie o cuerpo de la publicación. */
   caption: z.string().max(10_000).default(''),
+  /**
+   * Pie de ejemplo (versión 6): la indicación que trae una plantilla sobre qué
+   * escribir. Se enseña en gris en el campo del pie y NO se publica nunca.
+   */
+  captionHint: z.string().max(10_000).optional(),
   /** Sin la almohadilla. */
   hashtags: z
     .array(tag('#', /^[\p{L}\p{N}_]+$/u, 'Un hashtag solo admite letras, números y guion bajo'))
@@ -455,3 +487,13 @@ export type ShapeLayer = Extract<Layer, { type: 'shape' }>;
 export type ImageSource = z.infer<typeof imageSourceSchema>;
 export type LayerAnchor = Layer['anchor'];
 export type PostCopy = z.infer<typeof postCopySchema>;
+
+/** ¿Es un marco de foto (un hueco de plantilla, con foto o sin ella)? */
+export function isFrame(layer: Layer): boolean {
+  return layer.type === 'image' && (layer.frame === true || layer.source.kind === 'empty');
+}
+
+/** ¿Es un marco que todavía no tiene foto? */
+export function isEmptyFrame(layer: Layer): boolean {
+  return layer.type === 'image' && layer.source.kind === 'empty';
+}

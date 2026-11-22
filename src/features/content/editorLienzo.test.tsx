@@ -282,7 +282,7 @@ describe('Campo de texto sobre el lienzo', () => {
     expect(textEditStyle({ ...layer, rotation: 0 }, 1).transform).toBeUndefined();
   });
 
-  it('Intro confirma, Mayúsculas+Intro hace otra línea y Escape cancela; tiene nombre accesible', async () => {
+  it('Intro confirma, Mayúsculas+Intro hace otra línea y Escape termina conservando lo escrito; tiene nombre accesible', async () => {
     const user = userEvent.setup();
     const onCommit = vi.fn();
     const onCancel = vi.fn();
@@ -296,9 +296,11 @@ describe('Campo de texto sobre el lienzo', () => {
     unmount();
 
     render(<TextEditOverlay layer={layer} scale={1} onCommit={onCommit} onCancel={onCancel} />);
-    await user.keyboard('x{Escape}');
-    expect(onCancel).toHaveBeenCalledTimes(1);
-    expect(onCommit).toHaveBeenCalledTimes(1);
+    // Escape NO borra lo que se acaba de escribir: sale de la edición y lo conserva (se deshace con Ctrl+Z).
+    await user.keyboard('Titular nuevo{Escape}');
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    expect(onCommit).toHaveBeenLastCalledWith('Titular nuevo');
   });
 
   it('al salir del campo (clic fuera) confirma', () => {

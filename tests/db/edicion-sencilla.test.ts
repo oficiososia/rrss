@@ -65,7 +65,8 @@ async function insertTemplate(version: number | string, extra: Record<string, un
 describe('plantillas con el documento v5', () => {
   it('acepta las versiones 3, 4 y 5 y rechaza las demás', async () => {
     for (const version of [3, 4, 5]) await expect(insertTemplate(version), `v${version}`).resolves.toHaveLength(1);
-    await expect(insertTemplate(6)).rejects.toThrow(/brand_design_templates_document_check/);
+    // La 6 (marcos de foto) llegó después: migración 20270103010000, probada en marcos-borradores.test.ts.
+    await expect(insertTemplate(7)).rejects.toThrow(/brand_design_templates_document_check/);
     await expect(insertTemplate(2)).rejects.toThrow(/brand_design_templates_document_check/);
   });
 

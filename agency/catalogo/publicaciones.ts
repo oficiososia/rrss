@@ -3,9 +3,10 @@
 // un documento v5 del editor. Todo en 4:5 (1080 × 1350), con 72 px de margen:
 // lo importante queda dentro del recorte 3:4 de la cuadrícula del perfil.
 //
-// Las fotos son MARCADORES (una forma con el nombre «Foto (sustituir)»): una
-// plantilla no puede llevar fotos que no sean de la biblioteca de la marca, y el
-// catálogo no tiene ninguna. Quien usa la plantilla pone la suya encima.
+// Las fotos son MARCOS vacíos (documento v6): una plantilla no puede llevar
+// fotos que no sean de la biblioteca de la marca, y el catálogo no tiene
+// ninguna. Quien usa la plantilla pulsa el hueco («Poner foto») o suelta su foto
+// encima, y la foto rellena el marco. El nombre del marco dice qué foto va ahí.
 import type { DocumentPageInput, LayerInput } from '../../src/features/content/document/schema.ts';
 import type { Theme } from './tema.ts';
 
@@ -50,23 +51,17 @@ function tools(theme: Theme, look: Look, page: string) {
     onSurface,
     accentOnSurface,
     title: (value: string) => (look.upper ? value.toLocaleUpperCase('es') : value),
-    photo: (
-      name: string,
-      x: number,
-      y: number,
-      width: number,
-      height: number,
-      label = 'Foto (sustituir)',
-    ): LayerInput => ({
+    photo: (name: string, x: number, y: number, width: number, height: number, label = 'Foto'): LayerInput => ({
       id: id(name),
       name: label,
-      type: 'shape',
-      shape: 'rectangle',
+      type: 'image',
+      source: { kind: 'empty' },
+      frame: true,
+      fit: 'cover',
       x,
       y,
       width,
       height,
-      fill: theme.placeholder,
       anchor: { x: 'stretch', y: 'stretch' },
     }),
     rect: (
@@ -370,8 +365,8 @@ export function antesYDespues(
     });
   return page(id, 'Antes y después', [
     t.rect('fondo', 0, 0, W, H, theme.dark, { label: 'Fondo' }),
-    t.photo('foto-1', 0, 0, W, 663, 'Foto de antes (sustituir)'),
-    t.photo('foto-2', 0, 687, W, 663, 'Foto de después (sustituir)'),
+    t.photo('foto-1', 0, 0, W, 663, 'Foto de antes'),
+    t.photo('foto-2', 0, 687, W, 663, 'Foto de después'),
     label('etiqueta-1', 60, words.first, theme.dark, theme.onDark),
     label('etiqueta-2', 747, words.second, theme.accent, theme.onAccent),
     ...(words.foot
@@ -437,7 +432,7 @@ export function persona(
 ): DocumentPageInput {
   const t = tools(theme, look, id);
   return page(id, 'Persona', [
-    t.photo('foto', 0, 0, W, H, 'Retrato (sustituir)'),
+    t.photo('foto', 0, 0, W, H, 'Retrato'),
     t.text(
       'nombre',
       M,

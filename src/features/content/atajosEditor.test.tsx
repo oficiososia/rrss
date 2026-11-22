@@ -176,14 +176,15 @@ describe('Atajos del editor de piezas', () => {
     await waitFor(() => expect(layerButtons()).toHaveLength(4));
   });
 
-  it('Ctrl+S abre «Guardar versión» (y no el guardado del navegador)', async () => {
+  it('Ctrl+S guarda la versión al momento (y no abre el guardado del navegador ni un diálogo)', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
     await user.keyboard('{ArrowRight}');
     const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true });
     screen.getByTestId('stub-a').dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
-    expect(await screen.findByTestId('save-note')).toBeInTheDocument();
+    await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
+    expect(screen.queryByTestId('save-note')).not.toBeInTheDocument();
   });
 
   it('las flechas mueven 1 px y con Mayús 10 px; Supr borra y Ctrl+Z recupera', async () => {

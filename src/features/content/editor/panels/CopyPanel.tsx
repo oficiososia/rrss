@@ -56,13 +56,20 @@ export function CopyPanel({ copy, spec, networkName, readOnly, dispatch }: CopyP
               id={id}
               rows={6}
               maxLength={10_000}
-              className={FIELD}
+              className={cn(FIELD, 'placeholder:text-muted')}
               value={copy.caption}
+              // La indicación de la plantilla es un ejemplo: se ve en gris mientras el pie está vacío y no se publica.
+              placeholder={copy.captionHint?.trim() || 'Escribe aquí el texto que acompaña a la publicación…'}
               disabled={readOnly}
               onChange={(e) => set({ caption: e.target.value }, 'caption')}
               onBlur={checkpoint}
               data-testid="copy-caption"
             />
+            {copy.captionHint?.trim() && copy.caption.trim() === '' && (
+              <p className="text-xs text-muted" data-testid="copy-caption-hint">
+                En gris, la indicación de la plantilla: es una guía para escribir el pie, no se publica.
+              </p>
+            )}
             <Counter counter={counters.caption} />
           </>
         )}

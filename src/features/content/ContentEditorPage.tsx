@@ -6,11 +6,13 @@ import {
   ChevronDown,
   ChevronLeft,
   Circle,
+  CloudOff,
   Download,
   History,
   Image as ImageIcon,
   LayoutTemplate,
   Mic,
+  NotebookPen,
   PencilLine,
   Redo2,
   ScanEye,
@@ -18,6 +20,7 @@ import {
   Send,
   SendHorizontal,
   SearchX,
+  Share2,
   Sparkles,
   Square,
   Stamp,
@@ -25,6 +28,8 @@ import {
   Type,
   Undo2,
 } from 'lucide-react';
+import * as Dropdown from '@radix-ui/react-dropdown-menu';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   lazy,
   Suspense,
@@ -45,6 +50,9 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
   Notice,
   MoreMenu,
   Spinner,
@@ -78,7 +86,7 @@ import { loadBrandFonts, useBrandFontFaces } from '@/features/brand/fontsApi';
 import { publishedText } from '@/features/brandcheck/text';
 import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
-import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { assetKeys, previewPath, uploadAsset, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import type { ContentStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -97,6 +105,7 @@ import {
   allLayers,
   createEmptyDocument,
   DocumentError,
+  isEmptyFrame,
   MAX_LAYERS,
   pageLimits,
   pageView,
@@ -105,12 +114,20 @@ import {
 } from './document';
 import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
+import { imageFilesOf, type DraggedAsset } from './editor/assetDrag';
 import { assetIdsOf } from './editor/canvas/nodes';
-import type { CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
-import { activePageIndex, editorReducer, initEditor, type EditorAction } from './editor/history';
+import type { CanvasDrop, CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
+import { canPaste, clipboardIds, copyLayers, pasteLayers } from './editor/clipboard';
+import { discardDraft, fetchDraft, useDraftAutosave, type LoadedDraft } from './editor/drafts';
+import { emptyFramesOf, frameToFill, newPhotoLayer, replacePhotoPatch } from './editor/frames';
+import { activeLayers, activePageIndex, editorReducer, initEditor, type EditorAction } from './editor/history';
 import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { MultiSelectionPanel } from './editor/panels/ArrangeControls';
+import { CropDialog } from './editor/panels/CropDialog';
+import { PointMenu } from './editor/PointMenu';
+import { selectionMenuItems } from './editor/selectionMenu';
+import { SelectionToolbar } from './editor/SelectionToolbar';
 import { CopyPanel } from './editor/panels/CopyPanel';
 import { LayersPanel } from './editor/panels/LayersPanel';
 import { PageStrip } from './editor/panels/PageStrip';
@@ -147,6 +164,8 @@ import { cn } from '@/lib/utils';
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
 // El editor de reels (piezas de formato reel), aparte: solo se descarga al abrir una.
 const ReelEditor = lazy(() => import('@/features/reels/editor/ReelEditor').then((m) => ({ default: m.ReelEditor })));
+// El panel de fotos de la biblioteca (carpetas, buscador, subir), también aparte: solo al abrir su pestaña.
+const PhotoPanel = lazy(() => import('@/features/library/PhotoPanel').then((m) => ({ default: m.PhotoPanel })));
 // El copiloto por voz, también aparte: solo se descarga al pulsar «Dictar».
 const VoiceCopilot = lazy(() => import('./copilot/VoiceCopilot').then((m) => ({ default: m.VoiceCopilot })));
 
@@ -186,8 +205,19 @@ export function ContentEditorPage() {
   // Volver a abrir el editor desde cero con los datos ya refrescados (tras restaurar una versión ilegible).
   const [session, setSession] = useState(0);
   const [searchParams] = useSearchParams();
+  // El borrador que se guardó solo la última vez (si lo hay): se lee una vez, al abrir. Nunca falla:
+  // sin borrador (o sin poder leerlo) se abre la última versión, como siempre.
+  const asReel = content.data?.item.format === 'reel' && searchParams.get('editor') !== 'imagen';
+  const draft = useQuery({
+    queryKey: ['brand', brand.id, 'content-draft', contentId],
+    queryFn: () => fetchDraft(contentId),
+    enabled: content.isSuccess && !asReel,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
 
-  if (content.isPending) return <Spinner />;
+  if (content.isPending || (content.isSuccess && !asReel && draft.isPending)) return <Spinner />;
   if (content.isError) {
     const missing = (content.error as { code?: string } | null)?.code === 'PGRST116';
     return (
@@ -222,7 +252,15 @@ export function ContentEditorPage() {
       </Suspense>
     );
   }
-  return <Editor key={`${contentId}:${session}`} content={content.data} onReopen={() => setSession((n) => n + 1)} />;
+  return (
+    <Editor
+      key={`${contentId}:${session}`}
+      content={content.data}
+      // Tras reabrir (se ha restaurado otra versión), el borrador leído al principio ya no vale.
+      draft={session === 0 ? (draft.data ?? null) : null}
+      onReopen={() => setSession((n) => n + 1)}
+    />
+  );
 }
 
 /**
@@ -230,8 +268,18 @@ export function ContentEditorPage() {
  * después manda el estado del editor, y los refrescos de la pieza (estado,
  * archivado) no pisan los cambios sin guardar.
  */
-function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () => void }) {
+function Editor({
+  content,
+  draft,
+  onReopen,
+}: {
+  content: LoadedContent;
+  /** Borrador sin guardar de la última vez; null si no hay. */
+  draft: LoadedDraft | null;
+  onReopen: () => void;
+}) {
   const initial = content;
+  const queryClient = useQueryClient();
   // Pantalla de trabajo: la página mide justo la ventana y solo hacen scroll los paneles.
   useWorkspaceMode();
   const { org } = useOrg();
@@ -251,12 +299,26 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
   // El documento con el que se abre: la versión vigente o, en una idea sin diseño, uno vacío.
   const [unreadable] = useState(() => (initial.current && !initial.current.document ? initial.current : null));
-  const [initialDocument] = useState(() => initial.current?.document ?? startingDocument(spec));
+  const [versionDocument] = useState(() => initial.current?.document ?? startingDocument(spec));
+  // Con un borrador propio se sigue donde se dejó; la referencia para «hay cambios» sigue siendo la versión.
+  const [resumed] = useState(() => (draft && !readOnly && !unreadable ? draft : null));
+  const [initialDocument] = useState(() => resumed?.document ?? versionDocument);
   const [state, dispatch] = useReducer(editorReducer, initialDocument, initEditor);
-  const [baseline, setBaseline] = useState(() => JSON.stringify(initialDocument));
+  const [baseline, setBaseline] = useState(() => JSON.stringify(versionDocument));
   /** Versión sobre la que se trabaja: la que se manda como «esperada» al guardar, restaurar o cambiar de estado. */
   const [expectedVersion, setExpectedVersion] = useState(initial.item.current_version);
   const dirty = useMemo(() => JSON.stringify(state.document) !== baseline, [state.document, baseline]);
+  // Lo que aún no es una versión se guarda solo, como borrador, cada pocos segundos (ver editor/drafts.ts).
+  const autosave = useDraftAutosave({
+    contentId,
+    document: state.document,
+    baseVersion: expectedVersion,
+    dirty,
+    enabled: !readOnly && !unreadable,
+    startsSaved: resumed !== null,
+  });
+  /** Lo último todavía no está guardado en ningún sitio (ni como versión ni como borrador). */
+  const unsaved = dirty && autosave.status !== 'saved';
 
   const [panel, setPanel] = useState('layer');
   const [saveOpen, setSaveOpen] = useState(false);
@@ -277,7 +339,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   /** En pantallas estrechas, los paneles son una hoja inferior que se abre con las pestañas. */
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [conflict, setConflict] = useState(false);
+  // Un borrador empezado sobre una versión anterior: otra persona guardó después. Se dice igual que un conflicto.
+  const [conflict, setConflict] = useState(() => Boolean(resumed && resumed.baseVersion !== initial.item.current_version));
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -315,8 +378,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   /** Foto (capa) a la que el copiloto ha pedido quitar el fondo; se hace cuando su recurso está listo. */
   const pendingCutout = useRef<string | null>(null);
   const [cutoutRequest, setCutoutRequest] = useState(0);
-  /** Capa cuya foto se va a cambiar por otra de la biblioteca (orden del copiloto). */
+  /** Capa cuya foto se va a poner o a cambiar por otra de la biblioteca (un marco, «Sustituir», el copiloto). */
   const [replaceLayerId, setReplaceLayerId] = useState<string | null>(null);
+  /** Foto que se está encuadrando dentro de su caja, sobre el lienzo. */
+  const [framingId, setFramingId] = useState<string | null>(null);
+  /** Foto que se está recortando (desde la barra flotante). */
+  const [cropLayerId, setCropLayerId] = useState<string | null>(null);
+  /** Menú del botón derecho: dónde se abre. */
+  const [pointMenu, setPointMenu] = useState<{ x: number; y: number } | null>(null);
   const saveEdit = useSaveEdit(brand.id);
   // El estado al día también fuera del ciclo de React: el copiloto encadena
   // órdenes (deshacer y, acto seguido, otra) sin esperar a que se repinte.
@@ -472,13 +541,31 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const aiReasons = useMemo(() => aiContentReasons(state.document, assets.data ?? []), [state.document, assets.data]);
   const aiLabel = aiReasons.length > 0 || (!dirty && item.ai_generated === true);
 
-  // Avisar antes de cerrar la pestaña con cambios sin guardar.
+  // Avisar antes de cerrar la pestaña solo si lo último aún no ha llegado a guardarse (ni como borrador).
   useEffect(() => {
-    if (!dirty) return;
+    if (!unsaved) return;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [unsaved]);
+
+  // Al abrir con un borrador: se dice, y se ofrece volver a la versión guardada.
+  useEffect(() => {
+    if (!resumed) return;
+    toast.message('Sigues donde lo dejaste: hemos recuperado tus cambios sin guardar.', {
+      duration: 10_000,
+      action: {
+        label: 'Descartarlos',
+        onClick: () => {
+          dispatch({ type: 'load', document: versionDocument });
+          setConflict(false);
+          void discardDraft(contentId).catch(() => undefined);
+        },
+      },
+    });
+    // Solo al abrir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
   // contenido se monta después de este efecto.
@@ -561,6 +648,143 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     canvasRef.current?.focus();
   };
 
+  // ── Fotos: marcos, sustituir, soltar y pegar ──
+  /**
+   * Pone una foto de la biblioteca en el diseño. Va al marco indicado; si no se indica ninguno ni un
+   * punto, al marco vacío elegido o al primero vacío de la página; si no hay marcos, es una capa nueva
+   * (a lienzo completo solo si la página está vacía: encima de un diseño entra más pequeña, sin taparlo).
+   */
+  function placePhoto(asset: DraggedAsset, target: { frameId?: string | null; at?: { x: number; y: number } | null } = {}) {
+    const current = stateRef.current;
+    const pageLayers = activeLayers(current);
+    const frame = target.frameId
+      ? pageLayers.find((layer) => layer.id === target.frameId)
+      : target.at
+        ? undefined
+        : (frameToFill(pageLayers, current.selectedIds) ?? undefined);
+    if (frame?.type === 'image') {
+      run({ type: 'update', id: frame.id, patch: replacePhotoPatch(asset.id) });
+      run({ type: 'select', id: frame.id, exact: true });
+      setPanel('layer');
+      return;
+    }
+    if (pageLayers.length >= MAX_LAYERS) {
+      toast.error(`La página ya tiene el máximo de ${MAX_LAYERS} capas.`);
+      return;
+    }
+    const everything = allLayers(current.document);
+    const size = current.document.canvas;
+    run({
+      type: 'add',
+      layer:
+        pageLayers.length === 0
+          ? newImageLayer(size, everything, asset)
+          : newPhotoLayer(size, everything, asset, target.at ?? undefined),
+    });
+    setPanel('layer');
+  }
+
+  /** Sube fotos del dispositivo a la biblioteca de la marca y las pone en el diseño (soltar o pegar). */
+  async function uploadAndPlace(files: File[], target: { frameId?: string | null; at?: { x: number; y: number } | null } = {}) {
+    if (files.length === 0) return;
+    const notice = toast.loading(
+      files.length === 1 ? 'Subiendo la foto a la biblioteca…' : `Subiendo ${files.length} fotos a la biblioteca…`,
+    );
+    try {
+      for (const [index, file] of files.entries()) {
+        const row = await uploadAsset({ organizationId: org.id, brandId: brand.id, file, kind: 'image' });
+        // La primera va donde se soltó; las demás, a los siguientes marcos vacíos o como capas nuevas.
+        placePhoto(
+          { id: row.id, name: row.file_name, width: row.width, height: row.height },
+          index === 0 ? target : {},
+        );
+      }
+      await queryClient.invalidateQueries({ queryKey: assetKeys.all(brand.id) });
+      toast.success(
+        files.length === 1
+          ? 'Foto añadida. Queda también en la biblioteca.'
+          : `${files.length} fotos añadidas. Quedan también en la biblioteca.`,
+        { id: notice },
+      );
+    } catch (error) {
+      toast.error(translateError(error), { id: notice });
+    }
+  }
+
+  const onDropOnCanvas = (drop: CanvasDrop) => {
+    const target = { frameId: drop.frameId, at: drop.at };
+    if (drop.asset) placePhoto(drop.asset, target);
+    else if (drop.files.length > 0) void uploadAndPlace(drop.files, target);
+    if (drop.rejected > 0 && !drop.asset) toast.error('Solo se pueden soltar fotos JPG, PNG o WebP.');
+  };
+
+  /** Doble clic (o Intro) en una foto: encuadrarla dentro de su caja. Solo con el encaje «Llenar». */
+  const startFraming = (id: string) => {
+    const layer = activeLayers(stateRef.current).find((l) => l.id === id);
+    if (!layer || layer.type !== 'image' || layer.locked || readOnly) return;
+    if (isEmptyFrame(layer)) {
+      setReplaceLayerId(id);
+      return;
+    }
+    run({ type: 'select', id, exact: true });
+    if (layer.fit !== 'cover') {
+      toast.message('Para moverla dentro del marco, pon su encaje en «Llenar» (panel Diseño).');
+      return;
+    }
+    // Toda la sesión de encuadre es un solo paso de deshacer.
+    run({ type: 'checkpoint' });
+    setFramingId(id);
+  };
+  const endFraming = () => {
+    setFramingId(null);
+    dispatch({ type: 'checkpoint' });
+    canvasRef.current?.focus();
+  };
+  // Si la foto que se encuadraba deja de estar a la vista (otra página, deshacer, borrarla), no hay encuadre.
+  const activeFramingId =
+    framingId !== null && layers.some((layer) => layer.id === framingId && layer.type === 'image') ? framingId : null;
+
+  // ── Copiar, pegar y duplicar ──
+  const copySelection = () => {
+    const chosen = activeLayers(stateRef.current).filter((layer) => stateRef.current.selectedIds.includes(layer.id));
+    return copyLayers(brand.id, chosen);
+  };
+  const pasteClipboard = () => {
+    const current = stateRef.current;
+    const pageLayers = activeLayers(current);
+    const samePage = clipboardIds().some((id) => pageLayers.some((layer) => layer.id === id));
+    const copies = pasteLayers(brand.id, allLayers(current.document), current.document.canvas, samePage);
+    if (copies.length === 0) return false;
+    if (pageLayers.length + copies.length > MAX_LAYERS) {
+      toast.error(`No caben: la página admite como mucho ${MAX_LAYERS} capas.`);
+      return true;
+    }
+    run({ type: 'addMany', layers: copies });
+    return true;
+  };
+
+  // Pegar: una imagen del portapapeles del sistema (se sube a la biblioteca) o, si no la hay, lo copiado aquí.
+  const pasteHandler = useRef<(event: ClipboardEvent) => void>(() => undefined);
+  useLayoutEffect(() => {
+    pasteHandler.current = (event) => {
+      if (readOnly || isTypingTarget(event.target)) return;
+      const origin = event.target as Node | null;
+      if (origin !== document.body && !rootRef.current?.contains(origin)) return;
+      const images = imageFilesOf(event.clipboardData?.files);
+      if (images.length > 0) {
+        event.preventDefault();
+        void uploadAndPlace(images);
+      } else if (pasteClipboard()) {
+        event.preventDefault();
+      }
+    };
+  });
+  useEffect(() => {
+    const listener = (event: ClipboardEvent) => pasteHandler.current(event);
+    document.addEventListener('paste', listener);
+    return () => document.removeEventListener('paste', listener);
+  }, []);
+
   // ── Teclado: deshacer, rehacer, guardar y, con una capa elegida, mover, borrar y soltar ──
   // Se escucha en el documento y no solo en el editor: tras cerrar un diálogo (elegir o editar una foto)
   // el foco puede quedar en la página y los atajos deben seguir funcionando. Lo que llega desde un
@@ -578,7 +802,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
     if (mod && key === 's') {
       event.preventDefault();
-      if (!readOnly) setSaveOpen(true);
+      if (!readOnly) saveNow();
       return;
     }
     if (isTypingTarget(event.target)) return;
@@ -587,16 +811,45 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       if (!readOnly) dispatch({ type: event.shiftKey ? 'ungroup' : 'group' });
       return;
     }
+    if (mod && key === 'a') {
+      event.preventDefault();
+      dispatch({ type: 'selectMany', ids: layers.filter((l) => l.visible && !l.locked).map((l) => l.id) });
+      return;
+    }
     if (state.selectedIds.length === 0) return;
     if (event.key === 'Escape') {
       deselect();
       return;
     }
+    // Copiar vale también en solo lectura (pegar, no). Con texto seleccionado en la página, manda el navegador.
+    if (mod && key === 'c') {
+      if (window.getSelection()?.toString()) return;
+      if (copySelection() > 0) event.preventDefault();
+      return;
+    }
     if (readOnly) return;
+    if (mod && key === 'x') {
+      if (copySelection() > 0) {
+        event.preventDefault();
+        dispatch({ type: 'removeSelection' });
+      }
+      return;
+    }
+    if (mod && key === 'd') {
+      event.preventDefault();
+      dispatch({ type: 'duplicateSelection' });
+      return;
+    }
     // Intro con un texto elegido, desde el lienzo: escribir encima (lo mismo que el doble clic).
     if (event.key === 'Enter' && event.target === canvasRef.current && selected?.type === 'text' && !selected.locked) {
       event.preventDefault();
       onEditText(selected.id);
+      return;
+    }
+    // Intro con una foto o un marco elegido: poner la foto (marco vacío) o encuadrarla (lo mismo que el doble clic).
+    if (event.key === 'Enter' && event.target === canvasRef.current && selected?.type === 'image' && !selected.locked) {
+      event.preventDefault();
+      startFraming(selected.id);
       return;
     }
     if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -671,6 +924,16 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     );
   }
 
+  /** «Guardar versión» (botón o Ctrl+S): guarda al momento, sin preguntar nada. La nota, opcional, está en «⋯». */
+  function saveNow() {
+    if (mutations.saveVersion.isPending) return;
+    if (JSON.stringify(stateRef.current.document) === baseline && expectedVersion > 0) {
+      toast.message('No hay cambios que guardar.');
+      return;
+    }
+    void save('', undefined, true, stateRef.current.document);
+  }
+
   /** Tras un conflicto: guardar lo mío encima de la última versión (la otra sigue en el historial). */
   async function saveOverLatest() {
     try {
@@ -722,15 +985,63 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       );
   }
 
-  function changeStatus(to: ContentStatus) {
+  /** Cambia el estado. Devuelve la pieza ya cambiada, o null si no se ha podido (ya se ha avisado). */
+  function changeStatus(to: ContentStatus, version = expectedVersion, quiet = false) {
     setBusyStatus(to);
-    mutations.setStatus
-      .mutateAsync({ contentId, status: to, expectedVersion })
+    return mutations.setStatus
+      .mutateAsync({ contentId, status: to, expectedVersion: version })
       .then(
-        () => toast.success(statusChangedMessage(to)),
-        (error: unknown) => handleConflictOr(error),
+        (row) => {
+          if (!quiet) toast.success(statusChangedMessage(to));
+          return row;
+        },
+        (error: unknown) => {
+          handleConflictOr(error);
+          return null;
+        },
       )
       .finally(() => setBusyStatus(null));
+  }
+
+  /**
+   * Lo que hay en pantalla, guardado como versión: la que ya hay si no ha cambiado nada, o una nueva.
+   * Devuelve su número, o null si no se ha podido guardar (ya se ha avisado).
+   */
+  async function ensureVersion(): Promise<number | null> {
+    const document = stateRef.current.document;
+    if (JSON.stringify(document) === baseline && expectedVersion > 0) return expectedVersion;
+    return save('', undefined, true, document);
+  }
+
+  /** Un cambio de estado pedido por la persona: si hay cambios sin versión, primero se guardan. */
+  async function advance(action: StatusAction) {
+    const needsSave = dirty || (action.needsVersion && expectedVersion === 0);
+    const version = needsSave ? await ensureVersion() : expectedVersion;
+    if (version === null) return;
+    await changeStatus(action.to, version);
+  }
+
+  /**
+   * Antes de publicar o programar desde el editor: deja la pieza guardada y aprobada. Solo se llama
+   * cuando la persona puede aprobar; lo dice el propio botón («Aprobar y publicar ahora…»).
+   */
+  async function approveForPublishing(): Promise<boolean> {
+    const version = await ensureVersion();
+    if (version === null) return false;
+    // Guardar una versión nueva retira la aprobación: se aprueba la que se va a publicar.
+    if (item.status === 'approved' && !dirty) return true;
+    const row = await changeStatus('approved', version, true);
+    return row?.status === 'approved';
+  }
+
+  async function openPublishNow() {
+    if (needsApproval && !(await approveForPublishing())) return;
+    setPublishNowOpen(true);
+  }
+
+  async function openSchedule() {
+    if (needsApproval && !(await approveForPublishing())) return;
+    setScheduleOpen(true);
   }
 
   function toggleArchive() {
@@ -760,10 +1071,27 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
     }
   }
 
+  /** Salir del editor: si queda algo sin guardar, se guarda el borrador antes; solo si no se puede, se pregunta. */
+  /** La versión guardada, exportada a JPEG y subida a la biblioteca: lo que el calendario acepta para publicar. */
+  const exportApprovedVersion = () =>
+    exportForPublishing({
+      document: state.document,
+      images,
+      title: item.title,
+      contentId,
+      orgId: org.id,
+      brandId: brand.id,
+      version: expectedVersion,
+      prepareFonts: () => loadBrandFonts(brandFonts.fonts).then(() => undefined),
+    });
+
   function leave(event: MouseEvent<HTMLAnchorElement>) {
-    if (!dirty) return;
+    if (!unsaved) return;
     event.preventDefault();
-    setConfirmLeave(true);
+    void autosave.flush().then((saved) => {
+      if (saved) navigate(paths.list);
+      else setConfirmLeave(true);
+    });
   }
 
   /** Lo que el copiloto pide al editor que no es cambiar el documento. */
@@ -810,6 +1138,59 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
 
   const canvas = state.document.canvas;
   const full = layers.length >= MAX_LAYERS;
+  /** Huecos de foto todavía vacíos (de todas las páginas): no salen en la imagen. */
+  const emptyFrames = useMemo(() => emptyFramesOf(state.document), [state.document]);
+
+  // ── Barra de acciones sobre lo elegido y menú del botón derecho (la misma lista para los dos) ──
+  const selectionMenu = selectionMenuItems({
+    layers: selectedLayers,
+    pageLayers: layers,
+    dispatch,
+    canPaste: canPaste(brand.id),
+    onCopy: () => {
+      if (copySelection() > 0) toast.message('Copiado. Pégalo con Ctrl+V, aquí o en otra página.');
+    },
+    onPaste: () => void pasteClipboard(),
+    onFramePhoto: startFraming,
+    onMoreOptions: () => {
+      setPanel('layer');
+      setSheetOpen(true);
+    },
+  });
+  const selectedPhotoUrl =
+    selected?.type === 'image' && selected.source.kind === 'asset' ? images.get(selected.source.assetId) : undefined;
+  const selectionToolbar =
+    !readOnly && selectedLayers.length > 0 ? (
+      <SelectionToolbar
+        layers={selectedLayers}
+        brandStyle={brandStyle}
+        dispatch={dispatch}
+        onPickPhoto={setReplaceLayerId}
+        onEditPhoto={
+          editablePhoto?.url
+            ? () => {
+                setPhotoEditTab('enhance');
+                setPhotoEditing(true);
+              }
+            : undefined
+        }
+        onCropPhoto={selected && selectedPhotoUrl ? () => setCropLayerId(selected.id) : undefined}
+        onRemoveBackground={
+          editablePhoto?.url && canRemoveBackground()
+            ? () => {
+                pendingCutout.current = editablePhoto.layerId;
+                setCutoutRequest((n) => n + 1);
+              }
+            : undefined
+        }
+        onEditText={onEditText}
+        menu={selectionMenu}
+      />
+    ) : undefined;
+  const cropLayer = layers.find((layer) => layer.id === cropLayerId);
+  const cropUrl =
+    cropLayer?.type === 'image' && cropLayer.source.kind === 'asset' ? images.get(cropLayer.source.assetId) : undefined;
+  const replaceLayer = layers.find((layer) => layer.id === replaceLayerId);
   const actions = statusActions(item, { edit: canEdit, approve: canApprove });
   const allowed = spec ? allowedCanvasRatios(spec, spec.media.includes('image') ? 'image' : spec.media[0]) : null;
   const publishingOn = useFeature('publishing');
@@ -822,19 +1203,22 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   const BrandCheck = BRAND_CHECK_PANEL;
   const videoOnly = spec !== undefined && !spec.media.includes('image');
   const canSchedule = publishingOn && canEdit && !item.archived_at && item.status === 'approved';
-  const primary = editorPrimaryAction(item, actions, {
-    edit: canEdit,
-    publishNow: canPublishNow,
-    schedule: canSchedule,
-  });
+  // Publicar y programar se ofrecen también antes de aprobar a quien puede aprobar: el mismo botón
+  // guarda la versión, la aprueba y sigue. Con cambios después de aprobar pasa lo mismo.
+  const publishable = publishingOn && canEdit && !item.archived_at;
+  const needsApproval = item.status !== 'approved' || dirty;
+  const canApproveNow = canApprove && (item.status === 'draft' || item.status === 'in_review' || dirty || item.status === 'approved');
+  const offerPublishNow =
+    publishable && PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`) && (!needsApproval || canApproveNow);
+  const offerSchedule = publishable && (!needsApproval || canApproveNow);
+  // El botón principal de la cabecera solo cambia el estado (o recupera): publicar y programar van en «Publicar o compartir».
+  const primary = editorPrimaryAction(item, actions, { edit: canEdit, publishNow: false, schedule: false });
 
-  /** Por qué no se puede cambiar de estado ahora (o undefined si se puede). */
+  /** Por qué no se puede cambiar de estado ahora (o undefined si se puede). Con cambios sin versión, se guardan antes. */
   const statusBlocked = (action: StatusAction) =>
-    dirty
-      ? 'Guarda los cambios antes'
-      : action.needsVersion && expectedVersion === 0
-        ? 'Hace falta guardar una versión antes'
-        : undefined;
+    action.needsVersion && expectedVersion === 0 && !dirty && allLayers(state.document).length === 0
+      ? 'El diseño está vacío'
+      : undefined;
 
   const primaryButton = (() => {
     if (!primary) return null;
@@ -847,35 +1231,19 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           </Button>
         );
       case 'publishNow':
-        return (
-          <Button
-            size="sm"
-            disabled={dirty || busyStatus !== null}
-            title={dirty ? 'Guarda los cambios antes' : 'Pide confirmación antes de publicar'}
-            onClick={() => setPublishNowOpen(true)}
-            data-testid="editor-publish-now"
-          >
-            <Send className="h-4 w-4" aria-hidden />
-            <span className="max-sm:sr-only">Publicar ahora</span>
-          </Button>
-        );
       case 'schedule':
-        return (
-          <Button size="sm" disabled={dirty} onClick={() => setScheduleOpen(true)} data-testid="editor-schedule">
-            <CalendarPlus className="h-4 w-4" aria-hidden />
-            <span className="max-sm:sr-only">Programar</span>
-          </Button>
-        );
+        return null;
       case 'status': {
         const { action } = primary;
         const blocked = statusBlocked(action);
         return (
           <Button
+            // Con la pieza sin aprobar, lo principal es avanzar su estado; «Publicar o compartir» va al lado, en secundario.
             size="sm"
-            disabled={Boolean(blocked) || busyStatus !== null}
+            disabled={Boolean(blocked) || busyStatus !== null || mutations.saveVersion.isPending}
             loading={busyStatus === action.to}
-            title={blocked}
-            onClick={() => changeStatus(action.to)}
+            title={blocked ?? (dirty ? 'Guarda los cambios como versión y sigue' : undefined)}
+            onClick={() => void advance(action)}
             data-testid={`status-${action.to}`}
           >
             {action.to === 'approved' ? (
@@ -900,7 +1268,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       id: `status-${action.to}`,
       label: action.label,
       icon: FORWARD_STATUSES.has(action.to) ? SendHorizontal : Undo2,
-      onSelect: () => changeStatus(action.to),
+      onSelect: () => void advance(action),
       disabled: Boolean(blocked) || busyStatus !== null,
       hint: blocked,
       testId: `status-${action.to}`,
@@ -908,13 +1276,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
   };
   const when = <T,>(condition: boolean, item: T): T[] => (condition ? [item] : []);
   const moreActions: MoreMenuItem[] = [
-    {
-      id: 'preview',
-      label: 'Vista previa',
-      icon: ScanEye,
-      onSelect: () => setPreviewOpen(true),
-      testId: 'editor-preview',
-    },
+    ...when<MoreAction>(!readOnly, {
+      id: 'save-note',
+      label: 'Guardar versión con una nota…',
+      icon: NotebookPen,
+      onSelect: () => setSaveOpen(true),
+      hint: 'Qué has cambiado, para quien revise después',
+      testId: 'editor-save-note',
+    }),
     {
       id: 'history',
       label: 'Historial',
@@ -922,33 +1291,8 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
       onSelect: () => setHistoryOpen(true),
       testId: 'editor-history',
     },
-    {
-      id: 'export',
-      label: 'Exportar imagen',
-      icon: Download,
-      onSelect: () => setExportOpen(true),
-      testId: 'editor-export',
-    },
     null,
     ...forward.map(statusItem),
-    ...when<MoreAction>(canPublishNow && primary?.kind !== 'publishNow', {
-      id: 'publish-now',
-      label: 'Publicar ahora',
-      icon: Send,
-      onSelect: () => setPublishNowOpen(true),
-      disabled: dirty || busyStatus !== null,
-      hint: dirty ? 'Guarda los cambios antes' : undefined,
-      testId: 'editor-publish-now',
-    }),
-    ...when<MoreAction>(canSchedule && primary?.kind !== 'schedule', {
-      id: 'schedule',
-      label: 'Programar',
-      icon: CalendarPlus,
-      onSelect: () => setScheduleOpen(true),
-      disabled: dirty,
-      hint: dirty ? 'Guarda los cambios antes' : undefined,
-      testId: 'editor-schedule',
-    }),
     null,
     ...when<MoreAction>(canEdit && !item.archived_at, {
       id: 'settings',
@@ -1055,12 +1399,76 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             <ContentRequestOrigin item={item} />
           </span>
           <span data-testid="editor-version" className="hidden sm:inline">
-            {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar todavía'}
+            {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin versiones todavía'}
           </span>
-          {dirty && (
-            <span className="font-medium text-warning" data-testid="editor-dirty">
-              · Cambios sin guardar
-            </span>
+          {/* Qué pasa con lo último que se ha hecho: se guarda solo. */}
+          {!readOnly &&
+            (dirty ? (
+              <span
+                role="status"
+                // En el móvil va lo primero y solo con el icono: es lo que no debe quedar recortado.
+                className={cn(
+                  'flex shrink-0 items-center gap-1 max-sm:order-first',
+                  autosave.status === 'error' && 'font-medium text-warning',
+                )}
+                title={
+                  autosave.status === 'error'
+                    ? 'No se ha podido guardar el borrador. Comprueba la conexión; «Guardar versión» también lo intenta.'
+                    : 'Tus cambios se guardan solos como borrador. «Guardar versión» los deja en el historial: es lo que se aprueba y se publica.'
+                }
+                data-testid="editor-dirty"
+                data-state={autosave.status}
+              >
+                {autosave.status === 'error' ? (
+                  <>
+                    <CloudOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span className="max-sm:sr-only">Sin guardar</span>
+                    <button
+                      type="button"
+                      className="rounded underline underline-offset-2 hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                      onClick={autosave.retry}
+                      data-testid="editor-save-retry"
+                    >
+                      Reintentar
+                    </button>
+                  </>
+                ) : autosave.status === 'saved' ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <span className="max-sm:sr-only">Borrador guardado</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
+                    <span className="max-sm:sr-only">Guardando…</span>
+                  </>
+                )}
+              </span>
+            ) : (
+              expectedVersion > 0 && (
+                <span
+                  role="status"
+                  className="flex shrink-0 items-center gap-1 max-sm:order-first"
+                  data-testid="editor-saved"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="max-sm:sr-only">Guardado</span>
+                </span>
+              )
+            ))}
+          {emptyFrames.length > 0 && !readOnly && (
+            <button
+              type="button"
+              className="hidden shrink-0 rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary md:inline"
+              title="Un hueco de foto vacío no sale en la imagen. Pulsa para ir a él."
+              onClick={() => {
+                dispatch({ type: 'select', id: emptyFrames[0]!.layer.id, exact: true });
+                setPanel('layer');
+              }}
+              data-testid="editor-empty-frames"
+            >
+              {emptyFrames.length === 1 ? 'Falta 1 foto' : `Faltan ${emptyFrames.length} fotos`}
+            </button>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5" data-testid="page-actions">
@@ -1069,9 +1477,14 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               variant="secondary"
               size="sm"
               className="h-8 px-2.5"
-              onClick={() => setSaveOpen(true)}
+              onClick={saveNow}
+              loading={mutations.saveVersion.isPending}
               disabled={!dirty && expectedVersion > 0}
-              title={!dirty && expectedVersion > 0 ? 'No hay cambios que guardar' : 'Guardar versión (Ctrl+S)'}
+              title={
+                !dirty && expectedVersion > 0
+                  ? 'No hay cambios que guardar'
+                  : 'Guarda una versión en el historial (Ctrl+S). Es lo que se aprueba y se publica.'
+              }
               data-testid="editor-save"
             >
               <Save className="h-4 w-4" aria-hidden />
@@ -1079,6 +1492,64 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
             </Button>
           )}
           {primaryButton}
+          {/* Lo que se hace al terminar, en un solo sitio: ver cómo queda, descargarla, programarla o publicarla. */}
+          <Dropdown.Root modal={false}>
+            <Dropdown.Trigger asChild>
+              <Button
+                variant={primaryButton ? 'secondary' : 'primary'}
+                size="sm"
+                className="h-8 px-2.5"
+                data-testid="editor-share"
+                title="Vista previa, descargar, programar y publicar"
+              >
+                <Share2 className="h-4 w-4" aria-hidden />
+                <span className="max-md:sr-only">Publicar o compartir</span>
+                <ChevronDown className="h-3.5 w-3.5 max-md:hidden" aria-hidden />
+              </Button>
+            </Dropdown.Trigger>
+            <MenuContent align="end">
+              <MenuItem onSelect={() => setPreviewOpen(true)} data-testid="editor-preview">
+                <ScanEye className="h-4 w-4 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">Ver cómo quedará</span>
+              </MenuItem>
+              <MenuItem onSelect={() => setExportOpen(true)} data-testid="editor-export">
+                <Download className="h-4 w-4 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">Descargar la imagen</span>
+              </MenuItem>
+              {(offerSchedule || offerPublishNow) && <MenuSeparator />}
+              {offerSchedule && (
+                <MenuItem
+                  onSelect={() => void openSchedule()}
+                  disabled={busyStatus !== null || mutations.saveVersion.isPending}
+                  title={needsApproval ? 'Guarda la versión, la aprueba y abre el calendario' : undefined}
+                  data-testid="editor-schedule"
+                >
+                  <CalendarPlus className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1">{needsApproval ? 'Aprobar y programar…' : 'Programar…'}</span>
+                </MenuItem>
+              )}
+              {offerPublishNow && (
+                <MenuItem
+                  onSelect={() => void openPublishNow()}
+                  disabled={busyStatus !== null || mutations.saveVersion.isPending}
+                  title={
+                    needsApproval
+                      ? 'Guarda la versión, la aprueba y pide confirmación antes de publicar'
+                      : 'Pide confirmación antes de publicar'
+                  }
+                  data-testid="editor-publish-now"
+                >
+                  <Send className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1">{needsApproval ? 'Aprobar y publicar ahora…' : 'Publicar ahora…'}</span>
+                </MenuItem>
+              )}
+              {publishable && !offerSchedule && (
+                <p className="max-w-[16rem] px-2.5 py-1.5 text-xs text-muted" data-testid="editor-share-note">
+                  Para programarla o publicarla, antes tiene que aprobarla alguien con permiso.
+                </p>
+              )}
+            </MenuContent>
+          </Dropdown.Root>
           <MoreMenu items={moreActions} label="Más acciones de la pieza" testId="editor-more" size="sm" />
         </div>
       </header>
@@ -1322,7 +1793,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           tabIndex={0}
           // Un clic en el margen del lienzo (fuera del documento) quita la selección.
           onPointerDown={(event) => event.target === event.currentTarget && deselect()}
-          aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él."
+          aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él; con una foto, Intro para encuadrarla o, si es un hueco vacío, para ponerle la foto."
           className="flex min-h-0 flex-1 flex-col rounded-xl bg-subtle p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
         >
           {safeZone && (
@@ -1367,6 +1838,21 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   editingTextId={editingTextId}
                   onTextCommit={onTextCommit}
                   onTextCancel={onTextCancel}
+                  onFrameClick={(id) => !readOnly && setReplaceLayerId(id)}
+                  onEditImage={startFraming}
+                  framingId={activeFramingId}
+                  onFrameChange={(id, patch) => dispatch({ type: 'update', id, patch, key: `framing:${id}` })}
+                  onFramingEnd={endFraming}
+                  toolbar={selectionToolbar}
+                  onContextMenu={(target) => {
+                    if (target.id && !stateRef.current.selectedIds.includes(target.id)) {
+                      run({ type: 'select', id: target.id });
+                    } else if (!target.id) {
+                      run({ type: 'select', id: null });
+                    }
+                    setPointMenu({ x: target.clientX, y: target.clientY });
+                  }}
+                  onDrop={onDropOnCanvas}
                   safeZone={safeZoneOverlay}
                   label={
                     state.document.pages.length > 1
@@ -1406,6 +1892,15 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   >
                     Diseño
                   </TabsTrigger>
+                  {!readOnly && (
+                    <TabsTrigger
+                      value="photos"
+                      className="px-2.5 max-lg:min-h-[2.75rem]"
+                      onClick={() => setSheetOpen(true)}
+                    >
+                      Fotos
+                    </TabsTrigger>
+                  )}
                   <TabsTrigger
                     value="layers"
                     className="px-2.5 max-lg:min-h-[2.75rem]"
@@ -1479,6 +1974,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                           : undefined
                       }
                       photoTools={photoTools}
+                      onPickPhoto={readOnly ? undefined : setReplaceLayerId}
                       onRestoreOriginal={
                         originalPhoto
                           ? () => {
@@ -1495,6 +1991,20 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
                   </>
                 )}
               </TabsContent>
+              {!readOnly && (
+                // Las fotos de la marca a mano, sin tapar el diseño: tocar una la pone (en el hueco vacío, si lo
+                // hay) y también se puede arrastrar al lienzo o a un marco concreto.
+                <TabsContent value="photos" className="h-full pt-3 max-lg:h-[36dvh]" data-testid="editor-photos">
+                  <Suspense fallback={<Spinner label="Cargando las fotos…" />}>
+                    <PhotoPanel
+                      className="h-full"
+                      onPick={(asset) =>
+                        placePhoto({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height })
+                      }
+                    />
+                  </Suspense>
+                </TabsContent>
+              )}
               <TabsContent value="layers" className="pt-4">
                 <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
               </TabsContent>
@@ -1594,7 +2104,18 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         onSave={(note) => void save(note)}
       />
       {canSchedule && scheduleOpen && (
-        <ScheduleDialog brandId={brand.id} open onOpenChange={setScheduleOpen} initialContentId={contentId} />
+        <ScheduleDialog
+          brandId={brand.id}
+          open
+          onOpenChange={setScheduleOpen}
+          initialContentId={contentId}
+          // La imagen que se publica se prepara sola al guardar en el calendario, como en «Publicar ahora».
+          exportVersion={
+            (item.format === 'post' || item.format === 'carousel') && !dirty
+              ? { contentId, run: exportApprovedVersion }
+              : undefined
+          }
+        />
       )}
       {canPublishNow && (
         <PublishNowDialog
@@ -1603,19 +2124,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           onOpenChange={setPublishNowOpen}
           contentId={contentId}
           exportVersion={
-            (item.format === 'post' || item.format === 'carousel') && !dirty
-              ? () =>
-                  exportForPublishing({
-                    document: state.document,
-                    images,
-                    title: item.title,
-                    contentId,
-                    orgId: org.id,
-                    brandId: brand.id,
-                    version: expectedVersion,
-                    prepareFonts: () => loadBrandFonts(brandFonts.fonts).then(() => undefined),
-                  })
-              : undefined
+            (item.format === 'post' || item.format === 'carousel') && !dirty ? exportApprovedVersion : undefined
           }
         />
       )}
@@ -1685,35 +2194,59 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
           <ImagePickerDialog
             brandId={brand.id}
             libraryPath={`${brandBase}/biblioteca`}
+            uploadTo={{ organizationId: org.id }}
             open={imagePicker}
             onOpenChange={setImagePicker}
             onPick={(asset) => {
               setImagePicker(false);
-              dispatch({
-                type: 'add',
-                layer: newImageLayer(canvas, everyLayer, { id: asset.id, name: asset.file_name }),
-              });
+              // Con un hueco de foto vacío en la página, la foto va al hueco; si no, es una capa nueva.
+              placePhoto({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height });
             }}
           />
-          {/* «Cambia esta foto» dicho al copiloto: otra foto de la biblioteca para la misma capa. */}
+          {/* Poner la foto de un marco o sustituir la de una capa (barra flotante, clic en el hueco, copiloto):
+              la caja y los efectos se quedan; lo que era de la foto anterior (recorte, encuadre) se quita. */}
           <ImagePickerDialog
             brandId={brand.id}
             libraryPath={`${brandBase}/biblioteca`}
-            title="Cambiar la foto"
+            uploadTo={{ organizationId: org.id }}
+            title={replaceLayer && isEmptyFrame(replaceLayer) ? 'Poner foto' : 'Sustituir la foto'}
             open={replaceLayerId !== null}
             onOpenChange={(open) => {
               if (!open) setReplaceLayerId(null);
             }}
             onPick={(asset) => {
-              if (replaceLayerId) {
+              if (replaceLayer?.type === 'image') {
                 dispatch({
                   type: 'update',
-                  id: replaceLayerId,
-                  patch: { source: { kind: 'asset', assetId: asset.id }, name: asset.file_name.slice(0, 120) },
+                  id: replaceLayer.id,
+                  patch: {
+                    ...replacePhotoPatch(asset.id),
+                    // Un marco conserva su nombre («Foto de antes»); una foto suelta toma el del archivo.
+                    ...(replaceLayer.frame ? {} : { name: asset.file_name.slice(0, 120) }),
+                  },
                 });
+                dispatch({ type: 'select', id: replaceLayer.id, exact: true });
               }
               setReplaceLayerId(null);
             }}
+          />
+          {cropLayer?.type === 'image' && cropUrl && (
+            <CropDialog
+              layer={cropLayer}
+              url={cropUrl}
+              onClose={() => setCropLayerId(null)}
+              onApply={(patch) => {
+                dispatch({ type: 'update', id: cropLayer.id, patch });
+                dispatch({ type: 'checkpoint' });
+                setCropLayerId(null);
+              }}
+            />
+          )}
+          <PointMenu
+            at={pointMenu}
+            items={selectionMenu}
+            label="Acciones de lo elegido"
+            onClose={() => setPointMenu(null)}
           />
           {aiImage && (
             <GenerateImageDialog
@@ -1724,7 +2257,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
               // Una capa más: se deshace con Ctrl+Z como cualquier otra; la imagen queda en la biblioteca.
               onGenerated={(image) => {
                 setImageAi(false);
-                dispatch({ type: 'add', layer: newImageLayer(canvas, everyLayer, image) });
+                placePhoto(image);
                 toast.success('Imagen generada y añadida al diseño. Está también en la biblioteca.');
               }}
             />
@@ -1796,7 +2329,7 @@ function Editor({ content, onReopen }: { content: LoadedContent; onReopen: () =>
         open={confirmLeave}
         onOpenChange={setConfirmLeave}
         title="¿Salir sin guardar?"
-        description="Los cambios que no has guardado como versión se perderán."
+        description="No se ha podido guardar el borrador (¿sin conexión?). Si sales ahora, se pierden los últimos cambios."
         confirmLabel="Salir sin guardar"
         onConfirm={() => {
           setConfirmLeave(false);

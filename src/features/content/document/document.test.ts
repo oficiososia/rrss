@@ -451,7 +451,7 @@ describe('versión 5: ediciones sencillas', () => {
 
   it('un documento de la versión 4 se lee igual, sin ediciones', () => {
     const document = migrateDocument(savedV4());
-    expect(document.schemaVersion).toBe(5);
+    expect(document.schemaVersion).toBe(DOCUMENT_SCHEMA_VERSION);
     const layer = document.pages[0]!.layers[0]!;
     for (const field of ['adjust', 'turn', 'crop', 'backdrop', 'shadow', 'outline', 'background']) {
       expect(layer, field).not.toHaveProperty(field);

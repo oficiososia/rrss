@@ -1,4 +1,4 @@
-import { Crop, FlipHorizontal2, FlipVertical2, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react';
+import { Crop, FlipHorizontal2, FlipVertical2, Replace, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Notice } from '@/components/ui';
@@ -10,6 +10,7 @@ import type { MediaAssetRow } from '@/lib/database.types';
 import {
   IMAGE_FILTERS,
   isNeutralAdjust,
+  MAX_FRAME_ZOOM,
   MAX_IMAGE_BLUR,
   MAX_STRAIGHTEN,
   type ImageAdjust,
@@ -64,6 +65,7 @@ export function PhotoPanel({
   tools,
   onEditPhoto,
   onRestoreOriginal,
+  onReplace,
 }: {
   layer: ImageLayer;
   readOnly: boolean;
@@ -75,6 +77,8 @@ export function PhotoPanel({
   onEditPhoto?: () => void;
   /** Vuelve a la foto original, si la de ahora es una edición. */
   onRestoreOriginal?: () => void;
+  /** Abre «elegir foto» para poner otra en la misma caja (se conservan el marco y los efectos). */
+  onReplace?: () => void;
 }) {
   const [cropping, setCropping] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -128,8 +132,20 @@ export function PhotoPanel({
 
   return (
     <div className="space-y-3" data-testid="photo-panel">
-      {!readOnly && layer.source.kind === 'asset' && (onEditPhoto || onRestoreOriginal) && (
+      {!readOnly && layer.source.kind === 'asset' && (onEditPhoto || onRestoreOriginal || onReplace) && (
         <div className="space-y-1.5">
+          {onReplace && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="w-full"
+              onClick={onReplace}
+              data-testid="layer-replace-photo"
+            >
+              <Replace className="h-4 w-4" aria-hidden />
+              Sustituir la foto
+            </Button>
+          )}
           {onEditPhoto && (
             <Button variant="primary" size="sm" className="w-full" onClick={onEditPhoto} data-testid="layer-edit-photo">
               <SlidersHorizontal className="h-4 w-4" aria-hidden />
@@ -296,7 +312,23 @@ export function PhotoPanel({
       </Section>
 
       <Section id="photo.focus" title="Parte de la foto que se ve" summary={focusSummary(layer)}>
-        <p className="text-xs text-muted">Con «Llenar», la foto se recorta alrededor de este punto.</p>
+        <p className="text-xs text-muted">
+          Con «Llenar», la foto se recorta alrededor de este punto. También se mueve y se amplía con doble clic sobre
+          ella, en el lienzo.
+        </p>
+        {layer.fit === 'cover' && (
+          <RangeInput
+            label="Ampliación"
+            value={layer.zoom ?? 1}
+            min={1}
+            max={MAX_FRAME_ZOOM}
+            step={0.05}
+            disabled={readOnly}
+            testId="photo-zoom"
+            onChange={(zoom) => update({ zoom: zoom > 1 ? zoom : undefined }, 'zoom')}
+            onCommit={checkpoint}
+          />
+        )}
         <div className="grid grid-cols-2 gap-3">
           <NumberInput
             label="Punto de interés, a lo ancho (%)"

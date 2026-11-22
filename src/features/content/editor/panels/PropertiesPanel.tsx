@@ -1,4 +1,6 @@
+import { ImagePlus } from 'lucide-react';
 import type { Dispatch, Ref } from 'react';
+import { Button } from '@/components/ui';
 import {
   ANCHORS_X,
   ANCHORS_Y,
@@ -45,6 +47,8 @@ interface PropertiesPanelProps {
   onRestoreOriginal?: () => void;
   /** Lo que necesitan las ediciones de foto que crean una foto nueva (quitar el fondo…). */
   photoTools?: PhotoToolsContext;
+  /** Poner la foto de un marco vacío o sustituir la de una foto (abre «elegir foto»). */
+  onPickPhoto?: (id: string) => void;
 }
 
 const ANCHOR_X_LABEL: Record<(typeof ANCHORS_X)[number], string> = {
@@ -73,6 +77,7 @@ export function PropertiesPanel({
   onEditPhoto,
   onRestoreOriginal,
   photoTools,
+  onPickPhoto,
 }: PropertiesPanelProps) {
   const checkpoint = () => dispatch({ type: 'checkpoint' });
 
@@ -134,7 +139,22 @@ export function PropertiesPanel({
           checkpoint={checkpoint}
         />
       )}
-      {layer.type === 'image' && (
+      {layer.type === 'image' && layer.source.kind === 'empty' && (
+        <section className="space-y-2" data-testid="empty-frame-panel">
+          <p className="text-sm text-muted">
+            Es un hueco para una foto. Pulsa «Poner foto», o suelta una foto encima: la foto lo rellena y se puede
+            recolocar dentro con doble clic.
+          </p>
+          {!readOnly && onPickPhoto && (
+            <Button size="sm" className="w-full" onClick={() => onPickPhoto(layer.id)} data-testid="frame-place-photo">
+              <ImagePlus className="h-4 w-4" aria-hidden />
+              Poner foto
+            </Button>
+          )}
+          <p className="text-xs text-muted">Mientras esté vacío, no sale en la imagen.</p>
+        </section>
+      )}
+      {layer.type === 'image' && layer.source.kind !== 'empty' && (
         <PhotoPanel
           layer={layer}
           readOnly={readOnly}
@@ -144,6 +164,7 @@ export function PropertiesPanel({
           tools={photoTools ?? { row: null, url: undefined, onUseResult: () => undefined }}
           onEditPhoto={onEditPhoto}
           onRestoreOriginal={onRestoreOriginal}
+          onReplace={onPickPhoto ? () => onPickPhoto(layer.id) : undefined}
         />
       )}
 

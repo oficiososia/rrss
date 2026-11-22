@@ -195,6 +195,8 @@ const TENANT_TABLES = [
   'jobs',
   'content_items',
   'content_versions',
+  // Borradores del editor: solo los propios (casos en marcos-borradores.test.ts).
+  'content_drafts',
   'content_requests',
   'content_request_comments',
   'request_notifications',

@@ -246,9 +246,11 @@ describe('Calendario', () => {
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await user.click(await screen.findByTestId('calendar-schedule'));
     await user.selectOptions(await screen.findByTestId('schedule-content'), 'c-otra');
-    expect(await screen.findByTestId('schedule-no-media')).toHaveTextContent(/exportación JPEG de la versión 1/);
+    // Desde el calendario no se puede preparar la imagen (no tiene el diseño abierto): dice dónde hacerlo, sin jerga.
+    expect(await screen.findByTestId('schedule-no-media')).toHaveTextContent(/Falta la imagen de la versión 1.*editor/);
     await user.selectOptions(screen.getByTestId('schedule-content'), 'c-new');
-    await user.click(await screen.findByTestId('schedule-asset'));
+    // La imagen de la versión vigente viene ya marcada: no hay que elegirla.
+    expect(await screen.findByTestId('schedule-asset')).toBeChecked();
     await user.click(screen.getByTestId('schedule-submit'));
     await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1));
     expect(fake.callsTo('save_publication', 'rpc')[0]!.payload).toMatchObject({

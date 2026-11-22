@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { templateAnalysisSchema } from '@/features/brand/templates';
-import { allLayers, contentDocumentSchema, type ContentDocument, type Layer } from '../document';
+import {
+  allLayers,
+  contentDocumentSchema,
+  DOCUMENT_SCHEMA_VERSION,
+  type ContentDocument,
+  type Layer,
+} from '../document';
 import { allowedCanvasRatios, getFormatSpec } from '../networks';
 import type { BrandTemplate } from './api';
 import { analyzeDocument, buildEditorTemplate, newTemplateKey } from './build';
@@ -68,7 +74,7 @@ function layers(prefix: string, width: number, height: number): Layer[] {
 function documentOf(ratio: '1:1' | '4:5' | '9:16' | '16:9', pages: number): ContentDocument {
   const size = { '1:1': [1080, 1080], '4:5': [1080, 1350], '9:16': [1080, 1920], '16:9': [1920, 1080] }[ratio]!;
   return contentDocumentSchema.parse({
-    schemaVersion: 5,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: ratio, width: size[0], height: size[1], backgroundColor: '#112233' },
     pages: Array.from({ length: pages }, (_, i) => ({
       id: `p${i + 1}`,
@@ -128,7 +134,7 @@ describe('Guardar como plantilla: el análisis sale del propio diseño', () => {
 
   it('no guarda un diseño vacío, sin nombre o de un formato desconocido', () => {
     const empty = contentDocumentSchema.parse({
-      schemaVersion: 5,
+      schemaVersion: DOCUMENT_SCHEMA_VERSION,
       canvas: { aspectRatio: '1:1', width: 1080, height: 1080, backgroundColor: '#FFFFFF' },
       pages: [{ id: 'p1', layers: [] }],
     });

@@ -1,6 +1,10 @@
 import { Maximize, Minus, Plus } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { hasAssetDrag, hasFileDrag, imageFilesOf, readAssetDrag } from '../assetDrag';
+import { frameAt } from '../frames';
 import { fitScale } from '../geometry';
+import { boundsOf, placeToolbar } from '../toolbarPlacement';
+import { FrameAdjustOverlay } from './FrameAdjustOverlay';
 import { describeDocument } from './nodes';
 import { Scene } from './scene';
 import { TextEditOverlay } from './TextEditOverlay';
@@ -11,9 +15,20 @@ const MAX_ZOOM = 4;
 const ZOOM_STEP = 1.25;
 const clampZoom = (value: number) => Math.min(MAX_ZOOM, Math.max(1, Math.round(value * 100) / 100));
 
+/** ¿Viene la tecla de un control (un botón, un campo)? Ahí el Espacio es suyo. */
+const fromControl = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  Boolean(target.closest('button, a, input, textarea, select, summary, [role="menuitem"], [contenteditable="true"]'));
+
 // Envoltorio de React del lienzo de Konva (sin react-konva). Crea la escena una
 // vez, le pasa el documento en cada cambio y mide el hueco disponible para
 // escalar el lienzo. Se carga aparte (import perezoso) con Konva dentro.
+//
+// Además de dibujar, aquí vive lo que flota sobre el lienzo y depende de dónde
+// está cada cosa en pantalla: el campo para escribir un texto, el encuadre de
+// una foto dentro de su marco, la barra de acciones del elemento elegido (que
+// se coloca sin taparlo ni salirse), el zoom con la rueda, la mano con Espacio
+// y soltar fotos encima.
 
 export default function KonvaCanvas({
   document,
@@ -26,21 +41,39 @@ export default function KonvaCanvas({
   onEditText,
   editingTextId,
   onTextCommit,
-  onTextCancel,
   safeZone,
   label,
+  onFrameClick,
+  onEditImage,
+  framingId = null,
+  onFrameChange,
+  onFramingEnd,
+  toolbar,
+  onContextMenu,
+  onDrop,
 }: CanvasViewProps) {
+  const areaRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<Scene | null>(null);
-  const callbacks = useRef({ onSelect, onSelectMany, onChange, onEditText });
+  const callbacks = useRef({ onSelect, onSelectMany, onChange, onEditText, onFrameClick, onEditImage, onContextMenu });
   const [available, setAvailable] = useState({ width: 0, height: 0 });
   /** 1 = «ajustar»: el lienzo entero a la vista. Más: se acerca y se desplaza dentro del marco. */
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
+  /** Punto que debe quedarse bajo el cursor al cambiar el zoom con la rueda. */
+  const zoomAnchor = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
+  /** Se está arrastrando, girando o cambiando de tamaño: la barra flotante se esconde. */
+  const [gesturing, setGesturing] = useState(false);
+  /** Espacio pulsado: el puntero mueve la vista en vez de las capas. */
+  const [hand, setHand] = useState(false);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
 
   useLayoutEffect(() => {
-    callbacks.current = { onSelect, onSelectMany, onChange, onEditText };
+    callbacks.current = { onSelect, onSelectMany, onChange, onEditText, onFrameClick, onEditImage, onContextMenu };
     zoomRef.current = zoom;
   });
 
@@ -51,6 +84,10 @@ export default function KonvaCanvas({
       onSelectMany: (ids, additive) => callbacks.current.onSelectMany(ids, additive),
       onChange: (changes) => callbacks.current.onChange(changes),
       onEditText: (id) => callbacks.current.onEditText(id),
+      onFrameClick: (id) => callbacks.current.onFrameClick?.(id),
+      onEditImage: (id) => callbacks.current.onEditImage?.(id),
+      onContextMenu: (target) => callbacks.current.onContextMenu?.(target),
+      onGesture: setGesturing,
     });
     sceneRef.current = scene;
     return () => {
@@ -69,13 +106,34 @@ export default function KonvaCanvas({
     return () => observer.disconnect();
   }, []);
 
-  // Ctrl + rueda y pellizco con dos dedos acercan o alejan.
+  const nodes = useMemo(() => describeDocument(document, images, readOnly), [document, images, readOnly]);
+  const fit = fitScale(document.canvas, available);
+  // «Ajustar» nunca agranda por encima de 1; al acercar, sí se puede pasar de ahí.
+  const scale = zoom === 1 ? fit : Math.min(2, fit * zoom);
+  const zoomed = zoom > 1;
+  const scaleRef = useRef(scale);
+  useLayoutEffect(() => {
+    scaleRef.current = scale;
+  });
+
+  // La rueda del ratón acerca o aleja hacia donde está el cursor (con Ctrl o sin él), y el pellizco con
+  // dos dedos también. El desplazamiento de un panel táctil (deltas pequeños o en horizontal) mueve la vista.
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
     const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
+      const wheel = event.deltaX === 0 && Math.abs(event.deltaY) >= 40;
+      if (!event.ctrlKey && !event.metaKey && !wheel) return;
       event.preventDefault();
+      const stage = stageRef.current?.getBoundingClientRect();
+      if (stage) {
+        zoomAnchor.current = {
+          x: (event.clientX - stage.left) / scaleRef.current,
+          y: (event.clientY - stage.top) / scaleRef.current,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        };
+      }
       setZoom((z) => clampZoom(z * (event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP)));
     };
     let startDistance = 0;
@@ -108,48 +166,242 @@ export default function KonvaCanvas({
     };
   }, []);
 
-  const nodes = useMemo(() => describeDocument(document, images, readOnly), [document, images, readOnly]);
-  const fit = fitScale(document.canvas, available);
-  // «Ajustar» nunca agranda por encima de 1; al acercar, sí se puede pasar de ahí.
-  const scale = zoom === 1 ? fit : Math.min(2, fit * zoom);
-  const zoomed = zoom > 1;
+  // Tras cambiar el zoom con la rueda, el punto que estaba bajo el cursor sigue bajo el cursor.
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current;
+    const frame = frameRef.current;
+    const wrapper = wrapperRef.current;
+    zoomAnchor.current = null;
+    if (!anchor || !frame || !wrapper) return;
+    const box = frame.getBoundingClientRect();
+    frame.scrollLeft = wrapper.offsetLeft + anchor.x * scale - (anchor.clientX - box.left);
+    frame.scrollTop = wrapper.offsetTop + anchor.y * scale - (anchor.clientY - box.top);
+  }, [scale]);
+
+  // Mano: con Espacio pulsado (y el foco fuera de un control), arrastrar mueve la vista.
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.key !== ' ' || event.repeat || fromControl(event.target)) return;
+      const area = areaRef.current;
+      if (
+        !area ||
+        !(event.target === window.document.body || area.closest('section')?.contains(event.target as Node))
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setHand(true);
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.key === ' ') setHand(false);
+    };
+    const blur = () => setHand(false);
+    window.document.addEventListener('keydown', down);
+    window.document.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.document.removeEventListener('keydown', down);
+      window.document.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+  const handDrag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+
   const editing = document.layers.find((layer) => layer.id === editingTextId);
+  const framing = document.layers.find((layer) => layer.id === framingId);
+  const framingLayer = framing?.type === 'image' && !readOnly ? framing : null;
 
   useEffect(() => {
     sceneRef.current?.render({
       nodes,
       canvas: document.canvas,
-      selectedIds,
+      // Mientras se encuadra una foto no hay tiradores: el puntero mueve la foto, no la capa.
+      selectedIds: framingLayer ? [] : selectedIds,
       editingId: editingTextId,
       safeZone,
       readOnly,
       scale,
+      dropTargetId,
     });
-  }, [nodes, document.canvas, selectedIds, editingTextId, safeZone, readOnly, scale]);
+  }, [nodes, document.canvas, selectedIds, editingTextId, safeZone, readOnly, scale, dropTargetId, framingLayer]);
+
+  // ── Barra de acciones del elemento elegido ──
+  const showBar = Boolean(toolbar) && !gesturing && !editing && !framingLayer && !hand && selectedIds.length > 0;
+  const selectionBounds = useMemo(() => {
+    const ids = new Set(selectedIds);
+    return boundsOf(document.layers.filter((layer) => ids.has(layer.id) && layer.visible));
+  }, [document.layers, selectedIds]);
+
+  const positionBar = () => {
+    const bar = barRef.current;
+    const area = areaRef.current;
+    const wrapper = wrapperRef.current;
+    if (!bar || !area || !wrapper || !selectionBounds) return;
+    const areaBox = area.getBoundingClientRect();
+    const stageBox = wrapper.getBoundingClientRect();
+    const dx = stageBox.left - areaBox.left;
+    const dy = stageBox.top - areaBox.top;
+    // Lo que se ve del elemento (si el lienzo está ampliado, puede salirse del área).
+    const target = {
+      left: Math.max(0, dx + selectionBounds.left * scale),
+      top: Math.max(0, dy + selectionBounds.top * scale),
+      right: Math.min(areaBox.width, dx + selectionBounds.right * scale),
+      bottom: Math.min(areaBox.height, dy + selectionBounds.bottom * scale),
+    };
+    const place = placeToolbar(
+      target,
+      { width: bar.offsetWidth, height: bar.offsetHeight },
+      { width: areaBox.width, height: areaBox.height },
+    );
+    bar.style.left = `${place.left}px`;
+    bar.style.top = `${place.top}px`;
+    bar.style.visibility = 'visible';
+    bar.dataset.side = place.side;
+  };
+  // Tras cada pintado: la barra cambia de contenido (y de ancho) con lo elegido.
+  useLayoutEffect(() => {
+    if (showBar) positionBar();
+  });
+  useEffect(() => {
+    if (!showBar) return;
+    const frame = frameRef.current;
+    const bar = barRef.current;
+    if (!frame || !bar) return;
+    const again = () => positionBar();
+    frame.addEventListener('scroll', again, { passive: true });
+    const observer = new ResizeObserver(again);
+    observer.observe(bar);
+    observer.observe(frame);
+    return () => {
+      frame.removeEventListener('scroll', again);
+      observer.disconnect();
+    };
+    // `positionBar` lee las medidas del momento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBar, selectionBounds, scale]);
+
+  // ── Soltar una foto de la biblioteca o archivos del dispositivo ──
+  const accepts = (event: DragEvent) =>
+    Boolean(onDrop) && !readOnly && (hasAssetDrag(event.dataTransfer) || hasFileDrag(event.dataTransfer));
+  const pointOf = (event: { clientX: number; clientY: number }) => {
+    const stage = stageRef.current?.getBoundingClientRect();
+    if (!stage) return null;
+    const x = (event.clientX - stage.left) / scale;
+    const y = (event.clientY - stage.top) / scale;
+    return x >= 0 && y >= 0 && x <= document.canvas.width && y <= document.canvas.height ? { x, y } : null;
+  };
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!accepts(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    const at = pointOf(event);
+    const frame = at ? frameAt(document.layers, at) : null;
+    setDropping(true);
+    setDropTargetId(frame?.id ?? null);
+  };
+  const endDrag = () => {
+    setDropping(false);
+    setDropTargetId(null);
+  };
+  const onDropHere = (event: DragEvent<HTMLDivElement>) => {
+    if (!accepts(event)) return;
+    event.preventDefault();
+    const at = pointOf(event);
+    const frame = at ? frameAt(document.layers, at) : null;
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    const files = imageFilesOf(dropped);
+    endDrag();
+    onDrop?.({
+      asset: readAssetDrag(event.dataTransfer),
+      files,
+      rejected: dropped.length - files.length,
+      at,
+      frameId: frame?.id ?? null,
+    });
+  };
 
   const percent = Math.round(scale * 100);
   const zoomButton =
     'flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-surface hover:text-fg disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary';
   return (
     <div className="absolute inset-0 flex flex-col" data-testid="editor-canvas-area">
-      <div
-        ref={frameRef}
-        className="relative flex min-h-0 flex-1 overflow-auto"
-        // El margen alrededor del documento también quita la selección.
-        onPointerDown={(event) => event.target === event.currentTarget && callbacks.current.onSelect(null)}
-      >
-        <div className="relative m-auto shrink-0 shadow-pop ring-1 ring-border">
-          <div ref={stageRef} role="img" aria-label={label} data-testid="editor-stage" />
-          {editing?.type === 'text' && !readOnly && (
-            <TextEditOverlay
-              key={editing.id}
-              layer={editing}
-              scale={scale}
-              onCommit={(text) => onTextCommit(editing.id, text)}
-              onCancel={onTextCancel}
-            />
-          )}
+      <div ref={areaRef} className="relative min-h-0 flex-1">
+        <div
+          ref={frameRef}
+          className="absolute inset-0 flex overflow-auto"
+          // El margen alrededor del documento también quita la selección.
+          onPointerDown={(event) => event.target === event.currentTarget && callbacks.current.onSelect(null)}
+          onDragOver={onDragOver}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) endDrag();
+          }}
+          onDrop={onDropHere}
+          data-testid="editor-canvas-frame"
+          data-dropping={dropping || undefined}
+        >
+          <div ref={wrapperRef} className="relative m-auto shrink-0 shadow-pop ring-1 ring-border">
+            <div ref={stageRef} role="img" aria-label={label} data-testid="editor-stage" />
+            {editing?.type === 'text' && !readOnly && (
+              <TextEditOverlay
+                key={editing.id}
+                layer={editing}
+                scale={scale}
+                onCommit={(text) => onTextCommit(editing.id, text)}
+              />
+            )}
+            {framingLayer && (
+              <FrameAdjustOverlay
+                key={framingLayer.id}
+                layer={framingLayer}
+                scale={scale}
+                imageAspect={() => sceneRef.current?.imageAspect(framingLayer.id) ?? null}
+                onChange={(patch) => onFrameChange?.(framingLayer.id, patch)}
+                onDone={() => onFramingEnd?.()}
+              />
+            )}
+          </div>
         </div>
+        {hand && (
+          // Mano: una capa transparente recibe el puntero para que las capas del diseño no se muevan.
+          <div
+            className="absolute inset-0 z-10 cursor-grab touch-none active:cursor-grabbing"
+            onPointerDown={(event) => {
+              const frame = frameRef.current;
+              if (!frame) return;
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              handDrag.current = { x: event.clientX, y: event.clientY, left: frame.scrollLeft, top: frame.scrollTop };
+            }}
+            onPointerMove={(event) => {
+              const start = handDrag.current;
+              const frame = frameRef.current;
+              if (!start || !frame) return;
+              frame.scrollLeft = start.left - (event.clientX - start.x);
+              frame.scrollTop = start.top - (event.clientY - start.y);
+            }}
+            onPointerUp={() => {
+              handDrag.current = null;
+            }}
+            data-testid="canvas-hand"
+          />
+        )}
+        {dropping && dropTargetId === null && (
+          <p
+            className="pointer-events-none absolute inset-x-0 bottom-2 z-10 mx-auto w-fit rounded-full bg-fg px-3 py-1 text-xs font-medium text-surface shadow-pop"
+            role="status"
+          >
+            Suelta la foto para añadirla al diseño
+          </p>
+        )}
+        {showBar && (
+          <div
+            ref={barRef}
+            className="absolute z-20 max-w-[calc(100%-8px)]"
+            style={{ left: 4, top: 4, visibility: 'hidden' }}
+            data-testid="selection-toolbar-anchor"
+          >
+            {toolbar}
+          </div>
+        )}
       </div>
       <div
         className="flex shrink-0 items-center justify-center gap-1 pt-1"
@@ -172,7 +424,7 @@ export default function KonvaCanvas({
           type="button"
           className="flex h-8 min-w-[4.5rem] items-center justify-center gap-1 rounded-md px-2 text-xs text-muted hover:bg-surface hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
           aria-label={zoomed ? 'Ajustar el lienzo a la ventana' : 'El lienzo se ve entero'}
-          title="Ajustar el lienzo a la ventana"
+          title="Ajustar el lienzo a la ventana. La rueda del ratón acerca y aleja; con Espacio pulsado, arrastrar mueve la vista."
           onClick={() => setZoom(1)}
           data-testid="zoom-fit"
         >
