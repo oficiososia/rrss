@@ -178,7 +178,7 @@ describe('Nueva idea desde una plantilla', () => {
     expect(fake.rows('content_items')).toHaveLength(0);
 
     await user.click(option);
-    expect(dialog.getByTestId('create-content-network')).toBeDisabled();
+    expect(dialog.getByTestId('create-content-format-post').querySelector('input')).toBeDisabled();
     await user.click(dialog.getByTestId('create-content-submit'));
 
     await waitFor(() => expect(saved).toHaveLength(1));
@@ -240,7 +240,10 @@ describe('Nueva idea desde una plantilla', () => {
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByTestId('create-content-blank')).toBeChecked();
     await user.click(dialog.getByTestId('create-content-from-template'));
-    expect(await dialog.findAllByTestId('template-option')).toHaveLength(2);
+    // Se abre filtrada por el formato que se está creando (publicación).
+    expect(await dialog.findAllByTestId('template-option')).toHaveLength(1);
+    await user.click(dialog.getByRole('button', { name: 'Todas' }));
+    expect(dialog.getAllByTestId('template-option')).toHaveLength(2);
 
     const first = dialog
       .getAllByTestId('template-option')

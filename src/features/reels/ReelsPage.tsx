@@ -25,6 +25,7 @@ import {
   Select,
   Skeleton,
 } from '@/components/ui';
+import { defaultTitle } from '@/features/content/lista/stage';
 import { mediaWorkerEnabled, reelLikeEnabled } from '@/config/app';
 import { ReelFontLine } from '@/features/brand/BrandFontsCard';
 import { useSignedUrls } from '@/features/library/api';
@@ -89,7 +90,7 @@ function ReelsScreen() {
   // El editor de reels trabaja sobre una pieza de formato reel (con versiones y aprobación).
   const openEditor = () =>
     create
-      .mutateAsync({ title: 'Reel nuevo', network: 'instagram', format: 'reel' })
+      .mutateAsync({ title: defaultTitle('Reel'), network: 'instagram', format: 'reel' })
       .then((item) => navigate(contentPaths(org.id, brand.id).item(item.id)))
       .catch((error: unknown) => toast.error(translateError(error)));
   return (

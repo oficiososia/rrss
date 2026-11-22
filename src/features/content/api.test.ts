@@ -303,6 +303,7 @@ describe('useContentMutations', () => {
     expect(Object.keys(hook.result.current).sort()).toEqual([
       'archive',
       'create',
+      'duplicate',
       'restore',
       'saveVersion',
       'setStatus',

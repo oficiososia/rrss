@@ -25,8 +25,7 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   await page.goto(`${marca()}/contenidos`);
   await page.getByTestId('content-new').click();
   await page.getByTestId('create-content-title').fill(TITULO);
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
