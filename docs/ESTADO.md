@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,7 +15,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
@@ -632,6 +632,36 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
+
+### Editor de reels como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
+
+Cambio 1 de la propuesta de simplificación aceptada, más los fallos 4, 9, 10, 11, 12 y 24 de la prueba de punta a punta
+del 23/11 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`). Detalle en `docs/editor-reels.md` §11. Solo interfaz:
+sin migraciones, sin tocar el plan v2 ni el trabajador.
+
+- **Pantalla:** vídeo grande, línea de tiempo debajo y una sola barra que cambia con lo elegido (con un clip: Dividir,
+  Duración, Velocidad o Movimiento, Filtro, Sustituir y «Más»). Cada herramienta abre solo su ajuste (panel estrecho al
+  lado o hoja en móvil). Cabecera: volver, nombre, guardado, deshacer, «⋯» y **«Exportar»**. Plantilla dentro de
+  «Estilo». En móvil, a pantalla completa, por encima de la barra de la aplicación.
+- **Acciones a la vista con un clip elegido:** 52 → 13 (1366 px) y 22 → 12 (375 px; antes, además, las 7 de la app).
+- **«Exportar»:** monta si hace falta (guardando antes la versión) y abre una hoja con Descargar, Guardar en la
+  biblioteca y Publicar o programar, más portada, vídeos anteriores y avisos en una línea sin jerga. El vídeo se
+  reconoce por su montaje: cambiar solo el pie no pide montar otra vez. Con un archivo borrado no se monta y lleva a él.
+- **Publicar o programar:** pie y hashtags (se guardan en `copy` del reel, que es lo que lee el publicador: los reels
+  dejan de salir sin texto), «Redactar con IA» si está configurado, el pie de «Hacer un reel como este» si lo hay,
+  «Ahora» o «Programar…» con el vídeo recién montado sin elegirlo, aviso de cuenta sin conectar **antes** de aprobar,
+  y «Publicada» con fecha y enlace a Instagram («Publicar otra vez» hace una copia, porque la base de datos publica
+  cada pieza una vez). Sin texto alternativo: Instagram no lo admite en reels.
+- **Aprobación:** en autogestión no se ve; «Publicar o programar» aprueba por debajo con los pasos de
+  `set_content_status`. En modo agencia, el flujo de siempre (el siguiente paso en la hoja; los demás en «⋯»). Sin
+  textos de «cupo» en autogestión (reel como este y subtítulos).
+- **Avisos flotantes** en móvil por debajo de la cabecera (no tapan «Exportar» ni la barra). «Nuevo reel → Desde una
+  plantilla» va directo a pedir las fotos, sin volver a enseñar la galería.
+- **Probado:** unitarias y componentes (`exportFlow`, `editorPro`, `editorReels`, `mediosBorrados`, `reelLike`) y
+  `test:layout` en Chromium real. La prueba intermitente del guardado al salir espera a lo que de verdad hace falta.
+- **Sin probar:** móvil y Safari reales; publicar y programar contra Supabase y Meta reales; la e2e 29 (adaptada, sin
+  ejecutar); «Redactar con IA» con proveedor real. Una aserción de `src/features/content/contenidos.test.tsx` se cambió
+  porque miraba la cabecera vieja del editor de reels (`reel-version`).
 
 ## Sin probar contra el servicio real
 
