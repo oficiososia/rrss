@@ -18,9 +18,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { Button } from '@/components/ui';
 import type { ReelTemplateSummary } from '../templates';
 import { useClockValue, type PlayClock } from './clock';
-import { musicGain, prepareFrames, type Frame, type FrameText } from './compose';
+import { musicGain, prepareFrames, previewTotal, type Frame, type FrameText, type MeasurerFor } from './compose';
 import type { Selection } from './history';
-import { textLayout, type ClipFilter, type DraftPlan, type PlanTimeline, type VideoClip } from './project';
+import type { ClipFilter, DraftPlan, PlanTimeline, TextStyle, VideoClip } from './project';
+import { fallbackMeasurer, safeArea, type Measurer } from './textFit';
 import { TextOverlay } from './TextOverlay';
 import { setThumbsPaused } from './thumbs';
 
@@ -102,10 +103,14 @@ export function ReelPlayer(props: ReelPlayerProps) {
   const [size, setSize] = useState({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT });
   const scheduled = useRef(0);
 
+  // Lo que dura lo que se ve: los planos y, si lo lleva, el cierre con la marca.
+  const total = useMemo(() => previewTotal(plan, timeline, template), [plan, timeline, template]);
+  // Los textos se miden con la letra con la que se dibujan (como el vídeo con la suya).
+  const measurerFor = useMemo(() => canvasMeasurer(props.defaultFamily), [props.defaultFamily]);
   // Lo que no cambia de un fotograma a otro, preparado una vez por montaje.
   const frames = useMemo(
-    () => prepareFrames(plan, timeline, template, size),
-    [plan, timeline, template, size],
+    () => prepareFrames(plan, timeline, template, size, measurerFor),
+    [plan, timeline, template, size, measurerFor],
   );
   const framesRef = useRef(frames);
   useLayoutEffect(() => {
@@ -304,7 +309,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
             // sin datos todavía
           }
         }
-        track.volume = musicGain(t, p.timeline.total, music);
+        track.volume = musicGain(t, previewTotal(p.plan, p.timeline, p.template), music);
         if (track.paused) void track.play()?.catch(() => undefined);
       } else if (!track.paused) track.pause();
     }
@@ -361,6 +366,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
     }
     for (const item of frame.texts) drawText(ctx, item, W, H, p.defaultFamily);
     for (const item of frame.subtitles) drawText(ctx, item, W, H, p.defaultFamily);
+    if (frame.outro) drawOutro(ctx, frame, W, H, p.defaultFamily, photoFor, p.plan);
     ctx.restore();
   }
 
@@ -373,12 +379,13 @@ export function ReelPlayer(props: ReelPlayerProps) {
     }
     let raf = 0;
     const from = clock.get();
-    const startAt = from >= latest.current.timeline.total - 0.05 ? 0 : from;
+    const end = previewTotal(latest.current.plan, latest.current.timeline, latest.current.template);
+    const startAt = from >= end - 0.05 ? 0 : from;
     const started = performance.now();
     const tick = (now: number) => {
       const p = latest.current;
       const t = startAt + (now - started) / 1000;
-      const limit = Math.min(p.timeline.total, p.stopAt ?? Infinity);
+      const limit = Math.min(previewTotal(p.plan, p.timeline, p.template), p.stopAt ?? Infinity);
       if (t >= limit) {
         p.clock.set(limit);
         p.onPlayingChange(false);
@@ -437,7 +444,10 @@ export function ReelPlayer(props: ReelPlayerProps) {
           {!playing && (
             <TextOverlay
               plan={plan}
-              total={timeline.total}
+              total={total}
+              timeline={timeline}
+              template={template}
+              measurerFor={measurerFor}
               clock={clock}
               selection={props.selection}
               readOnly={props.readOnly}
@@ -460,12 +470,12 @@ export function ReelPlayer(props: ReelPlayerProps) {
           aria-keyshortcuts="Space"
           title="Reproducir o pausar (Espacio)"
           onClick={() => props.onPlayingChange(!playing)}
-          disabled={timeline.total <= 0}
+          disabled={total <= 0}
           data-testid="reel-play"
         >
           {playing ? <Pause className="h-4 w-4" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
         </Button>
-        <TimeLabel clock={clock} total={timeline.total} />
+        <TimeLabel clock={clock} total={total} />
         {props.extra}
       </div>
     </div>
@@ -482,40 +492,156 @@ function TimeLabel({ clock, total }: { clock: PlayClock; total: number }) {
   );
 }
 
-function drawText(ctx: CanvasRenderingContext2D, item: FrameText, W: number, H: number, defaultFamily: string | null) {
-  const { style } = item;
-  const layout = textLayout(style, item.position, item.lines.length, W, H);
+/** Letra con la que se dibuja un texto: la suya, la de la marca para los reels o una parecida. */
+function fontOf(style: TextStyle, size: number, defaultFamily: string | null): string {
   const family = style.fontFamily ?? (style.fontPath ? null : defaultFamily);
+  // Sin letra de la marca, el vídeo usa una de palo grueso (Montserrat ExtraBold): aquí, la más parecida.
+  const weight = family ? '' : '800 ';
+  return `${weight}${size}px ${family ? `"${family}", ` : ''}Montserrat, "DejaVu Sans", Arial, sans-serif`;
+}
+
+/**
+ * Medidas de los textos con el lienzo del navegador y la letra con la que se dibujan, para
+ * partir las líneas como el vídeo. Sin lienzo (pruebas), el ancho medio del trabajador.
+ */
+export function canvasMeasurer(defaultFamily: string | null): MeasurerFor {
+  let context: CanvasRenderingContext2D | null = null;
+  try {
+    context = typeof document !== 'undefined' ? (document.createElement('canvas').getContext?.('2d') ?? null) : null;
+  } catch {
+    context = null;
+  }
+  if (!context) return () => fallbackMeasurer;
+  const ctx = context;
+  const widths = new Map<string, number>();
+  const heights = new Map<string, number>();
+  return (style) => {
+    const measurer: Measurer = {
+      width: (text, size) => {
+        const font = fontOf(style, size, defaultFamily);
+        const key = `${font}|${text}`;
+        let width = widths.get(key);
+        if (width === undefined) {
+          ctx.font = font;
+          width = ctx.measureText(text).width;
+          if (!Number.isFinite(width) || width <= 0) width = fallbackMeasurer.width(text, size);
+          widths.set(key, width);
+        }
+        return width;
+      },
+      lineHeight: (size) => {
+        const font = fontOf(style, size, defaultFamily);
+        let height = heights.get(font);
+        if (height === undefined) {
+          ctx.font = font;
+          const m = ctx.measureText('ÁÉgjpqy');
+          const box = (m.fontBoundingBoxAscent ?? 0) + (m.fontBoundingBoxDescent ?? 0);
+          height = box > size * 0.8 && box < size * 2 ? box : fallbackMeasurer.lineHeight(size);
+          heights.set(font, height);
+        }
+        return height;
+      },
+    };
+    return measurer;
+  };
+}
+
+/**
+ * Un texto como lo dibuja el vídeo (`draw` en worker/src/reel/build.ts): cada línea en su sitio,
+ * con su caja (que rodea la línea con el relleno) o con contorno y sombra si no lleva caja.
+ */
+function drawText(ctx: CanvasRenderingContext2D, item: FrameText, W: number, H: number, defaultFamily: string | null) {
+  const { style, laid } = item;
   // Con el zoom la letra crece del 60 % al 100 % y el texto sigue centrado en su línea.
-  const size = layout.fontSize * item.scale;
+  const size = laid.fontSize * item.scale;
+  const area = safeArea(W, H);
   ctx.save();
   ctx.globalAlpha = item.alpha;
-  ctx.font = `${size}px ${family ? `"${family}", ` : ''}"DejaVu Sans", Arial, sans-serif`;
-  // Máquina de escribir: alineada a la izquierda del ancho útil (como en el vídeo).
-  const left = Math.round(((1 - style.maxWidthRatio) * W) / 2);
-  ctx.textAlign = item.typewriter ? 'left' : 'center';
-  ctx.textBaseline = 'top';
+  ctx.font = fontOf(style, size, defaultFamily);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  const originX = (item.typewriter ? left : W / 2) + item.dx * W;
+  const pad = laid.padding;
+  const ox = item.dx * W;
+  const typewriterLeft = Math.round((W - laid.blockWidth) / 2) + pad + ox;
   item.lines.forEach((line, index) => {
     if (!line) return;
-    const y = layout.top + index * layout.lineStep + (layout.fontSize - size) / 2 + item.dy * H;
+    const lineBox = laid.lineBox * item.scale;
+    const lineTop = laid.top + index * laid.lineStep + item.dy * H + (laid.lineBox - lineBox) / 2;
     const width = ctx.measureText(line).width;
+    // Centrado y, si se movió a mano, sin salirse de los márgenes laterales (como el vídeo).
+    const centered = (W - width) / 2 + ox;
+    const x = item.typewriter
+      ? Math.min(Math.max(typewriterLeft, area.left + pad), area.right - pad)
+      : ox === 0
+        ? centered
+        : Math.min(Math.max(centered, area.left + pad), area.right - pad - width);
+    const y = lineTop + lineBox / 2;
     if (style.box) {
-      const pad = Math.round(style.box.paddingRatio * layout.fontSize);
-      const boxX = item.typewriter ? originX : originX - width / 2;
       ctx.fillStyle = hexToRgba(style.box.color, style.box.opacity);
-      ctx.fillRect(boxX - pad, y - pad, width + pad * 2, size + pad * 2);
+      ctx.fillRect(x - pad, lineTop - pad, width + pad * 2, lineBox + pad * 2);
     }
     if (style.outline) {
-      ctx.lineWidth = Math.max(1, Math.round(style.outline.widthRatio * layout.fontSize)) * 2;
+      ctx.lineWidth = Math.max(1, Math.round(style.outline.widthRatio * laid.fontSize)) * 2;
       ctx.strokeStyle = style.outline.color;
-      ctx.strokeText(line, originX, y);
+      ctx.strokeText(line, x, y);
+    }
+    if (!style.box) {
+      // Sin caja, el vídeo le pone una sombra suave debajo.
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = Math.max(1, Math.round(laid.fontSize * 0.045));
+      ctx.shadowBlur = 0;
     }
     ctx.fillStyle = style.color;
-    ctx.fillText(line, originX, y);
+    ctx.fillText(line, x, y);
+    ctx.shadowColor = 'transparent';
   });
   ctx.restore();
+}
+
+/**
+ * El cierre con la marca: la última foto muy desenfocada y oscurecida (o el color de fondo),
+ * el logotipo arriba y los textos (llamada, usuario y dirección), como el vídeo.
+ */
+function drawOutro(
+  ctx: CanvasRenderingContext2D,
+  frame: Frame,
+  W: number,
+  H: number,
+  defaultFamily: string | null,
+  photoFor: (path: string) => Picture | null,
+  plan: DraftPlan,
+) {
+  const outro = frame.outro!;
+  ctx.save();
+  ctx.globalAlpha = outro.alpha;
+  const clip = outro.backgroundClip === null ? null : plan.clips[outro.backgroundClip];
+  const source = clip ? photoFor(clip.path) : null;
+  if (clip && source && source.width && source.height) {
+    const scale = Math.max(W / source.width, H / source.height);
+    const cw = W / scale;
+    const ch = H / scale;
+    const focal = clip.focalPoint ?? { x: 0.5, y: 0.5 };
+    const cx = Math.min(Math.max(focal.x * source.width - cw / 2, 0), source.width - cw);
+    const cy = Math.min(Math.max(focal.y * source.height - ch / 2, 0), source.height - ch);
+    ctx.filter = `blur(${(W * 0.045).toFixed(1)}px) brightness(0.76) saturate(0.75)`;
+    ctx.drawImage(source, cx, cy, cw, ch, -W * 0.03, -H * 0.03, W * 1.06, H * 1.06);
+    ctx.filter = 'none';
+  } else {
+    ctx.fillStyle = outro.outro.background ?? '#151515';
+    ctx.fillRect(0, 0, W, H);
+  }
+  const logo = outro.outro.logoPath ? photoFor(outro.outro.logoPath) : null;
+  if (logo && logo.width && logo.height) {
+    const scale = Math.min((W * 0.46) / logo.width, (H * 0.15) / logo.height);
+    const w = logo.width * scale;
+    const h = logo.height * scale;
+    ctx.globalAlpha = outro.alpha * outro.textAlpha;
+    ctx.drawImage(logo, (W - w) / 2, H * 0.34 - h / 2, w, h);
+  }
+  ctx.restore();
+  for (const item of outro.texts) drawText(ctx, item, W, H, defaultFamily);
 }
 
 function hexToRgba(hex: string, alpha: number): string {
