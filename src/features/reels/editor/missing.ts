@@ -17,15 +17,49 @@ export type MissingItem =
   | { kind: 'music'; path: string }
   | { kind: 'cover'; path: string };
 
-/** Rutas de la biblioteca que usa el plan (clips, música y foto de portada), sin repetir y ordenadas. */
+/**
+ * Rutas de la biblioteca que usa el plan (clips, música, foto de portada y logotipo del cierre),
+ * sin repetir y ordenadas. Las máscaras del sujeto no se ven: van aparte (`planHelperPaths`).
+ */
 export function planPaths(plan: DraftPlan): string[] {
   return [
     ...new Set([
       ...plan.clips.map((c) => c.path),
       ...(plan.music ? [plan.music.path] : []),
       ...(plan.cover?.type === 'photo' ? [plan.cover.path] : []),
+      ...(plan.outro?.logoPath ? [plan.outro.logoPath] : []),
     ]),
   ].sort();
+}
+
+/** Archivos que el reel usa sin enseñarlos (las máscaras de «Quitar el fondo»), sin repetir y ordenados. */
+export function planHelperPaths(plan: DraftPlan): string[] {
+  return [
+    ...new Set(plan.clips.flatMap((c) => (c.type === 'photo' && c.subjectMaskPath ? [c.subjectMaskPath] : []))),
+  ].sort();
+}
+
+/**
+ * Quita del plan lo que ayuda al montaje pero no es imprescindible y ya no está en la biblioteca:
+ * la máscara de una foto (se encuadra por saliencia) y el logotipo del cierre (sale sin él). Así un
+ * recorte o un logotipo borrados no impiden montar. Devuelve el mismo plan si no falta nada.
+ */
+export function dropMissingHelpers<P extends DraftPlan>(plan: P, isMissing: (path: string) => boolean): P {
+  let changed = false;
+  const clips = plan.clips.map((clip) => {
+    if (clip.type !== 'photo' || !clip.subjectMaskPath || !isMissing(clip.subjectMaskPath)) return clip;
+    changed = true;
+    const rest = { ...clip };
+    delete rest.subjectMaskPath;
+    return rest;
+  });
+  let outro = plan.outro;
+  if (outro?.logoPath && isMissing(outro.logoPath)) {
+    outro = { ...outro };
+    delete outro.logoPath;
+    changed = true;
+  }
+  return changed ? { ...plan, clips, ...(outro ? { outro } : {}) } : plan;
 }
 
 /** Lo que falta, en el orden de la pantalla: clips, música y portada (si no es ya un clip que falta). */

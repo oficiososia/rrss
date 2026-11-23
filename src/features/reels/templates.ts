@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 // Plantillas de reel que ofrece la aplicación.
 //
 // Fuente única: los archivos JSON de `worker/templates/`, los mismos que carga

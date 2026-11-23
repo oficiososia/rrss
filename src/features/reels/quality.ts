@@ -15,20 +15,21 @@
 //   * el aviso «Sin música» (`reelAudioNotice`).
 //
 // Todo es puro (sin red ni React): lo usan las plantillas, «Hacer un reel como
-// este» y, cuando lo adopten, las pantallas del editor y de los selectores.
+// este», los reels de las campañas y las pantallas del editor (crear desde una
+// plantilla, selectores de material, aviso de música).
 import type { BrandProfileData } from '@/features/brand/profile';
-import type { TextStyle } from './editor/project';
+import { OUTRO_SECONDS, TEXT_ROLES, type ReelOutro, type TextRole, type TextStyle } from './editor/project';
 
 // ───────────────────────────── Papeles de los textos ─────────────────────────────
 
 /**
  * Papel de un texto en el vídeo. Es el mismo vocabulario que entiende el
  * trabajador (worker/src/reel/textlayout.ts, campo `role` del plan v2 desde la
- * migración 20270113010000); mientras el editor no guarde `role`, el trabajador
- * lo deduce y aquí solo se usa para elegir el estilo.
+ * migración 20270113010000): el editor lo guarda en cada texto (`role`) y, sin
+ * él, el trabajador lo deduce.
  */
-export const REEL_TEXT_ROLES = ['headline', 'label', 'price', 'cta'] as const;
-export type ReelTextRole = (typeof REEL_TEXT_ROLES)[number];
+export const REEL_TEXT_ROLES = TEXT_ROLES;
+export type ReelTextRole = TextRole;
 
 /** Papel de un texto de plantilla (reelTemplate.ts) → papel en el vídeo. */
 export const TEMPLATE_ROLE_TO_TEXT_ROLE: Record<'hook' | 'title' | 'step' | 'detail' | 'cta', ReelTextRole> = {
@@ -313,24 +314,28 @@ export function assetCaption(fileName: string): string | null {
 
 /**
  * Orden del material para una plantilla: los vídeos van a los planos de ambiente
- * (huecos `video` o de tipo general o persona) y las fotos a los de detalle, sin
- * cambiar el orden dentro de cada grupo. Un vídeo real del sitio cuenta más que
- * una foto en un plano de ambiente.
+ * (huecos `video` o de tipo general o persona) y las fotos a los de detalle
+ * (huecos `photo`, detalle o texto); los planos sin preferencia se llenan con lo
+ * que queda, en el orden en que venía. Un vídeo real del sitio cuenta más que una
+ * foto en un plano de ambiente.
  */
 export function orderForSlots<T extends { kind: string }>(
   slots: ReadonlyArray<{ kind?: string; shot?: string }>,
   assets: readonly T[],
 ): T[] {
-  const videos = assets.filter((a) => a.kind === 'video');
-  const photos = assets.filter((a) => a.kind !== 'video');
-  return slots
-    .slice(0, assets.length)
-    .map((slot) => {
-      const wantsVideo = slot.kind === 'video' || slot.shot === 'wide' || slot.shot === 'person';
-      const pool = wantsVideo ? (videos.length ? videos : photos) : photos.length ? photos : videos;
-      return pool.shift()!;
-    })
-    .filter(Boolean);
+  const pool = [...assets];
+  const take = (video: boolean) => {
+    const index = pool.findIndex((a) => (a.kind === 'video') === video);
+    return index >= 0 ? pool.splice(index, 1)[0] : undefined;
+  };
+  const used = slots.slice(0, assets.length);
+  // Primero los planos que piden algo concreto; después, los demás con lo que quede, en su orden.
+  const out: Array<T | undefined> = used.map((slot) => {
+    if (slot.kind === 'video' || slot.shot === 'wide' || slot.shot === 'person') return take(true);
+    if (slot.kind === 'photo' || slot.shot === 'detail' || slot.shot === 'text') return take(false);
+    return undefined;
+  });
+  return out.map((asset) => asset ?? pool.shift()).filter((a): a is T => Boolean(a));
 }
 
 // ───────────────────────────── Cierre con la marca ─────────────────────────────
@@ -354,6 +359,24 @@ function pickColor(colors: BrandProfileData['visual']['colors'], words: RegExp, 
   return other?.hex.toUpperCase();
 }
 
+/**
+ * El logotipo para el cierre: el primero de los del perfil (`visual.logoAssetIds`, en su
+ * orden) que sea una imagen que el trabajador pueda superponer (PNG, JPEG o WebP; un SVG
+ * no). Undefined si no hay ninguno.
+ */
+export function reelLogoPath(
+  logoIds: readonly string[],
+  assets: ReadonlyArray<{ id: string; kind: string; storage_path: string; mime_type: string }>,
+): string | undefined {
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  for (const id of logoIds) {
+    const asset = byId.get(id);
+    if (asset && (asset.kind === 'image' || asset.kind === 'logo') && /^image\/(png|jpeg|webp)$/i.test(asset.mime_type))
+      return asset.storage_path;
+  }
+  return undefined;
+}
+
 /** Lo que el reel toma del perfil de la marca: colores, logotipo, usuario, dirección y llamada. */
 export function brandReelKit(profile: BrandProfileData, logoPath?: string | null): BrandReelKit {
   const colors = profile.visual.colors.filter((c) => HEX.test(c.hex));
@@ -375,15 +398,7 @@ export function brandReelKit(profile: BrandProfileData, logoPath?: string | null
 }
 
 /** Cierre del plan v2 (`plan.outro`): sin campos vacíos, como lo pide `request_media_job`. */
-export interface ReelOutroPlan {
-  seconds: number;
-  cta: string;
-  handle?: string;
-  address?: string;
-  logoPath?: string;
-  accent?: string;
-  accentText?: string;
-}
+export type ReelOutroPlan = ReelOutro & { seconds: number };
 
 /**
  * El cierre con la marca: logotipo, llamada grande (la del texto final de la
@@ -394,7 +409,7 @@ export function brandOutro(kit: BrandReelKit, cta?: string | null, seconds = 2):
   if (!call) return null;
   const accent = kit.colors.accent;
   return {
-    seconds: Math.min(3, Math.max(1.5, seconds)),
+    seconds: Math.min(OUTRO_SECONDS.max, Math.max(OUTRO_SECONDS.min, seconds)),
     cta: call,
     ...(kit.handle ? { handle: kit.handle } : {}),
     ...(kit.address ? { address: kit.address } : {}),
@@ -410,9 +425,7 @@ const CALL_TO_ACTION =
  * Añade al plan el cierre con la marca. Si el último texto del reel ya es la
  * llamada («Reserva tu mesa» sobre el último plano), pasa al cierre en lugar de
  * salir dos veces. Devuelve el plan tal cual si no hay llamada con la que cerrar.
- *
- * OJO: el plan del editor (editor/project.ts) aún no guarda `outro`; hasta que lo
- * haga, esto sirve para encargar el montaje directamente (o para las muestras).
+ * El editor lo guarda en el plan (`outro`) al crear un reel desde una plantilla.
  */
 export function withBrandOutro<
   P extends { texts: Array<{ text: string; start: number; end: number }>; clips: unknown[] },

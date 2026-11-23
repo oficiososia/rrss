@@ -4,23 +4,37 @@
 //
 // Imita al motor (worker/src/reel/build.ts): mismas duraciones, mismos
 // solapes en las transiciones, el mismo movimiento de las fotos, el mismo
-// desenfoque relativo y las mismas cuentas de texto. Las transiciones de
-// FFmpeg (`xfade`) se aproximan: fundido, a negro y deslizamientos.
+// desenfoque relativo y los mismos mínimos de texto (textFit.ts: tamaño por
+// papel, caja o contorno, zonas seguras y nunca dos textos encima). Las
+// transiciones de FFmpeg (`xfade`) se aproximan: fundido, a negro y
+// deslizamientos. Si el plan lleva el cierre con la marca, se ve al final.
 import type { ReelTemplateSummary } from '../templates';
 import { textAnimState, visiblePerLine } from './animation';
 import {
   MAX_SUBTITLE_LINES,
   MAX_TEXT_LINES,
-  textLines,
+  outroSpan,
   timelineSubtitles,
   type Clip,
   type DraftPlan,
+  type OutroSpan,
   type PhotoMotion,
   type PlanTimeline,
+  type ReelOutro,
   type TextPosition,
+  type TextRole,
   type TextStyle,
   type TransitionType,
 } from './project';
+import {
+  contrastingDark,
+  fitTexts,
+  layoutText,
+  legibleStyle,
+  type FittedText,
+  type LaidText,
+  type Measurer,
+} from './textFit';
 
 export const MOTION_CYCLE: PhotoMotion[] = ['zoom-in', 'pan-right', 'zoom-out', 'pan-left'];
 
@@ -41,8 +55,11 @@ export interface FrameLayer {
 export interface FrameText {
   key: string;
   lines: string[];
+  /** El estilo que dibuja el vídeo (con la caja o el contorno que le pone para que se lea). */
   style: TextStyle;
   position: TextPosition;
+  /** Medidas y sitio, los del vídeo: tamaño de letra, alto de línea, relleno y arriba. */
+  laid: LaidText;
   alpha: number;
   /** Animación: desplazamiento (fracción del ancho y del alto), tamaño y si se escribe letra a letra (alineado a la izquierda). */
   dx: number;
@@ -51,12 +68,25 @@ export interface FrameText {
   typewriter: boolean;
 }
 
+export interface FrameOutro {
+  outro: ReelOutro;
+  /** Opacidad del cierre sobre el último plano (entra fundiéndose). */
+  alpha: number;
+  /** Opacidad del logotipo y de los textos (entran un poco después). */
+  textAlpha: number;
+  /** Último plano de foto (el fondo desenfocado y oscurecido), si no hay color de fondo. */
+  backgroundClip: number | null;
+  texts: FrameText[];
+}
+
 export interface Frame {
   layers: FrameLayer[];
   /** Negro por encima de todo (transición a negro), de 0 a 1. */
   black: number;
   texts: FrameText[];
   subtitles: FrameText[];
+  /** El cierre con la marca, mientras se ve. */
+  outro: FrameOutro | null;
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
@@ -139,32 +169,135 @@ export function frameAt(
  * vez, no en cada fotograma. Con 15 clips y varios textos es la diferencia entre ir
  * fluido y dar saltos.
  */
+/** Medidor de cada texto (el lienzo del navegador con la letra que se dibuja); sin él, el ancho medio. */
+export type MeasurerFor = (style: TextStyle, role: TextRole | null) => Measurer;
+
+/** Duración de la vista previa: la de los planos y, si lo hay, la del cierre con la marca. */
+export function previewTotal(plan: DraftPlan, timeline: PlanTimeline, template: ReelTemplateSummary): number {
+  return outroSpan(plan, timeline, template)?.total ?? timeline.total;
+}
+
+/**
+ * Textos y subtítulos del reel como los colocará el vídeo (textFit.ts), en el
+ * tamaño dado. Lo usan la vista previa y las cajas para mover los textos.
+ */
+export function fittedTexts(
+  plan: DraftPlan,
+  timeline: PlanTimeline,
+  template: ReelTemplateSummary,
+  size: { width: number; height: number },
+  measurerFor?: MeasurerFor,
+): FittedText[] {
+  const outro = outroSpan(plan, timeline, template);
+  const cues = plan.subtitles?.enabled
+    ? timelineSubtitles(plan.clips, timeline).map((cue) => ({
+        key: `${cue.clip}:${cue.cue}`,
+        text: cue.text,
+        start: cue.start,
+        end: cue.end,
+      }))
+    : [];
+  return fitTexts(
+    {
+      texts: plan.texts,
+      cues,
+      subtitles: plan.subtitles?.enabled ? plan.subtitles : null,
+      clipsTotal: timeline.total,
+      ...(outro ? { outroStart: outro.start } : {}),
+      maxTextLines: MAX_TEXT_LINES,
+      maxSubtitleLines: MAX_SUBTITLE_LINES,
+    },
+    size.width,
+    size.height,
+    measurerFor,
+  );
+}
+
 export function prepareFrames(
   plan: DraftPlan,
   timeline: PlanTimeline,
   template: ReelTemplateSummary,
   size: { width: number; height: number },
+  measurerFor?: MeasurerFor,
 ): (t: number) => Frame {
   const { clips } = plan;
   const motions = photoMotions(clips, template);
-  const preparedTexts = plan.texts.map((text) => {
-    const { lines } = textLines(text.text, text.style, text.position, size.width, size.height, MAX_TEXT_LINES);
-    return { text, lines, chars: lines.reduce((n, line) => n + line.length, 0) };
-  });
-  const preparedCues = plan.subtitles?.enabled
-    ? timelineSubtitles(clips, timeline).map((cue) => ({
-        cue,
-        lines: textLines(
-          cue.text,
-          plan.subtitles!.style,
-          plan.subtitles!.position,
-          size.width,
-          size.height,
-          MAX_SUBTITLE_LINES,
-        ).lines,
-      }))
-    : [];
-  return (t) => frameOf(t, plan, timeline, template, motions, preparedTexts, preparedCues);
+  const positionOf = new Map(plan.texts.map((t) => [t.id, t.position]));
+  const fitted = fittedTexts(plan, timeline, template, size, measurerFor).map((fit) => ({
+    fit,
+    position: fit.kind === 'subtitle' ? (plan.subtitles?.position ?? 'bottom') : (positionOf.get(fit.key) ?? 'bottom'),
+    chars: fit.laid.lines.reduce((n, line) => n + line.length, 0),
+  }));
+  const outro = outroSpan(plan, timeline, template);
+  const outroTexts = outro && plan.outro ? outroLayout(plan.outro, size, measurerFor) : [];
+  return (t) => frameOf(t, plan, timeline, template, motions, fitted, outro, outroTexts);
+}
+
+/**
+ * Textos del cierre con la marca, como `build.ts`: la llamada grande en la caja del
+ * color de acento y, debajo, el usuario y la dirección.
+ */
+function outroLayout(
+  outro: ReelOutro,
+  size: { width: number; height: number },
+  measurerFor?: MeasurerFor,
+): Array<{ key: string; laid: LaidText; style: TextStyle }> {
+  const { width, height } = size;
+  const accent = outro.accent ?? '#FFFFFF';
+  const onBg = outro.background ? contrastingDark(outro.background) : '#FFFFFF';
+  const ctaStyle: TextStyle = {
+    sizeRatio: 0.078,
+    color: outro.accentText ?? contrastingDark(accent),
+    marginRatio: 0,
+    maxWidthRatio: 0.84,
+    lineHeight: 1.1,
+    box: { color: accent, opacity: 1, paddingRatio: 0.42 },
+    outline: null,
+    fadeSeconds: 0.3,
+  };
+  const moveTo = (laid: LaidText, top: number): LaidText => {
+    const h = laid.extent[1] - laid.extent[0];
+    return { ...laid, top: top + laid.padding, extent: [top, top + h] };
+  };
+  const cta = layoutText(
+    { text: outro.cta, style: ctaStyle, position: 'center', role: 'cta', maxLines: 2 },
+    width,
+    height,
+    measurerFor?.(ctaStyle, 'cta'),
+  );
+  const first = moveTo(cta, Math.round(height * (outro.logoPath ? 0.47 : 0.42)));
+  const out = [{ key: 'outro-cta', laid: first, style: ctaStyle }];
+  let cursor = first.extent[1] + Math.round(height * 0.035);
+  const bottom = height - Math.round((400 / 1920) * height);
+  for (const [value, ratio, key] of [
+    [outro.handle, 0.05, 'outro-handle'],
+    [outro.address, 0.038, 'outro-address'],
+  ] as const) {
+    if (!value) continue;
+    const style = legibleStyle(
+      {
+        sizeRatio: ratio,
+        color: onBg,
+        marginRatio: 0,
+        maxWidthRatio: 0.84,
+        lineHeight: 1.15,
+        box: null,
+        outline: null,
+        fadeSeconds: 0.3,
+      },
+      'cta',
+    );
+    const laid = layoutText(
+      { text: value, style, position: 'center', role: null, maxLines: 2 },
+      width,
+      height,
+      measurerFor?.(style, null),
+    );
+    const moved = moveTo(laid, Math.min(cursor, bottom - (laid.extent[1] - laid.extent[0])));
+    out.push({ key, laid: moved, style });
+    cursor = moved.extent[1] + Math.round(height * 0.012);
+  }
+  return out;
 }
 
 function frameOf(
@@ -173,23 +306,27 @@ function frameOf(
   timeline: PlanTimeline,
   template: ReelTemplateSummary,
   motions: Array<PhotoMotion | null>,
-  preparedTexts: Array<{ text: DraftPlan['texts'][number]; lines: string[]; chars: number }>,
-  preparedCues: Array<{ cue: ReturnType<typeof timelineSubtitles>[number]; lines: string[] }>,
+  fitted: Array<{ fit: FittedText; position: TextPosition; chars: number }>,
+  outro: OutroSpan | null,
+  outroTexts: Array<{ key: string; laid: LaidText; style: TextStyle }>,
 ): Frame {
   const { clips } = plan;
   const layers: FrameLayer[] = [];
   let black = 0;
-  const time = Math.min(Math.max(0, t), Math.max(0, timeline.total - 1e-3));
+  const total = outro?.total ?? timeline.total;
+  const time = Math.min(Math.max(0, t), Math.max(0, total - 1e-3));
+  // Durante el cierre, debajo sigue el último plano, quieto en su último fotograma.
+  const clipTime = Math.min(time, Math.max(0, timeline.total - 1e-3));
 
   const layerFor = (index: number, alpha = 1, dx = 0, dy = 0): FrameLayer => {
     const clip = clips[index]!;
     const start = timeline.starts[index]!;
     const duration = timeline.durations[index]!;
     if (clip.type === 'video') {
-      const sourceTime = clip.in + (time - start) * (clip.speed ?? 1);
+      const sourceTime = clip.in + (clipTime - start) * (clip.speed ?? 1);
       return { clip: index, alpha, dx, dy, sourceTime, zoom: 1, panX: 0.5, panY: 0.5 };
     }
-    const progress = duration > 0 ? (time - start) / duration : 0;
+    const progress = duration > 0 ? (clipTime - start) / duration : 0;
     const { zoom, panX, panY } = photoTransform(
       motions[index]!,
       clip.motionAmount ?? template.photoMotion.amount,
@@ -201,13 +338,13 @@ function frameOf(
   for (let i = 0; i < clips.length; i += 1) {
     const start = timeline.starts[i]!;
     const end = start + timeline.durations[i]!;
-    if (time < start || time >= end) continue;
+    if (clipTime < start || clipTime >= end) continue;
     const next = i + 1 < clips.length ? i + 1 : -1;
     const nextStart = next >= 0 ? timeline.starts[next]! : Infinity;
     const transition = next >= 0 ? timeline.transitions[next]! : 0;
-    if (next >= 0 && transition > 0 && time >= nextStart) {
+    if (next >= 0 && transition > 0 && clipTime >= nextStart) {
       // Dentro de la transición hacia el siguiente: se componen los dos.
-      const p = clamp01((time - nextStart) / transition);
+      const p = clamp01((clipTime - nextStart) / transition);
       const type: TransitionType = clips[next]!.transition?.type ?? template.transition.type;
       if (type === 'fadeblack') {
         if (p < 0.5) {
@@ -230,51 +367,73 @@ function frameOf(
     break;
   }
 
+  // Textos y subtítulos ya colocados como en el vídeo (el desplazamiento vertical a mano ya va en `laid`).
   const texts: FrameText[] = [];
-  for (const { text, lines, chars } of preparedTexts) {
-    const end = Math.min(text.end, timeline.total);
-    if (time < text.start || time > end) continue;
-    if (!lines.length) continue;
-    const state = textAnimState(text.animation, text.style, time, text.start, end, chars);
+  const subtitles: FrameText[] = [];
+  for (const { fit, position, chars } of fitted) {
+    if (time < fit.start || time > fit.end) continue;
+    const lines = fit.laid.lines;
+    if (fit.kind === 'subtitle') {
+      const alpha = fadeAlpha(time, fit.start, fit.end, fit.style.fadeSeconds);
+      if (alpha <= 0) continue;
+      subtitles.push({
+        key: fit.key,
+        lines,
+        style: fit.style,
+        position,
+        laid: fit.laid,
+        alpha,
+        dx: 0,
+        dy: 0,
+        scale: 1,
+        typewriter: false,
+      });
+      continue;
+    }
+    const state = textAnimState(fit.animation, fit.style, time, fit.start, fit.end, chars);
     if (state.alpha <= 0) continue;
-    const typewriter = text.animation?.in === 'typewriter';
+    const typewriter = fit.animation?.in === 'typewriter';
     const shown = typewriter ? visiblePerLine(lines, state.visibleChars).map((n, i) => lines[i]!.slice(0, n)) : lines;
     texts.push({
-      key: text.id,
+      key: fit.key,
       lines: shown,
-      style: text.style,
-      position: text.position,
+      style: fit.style,
+      position,
+      laid: fit.laid,
       alpha: state.alpha,
-      dx: state.dx + (text.offset?.x ?? 0),
-      dy: state.dy + (text.offset?.y ?? 0),
+      dx: state.dx + fit.offsetX,
+      dy: state.dy,
       scale: state.scale,
       typewriter,
     });
   }
 
-  const subtitles: FrameText[] = [];
-  if (plan.subtitles?.enabled) {
-    const settings = plan.subtitles;
-    for (const { cue, lines } of preparedCues) {
-      if (time < cue.start || time > cue.end) continue;
-      const alpha = fadeAlpha(time, cue.start, cue.end, settings.style.fadeSeconds);
-      if (alpha <= 0) continue;
-      if (lines.length) {
-        subtitles.push({
-          key: `${cue.clip}:${cue.cue}`,
-          lines,
-          style: settings.style,
-          position: settings.position,
-          alpha,
-          dx: 0,
-          dy: 0,
-          scale: 1,
-          typewriter: false,
-        });
-      }
-    }
+  let outroFrame: FrameOutro | null = null;
+  if (outro && plan.outro && time >= outro.start) {
+    const alpha = outro.fade > 0 ? clamp01((time - outro.start) / outro.fade) : 1;
+    const textAlpha = clamp01((time - (outro.start + outro.fade * 0.6)) / 0.35);
+    let lastPhoto: number | null = null;
+    for (let i = clips.length - 1; i >= 0 && lastPhoto === null; i -= 1) if (clips[i]!.type === 'photo') lastPhoto = i;
+    outroFrame = {
+      outro: plan.outro,
+      alpha,
+      textAlpha,
+      backgroundClip: plan.outro.background ? null : lastPhoto,
+      texts: outroTexts.map((item) => ({
+        key: item.key,
+        lines: item.laid.lines,
+        style: item.style,
+        position: 'center' as const,
+        laid: item.laid,
+        alpha: textAlpha,
+        dx: 0,
+        dy: 0,
+        scale: 1,
+        typewriter: false,
+      })),
+    };
   }
-  return { layers, black, texts, subtitles };
+  return { layers, black, texts, subtitles, outro: outroFrame };
 }
 
 export interface PreviewContext {

@@ -113,8 +113,19 @@ describe('plan v2 ampliado: el ejemplo compartido con el trabajador', () => {
     expect(frameAt(1.8, plan, timeline, fundido, size).subtitles.map((s) => s.lines.join(' '))).toEqual([
       'Va al doble',
     ]);
+    // El desplazamiento horizontal va aparte; el vertical ya está en su sitio (`laid`), como en el vídeo,
+    // y nunca lo saca de la zona segura de arriba (250 de 1920).
     const text = frameAt(0.8, plan, timeline, fundido, size).texts[0]!;
-    expect(text).toMatchObject({ dx: 0.1, dy: -0.25 });
+    expect(text).toMatchObject({ dx: 0.1, dy: 0 });
+    const still = frameAt(
+      0.8,
+      { ...plan, texts: [{ ...plan.texts[0]!, offset: { x: 0.1, y: 0 } }] },
+      timeline,
+      fundido,
+      size,
+    ).texts[0]!;
+    expect(text.laid.top).toBeLessThanOrEqual(still.laid.top);
+    expect(text.laid.extent[0]).toBeGreaterThanOrEqual(Math.round((250 / 1920) * 640));
     // Preparado una vez, da lo mismo que calculado de cero en cada fotograma.
     const frames = prepareFrames(plan, timeline, fundido, size);
     for (const t of [0, 0.8, 1.6, 2, 3.2]) expect(frames(t)).toEqual(frameAt(t, plan, timeline, fundido, size));

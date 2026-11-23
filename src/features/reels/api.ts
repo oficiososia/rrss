@@ -27,7 +27,9 @@ export type ReelSourceAsset = Pick<
   | 'created_at'
   | 'provenance'
   | 'folder'
->;
+> &
+  // Medidas y peso: con ellos los selectores ponen primero lo que mejor queda en un reel (quality.ts).
+  Partial<Pick<MediaAssetRow, 'width' | 'height' | 'bytes'>>;
 
 /** Fotos, clips y audios de la marca con los que se puede montar un reel (los 300 más recientes). */
 export function useReelSources(brandId: string) {
@@ -38,7 +40,7 @@ export function useReelSources(brandId: string) {
         await supabase
           .from('media_assets')
           .select(
-            'id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at, provenance, folder',
+            'id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at, provenance, folder, width, height, bytes',
           )
           .eq('brand_id', brandId)
           .in('kind', ['image', 'video', 'audio'])
