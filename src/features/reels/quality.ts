@@ -18,6 +18,7 @@
 // este», los reels de las campañas y las pantallas del editor (crear desde una
 // plantilla, selectores de material, aviso de música).
 import type { BrandProfileData } from '@/features/brand/profile';
+import { bestLogoVariant, type LogoTones } from '@/features/content/editor/logoContrast';
 import { OUTRO_SECONDS, TEXT_ROLES, type ReelOutro, type TextRole, type TextStyle } from './editor/project';
 
 // ───────────────────────────── Papeles de los textos ─────────────────────────────
@@ -216,9 +217,7 @@ export function rankReelAssets<T extends RankableAsset & { created_at?: string }
     .map((asset, index) => ({ asset, index, score: reelAssetScore(asset) }))
     .sort(
       (a, b) =>
-        b.score - a.score ||
-        (b.asset.created_at ?? '').localeCompare(a.asset.created_at ?? '') ||
-        a.index - b.index,
+        b.score - a.score || (b.asset.created_at ?? '').localeCompare(a.asset.created_at ?? '') || a.index - b.index,
     )
     .map((entry) => entry.asset);
 }
@@ -278,7 +277,8 @@ export function subjectMasks(library: readonly RankableAsset[]): Map<string, str
 }
 
 /** Nombres de archivo que no dicen nada (cámara, móvil, capturas). */
-const MEANINGLESS = /^(img|dsc|dscn|pxl|vid|video|mvimg|whatsapp|foto|image|imagen|photo|screenshot|captura|sin fondo|recorte)\b/i;
+const MEANINGLESS =
+  /^(img|dsc|dscn|pxl|vid|video|mvimg|whatsapp|foto|image|imagen|photo|screenshot|captura|sin fondo|recorte)\b/i;
 
 /**
  * Rótulo de un plano a partir del nombre del archivo, si dice algo: «Alcachofa a
@@ -360,21 +360,73 @@ function pickColor(colors: BrandProfileData['visual']['colors'], words: RegExp, 
 }
 
 /**
- * El logotipo para el cierre: el primero de los del perfil (`visual.logoAssetIds`, en su
- * orden) que sea una imagen que el trabajador pueda superponer (PNG, JPEG o WebP; un SVG
- * no). Undefined si no hay ninguno.
+ * Luminancia del fondo del cierre: siempre oscuro (el vídeo oscurecido o el color oscuro de la
+ * marca). Sobre él se quiere la variante clara del logotipo.
+ */
+export const REEL_OUTRO_BACKDROP_LUMINANCE = 0.02;
+
+const word = (words: string) => new RegExp(`(^|[^a-záéíóúüñ])(${words})([^a-záéíóúüñ]|$)`);
+/** Nombres de archivo o etiquetas que dicen que un logotipo es la versión clara (o la oscura). */
+const LIGHT_LOGO = word('claro|clara|blanco|blanca|white|light|negativo|negativa|inverso|inversa|reverse|reversed');
+const DARK_LOGO = word('oscuro|oscura|negro|negra|black|dark');
+
+interface LogoAsset {
+  id: string;
+  kind: string;
+  storage_path: string;
+  mime_type: string;
+  file_name?: string;
+  tags?: readonly string[];
+}
+
+/** Lo que dice de su tono el nombre del archivo (o su ruta, que lo lleva) o sus etiquetas. */
+function namedTone(asset: LogoAsset): 'light' | 'dark' | null {
+  const file = asset.storage_path.slice(asset.storage_path.lastIndexOf('/') + 1);
+  const words = lower(`${asset.file_name ?? ''} ${file} ${(asset.tags ?? []).join(' ')}`);
+  if (LIGHT_LOGO.test(words)) return 'light';
+  if (DARK_LOGO.test(words)) return 'dark';
+  return null;
+}
+
+/**
+ * El logotipo para el cierre, entre los del perfil (`visual.logoAssetIds`, en su orden) que el
+ * trabajador puede superponer (PNG, JPEG o WebP; un SVG no). Como el fondo del cierre siempre es
+ * oscuro, se prefiere la variante que contrasta con él, con la misma regla que las plantillas
+ * del editor (content/editor/logoContrast.ts):
+ *  - con la luminancia medida de los logotipos (`tones`), la variante que llega a 3:1 o, si
+ *    ninguna, la que más contrasta;
+ *  - sin medir, la que su nombre o sus etiquetas dicen clara («claro», «blanco», «white»…),
+ *    salvo que la primera ya lo sea.
+ * Si nada indica otra cosa, el primero. Undefined si no hay ninguno que se pueda superponer.
  */
 export function reelLogoPath(
   logoIds: readonly string[],
-  assets: ReadonlyArray<{ id: string; kind: string; storage_path: string; mime_type: string }>,
+  assets: ReadonlyArray<LogoAsset>,
+  tones?: LogoTones,
 ): string | undefined {
   const byId = new Map(assets.map((a) => [a.id, a]));
-  for (const id of logoIds) {
+  const usable = logoIds.flatMap((id) => {
     const asset = byId.get(id);
-    if (asset && (asset.kind === 'image' || asset.kind === 'logo') && /^image\/(png|jpeg|webp)$/i.test(asset.mime_type))
-      return asset.storage_path;
+    return asset &&
+      (asset.kind === 'image' || asset.kind === 'logo') &&
+      /^image\/(png|jpeg|webp)$/i.test(asset.mime_type)
+      ? [asset]
+      : [];
+  });
+  const first = usable[0];
+  if (!first) return undefined;
+  const measured = tones?.get(first.id);
+  if (tones && measured !== undefined && measured !== null) {
+    const best = bestLogoVariant(
+      first.id,
+      usable.map((a) => a.id),
+      tones,
+      REEL_OUTRO_BACKDROP_LUMINANCE,
+    );
+    return byId.get(best)!.storage_path;
   }
-  return undefined;
+  if (namedTone(first) === 'light') return first.storage_path;
+  return (usable.find((asset) => namedTone(asset) === 'light') ?? first).storage_path;
 }
 
 /** Lo que el reel toma del perfil de la marca: colores, logotipo, usuario, dirección y llamada. */
@@ -386,7 +438,10 @@ export function brandReelKit(profile: BrandProfileData, logoPath?: string | null
   const instagram = profile.channels.find((c) => /instagram/i.test(c.platform) && c.handle.trim());
   const anyHandle = instagram ?? profile.channels.find((c) => c.handle.trim());
   const handle = anyHandle ? `@${anyHandle.handle.trim().replace(/^@+/, '')}`.slice(0, 60) : undefined;
-  const address = profile.business.locations.find((l) => l.trim())?.trim().slice(0, 120);
+  const address = profile.business.locations
+    .find((l) => l.trim())
+    ?.trim()
+    .slice(0, 120);
   const cta = profile.voice.callsToAction.find((c) => c.trim() && c.trim().length <= 60)?.trim();
   return {
     colors: { ...(accent ? { accent } : {}), ...(dark ? { dark } : {}) },
@@ -500,10 +555,10 @@ export function separateTexts<T extends { start: number; end: number; position: 
  * final; el trabajo terminado lo confirma en `result.output.audio`
  * (`music` | `clips` | `none`).
  */
-export function reelAudioNotice(plan: {
-  music?: unknown;
-  clips: ReadonlyArray<{ type: string; volume?: number }>;
-}): { kind: 'music' | 'clips' | 'none'; notice: string | null } {
+export function reelAudioNotice(plan: { music?: unknown; clips: ReadonlyArray<{ type: string; volume?: number }> }): {
+  kind: 'music' | 'clips' | 'none';
+  notice: string | null;
+} {
   if (plan.music) return { kind: 'music', notice: null };
   const clipSound = plan.clips.some((c) => c.type === 'video' && (c.volume ?? 0) > 0);
   return clipSound

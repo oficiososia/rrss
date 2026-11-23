@@ -5,16 +5,29 @@
 // (las formas lisas que lo tapan, o el fondo del lienzo) y se elige la variante
 // del kit que más contrasta. Si ninguna contrasta, el editor lo avisa.
 //
-// Puro: el editor (useLogoContrast.tsx) carga las imágenes y llama a esto.
+// Puro y sin DOM (lo usa también el cierre de los reels, reels/quality.ts): el editor
+// (useLogoContrast.tsx) carga las imágenes, las mide y llama a esto.
 import { parseHex, relativeLuminance, type Rgb } from '@/features/brandcheck/color';
 import type { ContentDocument, Layer, LogoLayer } from '../document/schema';
-import { layerContains } from './frames';
 
 /** Contraste mínimo de un elemento gráfico con su fondo (WCAG 2.x, 1.4.11: 3:1). */
 export const LOGO_MIN_CONTRAST = 3;
 
 /** Luminancia relativa (0-1) de cada logotipo medido; null si no se ha podido leer. */
 export type LogoTones = ReadonlyMap<string, number | null>;
+
+/** ¿Está el punto dentro de la caja de la capa, contando su giro? (Como `layerContains` de frames.ts, sin arrastrar el editor.) */
+function layerContains(
+  layer: Pick<Layer, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  point: { x: number; y: number },
+) {
+  const angle = (-layer.rotation * Math.PI) / 180;
+  const dx = point.x - (layer.x + layer.width / 2);
+  const dy = point.y - (layer.y + layer.height / 2);
+  const lx = dx * Math.cos(angle) - dy * Math.sin(angle);
+  const ly = dx * Math.sin(angle) + dy * Math.cos(angle);
+  return Math.abs(lx) <= layer.width / 2 && Math.abs(ly) <= layer.height / 2;
+}
 
 function blend(top: Rgb, alpha: number, below: Rgb): Rgb {
   const mix = (t: number, b: number) => Math.round(t * alpha + b * (1 - alpha));
@@ -153,28 +166,6 @@ export function faintLogos(
     }
   });
   return faint;
-}
-
-/**
- * Luminancia media de lo que se ve de un logotipo: los píxeles con tinta (alfa), pesados por su
- * opacidad, en una copia pequeña. Null si no tiene píxeles visibles o el navegador no deja leerlos.
- */
-export function measureLogoLuminance(image: CanvasImageSource & { width: number; height: number }): number | null {
-  const side = 64;
-  const scale = Math.min(1, side / Math.max(image.width || 1, image.height || 1));
-  const width = Math.max(1, Math.round((image.width || 1) * scale));
-  const height = Math.max(1, Math.round((image.height || 1) * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) return null;
-  try {
-    context.drawImage(image, 0, 0, width, height);
-    return luminanceOfPixels(context.getImageData(0, 0, width, height).data);
-  } catch {
-    return null;
-  }
 }
 
 /** Luminancia media de unos píxeles RGBA, pesada por el alfa; null si todos son transparentes. */

@@ -13,7 +13,29 @@ import { loadCorsImage } from '@/lib/corsImage';
 import { allLayers } from '../document/pages';
 import type { ContentDocument } from '../document/schema';
 import type { EditorAction } from './history';
-import { faintLogos, fixLogoContrast, measureLogoLuminance, type LogoTones } from './logoContrast';
+import { faintLogos, fixLogoContrast, luminanceOfPixels, type LogoTones } from './logoContrast';
+
+/**
+ * Luminancia media de lo que se ve de un logotipo: los píxeles con tinta (alfa), pesados por su
+ * opacidad, en una copia pequeña. Null si no tiene píxeles visibles o el navegador no deja leerlos.
+ */
+function measureLogoLuminance(image: CanvasImageSource & { width: number; height: number }): number | null {
+  const side = 64;
+  const scale = Math.min(1, side / Math.max(image.width || 1, image.height || 1));
+  const width = Math.max(1, Math.round((image.width || 1) * scale));
+  const height = Math.max(1, Math.round((image.height || 1) * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  try {
+    context.drawImage(image, 0, 0, width, height);
+    return luminanceOfPixels(context.getImageData(0, 0, width, height).data);
+  } catch {
+    return null;
+  }
+}
 
 /** Luminancia de cada logotipo (el archivo original: la miniatura puede no tener transparencia). */
 function useLogoTones(brandId: string, ids: string[]): LogoTones {
