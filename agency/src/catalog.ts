@@ -141,6 +141,10 @@ export async function loadCatalog(
   if (options.only !== 'reels') {
     await write('publicaciones.json', catalog.publications.file);
     files.push('publicaciones.json');
+    if (catalog.stories) {
+      await write('historias.json', catalog.stories.file);
+      files.push('historias.json');
+    }
   }
   if (options.only !== 'publicaciones') {
     await write('reels.json', catalog.reels.file);
@@ -156,6 +160,14 @@ export async function loadCatalog(
         p_templates: catalog.publications.templates,
       });
       delivered.publications = rows.map((row) => row.template_key);
+      // Las historias, en otra entrega (cada una admite 12 plantillas como mucho).
+      if (catalog.stories) {
+        const more = await client.rpc<Array<{ template_key: string }>>('deliver_design_templates', {
+          p_brand_id: brandId,
+          p_templates: catalog.stories.templates,
+        });
+        delivered.publications.push(...more.map((row) => row.template_key));
+      }
     }
     if (options.only !== 'publicaciones') {
       const rows = await client.rpc<Array<{ template_key: string }>>('deliver_reel_templates', {
@@ -183,11 +195,14 @@ export function describeCatalog(setId?: string): string {
     for (const reel of built.reels.templates) {
       lines.push(`    ${reel.key}  «${reel.name}» · ${describeNeeds(reel.document)} · ${reel.document.purpose}`);
     }
-    lines.push(`  Publicaciones (${built.publications.templates.length}):`);
-    for (const post of built.publications.templates) {
+    const designs = [...built.publications.templates, ...(built.stories?.templates ?? [])];
+    lines.push(`  Publicaciones${built.stories ? ' e historias' : ''} (${designs.length}):`);
+    for (const post of designs) {
       const pages = post.document.pages.length;
       lines.push(
-        `    ${post.key}  «${post.name}» · ${post.format === 'carousel' ? `carrusel de ${pages} páginas` : 'publicación'}`,
+        `    ${post.key}  «${post.name}» · ${
+          post.format === 'carousel' ? `carrusel de ${pages} páginas` : post.format === 'story' ? 'historia (9:16)' : 'publicación'
+        }`,
       );
     }
   }
@@ -199,7 +214,9 @@ export function describeLoad(result: LoadCatalogResult, only?: CatalogPart): str
   const lines = [
     `Juego «${catalog.set.name}» (${catalog.set.id}) con el tema de la marca:`,
     `  fondo oscuro ${theme.dark} · fondo claro ${theme.light} · acento ${theme.accent} (sobre oscuro, ${theme.accentOnDark})`,
-    `  titulares «${theme.headline}» · texto «${theme.body}»`,
+    `  titulares «${theme.headline}» · texto «${theme.body}» · ${
+      theme.logo ? `logotipo ${theme.logo}` : 'sin logotipo (las historias salen sin él)'
+    }`,
   ];
   if (!result.profileFound) {
     lines.push('  AVISO: la marca no tiene perfil activo (o la cuenta no lo ve): se usa el tema neutro.');
@@ -211,11 +228,16 @@ export function describeLoad(result: LoadCatalogResult, only?: CatalogPart): str
     lines.push(
       `Publicaciones (${catalog.publications.templates.length}): ${catalog.publications.templates.map((t) => t.key).join(', ')}.`,
     );
+    if (catalog.stories) {
+      lines.push(
+        `Historias (${catalog.stories.templates.length}): ${catalog.stories.templates.map((t) => t.key).join(', ')}.`,
+      );
+    }
   }
   lines.push(`Archivos en ${result.dir}: ${result.files.join(', ')}.`);
   if (result.delivered) {
     lines.push(
-      `GUARDADAS en la marca: ${result.delivered.reels.length} de reel y ${result.delivered.publications.length} de publicación.`,
+      `GUARDADAS en la marca: ${result.delivered.reels.length} de reel y ${result.delivered.publications.length} de publicación o historia.`,
     );
   } else {
     lines.push('EN SECO: todo es válido, pero no se ha guardado nada. Para guardarlas, repite la orden con --cargar.');

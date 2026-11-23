@@ -26,7 +26,7 @@ export interface Look {
   weight: number;
 }
 
-type TextOptions = {
+export type TextOptions = {
   size: number;
   color: string;
   font?: string;
@@ -40,7 +40,7 @@ type TextOptions = {
 };
 
 /** Herramientas de una página: los identificadores llevan el de la página para no repetirse en el documento. */
-function tools(theme: Theme, look: Look, page: string) {
+export function tools(theme: Theme, look: Look, page: string) {
   const id = (name: string) => `${page}-${name}`;
   const surface = look.surface === 'dark' ? theme.dark : theme.light;
   const onSurface = look.surface === 'dark' ? theme.onDark : theme.onLight;

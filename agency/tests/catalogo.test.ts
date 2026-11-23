@@ -12,6 +12,7 @@ import { finalizeProject, planTimeline } from '../../src/features/reels/editor/p
 import type { SourceAsset } from '../../src/features/reels/editor/ops.ts';
 import { buildReelFromTemplate, reelTemplateNeeds } from '../../src/features/reels/reelTemplate.ts';
 import { CATALOG_SETS, NEUTRAL_THEME, themeFromProfile, type Theme } from '../catalogo/index.ts';
+import { STORY_SAFE } from '../catalogo/historias.ts';
 import { contrast } from '../catalogo/tema.ts';
 import { buildCatalog, describeCatalog, loadCatalog, reelStyleIds } from '../src/catalog.ts';
 import { run } from '../src/cli.ts';
@@ -143,10 +144,14 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
         });
 
         it('solo usa los colores y las tipografías del tema (por papeles)', () => {
-          for (const hex of [...hexes(catalog.reels.file), ...hexes(catalog.publications.file)]) {
+          for (const hex of [
+            ...hexes(catalog.reels.file),
+            ...hexes(catalog.publications.file),
+            ...hexes(catalog.stories?.file ?? null),
+          ]) {
             expect(allowed.has(hex.toUpperCase()), hex).toBe(true);
           }
-          for (const template of catalog.publications.templates) {
+          for (const template of [...catalog.publications.templates, ...(catalog.stories?.templates ?? [])]) {
             for (const page of template.document.pages) {
               for (const layer of page.layers) {
                 if (layer.type === 'text') expect([theme.headline, theme.body]).toContain(layer.fontFamily);
@@ -156,10 +161,14 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
         });
 
         it('las publicaciones son documentos v6 válidos: capas dentro del lienzo y carruseles de 2 a 10 páginas', () => {
-          for (const template of catalog.publications.templates) {
+          for (const template of [...catalog.publications.templates, ...(catalog.stories?.templates ?? [])]) {
             const { document } = template;
             expect(document.schemaVersion, template.key).toBe(DOCUMENT_SCHEMA_VERSION);
-            expect(document.canvas, template.key).toMatchObject({ aspectRatio: '4:5', width: 1080, height: 1350 });
+            const story = template.format === 'story';
+            const height = story ? 1920 : 1350;
+            expect(document.canvas, template.key).toMatchObject(
+              story ? { aspectRatio: '9:16', width: 1080, height: 1920 } : { aspectRatio: '4:5', width: 1080, height: 1350 },
+            );
             if (template.format === 'carousel') {
               expect(document.pages.length, template.key).toBeGreaterThanOrEqual(5);
               expect(document.pages.length, template.key).toBeLessThanOrEqual(10);
@@ -173,7 +182,7 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
                 expect(layer.x, where).toBeGreaterThanOrEqual(0);
                 expect(layer.y, where).toBeGreaterThanOrEqual(0);
                 expect(layer.x + layer.width, where).toBeLessThanOrEqual(1080);
-                expect(layer.y + layer.height, where).toBeLessThanOrEqual(1350);
+                expect(layer.y + layer.height, where).toBeLessThanOrEqual(height);
                 // Las fotos son marcos vacíos (nunca un recurso que la marca no tiene) con su nombre.
                 if (layer.type === 'image') {
                   expect(layer.source, where).toEqual({ kind: 'empty' });
@@ -273,6 +282,92 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
   });
 });
 
+describe('historias del juego de restaurante (tapas y menú)', () => {
+  const LOGO = '33333333-3333-4333-8333-333333333333';
+  const conLogo = themeFromProfile(parseProfile({ ...CLARA, visual: { ...CLARA.visual, logoAssetIds: [LOGO] } }));
+  const stories = (theme: Theme) => buildCatalog('restaurante', theme).stories?.templates ?? [];
+
+  it('el logotipo del kit de marca entra en el tema; sin él, el tema no lo lleva', () => {
+    expect(conLogo.logo).toBe(LOGO);
+    expect(themeFromProfile(parseProfile(CLARA)).logo).toBeUndefined();
+    expect(themeFromProfile(null)).not.toHaveProperty('logo');
+  });
+
+  it('trae la tapa del día, las tapas de la semana, dos tapas y los dos menús del día, en 9:16', () => {
+    expect(stories(conLogo).map((t) => [t.key, t.name])).toEqual([
+      ['rest-historia-tapa-del-dia', 'Tapa del día'],
+      ['rest-historia-tapas-semana', 'Tapas de la semana'],
+      ['rest-historia-dos-tapas', 'Dos tapas'],
+      ['rest-historia-menu-dia', 'Menú del día'],
+      ['rest-historia-menu-foto', 'Menú del día con foto'],
+    ]);
+    // Los otros juegos no traen historias (todavía).
+    for (const id of ['cocteleria', 'gimnasio', 'generico'])
+      expect(buildCatalog(id, NEUTRAL_THEME).stories).toBeNull();
+    // Y van en su propia entrega: cada una admite 12 plantillas como mucho.
+    const all = buildCatalog('restaurante', NEUTRAL_THEME);
+    expect(all.publications.templates.every((t) => t.format !== 'story')).toBe(true);
+    expect(all.stories!.templates.every((t) => t.format === 'story')).toBe(true);
+  });
+
+  for (const [name, theme] of [['con logotipo', conLogo], ...THEMES] as Array<[string, Theme]>) {
+    it(`${name}: nada que leer donde Instagram tapa (250 px arriba, 340 abajo) y el texto se lee en el móvil`, () => {
+      for (const template of stories(theme)) {
+        const layers = template.document.pages[0]!.layers as Layer[];
+        for (const layer of layers) {
+          if (layer.type !== 'text' && layer.type !== 'logo') continue;
+          const where = `${template.key}/${layer.id}`;
+          expect(layer.y, where).toBeGreaterThanOrEqual(STORY_SAFE.top);
+          expect(layer.y + layer.height, where).toBeLessThanOrEqual(STORY_SAFE.bottom);
+          expect(layer.x, where).toBeGreaterThanOrEqual(STORY_SAFE.left);
+          expect(layer.x + layer.width, where).toBeLessThanOrEqual(STORY_SAFE.right);
+          // En un 1080 × 1920 visto en un móvil, menos de 28 px no se lee bien.
+          if (layer.type === 'text') expect(layer.fontSize, where).toBeGreaterThanOrEqual(28);
+        }
+        expect(layers.some((l) => l.type === 'logo'), template.key).toBe(Boolean(theme.logo));
+        for (const layer of layers) if (layer.type === 'logo') expect(layer.assetId).toBe(theme.logo);
+        expect(template.analysis.logo.position, template.key).toBe(theme.logo ? 'top-center' : 'none');
+      }
+    });
+  }
+
+  it('el dueño solo pone las fotos: cada marco dice qué foto va y cada tapa lleva su nombre y su precio', () => {
+    const byKey = Object.fromEntries(stories(conLogo).map((t) => [t.key, t.document.pages[0]!.layers as Layer[]]));
+    const frames = (key: string) => byKey[key]!.filter((l) => l.type === 'image');
+    const text = (key: string, id: string) => {
+      const layer = byKey[key]!.find((l) => l.id === `h1-${id}`);
+      return layer?.type === 'text' ? layer.text : undefined;
+    };
+    expect(frames('rest-historia-tapa-del-dia').map((l) => l.name)).toEqual(['Foto de la tapa']);
+    expect(text('rest-historia-tapa-del-dia', 'nombre')).toBe('Nombre de la tapa');
+    expect(text('rest-historia-tapa-del-dia', 'sello-texto')).toMatch(/€/);
+    expect(text('rest-historia-tapa-del-dia', 'llamada')).toBe('Te esperamos en la barra');
+    expect(frames('rest-historia-tapas-semana')).toHaveLength(4);
+    expect(frames('rest-historia-dos-tapas')).toHaveLength(2);
+    for (const [key, count] of [
+      ['rest-historia-tapas-semana', 4],
+      ['rest-historia-dos-tapas', 2],
+    ] as const) {
+      for (let n = 1; n <= count; n++) {
+        expect(text(key, `nombre-${n}`), `${key} ${n}`).toBeTruthy();
+        expect(text(key, `dato-${n}`), `${key} ${n}`).toMatch(/€/);
+      }
+    }
+    for (const key of ['rest-historia-menu-dia', 'rest-historia-menu-foto']) {
+      expect(['seccion-1', 'seccion-2', 'seccion-3'].map((id) => text(key, id))).toEqual([
+        'PRIMEROS',
+        'SEGUNDOS',
+        'POSTRE',
+      ]);
+      expect(text(key, 'platos-1')).toContain('\n');
+      expect(byKey[key]!.some((l) => l.type === 'text' && /Bebida y postre incluidos/.test(l.text)), key).toBe(true);
+      expect(frames(key)).toHaveLength(1);
+    }
+    // En el menú sin foto, el marco va detrás de un velo: si se deja vacío, no sale y queda el color de la marca.
+    expect(frames('rest-historia-menu-dia')[0]!.name).toMatch(/opcional/);
+  });
+});
+
 describe('cargar un juego en una marca', () => {
   let fake: FakeSupabase;
   let client: SupabaseClient;
@@ -341,6 +436,20 @@ describe('cargar un juego en una marca', () => {
     ).toBe(true);
     expect(reels!.path).toBe('/rest/v1/rpc/deliver_reel_templates');
     expect(reels!.body).toMatchObject({ p_brand_id: BRAND, p_source: 'catalog' });
+  });
+
+  it('el juego de restaurante entrega las historias en una segunda llamada (12 plantillas como mucho por entrega)', async () => {
+    const result = await loadCatalog(client, workDir, BRAND, 'restaurante', { deliver: true });
+    expect(result.files).toEqual(['tema.json', 'publicaciones.json', 'historias.json', 'reels.json']);
+    const designs = rpcCalls().filter((c) => c.path === '/rest/v1/rpc/deliver_design_templates');
+    expect(designs).toHaveLength(2);
+    const sizes = designs.map((c) => (c.body as { p_templates: unknown[] }).p_templates.length);
+    expect(sizes).toEqual([10, 5]);
+    const second = designs[1]!.body as { p_templates: Array<{ format: string; document: { canvas: unknown } }> };
+    expect(second.p_templates.every((t) => t.format === 'story')).toBe(true);
+    expect(second.p_templates[0]!.document.canvas).toMatchObject({ aspectRatio: '9:16', width: 1080, height: 1920 });
+    expect(result.delivered?.publications).toContain('rest-historia-tapa-del-dia');
+    expect(result.delivered?.publications).toHaveLength(15);
   });
 
   it('--solo carga una mitad, y un juego que no existe o cargar sin marca se rechazan', async () => {

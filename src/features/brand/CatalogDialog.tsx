@@ -50,6 +50,15 @@ export function CatalogDialog({
           p_templates: built.publications.templates as unknown as Json,
         }),
       );
+      // Las historias (9:16), si el juego las trae, en otra entrega: cada una admite 12 como mucho.
+      if (built.stories) {
+        unwrap(
+          await supabase.rpc('deliver_design_templates', {
+            p_brand_id: brandId,
+            p_templates: built.stories.templates as unknown as Json,
+          }),
+        );
+      }
       unwrap(
         await supabase.rpc('deliver_reel_templates', {
           p_brand_id: brandId,
@@ -62,7 +71,9 @@ export function CatalogDialog({
         queryClient.invalidateQueries({ queryKey: reelTemplateKeys.all(brandId) }),
       ]);
       toast.success(
-        `Cargadas ${built.publications.templates.length} plantillas de publicación y ${built.reels.templates.length} de reel`,
+        `Cargadas ${built.publications.templates.length} plantillas de publicación${
+          built.stories ? `, ${built.stories.templates.length} de historia` : ''
+        } y ${built.reels.templates.length} de reel`,
       );
       onOpenChange(false);
     } catch (error) {
@@ -113,7 +124,7 @@ export function CatalogDialog({
               <span className="block text-sm font-medium">{set.name}</span>
               <span className="block text-xs text-muted">
                 {set.forWhom} {set.reels(NEUTRAL_THEME).length} de reel y {set.posts(NEUTRAL_THEME).length} de
-                publicación o carrusel.
+                publicación o carrusel{set.stories ? `, y ${set.stories(NEUTRAL_THEME).length} de historia` : ''}.
               </span>
             </span>
           </label>

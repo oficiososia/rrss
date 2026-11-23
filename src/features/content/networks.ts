@@ -180,6 +180,15 @@ const metaSafeZone = unverified(
   SAFE_ZONE_SOURCE,
   'Cifra atribuida a la guía de reels de Meta por una fuente secundaria; orientativa.',
 );
+// Historias: no tienen el pie ni los botones de los reels, pero sí la barra de progreso y el nombre
+// de la cuenta arriba y el campo «Enviar mensaje» abajo. Cifras de una fuente secundaria (250 px
+// arriba y 340 px abajo en 1080 × 1920); los lados, como en el vídeo vertical.
+const STORY_SAFE_ZONE_SOURCE = 'https://sproutsocial.com/insights/instagram-ad-sizes/';
+const storySafeZone = unverified(
+  { ratio: '9:16', insets: { top: 250 / 1920, bottom: 340 / 1920, left: 0.06, right: 0.06 } } satisfies SafeZoneSpec,
+  STORY_SAFE_ZONE_SOURCE,
+  'Historias: 250 px arriba (barra y nombre de la cuenta) y 340 px abajo («Enviar mensaje») en 1080 × 1920, según una fuente secundaria; orientativa.',
+);
 const verticalSafeZone = unverified(
   VERTICAL_INSETS,
   SAFE_ZONE_SOURCE,
@@ -281,7 +290,7 @@ export const FORMAT_SPECS: NetworkFormatSpec[] = [
     },
     text: {},
     notes: [official('Sin colaboradores.', IG_MEDIA)],
-    safeZone: metaSafeZone,
+    safeZone: storySafeZone,
   },
   {
     network: 'facebook',
