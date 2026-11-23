@@ -21,7 +21,17 @@
 //     biblioteca enviada, y lo que exceda el máximo de piezas;
 //   * sin datos de resultados, nada puede presentarse como «respaldado por
 //     datos»: lo que el modelo ponga ahí pasa a hipótesis.
+//
+// Tolerancia (prueba de calidad del 23/11/2026, fallo 2): un modelo real
+// escribe ideas más largas de lo pedido, fechas con hora («2026-11-24 13:00»),
+// redes y formatos con mayúsculas o en español, o el nombre de una foto en
+// lugar de su identificador. Antes, cualquiera de esas cosas tiraba la
+// respuesta entera («no se puede usar») y se cobraba. Ahora se valida la FORMA
+// (campos y tipos; un campo no previsto sigue invalidando) y el resto se
+// sanea: se recorta, se normaliza o se descarta la pieza. Si al final no queda
+// ninguna pieza, la respuesta no se cobra (`accept` → ai_waive_generation).
 import { AiError, type AiOutputSchema, type AiService, type Json, type JsonSchema } from '../../contract.ts';
+import { resolveFormat, resolveNetwork } from './targets.ts';
 import {
   AiTaskInputError,
   brandProfileContext,
@@ -43,6 +53,10 @@ export const MAX_ASSETS_PER_PIECE = 4;
 export const MAX_SOURCES = 5;
 export const MAX_SOURCES_CHARS = 60_000;
 export const MAX_HASHTAGS = 30;
+export const MAX_PIECE_TITLE_CHARS = 60;
+export const MAX_HEADLINE_CHARS = 120;
+/** Proporciones que admite una pieza (las del lienzo del editor). */
+export const PIECE_ASPECTS = ['1:1', '4:5', '9:16', '16:9'] as const;
 
 const ID = /^[a-z][a-z0-9_]{0,31}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,6 +131,14 @@ export interface CampaignPiece {
   assetIds: string[];
   /** Por qué esta pieza en este día y en esta red. */
   why: string;
+  /** Nombre corto de la pieza (el de la lista de contenidos). Opcional: sin él, sale de la idea. */
+  title?: string;
+  /** Hora propuesta para publicarla (HH:MM, hora de la marca). */
+  time?: string;
+  /** Proporción que pide la idea (4:5, 1:1…), si la pide. */
+  aspect?: (typeof PIECE_ASPECTS)[number];
+  /** Titular que lleva la imagen o el vídeo (corto), si la idea promete uno. */
+  headline?: string;
 }
 
 export interface CampaignReasoning {
@@ -161,6 +183,11 @@ export const CAMPAIGN_PLAN_INSTRUCTIONS = [
   'No inventes datos (precios, fechas, promociones, direcciones) que no estén en el perfil, la instrucción o las fuentes.',
   'Si llega el material «acuerdo previo», es lo que la persona ya aceptó: respétalo. Su «objetivo» es el del plan; cada fase de «phases» es una semana del plan, en orden, y las piezas de esa semana cuentan lo que dice su «focus»; «mix» dice cuántas piezas por semana van en cada red y formato.',
   'En «assetIds» sugiere, si encajan, identificadores del material «biblioteca»; solo esos identificadores, ninguno más. Si ninguno encaja, deja la lista vacía.',
+  'Cada pieza lleva: «title», un nombre corto (de 2 a 6 palabras, sin fecha ni red); «idea», qué es la pieza en una o dos frases (menos de 300 caracteres); «date», solo la fecha AAAA-MM-DD; «time», la hora a la que conviene publicarla (HH:MM) según el negocio y su público; «aspect», la proporción si la pieza la necesita (4:5, 1:1 o 9:16; vacío si da igual).',
+  'Si la idea habla de un titular, una franja con texto o un rótulo, pon ese texto exacto y corto (menos de 8 palabras) en «headline»: es lo que se escribirá en la pieza. Si no lleva texto, deja «headline» vacío. No prometas en la idea nada que la pieza no vaya a llevar.',
+  'Los reels y los vídeos se montan con fotos y vídeos de la biblioteca de la marca: no propongas reels solo tipográficos, sin imágenes ni con material que haya que grabar o encargar.',
+  'El pie termina con una llamada a la acción propia de la marca (las del perfil si las hay; si no, la que encaje con su negocio: reservar, apuntarse, pedir, venir…).',
+  'Escribe los nombres de la marca y de los lugares exactamente como vienen en el perfil (en «brand» y en «business.locations»): no los traduzcas ni los cambies.',
   'Separa el razonamiento: en «observed», lo que ves en el material; en «dataBacked», solo conclusiones apoyadas en el material «datos de resultados» (si no llega ese material, deja la lista vacía); en «hypotheses», lo que supones y convendría comprobar.',
   DATA_RULE,
 ].join('\n');
@@ -171,9 +198,13 @@ const textList = (maxItems: number, maxLength: number): JsonSchema => ({
   maxItems,
   items: { type: 'string', maxLength },
 });
+const PIECE_REQUIRED = ['network', 'format', 'date', 'idea', 'caption', 'hashtags', 'assetIds', 'why'];
+const PIECE_EXTRA = ['title', 'time', 'aspect', 'headline'];
+const PLAN_REQUIRED = ['objective', 'summary', 'observed', 'dataBacked', 'hypotheses', 'pieces'];
 
 export const CAMPAIGN_PLAN_SCHEMA: AiOutputSchema = {
   name: 'campaign_plan',
+  // Lo que se pide al proveedor (en modo estricto, todos los campos obligatorios).
   schema: {
     type: 'object',
     properties: {
@@ -192,18 +223,51 @@ export const CAMPAIGN_PLAN_SCHEMA: AiOutputSchema = {
             network: text(32),
             format: text(32),
             date: text(10),
+            time: text(5),
+            title: text(MAX_PIECE_TITLE_CHARS),
             idea: { type: 'string', minLength: 1, maxLength: 300 },
+            headline: text(MAX_HEADLINE_CHARS),
+            aspect: text(5),
             caption: { type: 'string', minLength: 1, maxLength: 5000 },
             hashtags: textList(MAX_HASHTAGS, 100),
             assetIds: textList(10, 36),
             why: text(600),
           },
-          required: ['network', 'format', 'date', 'idea', 'caption', 'hashtags', 'assetIds', 'why'],
+          required: [...PIECE_REQUIRED, ...PIECE_EXTRA],
           additionalProperties: false,
         },
       },
     },
-    required: ['objective', 'summary', 'observed', 'dataBacked', 'hypotheses', 'pieces'],
+    required: PLAN_REQUIRED,
+    additionalProperties: false,
+  } as JsonSchema,
+  // Lo que se comprueba aquí: la forma (campos y tipos, sin campos de más). Las
+  // longitudes, fechas, redes y recursos los arregla `sanitizePlan`; los campos
+  // nuevos pueden faltar (un modelo o un simulado que no los conozca).
+  localSchema: {
+    type: 'object',
+    properties: {
+      objective: { type: 'string' },
+      summary: { type: 'string' },
+      observed: { type: 'array', items: { type: 'string' } },
+      dataBacked: { type: 'array', items: { type: 'string' } },
+      hypotheses: { type: 'array', items: { type: 'string' } },
+      pieces: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: Object.fromEntries(
+            [...PIECE_REQUIRED, ...PIECE_EXTRA].map((key) => [
+              key,
+              key === 'hashtags' || key === 'assetIds' ? { type: 'array', items: { type: 'string' } } : { type: 'string' },
+            ]),
+          ),
+          required: PIECE_REQUIRED,
+          additionalProperties: false,
+        },
+      },
+    },
+    required: PLAN_REQUIRED,
     additionalProperties: false,
   } as JsonSchema,
 };
@@ -320,6 +384,15 @@ export function piecesForRhythm(days: number, perWeek: number): number {
   return Math.max(1, Math.min(MAX_PIECES, Math.ceil((days / 7) * perWeek)));
 }
 
+/**
+ * Tokens de salida de un plan. Con margen para los modelos que razonan antes de
+ * responder (el razonamiento cuenta como salida): con 1.500 + 700 por pieza, un
+ * plan de 4 piezas se cortaba antes de terminar. Es también lo que se reserva.
+ */
+export function planOutputTokens(maxPieces: number): number {
+  return Math.min(16_000, 3000 + maxPieces * 800);
+}
+
 /** Máximo de piezas por defecto: una cada dos días, entre 1 y 30. */
 export function defaultMaxPieces(days: number): number {
   return Math.max(1, Math.min(MAX_PIECES, Math.ceil(days / 2)));
@@ -336,15 +409,96 @@ export function normalizeHashtags(raw: string[]): string[] {
   return out.slice(0, MAX_HASHTAGS);
 }
 
-const cleanList = (items: string[]) => items.map((item) => item.trim()).filter(Boolean);
+const cleanList = (items: unknown, maxItems: number, maxChars: number) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => clipText(item, maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+
+/** Recorta un texto a `max` caracteres sin partir palabras, con «…» si hace falta. `oneLine`: junta los espacios. */
+export function clipText(value: unknown, max: number, oneLine = true): string {
+  const raw = typeof value === 'string' ? value : '';
+  const text = (oneLine ? raw.replace(/\s+/g, ' ') : raw).trim();
+  if ([...text].length <= max) return text;
+  const cut = [...text].slice(0, max - 1).join('');
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, '')}…`;
+}
+
+const MONTHS = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?$/;
+
+/**
+ * Fecha de una pieza tal como la escribe un modelo: «2026-11-24», «2026-11-24T13:00:00»,
+ * «2026-11-24 13:00» o «24/11/2026». Devuelve el día (AAAA-MM-DD) y la hora si venía.
+ */
+export function parsePieceDate(value: unknown, year: number): { date: string | null; time: string } {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  const iso = /^(\d{4}-\d{2}-\d{2})(?:[T\s]+(\d{1,2}):(\d{2}))?/.exec(raw);
+  if (iso) {
+    const time = iso[2] !== undefined ? normalizeTime(`${iso[2]}:${iso[3]}`) : '';
+    return { date: dayNumber(iso[1]) === null ? null : iso[1]!, time };
+  }
+  const local = MONTHS.exec(raw.split(/\s+/)[0] ?? '');
+  if (local) {
+    const y = local[3] ? (local[3].length === 2 ? 2000 + Number(local[3]) : Number(local[3])) : year;
+    const date = `${y}-${local[2]!.padStart(2, '0')}-${local[1]!.padStart(2, '0')}`;
+    return { date: dayNumber(date) === null ? null : date, time: normalizeTime(raw.split(/\s+/)[1] ?? '') };
+  }
+  return { date: null, time: '' };
+}
+
+/** Hora HH:MM a partir de «13:00», «9:30», «13h», «13.30» o «13 h»; vacía si no es una hora real. */
+export function normalizeTime(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const match = /^(\d{1,2})(?:[:.h]\s*(\d{2}))?\s*h?$/.exec(raw);
+  if (!match) return '';
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] ?? '0');
+  if (hours > 23 || minutes > 59) return '';
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+/** Proporción que dice el modelo («4:5», «4/5», «4x5») o, si no, la que menciona la idea. */
+export function pieceAspect(value: unknown, idea: string): CampaignPiece['aspect'] | undefined {
+  const pick = (text: string) => {
+    const match = /\b(1|4|9|16)\s*[:/x×]\s*(1|5|16|9)\b/i.exec(text);
+    if (!match) return undefined;
+    const ratio = `${match[1]}:${match[2]}`;
+    return (PIECE_ASPECTS as readonly string[]).includes(ratio) ? (ratio as CampaignPiece['aspect']) : undefined;
+  };
+  return pick(typeof value === 'string' ? value : '') ?? pick(idea);
+}
+
+/** Título corto de una pieza: el que dio el modelo o, si no, el principio de la idea. */
+export function pieceTitle(title: unknown, idea: string): string {
+  const own = clipText(title, MAX_PIECE_TITLE_CHARS);
+  if (own) return own;
+  const first = idea.split(/[.:;—–(]|\s-\s/)[0] ?? idea;
+  return clipText(first, MAX_PIECE_TITLE_CHARS);
+}
+
+interface RawPiece {
+  network?: unknown;
+  format?: unknown;
+  date?: unknown;
+  time?: unknown;
+  title?: unknown;
+  idea?: unknown;
+  headline?: unknown;
+  aspect?: unknown;
+  caption?: unknown;
+  hashtags?: unknown;
+  assetIds?: unknown;
+  why?: unknown;
+}
 
 interface RawPlan {
-  objective: string;
-  summary: string;
-  observed: string[];
-  dataBacked: string[];
-  hypotheses: string[];
-  pieces: Omit<CampaignPiece, never>[];
+  objective: unknown;
+  summary: unknown;
+  observed: unknown;
+  dataBacked: unknown;
+  hypotheses: unknown;
+  pieces: RawPiece[];
 }
 
 export interface SanitizeContext {
@@ -352,6 +506,8 @@ export interface SanitizeContext {
   endDate: string;
   targets: CampaignTarget[];
   assetIds: string[];
+  /** Nombres de los recursos enviados: un modelo a veces pone el nombre en lugar del identificador. */
+  assetNames?: Map<string, string>;
   maxPieces: number;
   /** ¿Se enviaron datos de resultados? Hoy nunca. */
   hasPerformanceData: boolean;
@@ -364,32 +520,55 @@ export interface SanitizeContext {
 export function sanitizePlan(raw: RawPlan, ctx: SanitizeContext): { plan: CampaignPlan; discarded: DiscardedPiece[] } {
   const start = dayNumber(ctx.startDate)!;
   const end = dayNumber(ctx.endDate)!;
+  const year = Number(ctx.startDate.slice(0, 4));
   const targets = new Set(ctx.targets.map((t) => `${t.network}/${t.format}`));
   const assets = new Set(ctx.assetIds.map((id) => id.toLowerCase()));
+  const byName = new Map([...(ctx.assetNames ?? new Map<string, string>())].map(([id, name]) => [name.trim().toLowerCase(), id.toLowerCase()]));
   const discarded: DiscardedPiece[] = [];
   const kept: CampaignPiece[] = [];
 
-  raw.pieces.forEach((piece, index) => {
-    const day = dayNumber(piece.date);
-    if (!targets.has(`${piece.network}/${piece.format}`)) {
+  (Array.isArray(raw.pieces) ? raw.pieces : []).forEach((piece, index) => {
+    // Red y formato tal como los escribe un modelo («Instagram», «Reels»): se llevan a los pedidos.
+    const network = resolveNetwork(piece.network, ctx.targets) ?? (typeof piece.network === 'string' ? piece.network : '');
+    const format = resolveFormat(network, piece.format, ctx.targets) ?? (typeof piece.format === 'string' ? piece.format : '');
+    const when = parsePieceDate(piece.date, year);
+    const day = when.date === null ? null : dayNumber(when.date);
+    const idea = clipText(piece.idea, 300);
+    const caption = clipText(piece.caption, 5000, false);
+    if (!targets.has(`${network}/${format}`)) {
       discarded.push({ index, reason: 'Red o formato que no se ha pedido.' });
     } else if (day === null || day < start || day > end) {
       discarded.push({ index, reason: 'Fecha fuera del plan.' });
-    } else if (!piece.idea.trim() || !piece.caption.trim()) {
+    } else if (!idea || !caption) {
       discarded.push({ index, reason: 'Pieza sin idea o sin texto.' });
     } else {
-      const assetIds = [...new Set(piece.assetIds.map((id) => id.trim().toLowerCase()))]
+      const assetIds = [
+        ...new Set(
+          (Array.isArray(piece.assetIds) ? piece.assetIds : [])
+            .map((id) => (typeof id === 'string' ? id.trim().toLowerCase() : ''))
+            .map((id) => (assets.has(id) ? id : (byName.get(id) ?? ''))),
+        ),
+      ]
         .filter((id) => assets.has(id))
         .slice(0, MAX_ASSETS_PER_PIECE);
+      const time = normalizeTime(piece.time) || when.time;
+      const aspect = pieceAspect(piece.aspect, idea);
+      const headline = clipText(piece.headline, MAX_HEADLINE_CHARS);
       kept.push({
-        network: piece.network,
-        format: piece.format,
-        date: piece.date,
-        idea: piece.idea.trim(),
-        caption: piece.caption.trim(),
-        hashtags: normalizeHashtags(piece.hashtags),
+        network,
+        format,
+        date: when.date!,
+        idea,
+        caption,
+        hashtags: normalizeHashtags(
+          (Array.isArray(piece.hashtags) ? piece.hashtags : []).filter((tag): tag is string => typeof tag === 'string'),
+        ),
         assetIds,
-        why: piece.why.trim(),
+        why: clipText(piece.why, 600),
+        title: pieceTitle(piece.title, idea),
+        ...(time ? { time } : {}),
+        ...(aspect ? { aspect } : {}),
+        ...(headline ? { headline } : {}),
       });
     }
   });
@@ -407,17 +586,20 @@ export function sanitizePlan(raw: RawPlan, ctx: SanitizeContext): { plan: Campai
     });
   }
 
-  const observed = cleanList(raw.observed);
-  const dataBacked = cleanList(raw.dataBacked);
-  const hypotheses = cleanList(raw.hypotheses);
+  const observed = cleanList(raw.observed, 10, 400);
+  const dataBacked = cleanList(raw.dataBacked, 10, 400);
+  const hypotheses = cleanList(raw.hypotheses, 10, 400);
+  const summary = clipText(raw.summary, 1500);
+  // Sin objetivo, el principio del resumen (un plan guardado siempre lo necesita).
+  const objective = clipText(raw.objective, 600) || clipText(summary.split(/(?<=\.)\s/)[0], 600) || 'Plan de publicaciones';
   return {
     plan: {
-      objective: raw.objective.trim(),
-      summary: raw.summary.trim(),
+      objective,
+      summary,
       reasoning: ctx.hasPerformanceData
         ? { observed, dataBacked, hypotheses, dataNote: '' }
         : // Sin datos, nada está respaldado por datos: lo que el modelo puso ahí es una hipótesis más.
-          { observed, dataBacked: [], hypotheses: [...hypotheses, ...dataBacked], dataNote: NO_DATA_NOTE },
+          { observed, dataBacked: [], hypotheses: [...hypotheses, ...dataBacked].slice(0, 20), dataNote: NO_DATA_NOTE },
       pieces,
     },
     discarded,
@@ -477,6 +659,15 @@ export async function planCampaign(
     ...sources.map((source) => ({ label: `fuente: ${source.title}`, content: source.text })),
   ];
 
+  const sanitizeContext: SanitizeContext = {
+    startDate: request.startDate,
+    endDate: request.endDate,
+    targets,
+    assetIds: assets.map((a) => a.id),
+    assetNames: new Map(assets.filter((a) => a.name).map((a) => [a.id, a.name])),
+    maxPieces,
+    hasPerformanceData: false,
+  };
   const { data, meta } = await runStructuredTask(service, {
     actor,
     purpose: CAMPAIGN_PLAN_PURPOSE,
@@ -484,18 +675,17 @@ export async function planCampaign(
     context,
     prompt: buildPrompt(request.startDate, request.endDate, targets, maxPieces, agreement?.perWeek),
     schema: CAMPAIGN_PLAN_SCHEMA,
-    maxOutputTokens: Math.min(16_000, 1500 + maxPieces * 700),
+    maxOutputTokens: planOutputTokens(maxPieces),
+    // Un plan sin ninguna pieza utilizable no se cobra.
+    accept: (value) =>
+      sanitizePlan(value as unknown as RawPlan, sanitizeContext).plan.pieces.length === 0
+        ? 'La IA no ha propuesto ninguna pieza válida para esas fechas y redes. Vuelve a probar o cambia la instrucción.'
+        : null,
   });
 
-  const { plan, discarded } = sanitizePlan(data as unknown as RawPlan, {
-    startDate: request.startDate,
-    endDate: request.endDate,
-    targets,
-    assetIds: assets.map((a) => a.id),
-    maxPieces,
-    hasPerformanceData: false,
-  });
+  const { plan, discarded } = sanitizePlan(data as unknown as RawPlan, sanitizeContext);
   if (plan.pieces.length === 0) {
+    // No debería llegar aquí (lo frena `accept`), pero sin piezas no hay plan.
     throw new AiError(
       'invalid_output',
       'La IA no ha propuesto ninguna pieza válida para esas fechas y redes. Vuelve a probar o cambia la instrucción.',

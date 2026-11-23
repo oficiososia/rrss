@@ -9,8 +9,14 @@
 //      si la marca redacta «por encargo a la agencia» (`brands.ai_mode = 'agency'`),
 //      rechaza la petición (409 `agency_mode`) antes de tocar el cupo. Única
 //      excepción: el copiloto por voz del editor (`editor.copilot`), que no
-//      redacta texto (decisión provisional, docs/ESTADO.md);
+//      redacta texto (decisión provisional, docs/ESTADO.md). Sin perfil, la IA
+//      trabaja con el nombre y el sector de la marca (brand-context.ts); solo si
+//      tampoco hay sector se pide antes de gastar (409 `brand_basics_missing`);
 //   4. llama a la tarea, que pasa por el servicio: reservar cupo → generar → registrar.
+//
+// `cost.estimate` dice el coste máximo de una petición de `post.caption`,
+// `campaign.brief` o `campaign.plan` sin reservar cupo ni llamar a nadie (la
+// interfaz lo enseña antes de pulsar).
 //
 // El permiso de «crear contenido en la marca» lo impone la base de datos al
 // reservar el cupo (`ai_reserve_generation`, error 42501 → 403), antes de
@@ -43,6 +49,12 @@ import {
 import { generatePostCopy, type NetworkLimits } from '../_shared/ai/text/tasks/post-copy.ts';
 import { proposeBrandProfile, type ProfileSource } from '../_shared/ai/text/tasks/profile-proposal.ts';
 import { AiTaskInputError, type TaskMeta } from '../_shared/ai/text/tasks/shared.ts';
+import {
+  effectiveBrandProfile,
+  needsBrandBasics,
+  sectorFromInput,
+  type BrandBasics,
+} from '../_shared/ai/text/tasks/brand-context.ts';
 
 export const AI_GENERATE_ACTIONS = [
   'post.caption',
@@ -52,8 +64,34 @@ export const AI_GENERATE_ACTIONS = [
   'campaign.brief',
   'analytics.summary',
   'editor.copilot',
+  'cost.estimate',
 ] as const;
 export type AiGenerateAction = (typeof AI_GENERATE_ACTIONS)[number];
+
+/** Acciones cuyo coste máximo se puede pedir antes (`cost.estimate`). */
+export const ESTIMABLE_ACTIONS = ['post.caption', 'campaign.brief', 'campaign.plan'] as const;
+type EstimableAction = (typeof ESTIMABLE_ACTIONS)[number];
+
+/** Acciones que escriben sobre la marca: sin perfil, necesitan al menos el sector. */
+const NEEDS_BASICS: readonly AiGenerateAction[] = ['post.caption', 'campaign.brief', 'campaign.plan', 'brand.check'];
+
+/** Lo que lanza el servicio «de estimar»: el coste máximo en lugar de generar. */
+class EstimateOnly extends Error {
+  constructor(readonly micros: number) {
+    super('estimate');
+  }
+}
+
+/** Un servicio que no genera: al pedir una generación devuelve (lanzando) lo que se reservaría. */
+function estimatingService(service: AiService): AiService {
+  return {
+    ...(service.capabilities ? { capabilities: service.capabilities } : {}),
+    async generate(params) {
+      if (!service.estimate) throw new AiError('not_configured', 'No se puede calcular el coste de esta tarea.');
+      throw new EstimateOnly(service.estimate(params));
+    },
+  };
+}
 
 export interface BrandProfileLookup {
   /** ¿Ve el usuario esta marca? Si no, se responde como si no existiera. */
@@ -62,6 +100,8 @@ export interface BrandProfileLookup {
   profile: Json | null;
   /** Cómo se redacta en la marca (`brands.ai_mode`). En `agency` no se usa este servicio. */
   aiMode: 'api' | 'agency';
+  /** Nombre, sector y web de la marca: la IA los usa siempre, y sin perfil son lo único que sabe. */
+  brand?: BrandBasics;
 }
 
 export interface AiGenerateDeps {
@@ -138,6 +178,59 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
   const fail = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
     json(status, { error: { code, message, retryable: false, ...extra } });
 
+  /** Las tareas que se pueden estimar: la misma llamada con el servicio real o con el de estimar. */
+  async function runTask(
+    action: EstimableAction,
+    data: Record<string, unknown>,
+    brandProfile: Json,
+    service: AiService,
+    actor: { userId: string; brandId: string },
+  ): Promise<Record<string, unknown>> {
+    if (action === 'post.caption') {
+      return strip(
+        await generatePostCopy(service, actor, {
+          brandProfile,
+          brief: data.brief as string,
+          network: data.network as NetworkLimits,
+          variants: data.variants === undefined ? 3 : (data.variants as number),
+        }),
+      );
+    }
+    if (action === 'campaign.brief') {
+      // Solo propone los datos del formulario; no crea nada. Mismo cupo y registro que `campaign.plan`.
+      const brief = await proposeCampaignBrief(
+        service,
+        actor,
+        {
+          brandProfile,
+          instruction: data.instruction as string,
+          today: data.today as string,
+          targets: data.targets as CampaignBriefRequest['targets'],
+          current: data.current as BriefProposal | undefined,
+          adjust: data.adjust as BriefAdjustment | undefined,
+          answer: data.answer as CampaignBriefRequest['answer'],
+        },
+        deps.log,
+      );
+      // Aquí sí se dice lo que ha costado: la pantalla lo enseña en pequeño junto a la propuesta.
+      return { ...strip(brief), costMicros: brief.costMicros };
+    }
+    // Solo propone: el plan no se guarda aquí ni crea nada (ver campaign-plan.ts).
+    return strip(
+      await planCampaign(service, actor, {
+        brandProfile,
+        instruction: data.instruction as string,
+        startDate: data.startDate as string,
+        endDate: data.endDate as string,
+        targets: data.targets as CampaignTarget[],
+        assets: data.assets as CampaignAssetRef[] | undefined,
+        sources: data.sources as CampaignSource[] | undefined,
+        maxPieces: data.maxPieces as number | undefined,
+        agreement: data.agreement as CampaignAgreement | undefined,
+      }),
+    );
+  }
+
   return async (request) => {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     if (request.method !== 'POST') return fail(405, 'method_not_allowed', 'Esta función solo admite POST.');
@@ -196,26 +289,48 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
               : 'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
         );
       }
-      // La interpretación de la analítica no necesita perfil: solo cita cifras medidas.
-      if (action !== 'profile.proposal' && action !== 'analytics.summary' && lookup.profile === null) {
+      // Coste máximo antes de pulsar: la misma petición, con un servicio que no genera.
+      if (action === 'cost.estimate') {
+        const target = data.action;
+        if (typeof target !== 'string' || !(ESTIMABLE_ACTIONS as readonly string[]).includes(target)) {
+          return fail(400, 'invalid_request', `Indica qué quieres calcular: ${ESTIMABLE_ACTIONS.join(', ')}.`);
+        }
+        const inner = data.input;
+        if (typeof inner !== 'object' || inner === null || Array.isArray(inner)) {
+          return fail(400, 'invalid_request', 'Faltan los datos de la petición que quieres calcular.');
+        }
+        const innerData = inner as Record<string, unknown>;
+        const sector = sectorFromInput(innerData.brandSector);
+        const estimateProfile = effectiveBrandProfile(lookup.profile, lookup.brand ?? null, sector).profile;
+        try {
+          await runTask(target as EstimableAction, innerData, estimateProfile, estimatingService(deps.service), actor);
+        } catch (error) {
+          if (error instanceof EstimateOnly) return json(200, { action, for: target, costMicros: error.micros });
+          throw error;
+        }
+        return fail(500, 'internal', 'No se ha podido calcular el coste.', { retryable: true });
+      }
+
+      // Sin perfil, la IA trabaja con el nombre y el sector de la marca; si tampoco hay
+      // sector, se pide antes de gastar (el diálogo lo pregunta y lo manda en `brandSector`).
+      const sector = sectorFromInput(data.brandSector);
+      if (NEEDS_BASICS.includes(action as AiGenerateAction) && needsBrandBasics(lookup.profile, lookup.brand ?? null, sector)) {
         return fail(
           409,
-          'brand_profile_missing',
-          'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.',
+          'brand_basics_missing',
+          'Para escribir sobre la marca, la IA necesita saber al menos a qué se dedica. Dilo en una línea y sigue.',
         );
       }
+      // El copiloto del editor recibe el perfil tal cual si existe (no cambia lo que ya hacía).
+      const brandProfile: Json =
+        action === 'editor.copilot' && lookup.profile !== null
+          ? lookup.profile
+          : effectiveBrandProfile(lookup.profile, lookup.brand ?? null, sector).profile;
 
       // 4. Tarea.
       let result: Record<string, unknown>;
-      if (action === 'post.caption') {
-        result = strip(
-          await generatePostCopy(deps.service, actor, {
-            brandProfile: lookup.profile,
-            brief: data.brief as string,
-            network: data.network as NetworkLimits,
-            variants: data.variants === undefined ? 3 : (data.variants as number),
-          }),
-        );
+      if (action === 'post.caption' || action === 'campaign.brief' || action === 'campaign.plan') {
+        result = await runTask(action, data, brandProfile, deps.service, actor);
       } else if (action === 'analytics.summary') {
         const day = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
         if (
@@ -264,7 +379,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
             deps.service,
             actor,
             {
-              brandProfile: lookup.profile,
+              brandProfile,
               transcript: data.transcript as string,
               document: data.document as CopilotDocumentSummary,
               assets,
@@ -275,35 +390,7 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
         );
       } else if (action === 'brand.check') {
         result = strip(
-          await checkBrandCompliance(deps.service, actor, { brandProfile: lookup.profile, text: data.text as string }),
-        );
-      } else if (action === 'campaign.brief') {
-        // Solo propone los datos del formulario; no crea nada. Mismo cupo y registro que `campaign.plan`.
-        const brief = await proposeCampaignBrief(deps.service, actor, {
-          brandProfile: lookup.profile,
-          instruction: data.instruction as string,
-          today: data.today as string,
-          targets: data.targets as CampaignBriefRequest['targets'],
-          current: data.current as BriefProposal | undefined,
-          adjust: data.adjust as BriefAdjustment | undefined,
-          answer: data.answer as CampaignBriefRequest['answer'],
-        }, deps.log);
-        // Aquí sí se dice lo que ha costado: la pantalla lo enseña en pequeño junto a la propuesta.
-        result = { ...strip(brief), costMicros: brief.costMicros };
-      } else if (action === 'campaign.plan') {
-        // Solo propone: el plan no se guarda aquí ni crea nada (ver campaign-plan.ts).
-        result = strip(
-          await planCampaign(deps.service, actor, {
-            brandProfile: lookup.profile,
-            instruction: data.instruction as string,
-            startDate: data.startDate as string,
-            endDate: data.endDate as string,
-            targets: data.targets as CampaignTarget[],
-            assets: data.assets as CampaignAssetRef[] | undefined,
-            sources: data.sources as CampaignSource[] | undefined,
-            maxPieces: data.maxPieces as number | undefined,
-            agreement: data.agreement as CampaignAgreement | undefined,
-          }),
+          await checkBrandCompliance(deps.service, actor, { brandProfile, text: data.text as string }),
         );
       } else {
         result = strip(
@@ -329,8 +416,11 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
           error.code === 'not_configured'
             ? 'La IA no está disponible en este momento. Avisa a quien administra la plataforma.'
             : error.message;
+        // `charged: false`: la respuesta no servía y no se ha cobrado (ai_waive_generation).
+        const details = error.details as { charged?: unknown } | null | undefined;
+        const charged = typeof details?.charged === 'boolean' ? { charged: details.charged } : {};
         return json(STATUS[error.code], {
-          error: { code: error.code, message, retryable: error.retryable, generationId: error.generationId },
+          error: { code: error.code, message, retryable: error.retryable, generationId: error.generationId, ...charged },
         });
       }
       deps.log?.('unexpected_error', { action, brandId });

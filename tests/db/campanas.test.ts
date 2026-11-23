@@ -403,7 +403,8 @@ describe('el motor: plan aceptado → borradores', () => {
     const a = planToDrafts(shaped, frameOf(['instagram', 'facebook']));
     const b = planToDrafts(shaped, frameOf(['instagram', 'facebook']));
     expect(a).toEqual(b);
-    expect(a.drafts[0]!.title).toBe('26/11 · Facebook · Publicación de página · Recordatorio de reservas');
+    // Título corto (el del plan o, en planes antiguos, el principio de la idea), no «fecha · red · idea entera».
+    expect(a.drafts[0]!.title).toBe('Recordatorio de reservas');
     // Una red que no es de la campaña o un formato inventado: el motor no hace nada.
     expect(() => planToDrafts(shaped, frameOf(['instagram']))).toThrow(/no es de la campaña/);
   });

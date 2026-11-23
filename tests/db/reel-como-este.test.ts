@@ -601,7 +601,7 @@ describe('ai-reel-like: coste máximo antes de analizar', () => {
     expect(fn.text!.calls).toHaveLength(0);
   });
 
-  it('sin modelo con visión no está disponible (nada simulado); sin transcripción, sin voz; sin perfil, se dice', async () => {
+  it('sin modelo con visión no está disponible (nada simulado); sin transcripción, sin voz; sin perfil, sí (y se avisa)', async () => {
     const t = await setup();
     const none = await createFunction({ text: null }).call(login(t.editor), { action: 'options', brandId: t.brand });
     expect(none.body).toMatchObject({ available: false, reason: 'not_configured', estimate: null });
@@ -610,7 +610,8 @@ describe('ai-reel-like: coste máximo antes de analizar', () => {
     expect((mute.body.estimate as { speechMicros: number }).speechMicros).toBe(0);
     const bare = await setup({ profile: null });
     const noProfile = await createFunction().call(login(bare.editor), { action: 'options', brandId: bare.brand });
-    expect(noProfile.body).toMatchObject({ available: false, reason: 'profile_missing' });
+    // Sin perfil también se puede (con el nombre y el sector de la marca); se avisa para que lo completen.
+    expect(noProfile.body).toMatchObject({ available: true, profileMissing: true });
     // Y crear sin modelo responde 503 sin tocar el cupo.
     const done = await measured(t, new Map());
     const refused = await createFunction({ text: null }).call(login(t.editor), { action: 'create', brandId: t.brand, referenceId: done.id });

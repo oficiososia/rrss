@@ -53,6 +53,13 @@ export interface AiOutputSchema {
   /** Nombre corto del esquema (`[a-z0-9_]`): algunos proveedores lo piden. */
   name: string;
   schema: JsonSchema;
+  /**
+   * Esquema con el que se valida la respuesta aquí, si es más tolerante que el
+   * que se envía al proveedor (por ejemplo, sin longitudes máximas: la tarea
+   * recorta después). Sin él, se valida con `schema`. Nunca más permisivo con
+   * la FORMA: los campos no previstos siguen invalidando la respuesta.
+   */
+  localSchema?: JsonSchema;
 }
 
 /**
@@ -262,6 +269,13 @@ export interface AiGenerateParams {
   /** Para qué se pide: `post.caption`, `profile.proposal`… Queda en el registro. */
   purpose: string;
   input: AiInput;
+  /**
+   * Comprobación de la tarea sobre el JSON ya validado con el esquema: devuelve
+   * por qué no se puede usar (y entonces la respuesta NO se cobra a la
+   * organización: `ai_waive_generation`) o `null` si sirve. Sin ella, todo JSON
+   * que cumple el esquema sirve.
+   */
+  accept?: (value: Json) => string | null;
 }
 
 export interface AiGenerateResult {
@@ -285,6 +299,12 @@ export interface AiCapabilities {
 
 export interface AiService {
   generate(params: AiGenerateParams): Promise<AiGenerateResult>;
+  /**
+   * Coste máximo (en millonésimas) de esa petición, sin reservar cupo ni llamar
+   * a nadie: lo que se reservaría. Lanza `AiError('not_configured')` si no hay
+   * modelo con precio para la tarea.
+   */
+  estimate?(params: AiGenerateParams): number;
   /** Adaptador y modelo que atenderían esa tarea y propósito, o `null` si no hay ninguno cargado. */
   capabilities?(task: AiTask, purpose: string): AiCapabilities | null;
 }
