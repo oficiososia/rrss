@@ -630,6 +630,7 @@ export function sanitizeOperations(
     if (base.text !== null) {
       const text = base.text.replace(/\r/g, '').trim();
       if (text.split('\n').length > MAX_TEXT_LINES) return drop('El texto tiene demasiadas líneas.');
+      if (!text) return drop('Falta el texto dictado.');
       if (!isDictated(text, context.transcript)) {
         return drop(notDictatedReason(text));
       }

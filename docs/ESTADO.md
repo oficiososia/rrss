@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -632,6 +632,28 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
+
+### Copiloto fiable y «Hacer un reel como este» tras la prueba real (rama `f56/copiloto-fiable`, 23/11/2026)
+
+Fallos 5, 6, 7 y 16 de la prueba de punta a punta del 23/11 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`).
+Detalle en `docs/copiloto-voz.md` §16 y `docs/reel-como-este.md` §13. Sin migraciones.
+
+- **Lo que dice el copiloto sale de lo aplicado** (fallo 6): la nota de la IA que dice haber hecho algo no se enseña;
+  sin cambios se dice «No he cambiado nada» y por qué; un texto no dictado se descarta diciendo cuál. «Que la foto llene
+  todo» llena el lienzo de verdad (`fit: canvas`).
+- **Entiende al negocio** (fallo 7): sin pedir un fondo, una foto real a sangre (`fill`) con el fondo con IA como opción;
+  titular de la ocasión y llamada a la acción del perfil en una pieza en blanco; búsqueda por intención sin exportaciones
+  ni diseños; recortes encajados por su zona opaca; titulares con mayúscula inicial y colores de la marca (o etiqueta de
+  la marca).
+- **Coste** (fallo 16): «Sin IA» solo sin gasto; si hubo, «Con IA: 0,14 créditos».
+- **«Hacer un reel como este»** (fallo 5): vídeo de la biblioteca, aviso de Instagram antes de pegar, pieza siempre nueva,
+  el nombre de «Nuevo reel» se conserva y el pie del análisis llega a la pieza.
+- **Probado** con todo simulado: unitarias y componentes (`calidad.test.ts`, `copilotoHonesto.test.tsx`,
+  `like/reelLike.test.tsx`), base de datos y el banco del copiloto en seco (101 casos, grupo nuevo `calidad`).
+- **Sin probar:** nada con IA real (que el modelo devuelva `fill`, `canvas` y consultas por intención), ni en un navegador
+  real (etiqueta de marca a la vista, medida de un recorte real con CORS, leer un vídeo de la biblioteca de R2 o Drive).
+- **Desplegar:** la aplicación y después `ai-generate` (enumeraciones nuevas `fill` y `canvas`: un editor anterior
+  rechaza entera la respuesta que las traiga).
 
 ### Editor de reels como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
 

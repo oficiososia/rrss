@@ -183,7 +183,7 @@ export const EDITOR_COPILOT_TOOLS: AiToolSpec[] = [
   // Pasos de plan: montar una pieza entera. La IA solo crea el fondo; los platos y productos son fotos de la biblioteca.
   tool(
     'generate_background',
-    'Si piden un fondo, lo crea con IA, SOLO el fondo: nunca comida, platos, bebidas, productos, personas ni texto; eso son fotos de la biblioteca (find_photos + place_photos).',
+    'Si lo piden, crea con IA SOLO el fondo: nunca comida, platos, bebidas, productos, personas ni texto; son fotos de la biblioteca (find_photos + place_photos).',
     { prompt: { type: 'string', maxLength: MAX_BACKGROUND_PROMPT_CHARS }, ratio: nenum(TOOL_RATIOS) },
   ),
   tool('find_photos', 'Busca fotos reales de la marca. query: lo que se ve, en plural y sin posesivos (platos, carnes, cócteles, sala, local…).', {

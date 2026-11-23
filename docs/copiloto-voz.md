@@ -29,7 +29,7 @@ banco del apartado 13 (grupo `multi`) es la forma de medirlo.
 | **Intérprete local** de órdenes frecuentes (sin IA, coste cero) | Implementado; 236 pruebas |
 | **Órdenes por teclado** (campo junto al micrófono; sirve sin micrófono) | Implementado; componentes y e2e 19 (la e2e, sin ejecutar en local) |
 | **Motor de voz**: dictado del navegador o transcriptor (`ai-transcribe`) | Implementado con micrófono y transcriptor SIMULADOS. **Sin probar con micrófono ni transcriptor reales** |
-| Banco de pruebas `scripts/copiloto-banco.ts` (95 órdenes: 13 de varias acciones o corregidas, `multi`, y 7 de plan) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
+| Banco de pruebas `scripts/copiloto-banco.ts` (101 órdenes: 13 de varias acciones o corregidas, `multi`, 7 de plan y 6 de la prueba real del 23/11, `calidad`) | En seco, en verde. `--apply` y el modo de audio, **sin ejecutar** |
 | Desenfoque de imágenes, color legible de los textos, aviso previo al dictado | Como estaban (apartados 6, 7 y 9 bis) |
 
 ## 1. Cómo funciona
@@ -747,10 +747,10 @@ dictado sigue valiendo (es transcripción, no redacción).
 
 ## 13. Banco de pruebas
 
-`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 95 órdenes en
+`scripts/copiloto-banco.ts` (casos en `scripts/copiloto-banco/casos.ts`): 101 órdenes en
 español con sus operaciones esperadas: 58 base (simples, compuestas, ambiguas, imposibles,
 hostelería y gimnasio), 17 de habla titubeante, 13 de **varias acciones o corregidas**
-(`multi`) y 7 de **plan** (órdenes que montan una pieza). 11 las resuelve el intérprete local;
+(`multi`), 7 de **plan** (órdenes que montan una pieza) y 6 de **`calidad`** (la prueba real del 23/11/2026, §16). 11 las resuelve el intérprete local;
 49 no se pueden expresar por la ruta JSON.
 
 - **Grupo `multi`** (`--grupo multi`): las tres órdenes que fallaron en la prueba real del
@@ -1069,3 +1069,92 @@ contraste dentro de la misma zona un texto puede seguir leyéndose mal. Sigue si
 un modelo real respete «sin comida» en el fondo. La e2e 19 tiene el caso del camino feliz;
 ahora comprueba que el interruptor viene marcado y lo desmarca (sigue siendo el camino sin
 recorte), **escrito y sin ejecutar en local**.
+
+## 16. Lo que dice coincide con lo que hace (prueba real del 23/11/2026, `f56/copiloto-fiable`)
+
+Prueba de punta a punta en staging (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`, apartados
+1.4 y 3.4, fallos 6, 7 y 16). Todo lo de abajo está probado con la IA, el generador, la biblioteca y
+el recorte **simulados**; nada con un proveedor real.
+
+**La nota de la IA (fallo 6).**
+
+- **Antes:** el copiloto enseñaba la nota de la IA tal cual. Con «ponle un título que invite a venir
+  el finde, con nuestros colores» el estado decía «Sin cambios» y la nota «Añadí el título “Ven a
+  disfrutar este finde”»; con «que la foto llene todo», «La foto ahora llena el lienzo» con los
+  márgenes blancos a la vista.
+- **Ahora:** lo hecho lo cuenta el editor con lo que de verdad aplica (la lista de cambios de
+  `apply.ts`). De la nota de la IA solo se enseñan las frases que preguntan o explican lo que no se
+  puede o lo que falta (`trustedNotes`, `copilot/intent.ts`); las que dicen haber hecho algo («añadí»,
+  «he puesto», «ahora llena», «listo») se quitan siempre. Si no ha cambiado nada, la primera nota es
+  «No he cambiado nada.» seguida del motivo (o, sin motivo, cómo decirlo de otra forma). Un texto que
+  la IA intenta poner sin que se haya dicho se descarta diciendo cuál y qué hacer: «No he puesto «…»:
+  no lo has dicho tú y el copiloto no redacta. Dicta el texto tal cual («pon de título: …») o usa
+  «Redactar con IA».» (`notDictatedReason`, servidor). Las instrucciones piden además que `done` no
+  cuente lo hecho.
+- **«Que la foto llene todo».** Nuevo encaje `transform_image` con `fit: canvas`: la caja pasa a ser
+  el lienzo entero, la foto lo llena de borde a borde (recortando lo que sobra) y va al fondo; los
+  textos se revisan para que se lean. Si la orden dice «llene todo», «a sangre», «de borde a borde»
+  o «sin márgenes» y la IA pide `cover` (llenar su caja), el navegador lo cambia por `canvas`
+  (`alignWithOrder`).
+
+**Entender lo que pide un negocio (fallo 7).**
+
+- **«Hazme algo para el finde que quede bonito».** Antes: solo un fondo con IA («sin comida ni
+  platos») por 0,143. Ahora: si la orden **no pide un fondo** (`asksForBackground`: «fondo»,
+  «ambiente», «escenario»), el plan no lo genera: usa UNA foto real de la marca que llena el lienzo
+  (disposición nueva `fill`) y deja el fondo con IA como **opción** en la tarjeta («Crear el fondo
+  con IA en vez de usar tu foto (≈ coste)», `setPlanAiBackground`; marcado, vuelve el plan de antes:
+  fondo con IA y fotos recortadas encima). Las instrucciones del servidor dicen lo mismo
+  (`generate_background` solo si se pide un fondo; `place_photos` con `fill`).
+- **Titular y llamada de la marca.** En una página sin textos, el plan añade el titular de la
+  ocasión que nombra la orden («para el finde» → «Este finde», «esta semana», «hoy», «Navidad»…,
+  `occasionHeadline`) si no se ha dictado otro, y la **llamada a la acción del perfil de la marca**
+  (`voice.callsToAction[0]`). Los dos salen en el plan como propuestos antes del «sí». No los
+  escribe la IA: uno es la propia orden y el otro, texto del perfil.
+- **«Una foto de un plato nuestro».** Antes: buscaba «plato nuestro» y eligió una exportación.
+  Ahora: la búsqueda quita posesivos y adjetivos («nuestro», «bonito»…) y, si la palabra dicha no
+  encuentra nada, busca por su familia (`SEARCH_FAMILIES` de `plan.ts`: «plato» → carnes, arroces,
+  postres…; «gym» → sala, máquinas, pesas…; «local» → comedor, terraza…). Solo se amplía desde la
+  palabra genérica: «hamburguesas» no trae cualquier plato. Nunca devuelve imágenes hechas con IA ni
+  piezas ya diseñadas o montadas (`isAppDesign`: exportaciones, reels, portadas, informes), igual que
+  los selectores.
+- **EnerGym: gimnasio inventado y recorte diminuto.** Con lo anterior, la foto real del sitio va de
+  fondo. Y cuando sí se recorta una foto, se mide qué parte ocupa lo recortado (`subjectBounds`,
+  `measureSubject` del editor: la caja de los píxeles opacos) y se coloca solo esa zona (`crop` de
+  la capa): el recorte llena su sitio en vez de quedar pequeño dentro de su aire transparente.
+- **Títulos dictados.** Antes: en minúscula y en negro. Ahora: un titular (estilo título o
+  subtítulo) entra con mayúscula inicial (`capitalizeFirst`), la primera tipografía del perfil y
+  **siempre con los colores de la marca** (`headingLook`): el color de la marca que se lea encima;
+  si ninguno se lee, el color de títulos o principal de la marca como **fondo de etiqueta** y el
+  texto en el color que más contraste con ella. Si la tipografía de la marca no está cargada en el
+  navegador, se pinta con la de reserva (eso es de la carga de tipografías del editor, no del
+  copiloto).
+
+**Coste (fallo 16).**
+
+- **Antes:** el «sí» a un plan con fondo con IA salía como «Sin IA» aunque se cobraron 0,143.
+- **Ahora:** «Sin IA» solo sale en una orden resuelta en el navegador que no ha gastado nada. El «sí»
+  (dicho o escrito) a un plan con fondo con IA, o la orden del plan si se pulsa «Sí, hazlo», enseña
+  «Con IA» y, en cuanto se genera el fondo, «Con IA: 0,14 créditos» con lo que ha costado de verdad
+  (`generateImageWithCost` de `features/ai/imageApi.ts`; si el servidor no lo dice, el máximo
+  enseñado antes del «sí»).
+
+**Banco.** Grupo nuevo `calidad` (6 casos, `--grupo calidad`) con las órdenes de la prueba y lo que
+debe salir: sin texto inventado y con nota; la foto que llena el lienzo (comprobado en el documento);
+el título dictado con mayúscula y color de la marca; «algo bonito» y «un plato nuestro» con una foto
+real a sangre, el titular de la ocasión y la llamada de la marca, sin exportaciones; y el gimnasio
+con su foto real. El banco construye ahora el plan como el editor (con la orden, si la página tiene
+textos y la llamada de la marca), así que los planes del grupo `plan` cuentan un paso más (la
+llamada) y el titubeante, dos (también el titular «Este otoño»). En seco: 101 casos, todos cuadran.
+
+**Probado** (simulado): `calidad.test.ts` (16), `copilotoHonesto.test.tsx` (7: la nota sin cambios,
+la foto que llena el lienzo, «Sin IA» solo sin gasto con «sí» y con el botón, «algo bonito» con foto
+real y con el interruptor), las pruebas que ya había (adaptadas: mayúscula inicial, nota de la IA) y
+`tests/db/ia-copiloto-herramientas.test.ts` (motivo del texto no dictado).
+
+**Sin probar con IA real:** que un modelo real devuelva `fill`, `fit: canvas`, consultas como
+«platos» en vez de «plato nuestro» y una nota vacía cuando todo se puede (las instrucciones son
+nuevas); cómo queda a la vista la etiqueta de marca de un titular; la medida de lo recortado en un
+recorte real (CORS del almacenamiento: si no se puede leer, se coloca la foto entera como antes).
+**Desplegar:** la aplicación y después `ai-generate` (instrucciones, herramientas y enumeraciones
+nuevas: un editor anterior rechaza entera una respuesta con `fill` o `canvas`, sin aplicar nada).

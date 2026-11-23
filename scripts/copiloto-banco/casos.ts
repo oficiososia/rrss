@@ -1056,7 +1056,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Paella de domingo', style: 'title' },
     ],
     // Sin fondo de imagen (lienzo liso), el recorte es el que diga la respuesta: no se comprueba.
-    plan: { library: 'hosteleria', background: false, photos: 1, steps: [3, 4] },
+    plan: { library: 'hosteleria', background: false, photos: 1, steps: [4, 5] },
   },
 ]);
 

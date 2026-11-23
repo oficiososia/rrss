@@ -813,7 +813,9 @@ describe('tarea editor.copilot por herramientas', () => {
       { index: 4, op: 'update_text' },
       { index: 5, op: 'add_text' },
     ]);
-    for (const item of discarded) {
+    // El texto vacío, aparte: falta el texto.
+    expect(discarded.at(-1)!.reason).toBe('Falta el texto dictado.');
+    for (const item of discarded.slice(0, -1)) {
       expect(item.reason).toMatch(/^No he puesto «.+»: no lo has dicho tú y el copiloto no redacta\. Dicta el texto tal cual/);
       expect(item.reason.length).toBeLessThanOrEqual(300);
     }
@@ -1530,7 +1532,7 @@ describe('pasos de plan: la IA solo crea el fondo; los platos y productos son fo
       count: { type: 'integer', minimum: 1, maximum: 6 },
     });
     expect(spec('place_photos').parameters.properties).toEqual({
-      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan'] },
+      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan', 'fill'] },
       cutout: { type: 'boolean' },
       on: { type: 'boolean' },
     });
@@ -1899,7 +1901,7 @@ describe('simulado local (el de la e2e) por herramientas', () => {
     expect(operations.some((o) => o.text?.includes('APROBADO'))).toBe(false);
     expect(operations.filter((o) => o.op === 'set_background_image')).toHaveLength(1);
     expect(reasons(response.body)).toEqual([
-      expect.stringMatching(/no está en lo dictado/),
+      expect.stringMatching(/no lo has dicho tú/),
       expect.stringMatching(/no está entre las elegidas/),
     ]);
   });

@@ -244,3 +244,35 @@ Opciones: `--video`, `--voz`, `--idea`, `--perfil`. **No se ha ejecutado con `--
 5. Prueba real: `node scripts/reel-como-este-prueba.ts --apply` (§9).
 6. Interruptor: construir la aplicación con `VITE_REEL_LIKE_ENABLED=true` (además de
    `VITE_MEDIA_WORKER_ENABLED=true`).
+
+## 13. Tras la prueba real del 23/11/2026 (`f56/copiloto-fiable`)
+
+Prueba de punta a punta en staging (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`, apartados
+1.5 y 3.5, fallo 5). Probado en componentes con la red simulada; nada contra servicios reales.
+
+- **Vídeo de la biblioteca.** Antes: solo subir un archivo o pegar un enlace. Ahora: pestaña «De la
+  biblioteca» con los vídeos de la marca (`useLibraryVideos`). Se lee el elegido con su dirección
+  firmada y se sube una **copia** a la carpeta privada de referencias (`fetchLibraryVideo`): sigue el
+  camino de siempre (`request_media_job` con `source.path`) y se borra al terminar; el vídeo de la
+  biblioteca no se toca. Su duración ajusta el coste máximo de la voz. Formato, peso y duración se
+  comprueban antes (`libraryVideoProblem`). Sin migraciones ni cambios en el trabajador.
+- **Enlaces de Instagram.** Antes: se decía que no se podía descargar después de pegar el enlace y
+  estudiarlo. Ahora: el aviso está en la pestaña antes de pegar nada, y un enlace de Instagram,
+  TikTok, YouTube o Facebook (`closedNetwork`) se dice al momento y no se manda a estudiar. Un enlace
+  directo a un archivo sigue como antes.
+- **Pieza nueva.** Antes: «Seguir en el editor» abría la pieza ya apuntada en el análisis, aunque
+  estuviera archivada («Prueba UX reel como este»). Ahora: el botón crea **siempre** una pieza nueva
+  («Abrir en el editor» la primera vez, «Hacer otro reel con esto» después) y la apunta en el
+  análisis. La anterior solo se enlaza («Ya hiciste un reel con este análisis: …») si sigue viva
+  (`useLinkedPiece`: ni borrada ni archivada).
+- **El nombre escrito.** Antes: «Nuevo reel → Hacer un reel como este» perdía el nombre. Ahora: el
+  diálogo lo pasa en `?nombre=` (`withName`), la pantalla lo enseña en «Nombre del reel», viaja con
+  el análisis y es el título de la pieza que se crea (si está vacío, el del guion).
+- **El pie del análisis.** Antes: el reel se creaba sin pie y se publicaba sin texto. Ahora: el
+  borrador lleva `copy` con el pie y los hashtags que propuso el análisis, marcado `aiGenerated`
+  (`likeCopy` de `useDraft.ts`); es el `copy` que el editor de reels ya admite («Exportar» lo deja
+  cambiar) y el publicador lee de la versión aprobada.
+
+Pruebas: `like/reelLike.test.tsx` (15; nuevas: enlaces cerrados avisados antes, enlace directo,
+vídeo de la biblioteca, el nombre, pieza nueva con la anterior archivada y el pie en la versión
+guardada).
