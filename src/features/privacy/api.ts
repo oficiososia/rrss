@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LEGAL_VERSIONS } from '@/features/legal/legal';
 import { signStoragePaths } from '@/features/storage/api';
 import type { AccountDeletionCheck, LegalAcceptanceRow } from '@/lib/database.types';
@@ -35,8 +35,9 @@ export function fileSafe(text: string): string {
   );
 }
 
-export function useLegalAcceptances(userId: string) {
-  return useQuery({
+/** Aceptaciones de los documentos legales (también la lanza `prefetchStartup` al arrancar). */
+export function legalAcceptancesQuery(userId: string) {
+  return queryOptions({
     queryKey: privacyKeys.acceptances(userId),
     queryFn: async (): Promise<LegalAcceptanceRow[]> =>
       unwrap(
@@ -47,6 +48,10 @@ export function useLegalAcceptances(userId: string) {
           .order('accepted_at', { ascending: false }),
       ),
   });
+}
+
+export function useLegalAcceptances(userId: string) {
+  return useQuery(legalAcceptancesQuery(userId));
 }
 
 /** ¿Aceptó ya las versiones vigentes de las condiciones y de la política de privacidad? */

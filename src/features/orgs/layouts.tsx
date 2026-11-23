@@ -13,6 +13,7 @@ import { PageSkeleton, ShellSkeleton } from '@/layout/Skeletons';
 import { readLocal, writeLocal } from '@/lib/localStore';
 import { useBrands, useMyBrandRoles, useMyOrganizations } from './api';
 import { BrandContext, lastSelectionKey, makeBrandContext, OrgContext, useOrg, type LastSelection } from './context';
+import { endColdRootEntry, isColdRootEntry } from './startup';
 
 /** «/»: decide a dónde va cada usuario al entrar. */
 export function RootRedirect() {
@@ -30,14 +31,17 @@ export function RootRedirect() {
     else toast.error(info.text);
   }, [social]);
 
+  useEffect(() => endColdRootEntry(), []);
+
   if (pendingInvite) return <Navigate to={`/invitacion/${pendingInvite}`} replace />;
 
   // Al entrar en frío, con una visita anterior se va directo a la última marca,
   // sin esperar la lista de organizaciones: el armazón de la organización ya
   // comprueba el acceso (y, si no lo hay, olvida esta elección). Si la lista ya
-  // está en memoria (p. ej., al salir de una organización) se decide con ella.
+  // está en memoria (p. ej., al salir de una organización) se decide con ella. Al entrar en frío la
+  // lista ya se está pidiendo a la vez (prefetchStartup) y puede llegar antes: se sigue yendo directo.
   const remembered = readLocal<LastSelection>(lastSelectionKey(user.id), {});
-  if (remembered.orgId && orgs.isPending) {
+  if (remembered.orgId && (orgs.isPending || isColdRootEntry())) {
     const rememberedBrand = remembered.brandByOrg?.[remembered.orgId];
     const target = rememberedBrand ? `/o/${remembered.orgId}/m/${rememberedBrand}/inicio` : `/o/${remembered.orgId}`;
     return <Navigate to={target} replace />;
