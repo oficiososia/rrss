@@ -185,3 +185,62 @@ describe('cierre con la marca y sonido', () => {
     expect(reelAudioNotice({ clips: [photo], music: { path: 'x' } })).toEqual({ kind: 'music', notice: null });
   });
 });
+
+describe('cada plano cuenta algo y el ritmo sale de la plantilla', () => {
+  it('saca el rótulo del nombre del archivo solo si dice algo', async () => {
+    const { assetCaption, orderForSlots } = await import('./quality');
+    expect(assetCaption('Alcachofa a la parrilla con oreja, guanciale y queso Idiazábal.webp')).toBe(
+      'Alcachofa a la parrilla con oreja',
+    );
+    expect(assetCaption('carne-plato.png')).toBe('Carne plato');
+    expect(assetCaption('IMG_0379.MOV')).toBeNull();
+    expect(assetCaption('PXL_20261105_123456.jpg')).toBeNull();
+    expect(assetCaption('Sin fondo · chuleton.png')).toBeNull();
+    // Los vídeos van a los planos de ambiente; las fotos, a los de detalle.
+    const v = { kind: 'video', n: 'v' };
+    const f1 = { kind: 'image', n: 'f1' };
+    const f2 = { kind: 'image', n: 'f2' };
+    expect(orderForSlots([{ kind: 'photo' }, { shot: 'wide' }, { kind: 'any' }], [f1, f2, v]).map((a) => a.n)).toEqual([
+      'f1',
+      'v',
+      'f2',
+    ]);
+  });
+
+  it('con rótulos y cortes al pulso, cada plano lleva su texto y dura pulsos enteros', async () => {
+    const { slotSecondsOnBeat } = await import('./reelTemplate');
+    const parsed = validateReelTemplate({
+      kind: 'rrss.reel-template',
+      schemaVersion: 1,
+      purpose: 'Prueba',
+      whenToUse: 'Prueba',
+      material: '3 fotos',
+      style: { id: 'corte-ritmico' },
+      slots: [
+        { id: 'a', label: 'A', seconds: 1 },
+        { id: 'b', label: 'B', seconds: 1.4 },
+        { id: 'c', label: 'C', seconds: 1.4 },
+      ],
+      texts: [{ id: 'g', role: 'hook', text: 'Lo que sale de la cocina', from: 'a', position: 'center' }],
+      music: { suggestion: 'Instrumental', bpm: { min: 110, max: 130 }, cutsOnBeat: true },
+    });
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+    const style = REEL_TEMPLATES.find((t) => t.id === 'corte-ritmico')!;
+    const beat = 60 / 120;
+    expect(slotSecondsOnBeat(1.4, parsed.template)).toBe(1.5);
+    const project = buildReelFromTemplate(
+      parsed.template,
+      [asset('a', { file_name: 'Pan gallego.jpg' }), asset('b', { file_name: 'Jamón 100% bellota.jpg' }), asset('c', { file_name: 'IMG_0001.jpg' })],
+      style,
+      { captions: true, beatSync: true },
+    );
+    expect(project.plan.clips.map((c) => (c.type === 'photo' ? c.seconds / beat : 0))).toEqual([2, 3, 3]);
+    // El plano 2 lleva el nombre del plato; el 3 (archivo de cámara) no se inventa nada.
+    expect(project.plan.texts.map((t) => t.text)).toEqual(['Lo que sale de la cocina', 'Jamón 100% bellota']);
+    expect(project.plan.texts[1]).toMatchObject({ position: 'bottom', animation: { in: 'rise', out: 'fade' } });
+    // Sin pedirlo, como antes (el editor todavía no lo pide).
+    const plain = buildReelFromTemplate(parsed.template, [asset('a'), asset('b'), asset('c')], style);
+    expect(plain.plan.texts).toHaveLength(1);
+    expect(plain.plan.clips[1]).toMatchObject({ seconds: 1.4 });
+  });
+});

@@ -276,6 +276,63 @@ export function subjectMasks(library: readonly RankableAsset[]): Map<string, str
   return out;
 }
 
+/** Nombres de archivo que no dicen nada (cámara, móvil, capturas). */
+const MEANINGLESS = /^(img|dsc|dscn|pxl|vid|video|mvimg|whatsapp|foto|image|imagen|photo|screenshot|captura|sin fondo|recorte)\b/i;
+
+/**
+ * Rótulo de un plano a partir del nombre del archivo, si dice algo: «Alcachofa a
+ * la parrilla con oreja, guanciale….webp» → «Alcachofa a la parrilla con oreja».
+ * Null si el nombre es de cámara o de móvil («IMG_0379», «PXL_2026…»).
+ */
+export function assetCaption(fileName: string): string | null {
+  const base = fileName
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/(\p{L})-(?=\p{L})/gu, '$1 ')
+    .replace(/\s*[-–]\s*(c\d+|img\s?\d+|copia|copy|\d+)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!base || MEANINGLESS.test(base)) return null;
+  const letters = (base.match(/\p{L}/gu) ?? []).length;
+  const digits = (base.match(/\d/g) ?? []).length;
+  if (letters < 3 || digits > letters / 2) return null;
+  // Lo primero hasta una coma y, como mucho, unas 34 letras sin partir palabras.
+  let caption = base.split(/[,(]/)[0]!.trim();
+  if (caption.length > 34) {
+    const words = caption.split(' ');
+    caption = '';
+    for (const w of words) {
+      if ((caption ? caption.length + 1 : 0) + w.length > 34) break;
+      caption = caption ? `${caption} ${w}` : w;
+    }
+    caption = caption.replace(/\s+(a|al|con|de|del|el|en|la|las|los|y|e|o)$/i, '');
+  }
+  if (caption.length < 3) return null;
+  return caption.charAt(0).toLocaleUpperCase('es') + caption.slice(1);
+}
+
+/**
+ * Orden del material para una plantilla: los vídeos van a los planos de ambiente
+ * (huecos `video` o de tipo general o persona) y las fotos a los de detalle, sin
+ * cambiar el orden dentro de cada grupo. Un vídeo real del sitio cuenta más que
+ * una foto en un plano de ambiente.
+ */
+export function orderForSlots<T extends { kind: string }>(
+  slots: ReadonlyArray<{ kind?: string; shot?: string }>,
+  assets: readonly T[],
+): T[] {
+  const videos = assets.filter((a) => a.kind === 'video');
+  const photos = assets.filter((a) => a.kind !== 'video');
+  return slots
+    .slice(0, assets.length)
+    .map((slot) => {
+      const wantsVideo = slot.kind === 'video' || slot.shot === 'wide' || slot.shot === 'person';
+      const pool = wantsVideo ? (videos.length ? videos : photos) : photos.length ? photos : videos;
+      return pool.shift()!;
+    })
+    .filter(Boolean);
+}
+
 // ───────────────────────────── Cierre con la marca ─────────────────────────────
 
 export interface BrandReelKit {

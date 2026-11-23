@@ -25,7 +25,7 @@ material, con qué colores de la marca y con qué cierre).
 | 4b | Color desigual | **Gradación** ligera e igual en todo el reel (`plan.grade`: `natural` por defecto, `warm` o `none`): algo más de contraste y color, enfoque suave y viñeteado apenas visible, después de unir los planos y antes de los textos. No se fuerza la matriz BT.709: con FFmpeg 9 anulaba parte de los filtros de color que trabajan en RGB. | `build.ts` (`GRADE_CHAINS`) |
 | 5 | La misma foto en 3 planos; fotos de móvil flojas antes que las buenas | **Sin repetir**: `buildReelFromTemplate` quita los repetidos (con menos fotos distintas que planos, se quitan planos, como con poco material); `matchShots` («Hacer un reel como este») nunca usa dos veces el mismo archivo. **Por calidad**: `reelAssetScore` puntúa resolución, nitidez (bytes por píxel), proporción y procedencia (un PNG sin fondo, un recorte o una captura no son tomas) y `matchShots` la usa para desempatar y apartar lo flojo; `rankReelAssets` y `strongestFirst` quedan listos para los selectores. El trabajador avisa si un archivo sale varias veces | `src/features/reels/quality.ts`, `reelTemplate.ts`, `like/draft.ts`, `like/api.ts` (pide `width`, `height`, `bytes`) |
 | 6 | Pista de audio a 2 kbps (silencio) | Sin música y sin sonido de clips, el vídeo sale **sin pista de audio** (antes, una pista muda). Con sonido, AAC a **160 kbps**. El resultado del trabajo dice de dónde sale el sonido (`result.output.audio`: `music`, `clips` o `none`) y `reelAudioNotice(plan)` da el aviso «Sin música». No se incluye ninguna pista de música (ver fuentes abajo) | `build.ts`, `handlers/reel-template.ts`, `quality.ts` |
-| 7 | H.264 a 2,9–3,7 Mbps | **High 4.2, ~9 Mbps** (`-b:v 9000k`, `-maxrate 12150k`, `-bufsize 18000k`, `preset medium`), GOP de 2 s, 30 fps, `yuv420p` y `+faststart` (campo `export.videoBitrateKbps` de las plantillas del trabajador; sin él, el CRF de antes) | `build.ts` (`reelVideoArgs`), `worker/templates/*.json` |
+| 7 | H.264 a 2,9–3,7 Mbps | **High 4.2, ~9 Mbps** (`-b:v 9000k`, `-maxrate 12150k`, `-bufsize 18000k`, `preset medium`), GOP de 2 s, 30 fps, `yuv420p` y `+faststart`; medido en las muestras: 7,7–8,5 Mbps frente a 1,4–3,0 antes (campo `export.videoBitrateKbps` de las plantillas del trabajador; sin él, el CRF de antes) | `build.ts` (`reelVideoArgs`), `worker/templates/*.json` |
 | 8 | Ritmo plano, sin gancho | El titular del principio entra en el **primer segundo** (si un gancho empieza entre 0,15 y 1 s, se adelanta a 0,15 s). En el catálogo: movimientos al 8–10 % (antes, zooms del 15 % que mareaban), fotos de 1,5 s en «Fotos con ritmo» (antes 1,3 s), tipos de transición por plano ya variados (corte, fundido, deslizar). Con música, el editor ya tiene «Ajustar los cortes a la música» | `build.ts`, `agency/catalogo/reels.ts` |
 
 ### Plantillas del catálogo (10 de restaurante)
@@ -44,6 +44,17 @@ usan todas:
 Además, la prueba del catálogo comprueba ya las zonas seguras del dueño (250 px arriba, 400 px
 abajo) y que ningún texto baje de ~60 px. Con el cierre de la marca, la llamada de la plantilla
 pasa al cierre (`withBrandOutro`) en vez de salir dos veces.
+
+### Segunda vuelta (el dueño: «sigue pareciendo un pase de diapositivas»)
+
+| # | Pedido | Qué se hizo |
+| --- | --- | --- |
+| 1 | Nunca bandas: el plano llena siempre el 9:16 | La foto se recorta a pantalla llena sobre el sujeto salvo que se viera menos de un tercio de él (fotos panorámicas). Solo entonces: fondo a sangre con la misma foto ampliada y desenfocada, la foto encima ocupando al menos el 80 % del alto y con **sombra** (`photoFraming`, `FIT_WHEN_VISIBLE_BELOW = 0.33`, `MIN_FIT_SCALE = 0.8`) |
+| 2 | Cada plano con su rótulo | `buildReelFromTemplate(…, { captions: true })`: cada plano sin texto propio lleva el **nombre del plato** sacado del archivo si dice algo (`assetCaption`: «Alcachofa a la parrilla con oreja»; nada con «IMG_0379»), abajo, en caja, entrando y saliendo animado. «Así se hace» lleva ya un rótulo por paso en la plantilla |
+| 3 | Variedad de encuadre: general y luego detalle | **Corte de cámara dentro de la foto** (trabajador): un plano de foto de 1,6 s o más con acercamiento empieza general y a mitad corta a un detalle del sujeto ×1,55 (solo con fotos de lado corto ≥ 900 px). Las plantillas de muestra alternan planos cortos y de 1,6–1,8 s |
+| 4 | Ritmo | Planos de 1,0–1,8 s (el gancho, de 1,0–1,2 s), **corte seco con golpe de zoom** (empieza un 7 % más cerca y se asienta en ~0,25 s) y algún barrido de 0,25 s; fundidos de 0,3 s como mucho; movimiento del 10–12 % (mínimo 8 %) |
+| 5 | Música | Sin música por decisión del dueño (ver abajo). Con `beatSync: true` cada plano dura pulsos enteros del tempo que dice la plantilla, así que sin música el ritmo sale de la plantilla y con una canción de ese tempo los cortes caen en el golpe |
+| 6 | Vídeos reales del sitio antes que fotos | `rankReelAssets` puntúa más un vídeo; `orderForSlots` lleva los vídeos a los planos de ambiente (huecos `video`, plano general o persona) y las fotos a los de detalle; «Paseo por el local» pide vídeo en su primer plano. En local no hay vídeos de Casa Tomás (solo de Touza, otra marca), así que las muestras son con fotos |
 
 ## Plan v2: campos nuevos (todos opcionales)
 
@@ -70,8 +81,9 @@ Para activarlos:
 
 1. `project.ts`: añadir los cuatro campos como opcionales (sin nulos), igual que en la tabla.
 2. Al crear un reel desde plantilla o desde «Hacer un reel como este»: `brandReelKit(perfil, rutaDelLogo)`
-   → `withBrandOutro(plan, kit, duración)`, y en `buildReelFromTemplate` pasar `colors: kit.colors`
-   y `focalPoints: savedFocalPoints(biblioteca)`; la máscara, con `subjectMasks(biblioteca)`.
+   → `withBrandOutro(plan, kit, duración)`, y en `buildReelFromTemplate` pasar `colors: kit.colors`,
+   `focalPoints: savedFocalPoints(biblioteca)`, **`captions: true` y `beatSync: true`** (hoy son
+   opcionales para no cambiar las pruebas del editor); la máscara, con `subjectMasks(biblioteca)`.
 3. **Aviso «Sin música»**: `reelAudioNotice(plan).notice`, junto a «Montar el vídeo» y en el panel
    «Vídeo final»; cuando el trabajo termina, `jobs.result.output.audio` lo confirma.
 4. Selectores de material (rama f49): ordenar con `rankReelAssets` y no dejar elegir dos veces el
@@ -81,18 +93,22 @@ Para activarlos:
    seguras 250/400/60 px y apilado). Hoy la vista previa puede enseñar un texto más pequeño o
    en otro sitio que el vídeo.
 
-## Música: fuentes propuestas (para que elija el dueño)
+## Música: fuentes propuestas (para que elija el dueño; no implementado)
 
-No se ha metido ninguna pista. Condiciones según lo que se sabía a 23/11/2026, **sin volver a
-leerlas en línea hoy**: hay que leer los términos vigentes antes de elegir.
+Decisión del dueño (23/11/2026): de momento, reels **sin música**; la música se pondrá en la app de
+Instagram antes de publicar («Terminar en Instagram», rama f62). No se ha metido ninguna pista. El
+montaje queda listo para cortar al ritmo: con `beatSync` cada plano dura pulsos enteros del tempo de
+la plantilla, y con la canción real el editor ya tiene «Ajustar los cortes a la música» (detección de
+pulsos). Fuentes para cuando se decida:
 
-| Fuente | Licencia | Para qué sirve | Ojo |
+| Fuente | Licencia | Precio | Ojo |
 | --- | --- | --- | --- |
-| **Colección de sonidos de Meta** (Meta Sound Collection, en Meta Business Suite / Creator Studio) | Gratis, licencia de Meta para usar en vídeos publicados en **Facebook e Instagram** | Lo más directo para reels de Instagram: es la que ya recomienda el catálogo | Solo vale para publicar en Meta; no para TikTok, web ni anuncios fuera de Meta |
-| **Pixabay Music** | Licencia de contenido de Pixabay: uso comercial gratis y sin atribución | Pistas instrumentales para todas las redes | No se puede revender la pista tal cual; algunas pistas tienen reclamaciones de Content ID en YouTube |
-| **Epidemic Sound** (plan para empresas) | Suscripción de pago con licencia comercial para redes sociales de la empresa | Catálogo grande y profesional, sin dudas de licencia | Hay que mantener la suscripción; comprobar que el plan cubre a cada marca si la agencia publica por varias |
+| **Colección de sonidos de Meta** (Meta Business Suite) o la música de la propia app de Instagram | Licencia de Meta para usar en Facebook e Instagram | Gratis | Solo vale dentro de Meta; la música de la app de Instagram no se puede usar en cuentas de empresa en todos los temas (la librería comercial es más corta) |
+| **Pixabay Music** | Licencia de contenido de Pixabay: uso comercial, sin atribución | Gratis | No se puede revender la pista tal cual; algunas pistas tienen reclamaciones de Content ID en YouTube |
+| **Epidemic Sound, plan Business** | Licencia comercial para marcas con menos de 10 M$ al año: redes sociales y anuncios digitales; no exterior, directos ni radio | 30 $/mes pagando el año, 75 $/mes mes a mes (página oficial, consultada el 23/11/2026) | Hasta dos usuarios; un canal por red por administrador: con varias marcas hay que mirar si hace falta más de un plan |
 
-En la aplicación la licencia ya la confirma la marca al subir la pista (`music.license.confirmed`).
+Artlist se descartó: su plan barato («Social», ~10 $/mes) es solo para canales personales, no para
+cuentas de empresa ni clientes.
 
 ## Montajes de muestra
 

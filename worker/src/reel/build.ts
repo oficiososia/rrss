@@ -252,9 +252,20 @@ const MIN_TEXT_FADE = 0.2;
 /** Transición hacia el cierre con la marca. */
 const OUTRO_FADE = 0.4;
 /** Lo más pequeño que se deja una foto horizontal para que quepa el sujeto (fracción del recorte a pantalla llena). */
-const MIN_FIT_SCALE = 0.62;
+const MIN_FIT_SCALE = 0.8;
 /** Se reduce la foto solo si a pantalla llena se vería menos de esta parte del sujeto. */
-const FIT_WHEN_VISIBLE_BELOW = 0.6;
+const FIT_WHEN_VISIBLE_BELOW = 0.33;
+/**
+ * Corte de cámara dentro de una foto: a partir de esta duración, el plano empieza
+ * general y, a mitad, corta a un detalle del sujeto (×1,55), como si hubiera dos
+ * cámaras. Solo con fotos de resolución suficiente (lado corto ≥ 900 px).
+ */
+export const DETAIL_CUT_MIN_SECONDS = 1.6;
+export const DETAIL_ZOOM = 1.55;
+const DETAIL_MIN_SOURCE = 900;
+/** «Golpe» de zoom al entrar por corte: empieza un 7 % más cerca y se asienta en ~0,25 s. */
+const PUNCH = 0.07;
+const PUNCH_FRAMES = 8;
 /** Por debajo de este tamaño (fracción del ancho), un texto sin caja la lleva: el contorno solo no basta. */
 const BOX_BELOW_SIZE = 0.075;
 
@@ -658,8 +669,9 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       const sh = height * SUPERSAMPLE;
       const count = frames(seconds);
       // Avance suavizado (entra y sale despacio): la cámara no arranca ni frena de golpe.
-      const progress = `(0.5-0.5*cos(PI*on/${Math.max(1, count - 1)}))`;
-      const amount = num(item.motionAmount ?? template.photoMotion.amount);
+      const ease = (from: number, length: number) =>
+        `(0.5-0.5*cos(PI*${from === 0 ? 'on' : `(on-${from})`}/${Math.max(1, length - 1)}))`;
+      const amount = num(item.motionAmount ?? Math.max(template.photoMotion.amount, 0.08));
       const kind: PhotoMotion =
         item.motion ??
         (template.photoMotion.type === 'alternate'
@@ -671,6 +683,14 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
       // La ventana del zoom se centra en el sujeto (sin salirse de la foto).
       const tx = `max(0,min(iw-iw/zoom,${num(frame.target.x, 3)}*iw-iw/zoom/2))`;
       const ty = `max(0,min(ih-ih/zoom,${num(frame.target.y, 3)}*ih-ih/zoom/2))`;
+      // Corte a detalle a mitad del plano (solo acercamientos, con foto de resolución suficiente).
+      const shortSide = item.sourceSize ? Math.min(item.sourceSize.width, item.sourceSize.height) : 0;
+      const detailAt =
+        (kind === 'zoom-in' || kind === 'zoom-out') && seconds >= DETAIL_CUT_MIN_SECONDS && shortSide >= DETAIL_MIN_SOURCE
+          ? Math.round(count * 0.5)
+          : 0;
+      const first = detailAt || count;
+      const progress = ease(0, first);
       const motion = {
         none: { z: '1', x: '0', y: '0' },
         'zoom-in': { z: `1+${amount}*${progress}`, x: tx, y: ty },
@@ -681,6 +701,18 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
         'pan-up': { z: `1+${amount}`, x: tx, y: `(ih-ih/zoom)*(1-${progress})` },
         'pan-down': { z: `1+${amount}`, x: tx, y: `(ih-ih/zoom)*${progress}` },
       }[kind];
+      // Entra por corte: un golpe de zoom corto que se asienta (no en las transiciones suaves).
+      const punch = (from: number) =>
+        `(1+${PUNCH}*pow(max(0,1-${from === 0 ? 'on' : `(on-${from})`}/${PUNCH_FRAMES}),2))`;
+      let z = motion.z;
+      if (detailAt) {
+        const second = `${DETAIL_ZOOM}+${amount}*${ease(detailAt, count - detailAt)}`;
+        z = `if(lt(on,${detailAt}),${z},(${second})*${punch(detailAt)})`;
+        motion.x = tx;
+        motion.y = ty;
+      }
+      if (transitions[index] === 0 && kind !== 'none') z = `(${z})*${punch(0)}`;
+      motion.z = z;
       const tail = [
         ...blurFilter(item.blur, sw, sh),
         ...colorFilter(item.filter),
@@ -698,10 +730,12 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
         chains.push(`[${nextInput - 1}:v]${head.join(',')},split=2[pb${index}][pf${index}]`);
         chains.push(
           `[pb${index}]${[
+            // Fondo a sangre: la misma foto ampliada y desenfocada, con la sombra de la foto encima.
             `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=bilinear:${scaleColor}`,
             crop(sw, sh, frame.focal),
-            `gblur=sigma=${num(sw * 0.035, 1)}`,
-            'eq=brightness=-0.08:saturation=0.85',
+            `drawbox=x=${f.x + Math.round(sw * 0.01)}:y=${f.y + Math.round(sh * 0.012)}:w=${f.cropW}:h=${f.cropH}:color=black@0.55:t=fill`,
+            `gblur=sigma=${num(sw * 0.03, 1)}`,
+            'eq=brightness=-0.03:saturation=0.95',
           ].join(',')}[pbg${index}]`,
         );
         chains.push(

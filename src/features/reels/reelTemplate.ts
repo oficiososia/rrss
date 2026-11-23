@@ -18,7 +18,14 @@
 import { z } from 'zod';
 import type { ReelTemplateSummary } from './templates';
 import type { SourceAsset } from './editor/ops';
-import { roleTextStyle, separateTexts, TEMPLATE_ROLE_TO_TEXT_ROLE, uniqueAssets, type BrandColors } from './quality';
+import {
+  assetCaption,
+  roleTextStyle,
+  separateTexts,
+  TEMPLATE_ROLE_TO_TEXT_ROLE,
+  uniqueAssets,
+  type BrandColors,
+} from './quality';
 import {
   MAX_CLIP_SEGMENT_SECONDS,
   MIN_SEGMENT_SECONDS,
@@ -407,6 +414,27 @@ export interface BuildReelOptions {
   colors?: BrandColors;
   /** Punto de interés guardado de cada foto (ruta → punto), de sus recortes (`savedFocalPoints`). */
   focalPoints?: ReadonlyMap<string, { x: number; y: number }>;
+  /**
+   * Rótulo en cada plano que no tenga texto propio, con el nombre del archivo si dice
+   * algo («Alcachofa a la parrilla»): así cada plano cuenta algo. Hay que pedirlo (el editor aún no lo pide).
+   */
+  captions?: boolean;
+  /**
+   * Cortes al pulso: si la plantilla pide cortes al golpe (`music.cutsOnBeat`) y dice
+   * su tempo (`music.bpm`), cada plano dura un número entero de pulsos (del tempo
+   * medio). Con una canción de ese tempo, los cortes caen en el golpe; con la canción
+   * real, «Ajustar los cortes a la música» del editor los afina. Hay que pedirlo (el editor aún no lo pide).
+   */
+  beatSync?: boolean;
+}
+
+/** Segundos de un plano, en pulsos enteros si la plantilla da el tempo y pide cortes al golpe. */
+export function slotSecondsOnBeat(seconds: number, template: Pick<ReelTemplate, 'music'>): number {
+  const bpm = template.music?.cutsOnBeat ? template.music.bpm : undefined;
+  if (!bpm) return seconds;
+  const beat = 60 / ((bpm.min + bpm.max) / 2);
+  const beats = Math.max(1, Math.round(seconds / beat));
+  return Number(Math.max(MIN_SEGMENT_SECONDS, beats * beat).toFixed(3));
 }
 
 /**
@@ -430,6 +458,8 @@ export function buildReelFromTemplate(
 ): ReelProject {
   const assets = uniqueAssets(chosen);
   const slots = slotsFor(template, assets.length);
+  const secondsOf = (slot: ReelSlot) =>
+    options.beatSync !== true ? slot.seconds : slotSecondsOnBeat(slot.seconds, template);
   const files = new Map<string, number>();
   const clips: Clip[] = slots.map((slot, index) => {
     const asset = assets[index]!;
@@ -438,7 +468,7 @@ export function buildReelFromTemplate(
     if (asset.kind === 'video') {
       const file = asset.duration_ms && asset.duration_ms > 0 ? asset.duration_ms / 1000 : null;
       if (file !== null) files.set(asset.storage_path, file);
-      const out = Math.max(MIN_SEGMENT_SECONDS, file === null ? slot.seconds : Math.min(slot.seconds, file));
+      const out = Math.max(MIN_SEGMENT_SECONDS, file === null ? secondsOf(slot) : Math.min(secondsOf(slot), file));
       return {
         id,
         type: 'video',
@@ -455,7 +485,7 @@ export function buildReelFromTemplate(
       type: 'photo',
       path: asset.storage_path,
       ...(focal ? { focalPoint: { x: focal.x, y: focal.y } } : {}),
-      seconds: Math.min(slot.seconds, PHOTO_SECONDS.max),
+      seconds: Math.min(secondsOf(slot), PHOTO_SECONDS.max),
       ...(slot.motion ? { motion: slot.motion } : {}),
       ...(slot.motionAmount !== undefined ? { motionAmount: slot.motionAmount } : {}),
       transition,
@@ -493,6 +523,30 @@ export function buildReelFromTemplate(
       position: text.position,
       style: textStyle,
       ...(text.animation ? { animation: { ...text.animation } } : {}),
+    });
+  }
+
+  // Rótulo en cada plano sin texto propio, con el nombre del plato (si el archivo lo dice).
+  if (options.captions === true) {
+    const covered = (index: number) =>
+      texts.some((t) => t.start < timeline.starts[index]! + timeline.durations[index]! - 0.3 && t.end > timeline.starts[index]! + 0.3);
+    slots.forEach((_, index) => {
+      if (index === 0 || covered(index)) return;
+      const caption = assetCaption(assets[index]!.file_name);
+      if (!caption) return;
+      const start = round(timeline.starts[index]! + Math.min(0.15, timeline.durations[index]! * 0.1));
+      const end = round(timeline.starts[index]! + timeline.durations[index]! - 0.05);
+      if (end - start < 0.5) return;
+      const style = roleTextStyle('label', options.colors);
+      texts.push({
+        id: `t${texts.length + 1}`,
+        text: caption,
+        start,
+        end,
+        position: 'bottom',
+        style: options.font ? { ...style, fontPath: options.font.path, fontFamily: options.font.family } : style,
+        animation: { in: 'rise', out: 'fade', seconds: 0.3 },
+      });
     });
   }
 

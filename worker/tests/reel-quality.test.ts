@@ -202,20 +202,23 @@ describe('encuadre sobre el sujeto', () => {
     expect(photoFraming({ sourceSize: { width: 1600, height: 900 }, subject, focalPoint: { x: 0.2, y: 0.5 } }, 2160, 3840).source).toBe('plan');
   });
 
-  it('un sujeto más ancho que el 9:16 (una bandeja en una foto horizontal) se ve entero sobre su copia desenfocada', () => {
+  it('solo una foto muy apaisada (panorámica) se ve sobre su copia ampliada y desenfocada a sangre, con sombra', () => {
     const subject = { focal: { x: 0.5, y: 0.6 }, box: { x: 0.05, y: 0.35, w: 0.9, h: 0.4 }, source: 'saliency' as const };
-    const frame = photoFraming({ sourceSize: { width: 1920, height: 1080 }, subject }, 2160, 3840);
+    const frame = photoFraming({ sourceSize: { width: 2400, height: 900 }, subject }, 2160, 3840);
     expect(frame.mode).toBe('fit');
-    expect(frame.fit!.fgW).toBeLessThan(1920 * (3840 / 1080));
+    expect(frame.fit!.fgW).toBeLessThan(2400 * (3840 / 900));
+    // La foto ocupa al menos el 80 % del alto: nada de una franja estrecha.
+    expect(frame.fit!.cropH).toBeGreaterThanOrEqual(3840 * 0.8 - 2);
     const build = buildReel({
       template: fundido,
-      plan: { clips: [photo('a.jpg', 3, { sourceSize: { width: 1920, height: 1080 }, subject })], texts: [] },
+      plan: { clips: [photo('a.jpg', 3, { sourceSize: { width: 2400, height: 900 }, subject })], texts: [] },
       outputFile: 'r.mp4',
       outputWidth: 540,
     });
     expect(build.framing[0]).toMatchObject({ mode: 'fit', source: 'saliency' });
     expect(build.filterGraph).toMatch(/split=2\[pb0\]\[pf0\]/);
     expect(build.filterGraph).toMatch(/overlay=\d+:\d+,/);
+    expect(build.filterGraph).toMatch(/drawbox=[^,]*color=black@0\.55:t=fill,gblur/);
   });
 
   it('la saliencia encuentra lo que se aparta del fondo (un plato rojo descentrado)', () => {
@@ -239,6 +242,43 @@ describe('encuadre sobre el sujeto', () => {
     // La orientación EXIF 6 (girar a la derecha) lleva la esquina de arriba a la izquierda a la de arriba a la derecha.
     expect(orientPoint({ x: 0, y: 0 }, 6)).toEqual({ x: 1, y: 0 });
     expect(orientPoint({ x: 0, y: 0 }, 8)).toEqual({ x: 0, y: 1 });
+  });
+});
+
+describe('ritmo y variedad de encuadre', () => {
+  it('una foto horizontal normal llena el 9:16 recortando sobre el sujeto: sin bandas', () => {
+    // Un plato que ocupa la mitad de una foto 4:3: a pantalla llena se ve casi entero.
+    const subject = { focal: { x: 0.6, y: 0.55 }, box: { x: 0.35, y: 0.3, w: 0.5, h: 0.5 }, source: 'saliency' as const };
+    expect(photoFraming({ sourceSize: { width: 1200, height: 900 }, subject }, 2160, 3840).mode).toBe('cover');
+    // Ni siquiera con un plato que ocupa casi todo el ancho de una foto 4:3.
+    const wide = { ...subject, box: { x: 0.05, y: 0.3, w: 0.9, h: 0.5 } };
+    expect(photoFraming({ sourceSize: { width: 1200, height: 900 }, subject: wide }, 2160, 3840).mode).toBe('cover');
+  });
+
+  it('un plano de foto de 1,6 s o más corta a mitad a un detalle del sujeto; los cortes secos entran con golpe de zoom', () => {
+    const big = { width: 3000, height: 4000 };
+    const build = buildReel({
+      template: corte,
+      plan: {
+        clips: [
+          photo('a.jpg', 1.8, { motion: 'zoom-in', sourceSize: big }),
+          photo('b.jpg', 1.2, { motion: 'zoom-in', sourceSize: big }),
+          photo('c.jpg', 1.8, { motion: 'zoom-in', sourceSize: { width: 500, height: 500 } }),
+        ],
+        texts: [],
+      },
+      outputFile: 'r.mp4',
+      outputWidth: 540,
+    });
+    const chain = (i: number) => build.filterGraph.split(';\n').find((c) => c.startsWith(`[${i}:v]`))!;
+    // 1,8 s = 54 fotogramas: a los 27, el detalle (×1,55) con su golpe.
+    expect(chain(0)).toContain('if(lt(on,27),');
+    expect(chain(0)).toContain('1.55+');
+    expect(chain(0)).toContain('pow(max(0,1-on/8),2)');
+    // Plano corto: sin detalle, pero con golpe; foto pequeña: sin detalle (se vería borrosa).
+    expect(chain(1)).not.toContain('if(lt(on');
+    expect(chain(1)).toContain('pow(max(0,1-on/8),2)');
+    expect(chain(2)).not.toContain('1.55+');
   });
 });
 
