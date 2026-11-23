@@ -4,14 +4,15 @@
 // prediseñados y estilo con la tipografía y los colores de la marca), música y
 // estilo de los subtítulos.
 //
-// Cada grupo es una sección con nombre. En escritorio se ven todas, una bajo
-// otra; en móvil el panel es una hoja y solo enseña la sección que abrió la
-// barra de herramientas (`section`).
+// Cada grupo es una sección con nombre. Como en CapCut, cada botón de la barra
+// abre solo su ajuste (`section`): el panel lateral estrecho en escritorio y la
+// hoja en móvil enseñan esa sección y nada más.
 import { ArrowLeft, ArrowRight, Captions, Play, Plus, Trash2, VolumeX } from 'lucide-react';
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Button, Dialog, Input, Select, Textarea } from '@/components/ui';
 import { formatMicros } from '@/features/ai/money';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { cn } from '@/lib/utils';
 import type { ReelTemplateSummary } from '../templates';
 import {
@@ -96,17 +97,19 @@ export interface InspectorProps {
   beats: BeatsState;
   /** Reproduce la vista previa desde un segundo (para ver la animación de un texto) y, si se da, hasta otro. */
   onPlayFrom?: (seconds: number, until?: number) => void;
-  /**
-   * Sección que enseña la hoja en móvil (la que abrió la barra). Null = todas.
-   * En escritorio se ven siempre todas.
-   */
+  /** Sección que se enseña (la que abrió la barra). Null = todas (pruebas aisladas del panel). */
   section?: string | null;
   /** Segundo del reel en que empieza cada elemento (para la vista previa de una transición). */
   startOf?: (clipId: string) => number | null;
 }
 
-/** Nombre de la sección abierta en la hoja de móvil. */
+/** Nombre de la sección abierta. */
 const ActiveSection = createContext<string | null>(null);
+
+/** ¿Se ve esta sección con `active` abierta? Una sección «x-algo» va con la «x» (los subtítulos y su estilo). */
+export function sectionShown(name: string | undefined, active: string | null): boolean {
+  return active === null || name === active || Boolean(name?.startsWith(`${active}-`));
+}
 
 export const TRANSITION_LABEL: Record<(typeof TRANSITION_TYPES)[number], string> = {
   cut: 'Corte seco',
@@ -199,9 +202,9 @@ function Section({ title, name, children }: { title: string; name?: string; chil
     <section
       className={cn(
         'space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0',
-        // En la hoja de móvil solo se ve la sección que se pidió.
-        active !== null && name !== active && 'max-lg:hidden',
-        active !== null && name === active && 'max-lg:border-t-0 max-lg:pt-0',
+        // Solo se ve la sección que se pidió desde la barra.
+        !sectionShown(name, active) && 'hidden',
+        active !== null && name === active && 'border-t-0 pt-0',
       )}
       data-section={name}
     >
@@ -470,6 +473,8 @@ function ClipPanel(props: InspectorProps & { clip: Clip; index: number }) {
 /** Subtítulos de un clip: automáticos (si hay OpenAI) o escritos a mano, y corregibles antes de montar. */
 function ClipSubtitles(props: InspectorProps & { clip: VideoClip; index: number }) {
   const { clip, apply, readOnly, project } = props;
+  // En autogestión no hay cupo que vigilar: se dice el coste y nada más.
+  const { selfManaged } = useWorkMode();
   const [confirming, setConfirming] = useState<{ microsPerSecond: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const cues = clip.subtitles ?? [];
@@ -612,7 +617,11 @@ function ClipSubtitles(props: InspectorProps & { clip: VideoClip; index: number 
         open={confirming !== null}
         onOpenChange={(open) => !open && setConfirming(null)}
         title="Subtítulos automáticos"
-        description="Se envía el sonido del tramo usado del clip a OpenAI para transcribirlo. Cuenta en el cupo de IA de la organización."
+        description={
+          selfManaged
+            ? 'Se envía el sonido del tramo usado del clip a OpenAI para transcribirlo.'
+            : 'Se envía el sonido del tramo usado del clip a OpenAI para transcribirlo. Cuenta en el cupo de IA de la organización.'
+        }
         footer={
           <>
             <Button variant="secondary" onClick={() => setConfirming(null)}>
@@ -1115,11 +1124,11 @@ function MusicPanel(props: InspectorProps) {
   );
 }
 
-/** «Ajustar los cortes a la música» como sección de la hoja de móvil (se abre desde la barra de la música). */
+/** «Ajustar los cortes a la música» como sección propia (se abre desde la barra de la música). */
 function RhythmWrap({ children }: { children: ReactNode }) {
   const active = useContext(ActiveSection);
   return (
-    <div className={cn(active !== null && active !== 'rhythm' && 'max-lg:hidden')} data-section="rhythm">
+    <div className={cn(!sectionShown('rhythm', active) && 'hidden')} data-section="rhythm">
       {children}
     </div>
   );

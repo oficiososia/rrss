@@ -52,6 +52,7 @@ import { formatMicros, moneyEstimateNote } from '@/features/ai/money';
 import { useContentMutations } from '@/features/content/api';
 import { contentPaths } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { ReelReferenceRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
@@ -166,6 +167,8 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const navigate = useNavigate();
+  // En autogestión no hay cupo: se dice lo que cuesta.
+  const { selfManaged } = useWorkMode();
   const paths = reelLikePaths(org.id, brand.id);
   const start = useStartAnalysis(brand.id);
   const [params] = useSearchParams();
@@ -403,8 +406,10 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
               {speech && options.speechAvailable
                 ? ` Transcribir la voz (hasta ${speechSeconds} s): hasta ${formatMicros(speechMicros)}.`
                 : ' Sin transcribir la voz.'}{' '}
-              Medir los cortes y el ritmo no usa IA. Lo normal es que cueste menos: se descuenta de tu cupo solo lo que
-              se use.
+              Medir los cortes y el ritmo no usa IA.{' '}
+              {selfManaged
+                ? 'Lo normal es que cueste menos: solo cuenta lo que se use.'
+                : 'Lo normal es que cueste menos: se descuenta de tu cupo solo lo que se use.'}
             </p>
             <p className="mt-1 text-xs text-muted">{moneyEstimateNote()}</p>
           </div>
@@ -613,6 +618,8 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const navigate = useNavigate();
+  // En autogestión no hay cupo: se dice lo que cuesta.
+  const { selfManaged } = useWorkMode();
   const paths = reelLikePaths(org.id, brand.id);
   const reference = useReelReference(brand.id, referenceId);
   const study = useStudyReference(brand.id);
@@ -707,7 +714,9 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
                 detail={
                   writing
                     ? 'Con IA. Puede tardar un par de minutos; no cierres la página.'
-                    : 'Con IA: es el único paso que gasta cupo.'
+                    : selfManaged
+                      ? 'Con IA: es el único paso que cuesta dinero.'
+                      : 'Con IA: es el único paso que gasta cupo.'
                 }
               />
               <Step state="pending" title="Plantilla, guion, borrador y textos" />
@@ -831,6 +840,8 @@ function ResultView({
   const { brand, can } = useBrand();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  // En autogestión no hay cupo: se dice lo que cuesta.
+  const { selfManaged } = useWorkMode();
   const { create } = useContentMutations(org.id, brand.id);
   // La pieza que ya se hizo con este análisis, si sigue viva (no archivada): se puede volver a ella.
   const previous = useLinkedPiece(brand.id, row.content_id);
@@ -934,7 +945,8 @@ function ResultView({
             </p>
           )}
           <p className="text-xs text-muted" data-testid="reel-like-cost-real">
-            Ha costado {formatMicros(Number(row.cost_micros) || 0)} de tu cupo de IA
+            Ha costado {formatMicros(Number(row.cost_micros) || 0)}
+            {selfManaged ? '' : ' de tu cupo de IA'}
             {options.estimate ? ` (el máximo era ${formatMicros(options.estimate.maxMicros)})` : ''}.{' '}
             {row.keep_source && row.source_path
               ? 'El vídeo de referencia está guardado en privado: no está en tu biblioteca ni se usa en tus piezas.'

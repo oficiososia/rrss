@@ -1,11 +1,17 @@
 // Proyecto de reel del editor: lo que se guarda como versión de una pieza de
 // formato reel (`content_versions.data`) y lo que se encarga al trabajador.
 //
-//   { kind: 'reel', template: { id }, plan: <plan v2>, guide?: <guion> }
+//   { kind: 'reel', template: { id }, plan: <plan v2>, guide?: <guion>, copy?: <texto> }
 //
 // `guide` es opcional y solo vive en la versión guardada (nunca se manda al
 // trabajador): el guion de un reel hecho con «Hacer un reel como este», con los
 // planos que faltan por grabar (src/features/reels/like/draft.ts).
+//
+// `copy` también es opcional y tampoco va al trabajador: el pie y los hashtags con
+// los que se publica. Tiene el mismo nombre y la misma forma que el `copy` de las
+// publicaciones (src/features/content/document/schema.ts) porque el publicador lo
+// lee igual para todas las piezas (`content_versions.data -> 'copy'`,
+// supabase/functions/_shared/social/caption.ts). Cambiarlo no pide montar otra vez.
 //
 // El plan v2 es el mismo que valida el trabajador (worker/src/reel/schema.ts,
 // zod 4); aquí se repite con zod 3 y las mismas reglas, y un ejemplo
@@ -267,7 +273,25 @@ export interface ReelProject {
   template: { id: string };
   plan: DraftPlan;
   guide?: ReelGuide;
+  copy?: ReelCopy;
 }
+
+/** Límite del pie en Instagram (el publicador también lo comprueba). */
+export const REEL_CAPTION_MAX = 2200;
+export const REEL_HASHTAGS_MAX = 30;
+
+/** Pie y hashtags (sin «#») con los que se publica el reel. */
+export const reelCopySchema = z
+  .object({
+    caption: z.string().max(REEL_CAPTION_MAX),
+    hashtags: z
+      .array(z.string().regex(/^[\p{L}\p{N}_]{1,100}$/u, 'Un hashtag solo admite letras, números y guion bajo'))
+      .max(REEL_HASHTAGS_MAX),
+    /** Redactado con IA (la base de datos lo usa para marcar el contenido generado). */
+    aiGenerated: z.boolean().optional(),
+  })
+  .strict();
+export type ReelCopy = z.infer<typeof reelCopySchema>;
 
 export const projectSchema = z
   .object({
@@ -275,6 +299,7 @@ export const projectSchema = z
     template: z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{1,40}$/) }).strict(),
     plan: planSchema,
     guide: guideSchema.optional(),
+    copy: reelCopySchema.optional(),
   })
   .strict();
 
@@ -314,6 +339,7 @@ const draftSchema = z.object({
     })
     .passthrough(),
   guide: guideSchema.optional(),
+  copy: reelCopySchema.optional(),
 });
 
 /**

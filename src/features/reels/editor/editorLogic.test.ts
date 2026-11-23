@@ -187,8 +187,10 @@ describe('vista previa', () => {
       mimeOf: () => 'image/jpeg',
     });
     expect(warnings.join(' ')).toMatch(/desenfoque/);
-    expect(warnings.join(' ')).toMatch(/«Titular» no se ha cargado/);
-    expect(warnings.join(' ')).toMatch(/DejaVu Sans/);
+    expect(warnings.join(' ')).toMatch(/«Titular» no ha cargado aquí/);
+    expect(warnings.join(' ')).toMatch(/de la marca no se puede usar en vídeo/);
+    // Sin jerga: ni extensiones de archivo, ni programas, ni el servidor que monta.
+    expect(warnings.join(' ')).not.toMatch(/\.ttf|DejaVu|FFmpeg|trabajador|HEIC/);
   });
 });
 

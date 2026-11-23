@@ -326,67 +326,49 @@ describe('textos: colocar, escalar, duplicar y estilos prediseñados', () => {
   });
 });
 
-describe('barra de herramientas según lo elegido', () => {
+describe('barra de herramientas según lo elegido (como CapCut)', () => {
   const context = (patch: Partial<BarContext> = {}): BarContext => ({
     project: sample(),
     selection: null,
     readOnly: false,
     canSplit: true,
-    hasBrandTemplates: true,
-    hasRenders: false,
     full: false,
     ...patch,
   });
   const labels = (c: BarContext) => contextActions(c).map((a) => a.label);
+  /** Lo que se ve en la fila (lo demás va en «Más»). */
+  const shown = (c: BarContext) => contextActions(c).filter((a) => !a.more).map((a) => a.label);
+  const inMore = (c: BarContext) => contextActions(c).filter((a) => a.more).map((a) => a.label);
 
-  it('sin nada elegido ofrece lo que se puede añadir', () => {
-    expect(labels(context())).toEqual(['Añadir', 'Texto', 'Música', 'Estilo', 'Plantilla', 'Subtítulos', 'Portada']);
-    expect(contextActions(context({ hasBrandTemplates: false })).find((a) => a.id === 'template')).toMatchObject({
-      disabled: true,
-    });
-    expect(labels(context({ hasRenders: true }))).toContain('Montajes');
+  it('sin nada elegido: añadir, texto, música, subtítulos y estilo (la plantilla va dentro de «Estilo»)', () => {
+    expect(labels(context())).toEqual(['Añadir', 'Texto', 'Música', 'Subtítulos', 'Estilo']);
+    // Portada, montajes y plantilla ya no están en la barra: la portada y los vídeos, en «Exportar».
+    expect(contextActions(context()).map((a) => a.id)).not.toContain('cover');
   });
 
-  it('con un clip elegido: dividir, recortar, velocidad, volumen, silenciar, filtro, sustituir, duplicar y borrar', () => {
+  it('con un clip: cinco a la vista y lo demás en «Más»', () => {
     const clip = context({ selection: { kind: 'clip', id: 'c2' } });
     expect(barKind(clip.project, clip.selection)).toBe('clip');
-    expect(labels(clip)).toEqual([
-      'Dividir',
-      'Recortar',
-      'Velocidad',
-      'Volumen',
-      // El estilo de partida silencia los clips: el botón ofrece devolverle el sonido.
-      'Con sonido',
-      'Filtro',
-      'Sustituir',
-      'Duplicar',
-      'Subtítulos',
-      'Borrar',
-    ]);
+    expect(shown(clip)).toEqual(['Dividir', 'Duración', 'Velocidad', 'Filtro', 'Sustituir']);
+    // El estilo de partida silencia los clips: el botón ofrece devolverle el sonido.
+    expect(inMore(clip)).toEqual(['Volumen', 'Con sonido', 'Subtítulos', 'Duplicar', 'Borrar']);
     // Una foto no tiene velocidad ni volumen: tiene movimiento de cámara.
-    expect(labels(context({ selection: { kind: 'clip', id: 'c1' } }))).toEqual([
-      'Dividir',
-      'Recortar',
-      'Movimiento',
-      'Filtro',
-      'Sustituir',
-      'Duplicar',
-      'Borrar',
-    ]);
+    const photo = context({ selection: { kind: 'clip', id: 'c1' } });
+    expect(shown(photo)).toEqual(['Dividir', 'Duración', 'Movimiento', 'Filtro', 'Sustituir']);
+    expect(inMore(photo)).toEqual(['Duplicar', 'Borrar']);
     const blocked = contextActions(context({ selection: { kind: 'clip', id: 'c2' }, canSplit: false, full: true }));
     expect(blocked.find((a) => a.id === 'split')).toMatchObject({ disabled: true });
     expect(blocked.find((a) => a.id === 'duplicate')).toMatchObject({ disabled: true });
   });
 
   it('con un texto: editar, estilo, animación, duración, duplicar y borrar; con la música y una transición, lo suyo', () => {
-    expect(labels(context({ selection: { kind: 'text', id: 't1' } }))).toEqual([
+    expect(shown(context({ selection: { kind: 'text', id: 't1' } }))).toEqual([
       'Editar',
       'Estilo',
       'Animación',
       'Duración',
-      'Duplicar',
-      'Borrar',
     ]);
+    expect(inMore(context({ selection: { kind: 'text', id: 't1' } }))).toEqual(['Duplicar', 'Borrar']);
     const music = { path: 'o/m/media/m.m4a', startAt: 0, volume: 0.3, fadeInSeconds: 0, fadeOutSeconds: 0 };
     const withMusic = { ...sample(), plan: { ...sample().plan, music } };
     expect(labels(context({ project: withMusic, selection: { kind: 'music' } }))).toEqual([

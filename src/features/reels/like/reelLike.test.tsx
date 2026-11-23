@@ -1,10 +1,11 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { chooseMoreAction } from '@/test/moreMenu';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ReelReferenceRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { buildReelLikeResult, parseMeasurement } from '../../../../supabase/functions/_shared/reels/like';
-
 
 // «Hacer un reel como este» de principio a fin en la aplicación (con la red
 // simulada): el botón solo sale si el servidor puede; subir o pegar el enlace
@@ -460,7 +461,9 @@ describe('«Hacer un reel como este»: resultado', () => {
         updated_at: '2026-11-22T12:00:00Z',
       } satisfies ContentItemRow as unknown as Record<string, unknown>,
     ];
-    fake.tables.reel_references = [reference({ status: 'ready', result: RESULT as never, cost_micros: 31_000, source_path: null, content_id: OLD })];
+    fake.tables.reel_references = [
+      reference({ status: 'ready', result: RESULT as never, cost_micros: 31_000, source_path: null, content_id: OLD }),
+    ];
     fake.rpc('set_reel_reference_content', (args) => {
       Object.assign(fake.rows('reel_references')[0]!, { content_id: args.p_content_id });
       return fake.rows('reel_references')[0];
@@ -478,7 +481,10 @@ describe('«Hacer un reel como este»: resultado', () => {
     const created = items.find((item) => item.id !== OLD)!;
     expect(created).toMatchObject({ title: 'Reel del pan', format: 'reel' });
     expect(created.archived_at ?? null).toBeNull();
-    expect(fake.callsTo('set_reel_reference_content', 'rpc')[0]!.payload).toEqual({ p_reference_id: REF, p_content_id: created.id });
+    expect(fake.callsTo('set_reel_reference_content', 'rpc')[0]!.payload).toEqual({
+      p_reference_id: REF,
+      p_content_id: created.id,
+    });
     expect(window.location.pathname).toContain(created.id);
   });
 
@@ -625,7 +631,6 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(screen.getByTestId('reel-like-draft-notice')).toHaveTextContent(
       '2 planos con material de tu biblioteca y 2 por grabar',
     );
-    expect(screen.getByTestId('reel-version')).toHaveTextContent('cambios sin guardar');
 
     // Guion: hechos y huecos.
     expect(screen.getByTestId('reel-guide-summary')).toHaveTextContent('Faltan 2 planos por grabar de 4.');
@@ -650,9 +655,10 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(screen.getAllByTestId('reel-clip')).toHaveLength(2);
     fireEvent.click(screen.getByTestId('reel-redo'));
 
-    // Guardar: la versión lleva el plan (válido para el trabajador) y el guion.
-    fireEvent.click(screen.getByTestId('reel-save'));
-    const dialog = await screen.findByRole('dialog');
+    // Guardar (⋯ → Historial → Marcar esta versión): la versión lleva el plan (válido para el trabajador) y el guion.
+    await chooseMoreAction(userEvent.setup(), 'reel-more', 'reel-history');
+    fireEvent.click(await screen.findByTestId('reel-save'));
+    const dialog = await screen.findByRole('dialog', { name: /Guardar/ });
     fireEvent.click(within(dialog).getByRole('button', { name: /Guardar/ }));
     await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
     const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {

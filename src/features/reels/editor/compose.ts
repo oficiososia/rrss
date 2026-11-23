@@ -286,7 +286,10 @@ export interface PreviewContext {
   mimeOf: (path: string) => string | null;
 }
 
-/** Lo que la vista previa enseña distinto del vídeo que montará el trabajador, en español. */
+/**
+ * Lo que la vista previa enseña distinto del vídeo montado, en una frase cada cosa y con palabras de quien
+ * edita (sin nombres de archivos, programas ni servidores). Se enseñan al exportar.
+ */
 export function previewWarnings(plan: DraftPlan, template: ReelTemplateSummary, context: PreviewContext): string[] {
   const warnings: string[] = [];
   const types = new Set(plan.clips.slice(1).map((c) => c.transition?.type ?? template.transition.type));
@@ -294,7 +297,7 @@ export function previewWarnings(plan: DraftPlan, template: ReelTemplateSummary, 
   if (types.has('slideleft') || types.has('slideup'))
     warnings.push('Los deslizamientos son aproximados: en el vídeo pueden ir algo más suaves.');
   if (plan.clips.some((c) => c.type === 'photo' && (c.blur ?? 0) > 0))
-    warnings.push('El desenfoque del navegador y el de FFmpeg se parecen, pero no son idénticos.');
+    warnings.push('El desenfoque se ve aquí aproximado: en el vídeo puede quedar algo distinto.');
   if (plan.clips.some((c) => c.filter))
     warnings.push('Los filtros de color se ven aquí aproximados: en el vídeo el tono puede cambiar un poco.');
   const families = new Set(context.loadedFamilies.map((f) => f.toLowerCase()));
@@ -303,12 +306,10 @@ export function previewWarnings(plan: DraftPlan, template: ReelTemplateSummary, 
     styles.filter((s) => s.fontFamily && !families.has(s.fontFamily.toLowerCase())).map((s) => s.fontFamily as string),
   );
   for (const family of missing)
-    warnings.push(`La tipografía «${family}» no se ha cargado en el navegador: aquí se ve otra parecida.`);
+    warnings.push(`El tipo de letra «${family}» no ha cargado aquí: en la vista previa se ve uno parecido.`);
   if (styles.some((s) => !s.fontPath) && !context.brandReelFont && styles.length > 0)
-    warnings.push(
-      'La marca no tiene tipografía .ttf u .otf: el vídeo usará la de reserva del trabajador (DejaVu Sans) y aquí se ve la del sistema.',
-    );
+    warnings.push('El tipo de letra de la marca no se puede usar en vídeo; se usará uno parecido.');
   if (plan.clips.some((c) => /heic|heif/i.test(context.mimeOf(c.path) ?? '')))
-    warnings.push('Hay fotos HEIC: el navegador no siempre las enseña y el trabajador no las monta.');
+    warnings.push('Hay fotos del iPhone en su formato original: no entran en el vídeo. Pásalas a JPEG.');
   return warnings;
 }
