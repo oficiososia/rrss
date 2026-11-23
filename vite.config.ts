@@ -16,12 +16,10 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom'],
           supabase: ['@supabase/supabase-js'],
-          ui: [
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-dropdown-menu',
-            '@radix-ui/react-tabs',
-            'sonner',
-          ],
+          // Solo lo que pinta el armazón (menú desplegable y avisos). Las ventanas (Dialog) y las
+          // pestañas (Tabs) llegan con las pantallas que las usan: metidas aquí, entraban en el
+          // arranque aunque la primera pantalla no las enseñe.
+          ui: ['@radix-ui/react-dropdown-menu', 'sonner'],
           // Sin lucide-react ni zod: metidos aquí arrastraban todos los iconos
           // (unos 4.700) y el validador al primer paquete. Fuera, cada pantalla
           // carga solo los iconos que usa y zod llega con las pantallas que lo piden.
