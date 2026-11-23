@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f65/historia-arreglos`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -836,7 +836,7 @@ foto de sala, póster «Jueves de tapas y cóctel» y rótulo de plato). Compara
   editor de staging. **En el editor** (`ContentEditorPage.tsx`, rama f53) la imagen que se publica solo se prepara sola
   para `post` y `carousel` (líneas de `exportVersion` de `ScheduleDialog` y `PublishNowDialog`): hay que añadir `story`
   allí al integrar; mientras tanto una historia se programa tras «Exportar imagen» en JPEG. Qué logotipo sale depende
-  del orden en el perfil (el primero); para historias oscuras conviene que sea el blanco.
+  del orden en el perfil (el primero); el editor lo corrige al abrir la pieza desde `f65` (abajo).
 
 ### «Terminar en Instagram (para poner música)» (rama `f62/terminar-en-instagram`, 23/11/2026)
 
@@ -856,6 +856,36 @@ pie van al móvil para ponerle la música en Instagram y publicarlo allí. Detal
 - **Sin probar:** compartir a Instagram desde un móvil de verdad (Android e iOS) y escanear el QR; la Graph API real;
   la música de cuentas de empresa y de creador. El calendario y la analítica todavía no ven lo publicado a mano.
 - **Para staging:** la migración y redesplegar `social-import`.
+
+### Arreglos al montar una historia real con «Tapa del día» (rama `f65/historia-arreglos`, 23/11/2026)
+
+Tres fallos que salieron al montar y publicar una historia de verdad con la plantilla «Tapa del día».
+
+- **Logotipo invisible.** Antes: las plantillas ponen el primer logotipo del kit; en una marca cuyo primero es el
+  oscuro, no se veía sobre la cabecera oscura. Ahora el editor mide la luminancia de cada logotipo del kit (sus
+  píxeles con tinta, del archivo original) y la del color que tiene detrás (formas lisas y fondo del lienzo; sobre una
+  foto no decide) y, por debajo de 3:1, pone la variante que más contrasta (`editor/logoContrast.ts`,
+  `editor/useLogoContrast.tsx`). Vale al abrir una pieza si el logotipo sigue siendo el primero del kit (el que puso
+  la plantilla) y al aplicar una plantilla desde el editor; lo que elige quien edita no se toca. Es un paso de
+  deshacer, con aviso «Hemos puesto la versión del logotipo que se ve…», y cada capa se mira una vez por sesión. Si la
+  marca solo tiene una variante y no contrasta, sale el aviso «El logotipo apenas se ve sobre este fondo» (no se tiñe
+  el logotipo: haría falta un campo nuevo en el documento, la exportación y el trabajador).
+- **Doble clic en un texto.** Antes: había que elegir el texto y pulsar «Escribir». Causa: Konva solo da su doble clic
+  si ninguna pulsación se mueve 3 px (si se mueve, arrastra) y la mano casi siempre se mueve algo. Ahora el lienzo
+  escucha el doble clic del navegador y busca la capa bajo el puntero (`canvas/scene.ts`); el doble toque táctil sigue
+  siendo el de Konva. Esc sale conservando el texto. Queda: ese primer temblor de 3 px o más sigue moviendo la capa
+  unos píxeles (un paso de deshacer), como antes.
+- **Plantillas de la marca en el móvil.** Antes: a 402 px el nombre salía partido («Dos / tapas») junto a Renombrar,
+  Duplicar y Borrar. Ahora, por debajo de `sm`, la miniatura y el nombre van arriba y las acciones en «⋯»
+  (`BrandTemplatesCard.tsx`); en el ordenador siguen a la vista.
+- **Probado:** unitarias (`logoContrast.test.ts`: claro sobre oscuro con la «Tapa del día» del catálogo, oscuro sobre
+  claro, una sola variante, foto detrás), componentes (`plantillasMarca.test.tsx`: el menú «⋯») y `test:layout` en
+  Chromium real: `editor-logotipo.spec.ts` (cambio al abrir, Ctrl+Z y aviso), `editor-doble-clic.spec.ts` (doble
+  clic con el temblor de la mano, a 1366 y 402 px, fallaba antes del arreglo) y `plantillas-marca.spec.ts` (375, 402
+  y 1366 px). Bancos: caso `tapa` de `tests/layout/marcos.tsx` (con `?logos=uno|dos`) y `plantillas-marca.html`.
+- **Sin probar:** con los logotipos reales de Casa Tomás y contra Supabase (en staging); el doble clic con un ratón y
+  un panel táctil de verdad; las miniaturas de las plantillas (selector y Marca) siguen pintando el primer logotipo,
+  y una pieza creada desde una plantilla guarda su versión 1 con él hasta que se abre en el editor.
 
 ## Sin probar contra el servicio real
 
