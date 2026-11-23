@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f57/estados-calendario`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -632,6 +632,59 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
+
+### Estados de publicación, calendario y selectores (rama `f57/estados-calendario`, 23/11/2026)
+
+Fallos 9, 10, 17, 19 y 22 de la prueba de calidad en staging
+(`rrss-recursos-comparativa/e2e-calidad/INFORME.md`), más la barra inferior móvil. Sin migraciones.
+
+- **Lo publicado se ve publicado (fallo 10).** Fuera del editor, una pieza publicada dice
+  «Publicada el … a las …» con «Ver en Instagram» y «Abrir la pieza»: tarjeta y lista de
+  Contenidos, «Calendario → Programar» y la ficha. Tocarla en el calendario abre su ficha (no la
+  vista rápida). No se ofrece para programar ni publicar: en «Programar» sale como «Publicada el…»
+  y no se puede elegir; abierta con ella, no deja guardar; «Publicar ahora» lo dice en vez de
+  pedir confirmación. «Publicar otra vez…» avisa de que saldrá repetida y hace una **copia** (la
+  base de datos solo admite una publicación viva por pieza, índice
+  `scheduled_publications_one_per_content_idx`).
+- **Cómo se lee «publicada»** (para el editor, que lo hace otro agente): la pieza NO cambia de
+  estado al publicarse; lo dice su publicación (`scheduled_publications.status = 'published'`,
+  siempre con `external_id` y `published_at`). `src/features/social/publishedState.ts`:
+  `usePublishedState(brandId, contentId)` → `{ published, publication }`, `publishedInfoOf(pub)`,
+  `usePublishedContents(brandId)` (mapa por pieza) y `publishedText()`; componente
+  `PublishedNotice` (aviso con enlace, «Abrir la pieza» y «Publicar otra vez»).
+- **Sin cuenta conectada (fallo 9).** `src/features/social/connectedAccount.ts`:
+  `useConnectedAccount(brandId, network?)` → `{ connected, state: 'connected' | 'needs_reauth' |
+  'none', account, isLoading }` y `connectionOf(accounts)`; componente
+  `NoConnectedAccountNotice` («No hay ninguna cuenta conectada» o «El acceso … ha caducado» con el
+  botón a Marca → Cuentas conectadas). Ya lo usan «Programar» (con «Ahora», no deja seguir),
+  «Publicar ahora» y «Aprobar varias» del calendario. **El editor** («Aprobar y publicar ahora»)
+  tiene que consultarlo antes de aprobar: es de la rama f53.
+- **Exportaciones aparte (fallo 17).** «Exportaciones» sale al final del árbol de la biblioteca
+  (y del selector del móvil), separada, y no cuenta ni aparece en «Toda la biblioteca»; un aviso
+  enlaza a ella. `useAssets` (selector «Poner foto» del editor y referencias de la IA) y
+  `fetchRecentImages` (búsqueda del copiloto) dejan fuera, en la consulta, lo que ya diseñó la
+  aplicación (exportaciones, portadas, carpetas Exportaciones/Reels/Informes). «Guardarla
+  también en la biblioteca» al exportar se recuerda en el dispositivo
+  (`rrss.exportar.guardarEnBiblioteca`). No se borra ni se mueve nada.
+- **Nombres que se distinguen (fallo 19).** `library/assetNames.ts` (`distinctNames`): si varios
+  nombres largos empiezan igual, la tarjeta enseña el final del nombre (o la carpeta, si son
+  iguales); el nombre entero, al pasar el ratón (`title`) o al mantener pulsado (`useNameReveal`,
+  no elige la foto). En el panel de fotos y la rejilla de la biblioteca. **El selector «Poner
+  foto» del editor** (`content/editor/AssetPickerDialog.tsx`, rama f53) sigue cortando con CSS:
+  debe usar `distinctNames` + `AssetName`.
+- **Selector de marca (fallo 22).** Una organización con una sola marca del mismo nombre
+  («EnerGym» en «EnerGym») sale una vez, como marca que se pulsa (antes, título que no hacía nada
+  + marca); el selector no repite el nombre debajo. El avatar se anunciaba «Cuenta de Oficiosos»
+  (el nombre de la persona), que se leía como otra organización: ahora «Tu usuario: … ·
+  organización …» y el menú empieza por «Organización: …» de la actual. La pantalla de campañas
+  (zona de otro agente) no tenía texto propio con la organización.
+- **Barra inferior móvil:** «Calendario» y «Biblioteca» ya no se tocan a 360-402 px (letra algo
+  menor, margen y «…» si no cabe; área táctil igual).
+- **Probado:** componentes nuevos (`social/estadoPublicada`, `library/exportacionesYNombres`,
+  casos en `calendario`, `calendarioVistas`, `exportarImagen`, `selectorUnico`) y
+  `tests/layout/menu.spec.ts` a 360 y 402 px. El Supabase simulado entiende ahora `.or()` y
+  `.not('in' | 'like')`. **Sin probar:** contra el Supabase real (el filtro `provenance->>type`
+  de PostgREST) y en un móvil real (la pulsación larga).
 
 ## Sin probar contra el servicio real
 
