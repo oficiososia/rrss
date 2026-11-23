@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ActionNotice, Badge, LinkButton, Notice, PageHeader } from '@/components/ui';
 import { useBrand, useOrg } from '@/features/orgs/context';
-import { BRAND_ROLE_LABEL } from '@/features/permissions/roles';
 import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
 import { useSocialAccounts } from '@/features/social/api';
 import { AccountAttentionNotice } from '@/features/social/AccountAttentionNotice';
@@ -21,7 +20,7 @@ import { parseProfile } from './profile';
  */
 export function BrandHomePage() {
   const { org } = useOrg();
-  const { brand, role, can } = useBrand();
+  const { brand, can } = useBrand();
   const base = `/o/${org.id}/m/${brand.id}`;
   const canEdit = can('edit');
   const canManage = can('manage');
@@ -40,7 +39,7 @@ export function BrandHomePage() {
     <>
       <PageHeader
         title={brand.name}
-        description={[brand.sector, `Tu rol: ${BRAND_ROLE_LABEL[role]}`].filter(Boolean).join(' · ')}
+        description={brand.sector || undefined}
         className="!mb-4"
         action={
           brand.status !== 'active' && (
