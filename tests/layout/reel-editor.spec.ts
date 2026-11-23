@@ -5,7 +5,9 @@ import { expect, test, type Page } from '@playwright/test';
 //
 // Regla de la casa: la página mide lo que la ventana y no se desplaza; el vídeo,
 // las herramientas y la línea de tiempo están siempre a la vista, en escritorio
-// y en un móvil de 375 px. Y lo que jsdom no puede comprobar: que la vista
+// y en un móvil de 375 px (ahí, a pantalla completa, sin la barra de la
+// aplicación). Como CapCut: pocas acciones a la vista (se cuentan) y un solo
+// «Exportar». Y lo que jsdom no puede comprobar: que la vista
 // previa se reproduce, que la línea de tiempo se desliza bajo el cabezal fijo,
 // que salen las miniaturas de los clips y la onda de la música, y que un texto
 // se arrastra sobre el vídeo.
@@ -28,6 +30,24 @@ const pageScroll = (page: Page) =>
   }));
 
 const box = async (page: Page, testId: string) => (await page.getByTestId(testId).first().boundingBox())!;
+
+/**
+ * Acciones a la vista en el editor (botones, enlaces y campos), sin contar la línea de tiempo (sus
+ * elementos y su zoom) ni lo que hay sobre el vídeo (los textos que se arrastran). Las de un menú «⋯»
+ * cerrado no cuentan: no se ven.
+ */
+const visibleActions = (page: Page) =>
+  page.evaluate(() => {
+    const root = document.querySelector('[data-testid="reel-editor"]')!;
+    const skip = '[data-testid="reel-timeline-area"], [data-testid="reel-stage"]';
+    return [...root.querySelectorAll<HTMLElement>('button, a[href], select, input:not([type="hidden"]), textarea')]
+      .filter((el) => {
+        if (el.closest(skip)) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+      })
+      .map((el) => el.getAttribute('aria-label') || el.textContent?.trim() || el.tagName);
+  });
 
 /** Lo que marca el reloj de la vista previa, en segundos. */
 const time = async (page: Page) =>
@@ -52,12 +72,34 @@ for (const size of SIZES) {
       expect(frame.width / frame.height).toBeCloseTo(9 / 16, 1);
       expect(frame.y).toBeGreaterThanOrEqual(0);
       expect(frame.y + frame.height).toBeLessThanOrEqual(size.height);
-      // Grande: al menos un tercio del alto de la pantalla.
-      expect(frame.height).toBeGreaterThan(size.height * 0.33);
-      // Y en móvil, sin tapar: la franja de estado cabe en una línea.
-      const strip = await box(page, 'reel-render');
-      const status = await box(page, 'reel-status');
-      expect(Math.abs(strip.y + strip.height / 2 - (status.y + status.height / 2))).toBeLessThan(12);
+      // Grande: al menos un tercio del alto de la pantalla (en móvil, más de la mitad).
+      expect(frame.height).toBeGreaterThan(size.height * (size.mobile ? 0.45 : 0.33));
+      // La cabecera cabe en una línea: volver, nombre, guardado, deshacer, «⋯» y «Exportar».
+      const back = await box(page, 'page-actions');
+      const exportButton = await box(page, 'reel-export');
+      expect(exportButton.x + exportButton.width).toBeLessThanOrEqual(size.width + 1);
+      expect(Math.abs(back.y + back.height / 2 - (exportButton.y + exportButton.height / 2))).toBeLessThan(4);
+      if (size.mobile) {
+        // A pantalla completa: el editor tapa la cabecera de la marca y la barra de la aplicación.
+        const editor = await box(page, 'reel-editor');
+        expect(editor.y).toBeLessThanOrEqual(0);
+        expect(editor.height).toBeGreaterThanOrEqual(size.height - 1);
+        const onTop = await page.evaluate(
+          ([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest('[data-testid="reel-editor"]')),
+          [size.width / 2, size.height - 4],
+        );
+        expect(onTop).toBe(true);
+        // La barra inferior de la aplicación (con «＋ Crear») queda debajo: ni se ve ni se puede tocar.
+        const nav = page.getByTestId('mobile-nav');
+        if ((await nav.count()) > 0) {
+          const bar = (await nav.boundingBox())!;
+          const covered = await page.evaluate(
+            ([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest('[data-testid="reel-editor"]')),
+            [bar.x + bar.width / 2, bar.y + bar.height / 2],
+          );
+          expect(covered).toBe(true);
+        }
+      }
 
       // La línea de tiempo y la barra de herramientas, enteras dentro de la ventana.
       const timeline = await box(page, 'reel-timeline-frame');
@@ -76,14 +118,29 @@ for (const size of SIZES) {
       const playhead = await box(page, 'reel-playhead');
       expect(Math.abs(playhead.x + playhead.width / 2 - (timeline.x + timeline.width / 2))).toBeLessThan(2);
 
-      // «Montar el vídeo» y el estado del guardado, a un toque arriba.
-      const render = await box(page, 'reel-render');
-      expect(render.y + render.height).toBeLessThan(frame.y + 1);
+      // «Exportar» y el estado del guardado, a un toque arriba.
+      expect(exportButton.y + exportButton.height).toBeLessThan(frame.y + 1);
       await expect(page.getByTestId('reel-autosave')).toHaveText('Guardado');
       await page.screenshot({ path: `test-results/reel-editor-${size.width}.png` });
     });
 
-    test('elegir un clip cambia la barra y abre sus ajustes sin mover la página', async ({ page }) => {
+    test(`con un clip elegido hay ${size.mobile ? 12 : 13} acciones a la vista como mucho`, async ({ page }) => {
+      await open(page, 'clips=6&musica=1');
+      await page.getByTestId('reel-clip').nth(1).getByRole('button').first().click();
+      await expect(page.getByTestId('reel-toolbar')).toHaveAttribute('data-kind', 'clip');
+      const actions = await visibleActions(page);
+      // Antes de simplificarlo eran 52 en el portátil y 22 en el móvil (más las 7 de la aplicación).
+      expect(actions.length, actions.join(' · ')).toBeLessThanOrEqual(size.mobile ? 12 : 13);
+      expect(actions).toContain('Exportar');
+      expect(actions.filter((a) => a === 'Exportar')).toHaveLength(1);
+      // Nada de lo que se quitó: ni guardar versión, ni enviar a revisión, ni montar, ni ver el vídeo.
+      expect(actions.join(' ')).not.toMatch(/Guardar versión|Enviar a revisión|Montar|Ver el vídeo/);
+      const scroll = await pageScroll(page);
+      expect(scroll.vertical).toBeLessThanOrEqual(0);
+      expect(scroll.horizontal).toBeLessThanOrEqual(0);
+    });
+
+    test('elegir un clip cambia la barra; cada herramienta abre solo su ajuste sin mover la página', async ({ page }) => {
       await open(page, 'clips=12');
       await expect(page.getByTestId('reel-toolbar')).toHaveAttribute('data-kind', 'none');
       await page.getByTestId('reel-clip').nth(1).getByRole('button').first().click();
@@ -93,12 +150,15 @@ for (const size of SIZES) {
       expect(split.height).toBeGreaterThanOrEqual(size.mobile ? 44 : 40);
       expect(split.x).toBeGreaterThanOrEqual(0);
 
+      // Elegir no abre nada: el vídeo sigue grande hasta que se pide una herramienta.
       const panel = page.getByTestId('reel-panel');
-      if (size.mobile) await expect(panel).toBeHidden();
-      else await expect(panel).toBeVisible();
+      await expect(panel).toBeHidden();
       await page.getByTestId('reel-bar-speed').click();
       await expect(panel).toBeVisible();
       await expect(page.getByTestId('reel-speed')).toBeVisible();
+      // Solo su ajuste: ni el tiempo ni el filtro del clip.
+      await expect(panel.locator('[data-section="trim"]')).toBeHidden();
+      await expect(panel.locator('[data-section="filter"]')).toBeHidden();
       expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
       expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
       const sheet = (await panel.boundingBox())!;
@@ -112,6 +172,11 @@ for (const size of SIZES) {
         await page.screenshot({ path: `test-results/reel-editor-${size.width}-hoja.png` });
         await page.getByTestId('reel-panel-close').click();
         await expect(panel).toBeHidden();
+      } else {
+        // En escritorio, un panel estrecho al lado del vídeo.
+        const frame = await box(page, 'reel-frame');
+        expect(sheet.x).toBeGreaterThan(frame.x + frame.width);
+        expect(sheet.width).toBeLessThan(size.width * 0.3);
       }
       // Al doble de velocidad el clip ocupa la mitad en la línea de tiempo.
       const before = (await page.getByTestId('reel-clip').nth(1).boundingBox())!.width;
@@ -119,6 +184,66 @@ for (const size of SIZES) {
       await page.getByTestId('reel-speed').getByRole('radio', { name: '2×' }).click();
       const after = (await page.getByTestId('reel-clip').nth(1).boundingBox())!.width;
       expect(after).toBeLessThan(before * 0.6);
+    });
+
+    test('«Exportar» abre la hoja con descargar, biblioteca y publicar o programar, sin salirse', async ({ page }) => {
+      await open(page, 'clips=6');
+      await page.getByTestId('reel-export').click();
+      const sheet = page.getByTestId('reel-export-sheet');
+      await expect(sheet).toBeVisible();
+      for (const id of ['reel-export-download', 'reel-export-library', 'reel-export-publish']) {
+        const row = await box(page, id);
+        expect(row.x).toBeGreaterThanOrEqual(0);
+        expect(row.x + row.width).toBeLessThanOrEqual(size.width + 1);
+      }
+      expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `test-results/reel-editor-${size.width}-exportar.png` });
+    });
+
+    test('«Publicar o programar»: pie, hashtags y cuándo, con el vídeo ya montado y sin salirse', async ({ page }) => {
+      await open(page, 'clips=6&montado=1&modo=propio');
+      await page.getByTestId('reel-export').click();
+      const sheet = page.getByTestId('reel-export-sheet');
+      await expect(sheet).toHaveAttribute('data-state', 'ready');
+      await page.getByTestId('reel-export-publish').click();
+      await expect(page.getByTestId('reel-publish-panel')).toBeVisible();
+      await page.getByTestId('reel-caption').fill('Menú de otoño: ven este finde.');
+      await page.getByTestId('reel-publish-mode-schedule').click();
+      await expect(page.getByTestId('reel-publish-when')).toBeVisible();
+      for (const id of ['reel-caption', 'reel-hashtags', 'reel-publish-when', 'reel-publish-submit']) {
+        const part = await box(page, id);
+        expect(part.x).toBeGreaterThanOrEqual(0);
+        expect(part.x + part.width).toBeLessThanOrEqual(size.width + 1);
+      }
+      await expect(page.getByTestId('reel-publish-submit')).toBeEnabled();
+      expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `test-results/reel-editor-${size.width}-publicar.png` });
+    });
+
+    test('un aviso no tapa la cabecera ni la barra de herramientas', async ({ page }) => {
+      await open(page, 'clips=6');
+      // Con el cabezal al principio no se puede dividir: sale un aviso.
+      await page.getByTestId('reel-clip').first().getByRole('button').first().click();
+      await page.keyboard.press('Home');
+      await page.keyboard.press('s');
+      const toast = page.locator('[data-sonner-toast]').first();
+      await expect(toast).toBeVisible();
+      // Espera a que termine de entrar (deja de moverse).
+      await expect
+        .poll(async () => {
+          const a = (await toast.boundingBox())!.y;
+          await page.waitForTimeout(150);
+          return Math.abs((await toast.boundingBox())!.y - a);
+        })
+        .toBeLessThan(1);
+      const note = (await toast.boundingBox())!;
+      const header = await box(page, 'reel-export');
+      const bar = await box(page, 'reel-toolbar');
+      if (size.mobile) expect(note.y).toBeGreaterThanOrEqual(header.y + header.height);
+      expect(note.y + note.height).toBeLessThanOrEqual(bar.y);
+      // Y «Exportar» sigue respondiendo con el aviso a la vista.
+      await page.getByTestId('reel-export').click();
+      await expect(page.getByTestId('reel-export-sheet')).toBeVisible();
     });
 
     test('un reel nuevo: «Empieza tu reel» cabe y solo se desplaza por dentro', async ({ page }) => {

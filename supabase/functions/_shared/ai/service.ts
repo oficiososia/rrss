@@ -91,7 +91,8 @@ export function createAiService(config: AiServiceConfig): AiService {
     }
   }
 
-  async function generate(params: AiGenerateParams): Promise<AiGenerateResult> {
+  /** Modelo y adaptador de la petición, y lo que se reservaría (el coste máximo). */
+  function plan(params: AiGenerateParams) {
     const spec = config.models.find(
       (model) => model.task === params.task && (!model.purposes || model.purposes.includes(params.purpose)),
     );
@@ -115,7 +116,15 @@ export function createAiService(config: AiServiceConfig): AiService {
         details: { model: spec.model, unpriced: estimate.unpriced },
       });
     }
-    const reserveMicros = Math.max(1, estimate.micros);
+    return { spec, provider, request, reserveMicros: Math.max(1, estimate.micros) };
+  }
+
+  function estimate(params: AiGenerateParams): number {
+    return plan(params).reserveMicros;
+  }
+
+  async function generate(params: AiGenerateParams): Promise<AiGenerateResult> {
+    const { spec, provider, request, reserveMicros } = plan(params);
 
     // 1. Reservar cupo. Si no hay, aquí se acaba: no se llama a nadie.
     const reservation = await rpc('ai_reserve_generation', {
@@ -202,7 +211,9 @@ export function createAiService(config: AiServiceConfig): AiService {
 
     // Salida estructurada: se valida aquí, con el esquema completo. Si el modelo
     // se negó, se cortó o no cumplió, la llamada YA se ha pagado: se registra
-    // con su coste y después se avisa, sin entregar un resultado a medias.
+    // con su coste y después se avisa, sin entregar un resultado a medias. Una
+    // negativa se cobra (la causa está en la petición); una respuesta que no se
+    // puede usar, no (ver más abajo).
     let output = result.output;
     let rejection: AiError | null = null;
     const finishReason = typeof output.finish_reason === 'string' ? output.finish_reason : 'stop';
@@ -211,30 +222,65 @@ export function createAiService(config: AiServiceConfig): AiService {
         generationId,
       });
     } else if (params.input.outputSchema) {
-      const parsed = parseStructuredOutput(output.text, params.input.outputSchema.schema);
-      if (parsed.ok) {
+      const parsed = parseStructuredOutput(
+        output.text,
+        params.input.outputSchema.localSchema ?? params.input.outputSchema.schema,
+      );
+      // La tarea puede decir además que, aunque cumpla el esquema, no sirve (un plan sin ninguna pieza válida).
+      const unusable = parsed.ok && params.accept ? params.accept(parsed.value) : null;
+      if (parsed.ok && !unusable) {
         output = { ...output, json: parsed.value };
       } else {
-        output = { ...output, invalid_output: parsed.problems };
+        const problems = parsed.ok ? [unusable!] : parsed.problems;
+        output = { ...output, invalid_output: problems };
         const truncated = finishReason === 'length';
         rejection = new AiError(
           'invalid_output',
-          truncated
-            ? 'La respuesta de la IA se ha cortado antes de terminar. Inténtalo de nuevo.'
-            : 'La IA ha respondido con un formato que no se puede usar. Inténtalo de nuevo.',
-          { generationId, retryable: true, details: { finish_reason: finishReason, problems: parsed.problems } },
+          parsed.ok
+            ? `${unusable} No se ha consumido cupo.`
+            : truncated
+              ? 'La respuesta de la IA se ha cortado antes de terminar. No se ha consumido cupo. Inténtalo de nuevo.'
+              : 'La IA ha respondido con un formato que no se puede usar. No se ha consumido cupo. Inténtalo de nuevo.',
+          { generationId, retryable: true, details: { finish_reason: finishReason, problems, charged: false } },
         );
       }
     }
 
-    const completion = await rpc('ai_complete_generation', {
-      p_generation_id: generationId,
-      p_cost_micros: costMicros,
-      p_usage: result.usage,
-      p_output: output,
-      p_latency_ms: latencyMs,
-      p_provider_request_id: result.providerRequestId,
-    });
+    // Una respuesta que no se puede usar no se cobra a la organización: se cierra como
+    // fallida y su coste real queda aparte (cuenta para el tope de la plataforma). Si la
+    // base de datos todavía no tiene `ai_waive_generation`, se apunta como antes.
+    let closed = false;
+    if (rejection?.code === 'invalid_output') {
+      const waived = await rpc('ai_waive_generation', {
+        p_generation_id: generationId,
+        p_cost_micros: costMicros,
+        p_usage: result.usage,
+        p_output: output,
+        p_latency_ms: latencyMs,
+        p_provider_request_id: result.providerRequestId,
+        p_error_code: 'invalid_output',
+        p_error_message: 'Respuesta que no se puede usar: no se cobra',
+      });
+      closed = !waived.error;
+      if (!closed) {
+        rejection = new AiError('invalid_output', rejection.message.replace(' No se ha consumido cupo.', ''), {
+          generationId,
+          retryable: true,
+          details: { ...(rejection.details as Record<string, Json>), charged: true },
+        });
+      }
+    }
+
+    const completion = closed
+      ? { error: null }
+      : await rpc('ai_complete_generation', {
+          p_generation_id: generationId,
+          p_cost_micros: costMicros,
+          p_usage: result.usage,
+          p_output: output,
+          p_latency_ms: latencyMs,
+          p_provider_request_id: result.providerRequestId,
+        });
     if (completion.error) {
       // El gasto ya está hecho pero no se ha podido anotar. No se entrega el
       // resultado sin registrar su coste; la reserva sigue contando hasta caducar.
@@ -272,5 +318,5 @@ export function createAiService(config: AiServiceConfig): AiService {
       : null;
   }
 
-  return { generate, capabilities };
+  return { generate, estimate, capabilities };
 }
