@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { visibleActions } from './acciones';
 
 // El Calendario en un navegador real, sin Supabase (banco de tests/layout/calendario.tsx),
 // con una semana cargada: la regla de la casa es que el alto de la página es el alto de la
@@ -69,16 +70,20 @@ for (const size of SIZES) {
       });
     }
 
-    test('con la bandeja «Por programar» abierta tampoco hay scroll de página', async ({ page }) => {
+    test('«Programar» abre la hoja con las piezas sin fecha primero y cabe en la pantalla', async ({ page }) => {
       await open(page, 'week');
-      await page.getByTestId('calendar-tray-toggle').click();
-      await expect(page.getByTestId('calendar-tray')).toBeVisible();
+      await page.getByTestId('calendar-schedule').click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toBeVisible();
+      await expect(page.getByTestId('schedule-content').locator('optgroup').first()).toHaveAttribute(
+        'label',
+        /^Sin fecha \(\d+\)$/,
+      );
+      const box = (await dialog.boundingBox())!;
+      expect(box.y + box.height).toBeLessThanOrEqual(size.height + 1);
+      expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
       const scroll = await pageScroll(page);
-      expect(scroll.vertical).toBeLessThanOrEqual(0);
       expect(scroll.horizontal).toBeLessThanOrEqual(0);
-      const tray = (await page.getByTestId('calendar-tray').boundingBox())!;
-      expect(tray.x + tray.width).toBeLessThanOrEqual(size.width + 1);
-      expect(tray.y + tray.height).toBeLessThanOrEqual(size.height + 1);
     });
 
     test('la vista rápida cabe en la pantalla y se cierra con Escape', async ({ page }) => {
@@ -96,13 +101,16 @@ for (const size of SIZES) {
   });
 }
 
-test('escritorio: los filtros caben en una sola fila y la etiqueta de estado no se sale de la tarjeta', async ({
+test('escritorio: los filtros (en «⋯») caben en una sola fila y la etiqueta de estado no se sale de la tarjeta', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, 'week');
+  await expect(page.getByTestId('calendar-filters')).toHaveCount(0);
+  await page.getByTestId('calendar-more').click();
+  await page.getByTestId('calendar-filter-toggle').click();
   const chips = page.getByTestId('calendar-filters').locator('label');
-  expect(await chips.count()).toBeGreaterThanOrEqual(4);
+  expect(await chips.count()).toBeGreaterThanOrEqual(2);
   const tops = await chips.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
   expect(new Set(tops).size).toBe(1);
   // Las dos piezas del mismo día, una debajo de otra, con su estado dentro.
@@ -116,7 +124,7 @@ test('escritorio: los filtros caben en una sola fila y la etiqueta de estado no 
   expect(one.x + one.width).toBeLessThanOrEqual(dayBox.x + dayBox.width + 1);
 });
 
-test('escritorio: la semana ocupa el ancho y el «+» solo aparece al pasar el ratón', async ({ page }) => {
+test('escritorio: la semana ocupa el ancho y un día sin nada se programa tocando su hueco', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, 'week');
   const days = page.getByTestId('calendar-day');
@@ -124,21 +132,63 @@ test('escritorio: la semana ocupa el ancho y el «+» solo aparece al pasar el r
   const first = (await days.first().boundingBox())!;
   const last = (await days.last().boundingBox())!;
   expect(last.x + last.width - first.x).toBeGreaterThan(900);
-  const futureDay = days.nth(6);
-  const add = futureDay.getByTestId('calendar-day-add');
-  if ((await add.count()) > 0) {
-    await expect(add).toHaveCSS('opacity', '0');
-    await futureDay.hover();
-    await expect(add).toHaveCSS('opacity', '1');
+  await expect(page.getByTestId('calendar-day-add')).toHaveCount(0);
+  const slot = page.getByTestId('calendar-day-slot').first();
+  if ((await slot.count()) > 0) {
+    await expect(slot).toBeVisible();
+    const box = (await slot.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(40);
+    await slot.click();
+    await expect(page.getByTestId('schedule-when')).toBeVisible();
   }
 });
 
-test('móvil: por defecto la lista, con el objetivo y los huecos arriba', async ({ page }) => {
+test('móvil: por defecto la semana como agenda, con «Programar» arriba y sin scroll de página', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await open(page);
-  await expect(page.getByTestId('calendar-view-agenda')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('calendar-agenda')).toBeVisible();
+  await expect(page.getByTestId('calendar-view-week')).toHaveAttribute('aria-pressed', 'true');
+  const week = page.getByTestId('calendar-week');
+  await expect(week).toBeVisible();
+  // Un día por fila: el día a la izquierda y lo programado a su lado.
+  const days = page.getByTestId('calendar-day');
+  const a = (await days.nth(0).boundingBox())!;
+  const b = (await days.nth(1).boundingBox())!;
+  expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
+  expect(Math.abs(a.x - b.x)).toBeLessThanOrEqual(1);
+  // «Programar» arriba, por encima del calendario y dentro de la pantalla.
+  const schedule = (await page.getByTestId('calendar-schedule').boundingBox())!;
+  const weekBox = (await week.boundingBox())!;
+  expect(schedule.y + schedule.height).toBeLessThanOrEqual(weekBox.y + 1);
+  expect(schedule.x + schedule.width).toBeLessThanOrEqual(375 + 1);
   const scroll = await pageScroll(page);
   expect(scroll.vertical).toBeLessThanOrEqual(0);
   expect(scroll.horizontal).toBeLessThanOrEqual(0);
 });
+
+// Simplificación aceptada (CAMBIOS.md, apartado 8): de 33 acciones propias a 9 en ordenador y 7 en
+// móvil, sin contar las pestañas «Calendario · Campañas» que llegaron después (f50). Se cuentan las
+// de la pantalla (sin las publicaciones, los días ni sus huecos, que son el contenido, ni los avisos
+// de cuenta, detenidas o plan propuesto). Hoy: Calendario, Campañas, Programar, «⋯», ‹, Hoy, ›,
+// Semana y Mes.
+for (const size of [
+  { width: 1366, height: 768, max: 9 },
+  { width: 375, height: 812, max: 9 },
+]) {
+  test(`a ${size.width} px el calendario enseña ${size.max} acciones como mucho`, async ({ page }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    await open(page, 'week');
+    const actions = await visibleActions(page, '[data-testid="calendar-page"]', [
+      '[data-testid="calendar-entry"]',
+      '[data-testid="calendar-day-slot"]',
+      '[data-testid="calendar-held"]',
+      '[data-testid="account-attention"]',
+      '[data-testid="calendar-proposed"]',
+    ]);
+    console.log(`calendario ${size.width}px: ${actions.length} acciones → ${actions.join(' | ')}`);
+    expect(actions.length).toBeLessThanOrEqual(size.max);
+    // Lo que sigue a la vista: «Programar», «⋯», ‹ Hoy › y Semana / Mes.
+    await expect(page.getByTestId('calendar-schedule')).toBeVisible();
+    await expect(page.getByTestId('calendar-more')).toBeVisible();
+    await expect(page.getByTestId('calendar-tray-toggle')).toHaveCount(0);
+  });
+}

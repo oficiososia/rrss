@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { openFicha } from '@/test/calendario';
+import { chooseMoreAction } from '@/test/moreMenu';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 
-// El calendario para planificar de un vistazo: semana, mes y lista; la vista rápida de cada
-// pieza; mover arrastrando (con deshacer) y desde «Mover a»; la bandeja «Por programar»; y
-// las ayudas (huecos, objetivo semanal, campañas). «Hoy» es el miércoles 18/11/2026 a las
+// El calendario para planificar de un vistazo: semana y mes (la lista, en «⋯»); la vista rápida
+// de cada pieza; mover arrastrando (con deshacer) y desde «Mover a»; un solo «Programar» que
+// abre primero las piezas sin fecha; el hueco de un día para programarlo; y las ayudas (línea
+// «Esta semana 1 de 3», objetivo en «⋯», campañas y el plan propuesto en gris). «Hoy» es el miércoles 18/11/2026 a las
 // 11:00 en Madrid, con la zona de la marca (Madrid) en el calendario.
 
 const NOW = new Date('2026-11-18T10:00:00Z');
@@ -214,36 +216,44 @@ describe('Calendario: la semana', () => {
     expect(day('2026-11-20')).toContainElement(reel);
   });
 
-  it('resalta los huecos de la semana y cuenta frente al objetivo, que se puede cambiar y se recuerda', async () => {
+  it('los días sin nada tienen su hueco para programar; la línea cuenta frente al objetivo, que se cambia en «⋯» y se recuerda', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seed();
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await week(user);
     await screen.findByTestId('calendar-plan');
-    // Jueves y sábado: sin nada. Lunes y martes ya pasaron: no son huecos.
-    expect(screen.getByTestId('calendar-gaps')).toHaveTextContent('Sin nada el jueves y el sábado');
+    // Jueves y sábado: sin nada, con su hueco. Lunes y martes ya pasaron: no son huecos.
     expect(day('2026-11-19')).toHaveAttribute('data-gap', 'true');
-    expect(within(day('2026-11-19')).getByTestId('calendar-day-gap')).toHaveTextContent('Sin nada');
+    expect(within(day('2026-11-19')).getByTestId('calendar-day-slot')).toBeInTheDocument();
     expect(day('2026-11-21')).toHaveAttribute('data-gap', 'true');
     expect(day('2026-11-17')).toHaveAttribute('data-gap', 'false');
+    expect(within(day('2026-11-17')).queryByTestId('calendar-day-slot')).toBeNull();
     expect(day('2026-11-20')).toHaveAttribute('data-gap', 'false');
+    // Ni el texto fijo de los huecos ni el objetivo con − y + a la vista.
+    expect(screen.queryByTestId('calendar-gaps')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Subir el objetivo' })).toBeNull();
 
-    expect(screen.getByTestId('calendar-week-count')).toHaveTextContent('5 de 3');
-    expect(screen.getByTestId('calendar-goal')).toHaveTextContent('3');
-    await user.click(screen.getByRole('button', { name: 'Subir el objetivo' }));
-    await user.click(screen.getByRole('button', { name: 'Subir el objetivo' }));
-    await user.click(screen.getByRole('button', { name: 'Subir el objetivo' }));
+    expect(screen.getByTestId('calendar-plan')).toHaveTextContent('Esta semana 5 de 3');
+    await chooseMoreAction(user, 'calendar-more', 'calendar-goal-edit');
+    const input = await screen.findByTestId('calendar-goal-input');
+    await user.clear(input);
+    await user.type(input, '6');
+    await user.click(screen.getByTestId('calendar-goal-save'));
     expect(screen.getByTestId('calendar-week-count')).toHaveTextContent('5 de 6');
     expect(window.localStorage.getItem(`rrss.calendar.goal.${BRAND_ID}`)).toBe('6');
     expect(window.localStorage.getItem('rrss.calendar.view')).toBe('"week"');
   });
 
-  it('un filtro no inventa huecos: se cuentan siempre todas las piezas de la semana', async () => {
+  it('los filtros están en «⋯»; un filtro no inventa huecos: se cuentan siempre todas las piezas', async () => {
     seed();
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await week(user);
+    expect(screen.queryByTestId('calendar-filters')).toBeNull();
+    await chooseMoreAction(user, 'calendar-more', 'calendar-filter-toggle');
+    // Con una sola red, no hay filtro de red.
+    expect(screen.queryByTestId('calendar-network-filter')).toBeNull();
     await user.selectOptions(await screen.findByTestId('calendar-format-filter'), 'reel');
     expect(screen.getAllByTestId('calendar-entry')).toHaveLength(1);
-    expect(screen.getByTestId('calendar-gaps')).toHaveTextContent('Sin nada el jueves y el sábado');
     expect(screen.getByTestId('calendar-week-count')).toHaveTextContent('5 de 3');
     await user.click(screen.getByTestId('calendar-filters-clear'));
     expect(screen.getAllByTestId('calendar-entry')).toHaveLength(5);
@@ -282,26 +292,24 @@ describe('Calendario: la semana', () => {
     expect(band).toHaveStyle({ gridColumn: '2 / 6' });
     expect(screen.getAllByTestId('calendar-campaign')).toHaveLength(1);
 
-    await user.selectOptions(screen.getByTestId('calendar-campaign-filter'), 'camp-1');
+    await chooseMoreAction(user, 'calendar-more', 'calendar-filter-toggle');
+    await user.selectOptions(await screen.findByTestId('calendar-campaign-filter'), 'camp-1');
     await waitFor(() => expect(screen.getAllByTestId('calendar-entry')).toHaveLength(1));
     expect(screen.getByTestId('calendar-entry')).toHaveTextContent('Carrusel de postres');
   });
 });
 
 describe('Calendario: el mes y la lista', () => {
-  it('mes compacto: las semanas pasadas se pliegan, la actual se destaca y cada día lleva un contador', async () => {
+  it('mes compacto: sin filas plegadas, la semana actual se destaca y cada día lleva un contador', async () => {
     seed();
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await user.click(await screen.findByTestId('calendar-view-month'));
     await screen.findByTestId('calendar-month');
-    // Noviembre de 2026 se ve en 6 semanas; las tres que ya pasaron, plegadas.
-    expect(screen.getAllByTestId('calendar-week-folded')).toHaveLength(3);
+    // Noviembre de 2026 se ve en 6 semanas, todas iguales (ya no se pliegan las pasadas).
+    expect(screen.queryAllByTestId('calendar-week-folded')).toHaveLength(0);
     const rows = screen.getAllByTestId('calendar-week-row');
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(6);
     expect(rows.filter((r) => r.getAttribute('data-current') === 'true')).toHaveLength(1);
-    // Una semana plegada se abre y se vuelve a plegar.
-    await user.click(screen.getAllByTestId('calendar-week-folded')[0]!);
-    expect(screen.getAllByTestId('calendar-week-folded')).toHaveLength(2);
 
     const friday = day('2026-11-20');
     expect(within(friday).getByTestId('calendar-day-count')).toHaveTextContent('2');
@@ -312,24 +320,26 @@ describe('Calendario: el mes y la lista', () => {
     await user.click(friday);
     const panel = screen.getByTestId('calendar-day-panel');
     expect(within(panel).getAllByTestId('calendar-entry')).toHaveLength(2);
+    // «Programar este día» ya no existe: un día vacío enseña su hueco.
+    expect(screen.queryByTestId('calendar-day-panel-add')).toBeNull();
   });
 
-  it('lista: semana a semana, con los huecos, y la vista elegida se recuerda', async () => {
+  it('de entrada, la semana; la lista (semana a semana, con los huecos) está en «⋯» y se recuerda', async () => {
     seed();
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
-    // Sin preferencia y en una pantalla estrecha (la de las pruebas), la lista.
+    await screen.findByTestId('calendar-week');
+    expect(screen.getByTestId('calendar-view-week')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByTestId('calendar-view-agenda')).toBeNull();
+    await chooseMoreAction(user, 'calendar-more', 'calendar-view-list');
     const agenda = await screen.findByTestId('calendar-agenda');
-    expect(screen.getByTestId('calendar-view-agenda')).toHaveAttribute('aria-pressed', 'true');
     expect(within(agenda).getAllByTestId('calendar-entry')).toHaveLength(5);
-    expect(within(agenda).getAllByTestId('calendar-day-gap').length).toBeGreaterThanOrEqual(2);
     expect(within(agenda).getByText('Esta semana')).toBeInTheDocument();
+    expect(window.localStorage.getItem('rrss.calendar.view')).toBe('"agenda"');
 
     await user.click(screen.getByTestId('calendar-view-month'));
     expect(window.localStorage.getItem('rrss.calendar.view')).toBe('"month"');
     await user.click(screen.getByRole('button', { name: 'Siguiente' }));
     expect(screen.getByTestId('calendar-title')).toHaveTextContent('diciembre de 2026');
-    await user.click(screen.getByTestId('calendar-today'));
-    expect(screen.getByTestId('calendar-title')).toHaveTextContent('noviembre de 2026');
   });
 });
 
@@ -454,53 +464,119 @@ describe('Calendario: vista rápida y mover', () => {
   });
 });
 
-describe('Calendario: crear desde un día y «Por programar»', () => {
-  it('el «+» de un día abre «Programar» con la fecha puesta', async () => {
+describe('Calendario: un solo «Programar» y el hueco del día', () => {
+  it('tocar el hueco de un día abre «Programar» con la fecha puesta', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seed();
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await week(user);
-    // Solo se ve al pasar el ratón o al enfocarlo: está en el día, oculto hasta entonces.
-    const add = within(day('2026-11-19')).getByTestId('calendar-day-add');
-    expect(add).toHaveClass('opacity-0');
-    // Los días que ya pasaron no tienen «+».
-    expect(within(day('2026-11-17')).queryByTestId('calendar-day-add')).toBeNull();
-    await user.click(add);
+    // Los días que ya pasaron no tienen hueco.
+    expect(within(day('2026-11-17')).queryByTestId('calendar-day-slot')).toBeNull();
+    await user.click(within(day('2026-11-19')).getByTestId('calendar-day-slot'));
     expect(await screen.findByTestId('schedule-when')).toHaveValue('2026-11-19T10:00');
   });
 
-  it('arrastrar una pieza de «Por programar» a un día abre «Programar» con la pieza y el día; también con «Programar…»', async () => {
+  it('la línea dice cuántas hay sin fecha y «Programar» las abre primero; ya no hay «Por programar»', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seed({ tray: true });
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await week(user);
-    const toggle = await screen.findByTestId('calendar-tray-toggle');
-    await waitFor(() => expect(toggle).toHaveTextContent('2'));
-    await user.click(toggle);
-    const items = await screen.findAllByTestId('calendar-tray-item');
-    // Aprobadas primero; lo que ya está en el calendario no sale.
-    expect(items.map((i) => i.getAttribute('data-content'))).toEqual(['c-tray', 'c-borrador']);
-
-    const dt = transfer();
-    fireEvent.dragStart(items[0]!, { dataTransfer: dt });
-    fireEvent.drop(day('2026-11-21'), { dataTransfer: dt });
-    expect(await screen.findByTestId('schedule-content')).toHaveValue('c-tray');
-    expect(screen.getByTestId('schedule-when')).toHaveValue('2026-11-21T10:00');
-    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
-
-    await user.click(within(items[1]!).getByRole('button', { name: 'Programar Idea a medias' }));
-    expect(await screen.findByTestId('schedule-content')).toHaveValue('c-borrador');
+    expect(screen.queryByTestId('calendar-tray-toggle')).toBeNull();
+    const pending = await screen.findByTestId('calendar-unscheduled');
+    await waitFor(() => expect(pending).toHaveTextContent('2 sin fecha'));
+    await user.click(screen.getByTestId('calendar-schedule'));
+    const select = await screen.findByTestId('schedule-content');
+    const group = await within(select).findByRole('group', { name: 'Sin fecha (2)' });
+    expect(within(group).getAllByRole('option').map((o) => (o as HTMLOptionElement).value).sort()).toEqual([
+      'c-borrador',
+      'c-tray',
+    ]);
   });
 
-  it('sin permiso de edición no hay «+» ni bandeja', async () => {
+  it('sin permiso de edición no hay «Programar» ni huecos', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seed();
     seedWorkspace({ orgRole: 'member', brandRole: 'viewer' });
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     await week(user);
     await card('Menú del día');
-    expect(screen.queryByTestId('calendar-day-add')).toBeNull();
-    expect(screen.queryByTestId('calendar-tray-toggle')).toBeNull();
+    expect(screen.queryByTestId('calendar-day-slot')).toBeNull();
+    expect(screen.queryByTestId('calendar-schedule')).toBeNull();
+  });
+});
+
+describe('Calendario: el plan propuesto', () => {
+  it('sale como aviso arriba y sus piezas en gris en su día hasta aceptarlo; preparar un plan está en «⋯»', async () => {
+    vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
+    seed();
+    fake.tables.campaigns = [
+      {
+        id: 'camp-p',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        title: 'Navidad',
+        instruction: '',
+        networks: ['instagram'],
+        starts_on: '2026-11-19',
+        ends_on: '2026-11-21',
+        origin: 'ai',
+        status: 'proposed',
+        current_plan_version: 1,
+        accepted_plan_version: null,
+        created_by: null,
+        accepted_by: null,
+        accepted_at: null,
+        created_at: '2026-11-17T09:00:00Z',
+        updated_at: '2026-11-17T09:00:00Z',
+      },
+    ];
+    const piece = (date: string, idea: string) => ({
+      network: 'instagram',
+      format: 'post',
+      date,
+      idea,
+      caption: 'Texto',
+      hashtags: [],
+      assetIds: [],
+      why: '',
+    });
+    fake.tables.campaign_plans = [
+      {
+        id: 'plan-1',
+        campaign_id: 'camp-p',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        version: 1,
+        data: {
+          objective: 'Llenar en Navidad',
+          summary: '',
+          reasoning: { observed: [], dataBacked: [], hypotheses: [], dataNote: '' },
+          pieces: [piece('2026-11-19', 'Menú de Navidad'), piece('2026-11-21', 'Turrón casero')],
+        },
+        source: 'ai',
+        generation_id: null,
+        created_by: null,
+        created_at: '2026-11-17T09:00:00Z',
+      },
+    ];
+    fake.tables.campaign_contents = [];
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    await week(user);
+    const notice = await screen.findByTestId('calendar-proposed');
+    expect(notice).toHaveTextContent('Plan propuesto «Navidad»: 2 piezas en gris hasta que lo aceptes');
+    expect(within(notice).getByTestId('calendar-proposed-open')).toHaveAttribute(
+      'href',
+      `${BRAND_BASE}/calendario/campanas/camp-p`,
+    );
+    expect(within(day('2026-11-19')).getByTestId('calendar-ghost')).toHaveTextContent('Menú de Navidad');
+    expect(within(day('2026-11-21')).getByTestId('calendar-ghost')).toHaveTextContent('Turrón casero');
+    // En gris y sin acciones: no son publicaciones ni se pueden abrir.
+    expect(within(day('2026-11-19')).queryAllByTestId('calendar-entry')).toHaveLength(0);
+    expect(within(day('2026-11-19')).queryByTestId('calendar-day-slot')).toBeNull();
+
+    await chooseMoreAction(user, 'calendar-more', 'calendar-plan-ai');
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario/campanas`));
+    expect(window.location.search).toBe('?nuevo=1');
   });
 });
 

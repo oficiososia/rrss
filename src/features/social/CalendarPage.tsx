@@ -1,11 +1,28 @@
-import { CalendarDays, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, FileText, Inbox, Plus, X } from 'lucide-react';
+import {
+  CalendarDays,
+  CheckSquare,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Filter,
+  List,
+  Megaphone,
+  Plus,
+  Target,
+  X,
+} from 'lucide-react';
 import { useMemo, useState, type DragEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ActionNotice,
   Button,
   Card,
+  Dialog,
   ErrorState,
+  Field,
+  Input,
   LinkButton,
   Notice,
   PageHeader,
@@ -18,6 +35,8 @@ import { useWorkMode } from '@/features/orgs/workMode';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { useWorkspaceMode } from '@/layout/workspace';
+import { campaignPaths, campaignsAvailable } from '@/features/campaigns/labels';
+import { useTextTask } from '@/features/platform/integrations/useFeature';
 import { cn } from '@/lib/utils';
 import {
   useApproveContents,
@@ -25,7 +44,6 @@ import {
   useReschedulePublication,
   useSavePublication,
   useSocialAccounts,
-  type CalendarContent,
   type CalendarEntry,
 } from './api';
 import {
@@ -51,14 +69,14 @@ import {
   useWeeklyGoal,
 } from './calendarData';
 import { readDrag } from './calendarDnd';
-import { countsAsPlanned, daysOfWeek, isPastDay } from './calendarPlan';
+import { clampGoal, countsAsPlanned, daysOfWeek, isPastDay, MAX_WEEKLY_GOAL } from './calendarPlan';
 import { CalendarEntryCard } from './CalendarEntryCard';
 import { formatLabel } from './formatLabel';
 import { CalendarQuickView } from './CalendarQuickView';
 import { useConnectedAccount } from './connectedAccount';
 import { NoConnectedAccountNotice } from './NoConnectedAccountNotice';
-import { CalendarTray } from './CalendarTray';
-import { AgendaView, DayPanel, MonthView, PlanStrip, WeekView, type ViewCommon } from './CalendarViews';
+import { AgendaView, DayPanel, MonthView, WeekLine, WeekView, type ViewCommon } from './CalendarViews';
+import { useProposedPlans } from './proposedPlans';
 import {
   activeAccountOf,
   heldCountText,
@@ -133,6 +151,49 @@ function FilterChip({
   );
 }
 
+/** «⋯ → Objetivo semanal»: cuántas publicaciones a la semana se quieren (se recuerda en el dispositivo). */
+function GoalDialog({ goal, onClose, onSave }: { goal: number; onClose: () => void; onSave: (goal: number) => void }) {
+  const [value, setValue] = useState(String(goal));
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title="Objetivo semanal"
+      description="Cuántas publicaciones quieres a la semana."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => {
+              onSave(clampGoal(Number(value)));
+              onClose();
+            }}
+            data-testid="calendar-goal-save"
+          >
+            Guardar
+          </Button>
+        </>
+      }
+    >
+      <Field label="Publicaciones por semana">
+        {(props) => (
+          <Input
+            {...props}
+            type="number"
+            min={1}
+            max={MAX_WEEKLY_GOAL}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            data-testid="calendar-goal-input"
+          />
+        )}
+      </Field>
+    </Dialog>
+  );
+}
+
 /** Calendario editorial de la marca: semana, mes y lista, con arrastrar y soltar y ayudas para planificar. */
 export function CalendarPage() {
   // Pantalla de trabajo: la página mide justo la ventana y solo se desplaza el calendario por dentro.
@@ -143,6 +204,7 @@ export function CalendarPage() {
   const canApprove = can('approve');
   const publishing = useFeature('publishing');
   const { selfManaged } = useWorkMode();
+  const navigate = useNavigate();
 
   const [view, setView] = useCalendarView();
   const zone = useBrandZone();
@@ -156,7 +218,8 @@ export function CalendarPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [quickId, setQuickId] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState<{ date: Date | null; contentId?: string } | null>(null);
-  const [trayOpen, setTrayOpen] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [publishNow, setPublishNow] = useState<CalendarEntry | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -176,6 +239,11 @@ export function CalendarPage() {
   const links = useCampaignLinks(brand.id, campaigns.length > 0);
   const canSchedule = publishing && canEdit;
   const unscheduled = useUnscheduled(brand.id, canSchedule);
+  const aiText = useTextTask('campaign.plan');
+  const agency = brand.ai_mode === 'agency';
+  const canAskPlan = campaignsAvailable(brand, aiText) && (agency ? can('comment') : canEdit);
+  // Un plan propuesto se enseña siempre (aunque ahora no se pueda preparar otro).
+  const proposed = useProposedPlans(brand.id);
 
   const entries = useMemo(
     () =>
@@ -441,6 +509,7 @@ export function CalendarPage() {
     onDropOnDay: dropOnDay,
     campaigns,
     goal,
+    ghostsByDay: proposed.ghostsByDay,
   };
 
   const quickAdvice = quick ? adviceFor(quick) : null;
@@ -451,17 +520,6 @@ export function CalendarPage() {
       <PageHeader
         compact
         title="Calendario"
-        description={
-          <>
-            <span data-testid="calendar-zone">
-              Horas en {zoneLabel(zone)}
-              {differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}
-            </span>
-            <span className="hidden lg:inline">
-              {' · '}«Programada» no es «publicada»: se publica a su hora y solo si está aprobada.
-            </span>
-          </>
-        }
         action={
           canSchedule && (
             <Button onClick={() => openSchedule(null)} data-testid="calendar-schedule">
@@ -471,6 +529,43 @@ export function CalendarPage() {
           )
         }
         more={[
+          canAskPlan
+            ? {
+                id: 'plan',
+                label: agency ? 'Pedir un plan a la agencia' : 'Preparar un plan con IA',
+                icon: Megaphone,
+                onSelect: () => navigate(`${campaignPaths(org.id, brand.id).list}?nuevo=1`),
+                testId: 'calendar-plan-ai',
+              }
+            : null,
+          {
+            id: 'goal',
+            label: `Objetivo semanal: ${goal}`,
+            icon: Target,
+            onSelect: () => setEditingGoal(true),
+            testId: 'calendar-goal-edit',
+          },
+          {
+            id: 'filter',
+            label: showFilters || filtering ? 'Ocultar los filtros' : 'Filtrar',
+            icon: Filter,
+            onSelect: () => {
+              if (showFilters || filtering) {
+                clearFilters();
+                setShowFilters(false);
+              } else setShowFilters(true);
+            },
+            testId: 'calendar-filter-toggle',
+          },
+          view === 'agenda'
+            ? {
+                id: 'week',
+                label: 'Ver por semanas',
+                icon: CalendarDays,
+                onSelect: () => setView('week'),
+                testId: 'calendar-view-calendar',
+              }
+            : { id: 'list', label: 'Ver en lista', icon: List, onSelect: () => setView('agenda'), testId: 'calendar-view-list' },
           canApprove && reviewable.length > 0 && !selecting
             ? {
                 id: 'approve-many',
@@ -489,6 +584,20 @@ export function CalendarPage() {
         <div className="empty:hidden">
           <AccountAttentionNotice />
         </div>
+        {proposed.plans.map(({ campaign, pieces }) => (
+          <ActionNotice
+            key={campaign.id}
+            tone="info"
+            icon={Megaphone}
+            title={`Plan propuesto «${campaign.title}»: ${pieces} ${pieces === 1 ? 'pieza' : 'piezas'} en gris hasta que lo aceptes`}
+            action={
+              <LinkButton to={campaignPaths(org.id, brand.id).item(campaign.id)} data-testid="calendar-proposed-open">
+                Revisar el plan
+              </LinkButton>
+            }
+            data-testid="calendar-proposed"
+          />
+        ))}
         {heldGroups.length > 0 && (
           <div className="space-y-2" data-testid="calendar-held">
             {heldGroups.map(({ advice, reason, entries: list }) => (
@@ -533,9 +642,15 @@ export function CalendarPage() {
         </div>
         <h2 className="order-last min-w-0 basis-full truncate text-sm font-semibold first-letter:uppercase sm:order-none sm:basis-0 sm:flex-1" data-testid="calendar-title">
           {rangeTitle(view, anchor)}
+          {/* Solo si la hora de la marca no es la del dispositivo: entonces sí hay que decirlo. */}
+          {differsFromDevice(zone) && (
+            <span className="ml-2 text-xs font-normal text-muted" data-testid="calendar-zone">
+              Horas en {zoneLabel(zone)}
+            </span>
+          )}
         </h2>
         <div className="flex rounded-lg border border-border" role="group" aria-label="Vista">
-          {CALENDAR_VIEWS.map((v) => (
+          {CALENDAR_VIEWS.filter((v) => v.value !== 'agenda').map((v) => (
             <button
               key={v.value}
               type="button"
@@ -551,23 +666,6 @@ export function CalendarPage() {
             </button>
           ))}
         </div>
-        {canSchedule && (
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-expanded={trayOpen}
-            onClick={() => setTrayOpen((v) => !v)}
-            data-testid="calendar-tray-toggle"
-          >
-            <Inbox className="h-4 w-4" aria-hidden />
-            Por programar
-            {!unscheduled.isPending && (
-              <span className="rounded-full bg-primary px-1.5 text-xs tabular-nums text-primary-fg">
-                {unscheduledCount}
-              </span>
-            )}
-          </Button>
-        )}
         {canApprove && selecting && (
           <Button
             size="sm"
@@ -597,6 +695,7 @@ export function CalendarPage() {
         />
       )}
 
+      {(showFilters || filtering) && (
       <div className="flex gap-2 overflow-x-auto pb-0.5" role="group" aria-label="Filtros" data-testid="calendar-filters">
         <FilterChip
           label="Estado"
@@ -606,14 +705,16 @@ export function CalendarPage() {
           allLabel="Todos"
           options={DISPLAY_STATES.map((s) => ({ value: s, label: DISPLAY_LABEL[s] }))}
         />
-        <FilterChip
-          label="Red"
-          value={network}
-          onChange={setNetwork}
-          testId="calendar-network-filter"
-          allLabel="Todas"
-          options={networks.map((n) => ({ value: n, label: networkLabel(n) }))}
-        />
+        {networks.length > 1 && (
+          <FilterChip
+            label="Red"
+            value={network}
+            onChange={setNetwork}
+            testId="calendar-network-filter"
+            allLabel="Todas"
+            options={networks.map((n) => ({ value: n, label: networkLabel(n) }))}
+          />
+        )}
         <FilterChip
           label="Formato"
           value={format}
@@ -644,9 +745,16 @@ export function CalendarPage() {
           </button>
         )}
       </div>
+      )}
 
       {stripWeek && calendar.isSuccess && (
-        <PlanStrip week={stripWeek} plannedByDay={plannedByDay} today={today} goal={goal} onGoal={setGoal} />
+        <WeekLine
+          week={stripWeek}
+          plannedByDay={plannedByDay}
+          today={today}
+          goal={goal}
+          unscheduled={canSchedule && !unscheduled.isPending ? unscheduledCount : 0}
+        />
       )}
 
       {calendar.isSuccess && entries.length === 0 && !filtering && (
@@ -677,15 +785,6 @@ export function CalendarPage() {
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
-        {canSchedule && trayOpen && (
-          <CalendarTray
-            items={unscheduled.list}
-            loading={unscheduled.isPending}
-            canSchedule={canSchedule}
-            onSchedule={(c: CalendarContent) => openSchedule(null, c.id)}
-            className="max-h-[28dvh] min-h-0 shrink lg:order-last lg:max-h-none lg:w-64 lg:shrink-0"
-          />
-        )}
         <div className="flex min-h-[8rem] min-w-0 flex-1 flex-col gap-2 lg:min-h-0">
           {calendar.isPending ? (
             <Skeleton className="min-h-0 flex-1" />
@@ -707,6 +806,7 @@ export function CalendarPage() {
               <DayPanel
                 day={panelDay}
                 list={byDay.get(dayKey(panelDay)) ?? []}
+                ghosts={proposed.ghostsByDay.get(dayKey(panelDay)) ?? []}
                 today={today}
                 renderCard={renderCard}
                 canSchedule={canSchedule}
@@ -772,8 +872,10 @@ export function CalendarPage() {
           onOpenChange={(o) => !o && setScheduling(null)}
           initialDate={scheduling.date}
           {...(scheduling.contentId ? { initialContentId: scheduling.contentId } : {})}
+          firstIds={unscheduled.list.map((c) => c.id)}
         />
       )}
+      {editingGoal && <GoalDialog goal={goal} onClose={() => setEditingGoal(false)} onSave={setGoal} />}
     </div>
   );
 }

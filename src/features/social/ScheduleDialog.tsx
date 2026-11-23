@@ -50,6 +50,8 @@ interface ScheduleDialogProps {
    * por eso el calendario (que no tiene el diseño abierto) no puede.
    */
   exportVersion?: { contentId: string; run: () => Promise<string[]> };
+  /** Piezas sin fecha (las de «Programar» del calendario): salen primero, en su grupo. */
+  firstIds?: string[];
 }
 
 /**
@@ -64,6 +66,7 @@ export function ScheduleDialog({
   initialDate,
   initialContentId,
   exportVersion,
+  firstIds,
 }: ScheduleDialogProps) {
   const qc = useQueryClient();
   const { org } = useOrg();
@@ -246,16 +249,30 @@ export function ScheduleDialog({
                 data-testid="schedule-content"
               >
                 <option value="">Elige un contenido</option>
-                {(contents.data ?? []).map((c) => {
-                  const done = published.data?.get(c.id);
+                {(() => {
+                  const option = (c: NonNullable<typeof contents.data>[number]) => {
+                    const done = published.data?.get(c.id);
+                    return (
+                      // Lo publicado se ve (para no buscarlo), pero no se elige: ya salió.
+                      <option key={c.id} value={c.id} disabled={Boolean(done) && c.id !== contentId}>
+                        {c.title} · {targetLabel(c.network, c.format)} ·{' '}
+                        {done ? publishedText(done, zone) : STATUS_LABEL[c.status]}
+                      </option>
+                    );
+                  };
+                  const all = contents.data ?? [];
+                  if (!firstIds) return all.map(option);
+                  // Desde el calendario: primero las piezas sin fecha, que es lo que se viene a programar.
+                  const first = new Set(firstIds);
+                  const pending = all.filter((c) => first.has(c.id));
+                  const rest = all.filter((c) => !first.has(c.id));
                   return (
-                    // Lo publicado se ve (para no buscarlo), pero no se elige: ya salió.
-                    <option key={c.id} value={c.id} disabled={Boolean(done) && c.id !== contentId}>
-                      {c.title} · {targetLabel(c.network, c.format)} ·{' '}
-                      {done ? publishedText(done, zone) : STATUS_LABEL[c.status]}
-                    </option>
+                    <>
+                      {pending.length > 0 && <optgroup label={`Sin fecha (${pending.length})`}>{pending.map(option)}</optgroup>}
+                      {rest.length > 0 && <optgroup label="Otras piezas">{rest.map(option)}</optgroup>}
+                    </>
                   );
-                })}
+                })()}
               </Select>
             )}
           </Field>

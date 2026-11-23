@@ -80,7 +80,7 @@ describe('Aviso de que el acceso a Instagram caduca', () => {
   it('si la renovación automática va bien, no molesta: ni con 10 días de margen ni tras renovarse', async () => {
     seed([account({ token_expires_at: inDays(10), token_renewed_at: inDays(-1) })]);
     renderApp(`${BRAND_BASE}/calendario`);
-    await screen.findByTestId('calendar-zone');
+    await screen.findByTestId('calendar-title');
     expect(screen.queryByTestId('account-attention')).toBeNull();
   });
 
