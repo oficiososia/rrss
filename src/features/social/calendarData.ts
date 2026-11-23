@@ -15,12 +15,14 @@ import { clampGoal, DEFAULT_WEEKLY_GOAL, type BandCampaign } from './calendarPla
 const VIEW_KEY = 'rrss.calendar.view';
 const goalKey = (brandId: string) => `rrss.calendar.goal.${brandId}`;
 
-/** Vista de partida: la recordada; si no hay, la semana en pantallas anchas y la lista en las estrechas. */
+/**
+ * Vista de partida: la recordada; si no hay, la semana (en el móvil se pinta como agenda, un día por
+ * fila). La lista de cuatro semanas sigue en «⋯ → Ver en lista».
+ */
 export function initialView(): CalendarView {
   const saved = readLocal<unknown>(VIEW_KEY, null);
   if (isCalendarView(saved)) return saved;
-  const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches;
-  return wide ? 'week' : 'agenda';
+  return 'week';
 }
 
 export function useCalendarView(): [CalendarView, (view: CalendarView) => void] {

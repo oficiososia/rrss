@@ -43,7 +43,7 @@ export function useContentBoard(brandId: string, archived: boolean) {
         items,
         supabase
           .from('scheduled_publications')
-          .select('content_id, status, scheduled_at, published_at, hold_reason')
+          .select('id, content_id, status, scheduled_at, published_at, hold_reason, external_url, network')
           .eq('brand_id', brandId)
           .order('scheduled_at', { ascending: false })
           .limit(1000),

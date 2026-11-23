@@ -154,10 +154,36 @@ describe('Calendario', () => {
     await openFicha(user, await entry('Pieza c-pub'));
     const dialog = await screen.findByTestId('publication-dialog');
     expect(within(dialog).getByTestId('publication-external-id')).toHaveTextContent('17900000000001');
-    expect(within(dialog).getByTestId('publication-link')).toHaveAttribute(
+    expect(within(dialog).getByTestId('publication-published-link')).toHaveAttribute(
       'href',
       'https://instagram.simulado.invalid/p/17900000000001/',
     );
+  });
+
+  it('una publicada se abre directamente en su ficha: «Publicada el…», el enlace a Instagram y «Abrir la pieza», sin programar ni publicar', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    seed();
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    await user.click(await entry('Pieza c-pub'));
+    const dialog = await screen.findByTestId('publication-dialog');
+    expect(screen.queryByTestId('calendar-quick')).toBeNull();
+    expect(within(dialog).getByTestId('publication-state')).toHaveTextContent('Publicada');
+    expect(within(dialog).getByTestId('publication-published-text')).toHaveTextContent(/^Publicada el .+ a las /);
+    expect(within(dialog).getByTestId('publication-published-link')).toHaveTextContent('Ver en Instagram');
+    expect(within(dialog).getByTestId('publication-published-open')).toHaveAttribute(
+      'href',
+      `${BRAND_BASE}/contenidos/c-pub`,
+    );
+    // Nada de «Aprobada», ni publicar, ni mover, ni cancelar.
+    expect(dialog).not.toHaveTextContent('Pieza: Aprobada');
+    expect(within(dialog).queryByTestId('publication-publish-now')).toBeNull();
+    expect(within(dialog).queryByTestId('publication-cancel')).toBeNull();
+    expect(within(dialog).queryByLabelText('Mover a')).toBeNull();
+
+    // «Publicar otra vez» avisa del duplicado y no publica: hace una copia.
+    await user.click(within(dialog).getByTestId('publication-published-again'));
+    expect(await screen.findByTestId('republish-warning')).toHaveTextContent('saldrá repetida');
+    expect(fake.calls.some((c) => c.name === 'publish_publication_now')).toBe(false);
   });
 
   it('sin el interruptor del entorno se ve lo programado, pero no se programa', async () => {

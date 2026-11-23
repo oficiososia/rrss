@@ -1,5 +1,15 @@
 import { FileText, Film, Music } from 'lucide-react';
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type DragEvent,
+  type MouseEvent,
+} from 'react';
 import { Badge, Skeleton } from '@/components/ui';
 import { isDriveAsset } from '@/features/drive/api';
 import type { MediaAssetRow } from '@/lib/database.types';
@@ -7,7 +17,11 @@ import { cn } from '@/lib/utils';
 import { previewPath } from './api';
 import { DRAG_ASSETS } from './FolderTree';
 import { ASSET_KIND_LABEL } from './labels';
+import { AssetName } from './AssetName';
+import { distinctNames, NAME_CHARS, type DistinctName } from './assetNames';
+import { readableName } from './readableName';
 import { ThumbImage } from './ThumbImage';
+import { useLongPress, useNameReveal } from './useNameReveal';
 
 /** Cuántas miniaturas se pintan de golpe; al llegar al final de la lista se añaden otras tantas. */
 export const GRID_BATCH = 96;
@@ -24,6 +38,34 @@ function Thumbnail({ asset, url }: { asset: MediaAssetRow; url: string | undefin
   );
 }
 
+const RevealContext = createContext(false);
+
+/** El botón de la tarjeta: con el ratón, el nombre entero en el título; en el móvil, manteniendo pulsado. */
+function GridTileButton({
+  assetName,
+  onLongPress,
+  children,
+  onClick,
+  ...props
+}: { assetName: DistinctName | undefined; onLongPress?: () => void } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  // En la biblioteca, mantener pulsado empieza a elegir varias (el nombre ya es legible); en
+  // quien solo mira, enseña el nombre entero.
+  const reveal = useNameReveal();
+  const choose = useLongPress(() => onLongPress?.());
+  const handlers = onLongPress ? choose : reveal.handlers;
+  return (
+    <button type="button" {...props} onClick={onClick} {...handlers} onBlur={reveal.hide} data-testid="library-asset">
+      <RevealContext.Provider value={reveal.revealed && Boolean(assetName)}>{children}</RevealContext.Provider>
+    </button>
+  );
+}
+
+function NameSlot({ name, fallback }: { name: DistinctName | undefined; fallback: string }) {
+  const revealed = useContext(RevealContext);
+  if (!name) return <span className="min-w-0 truncate text-xs font-medium">{fallback}</span>;
+  return <AssetName name={name} revealed={revealed} className="flex-1" />;
+}
+
 export interface AssetGridProps {
   assets: readonly MediaAssetRow[];
   /** Ruta firmada de cada miniatura (por `previewPath`). */
@@ -33,6 +75,13 @@ export interface AssetGridProps {
   selection: ReadonlySet<string>;
   openId: string | null;
   canSelect: boolean;
+  /**
+   * Casillas a la vista (B2): solo al «Elegir varias» (o con algo ya elegido). Si no, la miniatura
+   * va limpia; con el ratón, Ctrl/⌘ o Mayús siguen eligiendo.
+   */
+  showChecks?: boolean;
+  /** Pulsación larga en una pantalla táctil: empieza a elegir varias con esa. */
+  onLongPress?: (id: string) => void;
   canDrag: boolean;
   onOpen: (id: string) => void;
   /** `range`: con Mayús, desde la última elegida; `toggle`: casilla o Ctrl/⌘. */
@@ -53,6 +102,8 @@ export function AssetGrid({
   selection,
   openId,
   canSelect,
+  showChecks = false,
+  onLongPress,
   canDrag,
   onOpen,
   onSelect,
@@ -60,9 +111,12 @@ export function AssetGrid({
   onShowMore,
 }: AssetGridProps) {
   const sentinel = useRef<HTMLLIElement>(null);
-  const selecting = selection.size > 0;
+  const selecting = selection.size > 0 || showChecks;
   const shown = assets.slice(0, visible);
   const [dragging, setDragging] = useState<string | null>(null);
+  // Nombres legibles (B4: «Portada reel», no «portada-reel-20261123-085833.jpg») que además se
+  // distinguen entre sí (tres «Arroz meloso…» no pueden verse iguales).
+  const names = useMemo(() => distinctNames(assets, NAME_CHARS, (a) => readableName(a.file_name)), [assets]);
 
   useEffect(() => {
     const node = sentinel.current;
@@ -109,8 +163,10 @@ export function AssetGrid({
         const chosen = selection.has(asset.id);
         return (
           <li key={asset.id} className="group relative">
-            <button
-              type="button"
+            <GridTileButton
+              assetName={names.get(asset.id)}
+              onLongPress={canSelect && onLongPress ? () => onLongPress(asset.id) : undefined}
+              title={asset.file_name}
               onClick={(event) => click(event, asset)}
               draggable={canDrag}
               onDragStart={(event) => dragStart(event, asset)}
@@ -123,13 +179,12 @@ export function AssetGrid({
                 chosen || openId === asset.id ? 'border-primary ring-2 ring-primary' : 'border-border',
                 dragging === asset.id && 'opacity-50',
               )}
-              data-testid="library-asset"
             >
               <span className="block aspect-square overflow-hidden bg-subtle">
                 <Thumbnail asset={asset} url={urls?.get(previewPath(asset))} />
               </span>
               <span className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="min-w-0 truncate text-xs font-medium">{asset.file_name}</span>
+                <NameSlot name={names.get(asset.id)} fallback={asset.file_name} />
                 {isDriveAsset(asset) ? (
                   <span data-testid="library-asset-drive" className="shrink-0">
                     <Badge>Drive</Badge>
@@ -140,13 +195,13 @@ export function AssetGrid({
                   )
                 )}
               </span>
-            </button>
+            </GridTileButton>
             {canSelect && (
               <label
                 className={cn(
                   'absolute left-2 top-2 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-surface/90 shadow-card',
-                  // La casilla se ve al pasar el ratón, al enfocarla o cuando ya se está eligiendo.
-                  chosen || selecting ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100',
+                  // Sin casilla en cada miniatura (B2): solo al elegir varias. Con teclado, al enfocarla.
+                  chosen || selecting ? 'opacity-100' : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100',
                 )}
               >
                 <input

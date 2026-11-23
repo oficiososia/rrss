@@ -5,12 +5,27 @@ import { isInside } from './folders';
 // archivos de la marca (cientos, no millones): así el árbol, los contadores y los
 // filtros por uso responden al instante y siempre cuadran entre sí.
 
-export type ChipId = 'photos' | 'videos' | 'logos' | 'cutout' | 'ai' | 'unused' | 'recent';
+export type ChipId = 'photos' | 'videos' | 'audios' | 'logos' | 'cutout' | 'ai' | 'unused' | 'recent';
 export type SortKey = 'date' | 'name' | 'usage';
+
+/**
+ * Las fichas de la biblioteca (simplificación B1): Todo, Fotos, Vídeos y Audios (la música de los
+ * reels). Lo demás que había (Logotipos, Con fondo quitado, Hechas con IA, Recientes) está en su
+ * carpeta o en el orden; «Sin usar», en «⋯».
+ */
+export type KindTab = 'all' | 'photos' | 'videos' | 'audios';
+
+export const KIND_TABS: ReadonlyArray<{ id: KindTab; label: string }> = [
+  { id: 'all', label: 'Todo' },
+  { id: 'photos', label: 'Fotos' },
+  { id: 'videos', label: 'Vídeos' },
+  { id: 'audios', label: 'Audios' },
+];
 
 export const CHIPS: ReadonlyArray<{ id: ChipId; label: string }> = [
   { id: 'photos', label: 'Fotos' },
   { id: 'videos', label: 'Vídeos' },
+  { id: 'audios', label: 'Audios' },
   { id: 'logos', label: 'Logotipos' },
   { id: 'cutout', label: 'Con fondo quitado' },
   { id: 'ai', label: 'Hechas con IA' },
@@ -80,8 +95,24 @@ export function isAiMade(asset: Pick<MediaAssetRow, 'provenance'>): boolean {
   return type === 'ai_generation' || type === 'ai_animation' || stepKinds(asset).includes('ai_background');
 }
 
-/** Carpetas donde la propia aplicación deja lo que genera (exportaciones, ediciones, reels, informes). */
-const GENERATED_FOLDERS = ['Exportaciones', 'Ediciones', 'Reels', 'Informes'];
+/**
+ * Carpeta donde quedan las imágenes exportadas del editor («Descargar», «Programar», «Publicar
+ * ahora»). La biblioteca la enseña aparte y no sale en «Toda la biblioteca» ni en los selectores.
+ */
+export const EXPORTS_FOLDER = 'Exportaciones';
+
+/** ¿Es una exportación del editor? Por su procedencia o porque está en «Exportaciones». */
+export function isExport(asset: Pick<MediaAssetRow, 'provenance' | 'folder'>): boolean {
+  if (provenanceOf(asset)?.type === 'export') return true;
+  const top = (asset.folder ?? '').split(' / ')[0] ?? '';
+  return top === EXPORTS_FOLDER;
+}
+
+/** Carpetas donde la propia aplicación deja lo que genera (exportaciones, ediciones, IA, reels, informes). */
+export const GENERATED_FOLDERS = ['Ediciones', 'Exportaciones', 'IA', 'Reels', 'Informes'];
+
+/** «Hechas aquí»: el grupo de la biblioteca que reúne esas carpetas (simplificación B3). */
+export const MADE_HERE_LABEL = 'Hechas aquí';
 
 /**
  * Archivo que generó la aplicación (exportación del editor, foto editada, IA, reel,
@@ -121,12 +152,17 @@ export const isPhoto = (asset: Pick<MediaAssetRow, 'kind' | 'mime_type'>): boole
 export const isVideo = (asset: Pick<MediaAssetRow, 'kind' | 'mime_type'>): boolean =>
   asset.kind === 'video' || asset.mime_type.startsWith('video/');
 
+export const isAudio = (asset: Pick<MediaAssetRow, 'kind' | 'mime_type'>): boolean =>
+  asset.kind === 'audio' || asset.mime_type.startsWith('audio/');
+
 function matchesChip(chip: ChipId, asset: MediaAssetRow, usage: ReadonlyMap<string, number>, now: number): boolean {
   switch (chip) {
     case 'photos':
       return isPhoto(asset);
     case 'videos':
       return isVideo(asset);
+    case 'audios':
+      return isAudio(asset);
     case 'logos':
       return asset.kind === 'logo';
     case 'cutout':
@@ -141,7 +177,7 @@ function matchesChip(chip: ChipId, asset: MediaAssetRow, usage: ReadonlyMap<stri
 }
 
 /** Fotos, vídeos y logotipos se suman entre sí; el resto (fondo, IA, uso, fecha) se exige a la vez. */
-const KIND_CHIPS: ReadonlySet<ChipId> = new Set<ChipId>(['photos', 'videos', 'logos']);
+const KIND_CHIPS: ReadonlySet<ChipId> = new Set<ChipId>(['photos', 'videos', 'audios', 'logos']);
 
 export function applyFilters(
   assets: readonly MediaAssetRow[],
@@ -153,6 +189,8 @@ export function applyFilters(
   const kindChips = [...filters.chips].filter((c) => KIND_CHIPS.has(c));
   const otherChips = [...filters.chips].filter((c) => !KIND_CHIPS.has(c));
   const out = assets.filter((a) => {
+    // Las exportaciones van aparte: no salen en «Toda la biblioteca» (ni al buscar en ella), solo en su carpeta.
+    if (filters.folder === null && isExport(a)) return false;
     if (filters.folder === '' && a.folder !== '') return false;
     if (filters.folder && !isInside(a.folder, filters.folder)) return false;
     if (filters.tag && !a.tags.includes(filters.tag)) return false;

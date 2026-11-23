@@ -118,6 +118,7 @@ describe('Hora del calendario según la zona de la marca', () => {
     const { user } = renderApp(`${BRAND_BASE}/calendario`);
     const entry = (await screen.findAllByTestId('calendar-entry'))[0]!;
     expect(entry).toHaveTextContent(formatTimeIn(at, ZONE));
+    // Auckland no es la hora del dispositivo: se dice junto al título.
     expect(screen.getByTestId('calendar-zone')).toHaveTextContent('Horas en hora de Auckland');
 
     await openFicha(user, entry);
@@ -169,7 +170,10 @@ describe('Hora del calendario según la zona de la marca', () => {
   it('una zona guardada que el navegador no conoce no rompe el calendario: se usa la de Madrid', async () => {
     seed('Marte/Olimpo');
     renderApp(`${BRAND_BASE}/calendario`);
-    expect(await screen.findByTestId('calendar-zone')).toHaveTextContent('Horas en hora de Madrid');
+    // La zona solo se dice si no es la del dispositivo; si se dice, es la de Madrid.
+    await screen.findAllByTestId('calendar-entry');
+    const zoneNote = screen.queryByTestId('calendar-zone');
+    if (zoneNote) expect(zoneNote).toHaveTextContent('Horas en hora de Madrid');
     expect((await screen.findAllByTestId('calendar-entry'))[0]!).toHaveTextContent(formatTimeIn(at, 'Europe/Madrid'));
   });
 });

@@ -26,6 +26,11 @@ import {
   PUBLISHABLE_TARGETS,
   toLocalInput,
 } from './calendar';
+import { useBrand, useOrg } from '@/features/orgs/context';
+import { useConnectedAccount } from './connectedAccount';
+import { NoConnectedAccountNotice } from './NoConnectedAccountNotice';
+import { publishedText, usePublishedContents } from './publishedState';
+import { PublishedNotice } from './PublishedNotice';
 import { useBrandZone } from './useBrandZone';
 import { differsFromDevice, zoneLabel } from './zone';
 import { PublishNowDialog } from './PublishNowDialog';
@@ -46,6 +51,8 @@ interface ScheduleDialogProps {
    * por eso el calendario (que no tiene el diseño abierto) no puede.
    */
   exportVersion?: { contentId: string; run: () => Promise<string[]> };
+  /** Piezas sin fecha (las de «Programar» del calendario): salen primero, en su grupo. */
+  firstIds?: string[];
 }
 
 /**
@@ -60,10 +67,14 @@ export function ScheduleDialog({
   initialDate,
   initialContentId,
   exportVersion,
+  firstIds,
 }: ScheduleDialogProps) {
   const qc = useQueryClient();
+  const { org } = useOrg();
+  const { can } = useBrand();
   const contents = useSchedulableContents(brandId, open);
   const accounts = useSocialAccounts(brandId);
+  const published = usePublishedContents(brandId, open);
   const media = usePublishableMedia(brandId, open);
   const save = useSavePublication(brandId);
   const zone = useBrandZone();
@@ -99,6 +110,11 @@ export function ScheduleDialog({
   const supported = PUBLISHABLE_TARGETS.has(target);
   const liveAccounts = (accounts.data ?? []).filter((a) => a.network === content?.network);
   const accountId = accountChoice ?? liveAccounts.find((a) => a.status === 'active')?.id ?? '';
+  const connection = useConnectedAccount(brandId, content?.network ?? 'instagram');
+  // Sin cuenta activa en la red de la pieza: se dice ANTES de nada, con el enlace para conectarla.
+  const noAccount = Boolean(content && supported && !connection.isLoading && !connection.connected);
+  // Ya publicada: no se vuelve a programar ni a publicar (solo «Publicar otra vez», que hace una copia).
+  const publishedInfo = content ? (published.data?.get(content.id) ?? null) : null;
 
   const chooseContent = (id: string) => {
     setContentId(id);
@@ -161,6 +177,8 @@ export function ScheduleDialog({
   const publishNow = () => {
     setError(null);
     if (!content) return setError('Elige qué contenido se publica.');
+    if (publishedInfo) return setError('Ya está publicada.');
+    if (noAccount) return setError('No hay ninguna cuenta conectada: conéctala antes de publicar.');
     if (content.status !== 'approved') return setError('Solo se publica lo aprobado.');
     setNowOpen(true);
   };
@@ -170,6 +188,7 @@ export function ScheduleDialog({
     setError(null);
     const scheduledAt = fromLocalInput(when, zone);
     if (!content) return setError('Elige qué contenido se publica.');
+    if (publishedInfo) return setError('Ya está publicada.');
     if (!scheduledAt) return setError('Indica el día y la hora.');
     if (isPast(scheduledAt)) return setError('La fecha ya ha pasado.');
     let mediaAssetIds = assetIds;
@@ -221,7 +240,12 @@ export function ScheduleDialog({
             <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={save.isPending || exporting}>
               Cancelar
             </Button>
-            <Button onClick={() => void submit()} loading={save.isPending || exporting} data-testid="schedule-submit">
+            <Button
+              onClick={() => void submit()}
+              loading={save.isPending || exporting}
+              disabled={Boolean(publishedInfo) || (mode === 'now' && noAccount)}
+              data-testid="schedule-submit"
+            >
               {mode === 'now' ? 'Publicar ahora…' : 'Guardar en el calendario'}
             </Button>
           </>
@@ -237,14 +261,60 @@ export function ScheduleDialog({
                 data-testid="schedule-content"
               >
                 <option value="">Elige un contenido</option>
-                {(contents.data ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title} · {targetLabel(c.network, c.format)} · {STATUS_LABEL[c.status]}
-                  </option>
-                ))}
+                {(() => {
+                  const option = (c: NonNullable<typeof contents.data>[number]) => {
+                    const done = published.data?.get(c.id);
+                    return (
+                      // Lo publicado se ve (para no buscarlo), pero no se elige: ya salió.
+                      <option key={c.id} value={c.id} disabled={Boolean(done) && c.id !== contentId}>
+                        {c.title} · {targetLabel(c.network, c.format)} ·{' '}
+                        {done ? publishedText(done, zone) : STATUS_LABEL[c.status]}
+                      </option>
+                    );
+                  };
+                  const all = contents.data ?? [];
+                  if (!firstIds) return all.map(option);
+                  // Desde el calendario: primero las piezas sin fecha, que es lo que se viene a programar.
+                  const first = new Set(firstIds);
+                  const pending = all.filter((c) => first.has(c.id));
+                  const rest = all.filter((c) => !first.has(c.id));
+                  return (
+                    <>
+                      {pending.length > 0 && <optgroup label={`Sin fecha (${pending.length})`}>{pending.map(option)}</optgroup>}
+                      {rest.length > 0 && <optgroup label="Otras piezas">{rest.map(option)}</optgroup>}
+                    </>
+                  );
+                })()}
               </Select>
             )}
           </Field>
+          {content && publishedInfo && (
+            <PublishedNotice
+              orgId={org.id}
+              brandId={brandId}
+              contentId={content.id}
+              title={content.title}
+              info={publishedInfo}
+              canRepublish={can('edit')}
+              showOpen={exportVersion?.contentId !== content.id}
+              testId="schedule-published"
+            />
+          )}
+          {noAccount && !publishedInfo && (
+            <NoConnectedAccountNotice
+              orgId={org.id}
+              brandId={brandId}
+              state={connection.state}
+              why={
+                mode === 'now'
+                  ? 'Sin cuenta no se puede publicar: no se ha aprobado ni publicado nada.'
+                  : 'Puedes dejarla en el calendario, pero no se publicará hasta que conectes la cuenta.'
+              }
+              testId="schedule-no-account"
+            />
+          )}
+          {!publishedInfo && (
+          <>
           {content && !supported && (
             <Notice tone="warning">Este formato todavía no se publica automáticamente: solo quedará apuntado.</Notice>
           )}
@@ -309,11 +379,6 @@ export function ScheduleDialog({
           {content && supported && (
             <Field
               label="Cuenta"
-              hint={
-                liveAccounts.length === 0
-                  ? 'No hay ninguna cuenta conectada: conéctala en Marca → Cuentas conectadas.'
-                  : undefined
-              }
             >
               {(props) => (
                 <Select
@@ -372,8 +437,8 @@ export function ScheduleDialog({
               ) : autoExport && choices.length === 0 ? (
                 <p className="text-sm text-muted" data-testid="schedule-auto-export">
                   {content.format === 'carousel'
-                    ? 'No hace falta exportar nada: las imágenes se preparan solas al guardar y quedan en la biblioteca.'
-                    : 'No hace falta exportar nada: la imagen se prepara sola al guardar y queda en la biblioteca.'}
+                    ? 'No hace falta exportar nada: las imágenes se preparan solas al guardar y quedan aparte, en «Exportaciones» de la biblioteca.'
+                    : 'No hace falta exportar nada: la imagen se prepara sola al guardar y queda aparte, en «Exportaciones» de la biblioteca.'}
                 </p>
               ) : choices.length === 0 ? (
                 <p className="text-sm text-muted" data-testid="schedule-no-media">
@@ -414,6 +479,9 @@ export function ScheduleDialog({
                 </ul>
               )}
             </fieldset>
+          )}
+
+          </>
           )}
 
           {error && (

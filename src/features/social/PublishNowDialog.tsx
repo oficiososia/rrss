@@ -16,6 +16,11 @@ import {
   useSocialAccounts,
 } from './api';
 import { HOLD_REASON_TEXT, PUBLISHABLE_TARGETS } from './calendar';
+import { useOrg } from '@/features/orgs/context';
+import { connectionOf } from './connectedAccount';
+import { NoConnectedAccountNotice } from './NoConnectedAccountNotice';
+import { publishedInfoOf } from './publishedState';
+import { PublishedNotice } from './PublishedNotice';
 
 interface PublishNowDialogProps {
   brandId: string;
@@ -61,6 +66,7 @@ export function PublishNowDialog({
   editorPath,
 }: PublishNowDialogProps) {
   const qc = useQueryClient();
+  const { org } = useOrg();
   const content = useCalendarContent(brandId, contentId, open);
   const accounts = useSocialAccounts(brandId, open);
   const media = usePublishableMedia(brandId, open);
@@ -89,10 +95,17 @@ export function PublishNowDialog({
   if (assetIds.length === 0 && item && item.format === 'reel') assetIds = existing;
   const needsExport = assetIds.length === 0 && exportable && Boolean(exportVersion);
 
+  // Ya publicada (antes de abrir este diálogo): no se publica otra vez sin querer.
+  const alreadyPublished = !started ? publishedInfoOf(pub) : null;
+  // Sin cuenta activa: se dice con el enlace para conectarla, antes de nada.
+  const connection = connectionOf(accounts.data, item?.network ?? 'instagram');
+  const noAccount = Boolean(item && !started && accounts.data && !forcedAccount && !accountId);
+
   // Por qué todavía no se puede (se dice antes de pedir confirmación).
   let blocker: string | null = null;
   if (item && !started) {
-    if (item.archived_at) blocker = 'La pieza está archivada.';
+    if (alreadyPublished) blocker = 'Ya está publicada.';
+    else if (item.archived_at) blocker = 'La pieza está archivada.';
     else if (item.status !== 'approved')
       blocker = `Solo se publica lo aprobado y ahora está en «${STATUS_LABEL[item.status]}».`;
     else if (!PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`))
@@ -212,7 +225,28 @@ export function PublishNowDialog({
       }
     >
       <div className="space-y-3" data-testid="publish-now">
-        {!started && blocker && (
+        {alreadyPublished && item && (
+          <PublishedNotice
+            orgId={org.id}
+            brandId={brandId}
+            contentId={item.id}
+            title={item.title}
+            info={alreadyPublished}
+            canRepublish
+            showOpen={!exportVersion}
+            testId="publish-now-published"
+          />
+        )}
+        {noAccount && !alreadyPublished && (
+          <NoConnectedAccountNotice
+            orgId={org.id}
+            brandId={brandId}
+            state={connection.state}
+            why="Sin cuenta no se puede publicar: no se ha publicado nada."
+            testId="publish-now-no-account"
+          />
+        )}
+        {!started && blocker && !alreadyPublished && !noAccount && (
           <Notice tone="warning">
             <span data-testid="publish-now-blocker">{blocker}</span>
             {editorPath && exportable && item?.status === 'approved' && (

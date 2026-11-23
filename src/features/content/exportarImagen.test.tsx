@@ -132,6 +132,24 @@ beforeEach(() => {
 });
 
 describe('Exportar imagen', () => {
+  it('«Guardarla también en la biblioteca» se recuerda siempre igual (fallo 17)', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    let dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).toBeChecked();
+    expect(dialog.getByText(/aparte, en «Exportaciones»/)).toBeInTheDocument();
+    await user.click(dialog.getByTestId('export-library'));
+    expect(window.localStorage.getItem('rrss.exportar.guardarEnBiblioteca')).toBe('false');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // Al volver a abrirlo (o en otra pieza), la misma decisión: no se vuelve a marcar sola.
+    dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).not.toBeChecked();
+    await user.click(dialog.getByTestId('export-confirm'));
+    expect(await dialog.findByTestId('export-done')).toBeInTheDocument();
+    expect(mocks.uploadAsset).not.toHaveBeenCalled();
+  });
+
   it('descarga la imagen a tamaño real con un nombre legible y sin tocar la biblioteca si no se pide', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     const dialog = await openDialog(user);

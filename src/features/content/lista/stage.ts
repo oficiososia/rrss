@@ -35,6 +35,10 @@ export interface PublicationLite {
   scheduled_at: string;
   published_at: string | null;
   hold_reason: PublicationHoldReason | null;
+  /** Enlace a la publicación en la red (solo si ya salió y la red lo dio). */
+  external_url?: string | null;
+  network?: string;
+  id?: string;
 }
 
 const ACTIVE: PublicationStatus[] = ['planned', 'scheduled', 'publishing', 'failed'];

@@ -1,24 +1,16 @@
-import { CalendarDays, ChevronDown, ChevronRight, Film, Image as ImageIcon, Minus, Plus } from 'lucide-react';
+import { CalendarDays, Film, Image as ImageIcon, Plus, Sparkles } from 'lucide-react';
 import { useState, type DragEvent, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { CalendarEntry } from './api';
 import { dayKey, sameDay } from './calendar';
-import {
-  campaignSpans,
-  chunkWeeks,
-  gapDays,
-  gapSentence,
-  isPastDay,
-  isPastWeek,
-  MAX_WEEKLY_GOAL,
-  weekProgress,
-  type BandCampaign,
-} from './calendarPlan';
+import { campaignSpans, chunkWeeks, isPastDay, isPastWeek, weekProgress, type BandCampaign } from './calendarPlan';
+import { formatLabel } from './formatLabel';
 import type { EntryThumb } from './CalendarEntryCard';
 
-// Las tres vistas del calendario (semana, mes y lista) y las ayudas para planificar:
-// franjas de campañas, huecos y objetivo semanal. Los datos y las acciones los pone
-// CalendarPage; aquí solo se pinta y se reparte lo que se arrastra.
+// Las vistas del calendario (semana, mes y, desde «⋯», lista) y las ayudas para planificar:
+// franjas de campañas, huecos, el plan propuesto en gris y la línea «Esta semana 1 de 3».
+// Los datos y las acciones los pone CalendarPage; aquí solo se pinta y se reparte lo que se
+// arrastra. Para programar un día concreto se toca su hueco (ya no hay «Programar este día»).
 
 const WEEKDAYS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
 const longDay = (d: Date) => d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -41,6 +33,17 @@ export interface ViewCommon {
   onDropOnDay: (day: Date, event: DragEvent) => void;
   campaigns: BandCampaign[];
   goal: number;
+  /** Piezas de un plan propuesto (sin aceptar), por día: se ven en gris. */
+  ghostsByDay: Map<string, GhostPiece[]>;
+}
+
+/** Una pieza de un plan propuesto que todavía no existe: se pinta en gris hasta aceptar el plan. */
+export interface GhostPiece {
+  key: string;
+  campaignTitle: string;
+  network: string;
+  format: string;
+  idea: string;
 }
 
 /** Lo que hace falta para que un día acepte lo que se arrastra, y saber si se está arrastrando encima. */
@@ -65,18 +68,8 @@ function useDayDrop(common: Pick<ViewCommon, 'canDrop' | 'onDropOnDay'>) {
   };
 }
 
-/** El «+» de un día: solo se ve al pasar el ratón, al enfocarlo con teclado o al tocar el día. */
-function AddButton({
-  day,
-  onAdd,
-  active,
-  className,
-}: {
-  day: Date;
-  onAdd: (day: Date) => void;
-  active: boolean;
-  className?: string;
-}) {
+/** El hueco de un día sin nada: tocarlo programa ese día. */
+function DaySlot({ day, onAdd, className }: { day: Date; onAdd: (day: Date) => void; className?: string }) {
   return (
     <button
       type="button"
@@ -85,17 +78,33 @@ function AddButton({
         onAdd(day);
       }}
       aria-label={`Programar el ${day.toLocaleDateString('es-ES')}`}
-      data-active={active}
       className={cn(
-        'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted opacity-0 transition-opacity',
-        'hover:bg-subtle hover:text-fg focus-visible:opacity-100 group-focus-within/day:opacity-100 group-hover/day:opacity-100',
-        'data-[active=true]:opacity-100',
+        'relative flex min-h-[2.75rem] w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted',
+        'hover:border-primary/50 hover:bg-subtle hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
         className,
       )}
-      data-testid="calendar-day-add"
+      data-testid="calendar-day-slot"
     >
       <Plus className="h-4 w-4" aria-hidden />
+      <span className="sr-only md:not-sr-only">Programar</span>
     </button>
+  );
+}
+
+/** Una pieza de un plan propuesto: en gris, sin acciones (se acepta o descarta el plan entero). */
+function GhostCard({ ghost }: { ghost: GhostPiece }) {
+  return (
+    <div
+      className="flex min-w-0 items-start gap-1.5 rounded-lg border border-dashed border-border bg-subtle/60 p-2 text-xs text-muted"
+      title={`Plan propuesto «${ghost.campaignTitle}»: ${ghost.idea}`}
+      data-testid="calendar-ghost"
+    >
+      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0">
+        <span className="block font-medium">{formatLabel(ghost.network, ghost.format)} · propuesta</span>
+        <span className="line-clamp-2 break-words">{ghost.idea}</span>
+      </span>
+    </div>
   );
 }
 
@@ -162,79 +171,49 @@ function CampaignList({ week, campaigns }: { week: Date[]; campaigns: BandCampai
   );
 }
 
-// ── Contador, huecos y objetivo ──────────────────────────────────────────
+// ── «Esta semana 1 de 3 · 4 sin fecha» ──────────────────────────────────
 
-interface PlanStripProps {
+interface WeekLineProps {
   /** Los siete días de la semana que se resume. */
   week: Date[];
   plannedByDay: Map<string, number>;
   today: Date;
   goal: number;
-  onGoal: (goal: number) => void;
+  /** Piezas listas o en borrador que aún no tienen fecha (se programan con «Programar»). */
+  unscheduled: number;
 }
 
-/** «2 de 3 esta semana», los días sin nada y el objetivo, que se puede cambiar. */
-export function PlanStrip({ week, plannedByDay, today, goal, onGoal }: PlanStripProps) {
+/**
+ * Una línea: «Esta semana 1 de 3» (el objetivo se cambia en «⋯») y cuántas piezas faltan por
+ * fechar (se programan con «Programar», que las enseña primero).
+ */
+export function WeekLine({ week, plannedByDay, today, goal, unscheduled }: WeekLineProps) {
   const count = week.reduce((sum, d) => sum + (plannedByDay.get(dayKey(d)) ?? 0), 0);
   const progress = weekProgress(count, goal);
-  const gaps = gapSentence(gapDays(week, plannedByDay, today));
   const current = week.some((d) => sameDay(d, today));
+  const label = current ? 'Esta semana' : `Semana del ${shortDay(week[0]!)}`;
   return (
-    <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-0.5 rounded-lg border border-border bg-surface px-3 py-1 text-sm"
-      data-testid="calendar-plan"
-    >
-      <span className="flex items-center gap-2">
-        <span className="font-medium">{current ? 'Esta semana' : `Semana del ${shortDay(week[0]!)}`}:</span>
-        <span
-          role="meter"
-          aria-label="Publicaciones de la semana frente al objetivo"
-          aria-valuemin={0}
-          aria-valuemax={goal}
-          aria-valuenow={Math.min(count, goal)}
-          aria-valuetext={`${progress.text} publicaciones`}
-          className="h-1.5 w-16 overflow-hidden rounded-full bg-subtle"
-        >
-          <span
-            className={cn('block h-full rounded-full', progress.reached ? 'bg-success' : 'bg-primary')}
-            style={{ width: `${Math.round(progress.ratio * 100)}%` }}
-          />
-        </span>
-        <span className={cn('tabular-nums', progress.reached && 'text-success')} data-testid="calendar-week-count">
-          {progress.text}
-        </span>
+    <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="calendar-plan">
+      <span
+        role="meter"
+        aria-label={`${label}: publicaciones frente al objetivo`}
+        aria-valuemin={0}
+        aria-valuemax={goal}
+        aria-valuenow={Math.min(count, goal)}
+        aria-valuetext={`${progress.text} publicaciones`}
+        className={cn(
+          'rounded-full px-2.5 py-0.5 text-xs font-medium',
+          progress.reached ? 'bg-success-soft text-success' : 'bg-primary-soft text-primary',
+        )}
+      >
+        {label} <span className="tabular-nums" data-testid="calendar-week-count">{progress.text}</span>
       </span>
-      {gaps && (
-        <span className="text-warning" data-testid="calendar-gaps">
-          {gaps}
+      {unscheduled > 0 && (
+        // Solo se dice: se programan con «Programar», que las enseña primero (una acción, un sitio).
+        <span className="text-xs text-muted" data-testid="calendar-unscheduled">
+          {unscheduled} sin fecha
         </span>
       )}
-      <span className="ml-auto flex items-center gap-1 text-muted">
-        <span id="objetivo-semanal">Objetivo por semana</span>
-        <span className="flex items-center" role="group" aria-labelledby="objetivo-semanal">
-          <button
-            type="button"
-            aria-label="Bajar el objetivo"
-            disabled={goal <= 1}
-            onClick={() => onGoal(goal - 1)}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-subtle disabled:opacity-40"
-          >
-            <Minus className="h-3.5 w-3.5" aria-hidden />
-          </button>
-          <output className="w-6 text-center font-medium tabular-nums text-fg" data-testid="calendar-goal">
-            {goal}
-          </output>
-          <button
-            type="button"
-            aria-label="Subir el objetivo"
-            disabled={goal >= MAX_WEEKLY_GOAL}
-            onClick={() => onGoal(goal + 1)}
-            className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-subtle disabled:opacity-40"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        </span>
-      </span>
     </div>
   );
 }
@@ -244,19 +223,17 @@ export function PlanStrip({ week, plannedByDay, today, goal, onGoal }: PlanStrip
 function DayHeading({ day, today }: { day: Date; today: Date }) {
   const isToday = sameDay(day, today);
   return (
-    <h3 className="flex items-baseline gap-1.5 text-sm">
-      <span className="text-muted first-letter:uppercase md:hidden">{longDay(day)}</span>
-      <span className="hidden text-xs text-muted md:inline">{WEEKDAYS[(day.getDay() + 6) % 7]}</span>
+    <h3 className="flex w-12 shrink-0 flex-col items-center gap-0.5 text-sm md:w-auto md:flex-row md:items-baseline md:gap-1.5">
+      <span className="text-xs capitalize text-muted">{WEEKDAYS[(day.getDay() + 6) % 7]}</span>
       <span
         className={cn(
-          'hidden rounded-full px-1.5 text-sm font-semibold md:inline',
+          'flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-sm font-semibold md:h-auto',
           isToday ? 'bg-primary text-primary-fg' : 'text-fg',
         )}
-        aria-hidden
       >
         {day.getDate()}
       </span>
-      {isToday && <span className="rounded-full bg-primary px-1.5 text-xs text-primary-fg md:hidden">Hoy</span>}
+      <span className="sr-only">{longDay(day)}</span>
     </h3>
   );
 }
@@ -265,11 +242,13 @@ interface WeekViewProps extends ViewCommon {
   days: Date[];
 }
 
-/** Semana: siete columnas con las piezas como tarjetas (en móvil, un día debajo de otro). */
+/**
+ * Semana: siete columnas con las piezas como tarjetas. En el móvil, la semana como agenda: un
+ * día por fila (el día a la izquierda, lo programado a la derecha y el hueco para programar).
+ */
 export function WeekView(common: WeekViewProps) {
-  const { days, byDay, plannedByDay, today, renderCard, canSchedule, onAdd, campaigns } = common;
+  const { days, byDay, ghostsByDay, today, renderCard, canSchedule, onAdd, campaigns } = common;
   const drop = useDayDrop(common);
-  const [active, setActive] = useState<string | null>(null);
   return (
     <div
       className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-xl border border-border bg-surface"
@@ -278,44 +257,43 @@ export function WeekView(common: WeekViewProps) {
       <div className="hidden pt-1 md:block">
         <CampaignBands week={days} campaigns={campaigns} />
       </div>
-      <div className="px-2 pt-2 md:hidden">
+      <div className="px-2 pt-2 empty:hidden md:hidden">
         <CampaignList week={days} campaigns={campaigns} />
       </div>
       <div className="grid flex-1 grid-cols-1 md:grid-cols-7">
         {days.map((day) => {
           const key = dayKey(day);
           const list = byDay.get(key) ?? [];
+          const ghosts = ghostsByDay.get(key) ?? [];
           const past = isPastDay(day, today);
-          const gap = !past && (plannedByDay.get(key) ?? 0) === 0;
+          const empty = list.length === 0 && ghosts.length === 0;
           return (
             <section
               key={key}
               aria-label={longDay(day)}
               className={cn(
-                'group/day flex min-w-0 flex-col border-b border-border md:border-b-0 md:border-r md:last:border-r-0',
+                // `relative`: los textos solo para lector (sr-only) se colocan aquí y no alargan la página.
+                'relative flex min-w-0 items-start gap-2 border-b border-border px-2 py-1.5 last:border-b-0 md:flex-col md:items-stretch md:gap-1 md:border-b-0 md:border-r md:last:border-r-0',
                 past && 'bg-subtle/40',
                 drop.isOver(day) && 'bg-primary-soft/60',
               )}
-              onClick={() => setActive(key)}
               {...drop.props(day)}
               data-testid="calendar-day"
               data-day={key}
-              data-gap={gap}
+              data-gap={!past && empty}
               data-today={sameDay(day, today)}
             >
-              <header className="flex items-center justify-between gap-1 px-2 pt-1.5">
-                <DayHeading day={day} today={today} />
-                {canSchedule && !past && <AddButton day={day} onAdd={onAdd} active={active === key} />}
-              </header>
-              <div className="flex flex-col gap-2 px-2 pb-2 pt-1">
+              <DayHeading day={day} today={today} />
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
                 {list.map((e) => (
                   <div key={e.id}>{renderCard(e, 'week')}</div>
                 ))}
-                {list.length === 0 && gap && (
-                  <p
-                    className="rounded-lg border border-dashed border-warning/50 px-2 py-3 text-center text-xs text-warning"
-                    data-testid="calendar-day-gap"
-                  >
+                {ghosts.map((g) => (
+                  <GhostCard key={g.key} ghost={g} />
+                ))}
+                {empty && !past && canSchedule && <DaySlot day={day} onAdd={onAdd} />}
+                {empty && !past && !canSchedule && (
+                  <p className="py-2 text-xs text-muted" data-testid="calendar-day-gap">
                     Sin nada
                   </p>
                 )}
@@ -354,11 +332,10 @@ function MiniThumb({ thumb }: { thumb: EntryThumb | undefined }) {
   );
 }
 
-/** Mes compacto: las semanas pasadas se pliegan, la actual se destaca y cada día enseña miniaturas y un contador. */
+/** Mes compacto: la semana actual se destaca y cada día enseña miniaturas y un contador (las propuestas, en gris). */
 export function MonthView(common: MonthViewProps) {
-  const { days, anchor, selected, onSelect, byDay, plannedByDay, today, thumbOf, campaigns, goal } = common;
+  const { days, anchor, selected, onSelect, byDay, ghostsByDay, today, thumbOf, campaigns } = common;
   const drop = useDayDrop(common);
-  const [open, setOpen] = useState<Set<string>>(new Set());
   const weeks = chunkWeeks(days);
   return (
     <div
@@ -375,27 +352,7 @@ export function MonthView(common: MonthViewProps) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {weeks.map((week) => {
           const weekKey = dayKey(week[0]!);
-          const planned = week.reduce((sum, d) => sum + (plannedByDay.get(dayKey(d)) ?? 0), 0);
           const current = week.some((d) => sameDay(d, today));
-          const past = isPastWeek(week, today);
-          if (past && !open.has(weekKey)) {
-            return (
-              <button
-                key={weekKey}
-                type="button"
-                aria-expanded={false}
-                onClick={() => setOpen((prev) => new Set(prev).add(weekKey))}
-                className="flex h-8 w-full items-center gap-2 border-b border-border bg-subtle/50 px-3 text-left text-xs text-muted hover:bg-subtle"
-                data-testid="calendar-week-folded"
-              >
-                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-                Semana del {shortDay(week[0]!)}
-                <span className="ml-auto tabular-nums">
-                  {planned === 0 ? 'sin nada' : `${planned} ${planned === 1 ? 'pieza' : 'piezas'}`}
-                </span>
-              </button>
-            );
-          }
           return (
             <div
               key={weekKey}
@@ -403,42 +360,21 @@ export function MonthView(common: MonthViewProps) {
               data-testid="calendar-week-row"
               data-current={current}
             >
-              <div className="flex items-center gap-2 px-2 pt-1 text-[11px] text-muted">
-                {past ? (
-                  <button
-                    type="button"
-                    aria-expanded
-                    onClick={() =>
-                      setOpen((prev) => {
-                        const next = new Set(prev);
-                        next.delete(weekKey);
-                        return next;
-                      })
-                    }
-                    className="flex items-center gap-1 hover:text-fg"
-                  >
-                    <ChevronDown className="h-3 w-3" aria-hidden />
-                    Semana del {shortDay(week[0]!)}
-                  </button>
-                ) : (
-                  <span className={cn(current && 'font-semibold text-primary')}>
-                    {current ? 'Esta semana' : `Semana del ${shortDay(week[0]!)}`}
-                  </span>
-                )}
-                <span className="tabular-nums">
-                  {planned} de {goal}
-                </span>
-              </div>
               <CampaignBands week={week} campaigns={campaigns} className="pt-0.5" />
               <div className="grid grid-cols-7">
                 {week.map((day) => {
                   const key = dayKey(day);
                   const list = byDay.get(key) ?? [];
+                  const ghosts = ghostsByDay.get(key) ?? [];
                   const pastDay = isPastDay(day, today);
                   const outside = day.getMonth() !== anchor.getMonth();
                   const isToday = sameDay(day, today);
                   const isSelected = sameDay(day, selected);
-                  const label = list.length === 0 ? 'sin nada' : `${list.length} ${list.length === 1 ? 'publicación' : 'publicaciones'}`;
+                  const label =
+                    (list.length === 0
+                      ? 'sin nada'
+                      : `${list.length} ${list.length === 1 ? 'publicación' : 'publicaciones'}`) +
+                    (ghosts.length ? ` y ${ghosts.length} ${ghosts.length === 1 ? 'propuesta' : 'propuestas'}` : '');
                   return (
                     <button
                       key={key}
@@ -467,19 +403,29 @@ export function MonthView(common: MonthViewProps) {
                       >
                         {day.getDate()}
                       </span>
-                      {list.length > 0 && (
+                      {(list.length > 0 || ghosts.length > 0) && (
                         <span className="flex items-center gap-0.5">
                           <span className="hidden -space-x-1.5 sm:flex">
                             {list.slice(0, 3).map((e) => (
                               <MiniThumb key={e.id} thumb={thumbOf(e)} />
                             ))}
                           </span>
-                          <span
-                            className="rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-fg"
-                            data-testid="calendar-day-count"
-                          >
-                            {list.length}
-                          </span>
+                          {list.length > 0 && (
+                            <span
+                              className="rounded-full bg-primary px-1.5 text-[11px] font-semibold tabular-nums text-primary-fg"
+                              data-testid="calendar-day-count"
+                            >
+                              {list.length}
+                            </span>
+                          )}
+                          {ghosts.length > 0 && (
+                            <span
+                              className="rounded-full border border-dashed border-muted px-1.5 text-[11px] tabular-nums text-muted"
+                              data-testid="calendar-day-ghosts"
+                            >
+                              {ghosts.length}
+                            </span>
+                          )}
                         </span>
                       )}
                     </button>
@@ -494,10 +440,11 @@ export function MonthView(common: MonthViewProps) {
   );
 }
 
-/** El día elegido en el mes: sus piezas como tarjetas y «Programar este día». */
+/** El día elegido en el mes: sus piezas como tarjetas; si no tiene nada, su hueco programa ese día. */
 export function DayPanel({
   day,
   list,
+  ghosts = [],
   today,
   renderCard,
   canSchedule,
@@ -505,6 +452,7 @@ export function DayPanel({
 }: {
   day: Date;
   list: CalendarEntry[];
+  ghosts?: GhostPiece[];
   today: Date;
   renderCard: ViewCommon['renderCard'];
   canSchedule: boolean;
@@ -517,26 +465,20 @@ export function DayPanel({
       className="max-h-[38%] shrink-0 overflow-y-auto rounded-xl border border-border bg-surface p-2"
       data-testid="calendar-day-panel"
     >
-      <header className="mb-1 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold first-letter:uppercase">{longDay(day)}</h3>
-        {canSchedule && !past && (
-          <button
-            type="button"
-            onClick={() => onAdd(day)}
-            className="inline-flex h-9 items-center gap-1 rounded-lg px-2 text-sm text-primary hover:bg-subtle"
-            data-testid="calendar-day-panel-add"
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            Programar este día
-          </button>
-        )}
-      </header>
-      {list.length === 0 ? (
-        <p className="py-2 text-sm text-muted">Sin nada este día.</p>
+      <h3 className="mb-1 text-sm font-semibold first-letter:uppercase">{longDay(day)}</h3>
+      {list.length === 0 && ghosts.length === 0 ? (
+        canSchedule && !past ? (
+          <DaySlot day={day} onAdd={onAdd} />
+        ) : (
+          <p className="py-2 text-sm text-muted">Sin nada este día.</p>
+        )
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {list.map((e) => (
             <div key={e.id}>{renderCard(e, 'row')}</div>
+          ))}
+          {ghosts.map((g) => (
+            <GhostCard key={g.key} ghost={g} />
           ))}
         </div>
       )}
@@ -552,9 +494,8 @@ interface AgendaViewProps extends ViewCommon {
 
 /** Lista: semana a semana, día a día, con los huecos a la vista. Es la de móvil. */
 export function AgendaView(common: AgendaViewProps) {
-  const { days, byDay, plannedByDay, today, renderCard, canSchedule, onAdd, campaigns, goal } = common;
+  const { days, byDay, ghostsByDay, plannedByDay, today, renderCard, canSchedule, onAdd, campaigns, goal } = common;
   const drop = useDayDrop(common);
-  const [active, setActive] = useState<string | null>(null);
   const weeks = chunkWeeks(days).filter(
     (week) => !isPastWeek(week, today) || week.some((d) => (byDay.get(dayKey(d)) ?? []).length > 0),
   );
@@ -581,6 +522,7 @@ export function AgendaView(common: AgendaViewProps) {
               {week.map((day) => {
                 const key = dayKey(day);
                 const list = byDay.get(key) ?? [];
+                const ghosts = ghostsByDay.get(key) ?? [];
                 const past = isPastDay(day, today);
                 const gap = !past && (plannedByDay.get(key) ?? 0) === 0;
                 if (past && list.length === 0) return null;
@@ -588,11 +530,10 @@ export function AgendaView(common: AgendaViewProps) {
                   <div
                     key={key}
                     className={cn(
-                      'group/day flex gap-3 border-b border-border p-2 last:border-b-0',
+                      'flex gap-3 border-b border-border p-2 last:border-b-0',
                       past && 'bg-subtle/40',
                       drop.isOver(day) && 'bg-primary-soft/60',
                     )}
-                    onClick={() => setActive(key)}
                     {...drop.props(day)}
                     data-testid="calendar-day"
                     data-day={key}
@@ -615,13 +556,18 @@ export function AgendaView(common: AgendaViewProps) {
                       {list.map((e) => (
                         <div key={e.id}>{renderCard(e, 'row')}</div>
                       ))}
-                      {list.length === 0 && (
-                        <p className="py-2 text-sm text-warning" data-testid="calendar-day-gap">
+                      {ghosts.map((g) => (
+                        <GhostCard key={g.key} ghost={g} />
+                      ))}
+                      {list.length === 0 && ghosts.length === 0 && canSchedule && !past && (
+                        <DaySlot day={day} onAdd={onAdd} />
+                      )}
+                      {list.length === 0 && ghosts.length === 0 && !(canSchedule && !past) && (
+                        <p className="py-2 text-sm text-muted" data-testid="calendar-day-gap">
                           Sin nada
                         </p>
                       )}
                     </div>
-                    {canSchedule && !past && <AddButton day={day} onAdd={onAdd} active={active === key} />}
                   </div>
                 );
               })}

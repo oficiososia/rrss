@@ -1,7 +1,15 @@
 import {
+  ArrowDownAZ,
+  CheckSquare,
   Clapperboard,
+  Clock,
   Download,
+  EyeOff,
   FilterX,
+  Flame,
+  ZoomIn,
+  ZoomOut,
+  type LucideIcon,
   FolderInput,
   FolderPen,
   FolderPlus,
@@ -23,10 +31,10 @@ import {
   Button,
   Card,
   ConfirmDialog,
+  Dialog,
   EmptyState,
   ErrorState,
   Input,
-  MoreMenu,
   Notice,
   PageHeader,
   Select,
@@ -53,12 +61,17 @@ import {
 } from './catalog';
 import {
   applyFilters,
-  CHIPS,
+  EXPORTS_FOLDER,
+  GENERATED_FOLDERS,
+  isExport,
+  KIND_TABS,
+  MADE_HERE_LABEL,
   countByFolder,
   EMPTY_FILTERS,
   idsBetween,
   SORT_LABEL,
   type ChipId,
+  type KindTab,
   type SortKey,
 } from './filters';
 import { FolderNameDialog, MoveDialog, TagDialog } from './LibraryDialogs';
@@ -80,6 +93,7 @@ const TILE_KEY = 'rrss.library.tile';
 const TILE_MIN = 96;
 const TILE_MAX = 280;
 const TILE_DEFAULT = 160;
+const TILE_STEP = 40;
 const NO_USAGE: ReadonlyMap<string, number> = new Map();
 
 function readTile(): number {
@@ -119,7 +133,17 @@ export function LibraryPage() {
 
   // ── Filtros ──
   const [folder, setFolder] = useState<string | null>(EMPTY_FILTERS.folder);
-  const [chips, setChips] = useState<ReadonlySet<ChipId>>(EMPTY_FILTERS.chips);
+  // Simplificación B1: una ficha de tipo (Todo, Fotos, Vídeos, Audios) y, desde «⋯», «solo sin usar».
+  const [kind, setKind] = useState<KindTab>('all');
+  const [onlyUnused, setOnlyUnused] = useState(false);
+  const chips = useMemo<ReadonlySet<ChipId>>(() => {
+    const next = new Set<ChipId>();
+    if (kind !== 'all') next.add(kind);
+    if (onlyUnused) next.add('unused');
+    return next;
+  }, [kind, onlyUnused]);
+  const [choosingTag, setChoosingTag] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
   const [tag, setTag] = useState('');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('date');
@@ -140,8 +164,14 @@ export function LibraryPage() {
 
   // ── Carpetas ──
   const counts = useMemo(() => countByFolder(all), [all]);
-  const tree = useMemo(() => buildFolderTree(counts, empty.folders), [counts, empty.folders]);
-  const flat = useMemo(() => flattenTree(tree), [tree]);
+  const fullTree = useMemo(() => buildFolderTree(counts, empty.folders), [counts, empty.folders]);
+  // «Hechas aquí» (B3): las carpetas que llena la aplicación van juntas, al final y plegadas.
+  // «Exportaciones» además no cuenta en «Toda la biblioteca».
+  const tree = useMemo(() => fullTree.filter((n) => !GENERATED_FOLDERS.includes(n.path)), [fullTree]);
+  const madeHere = useMemo(() => fullTree.filter((n) => GENERATED_FOLDERS.includes(n.path)), [fullTree]);
+  const exportsNode = useMemo(() => fullTree.find((n) => n.path === EXPORTS_FOLDER) ?? null, [fullTree]);
+  const libraryTotal = useMemo(() => all.filter((a) => !isExport(a)).length, [all]);
+  const flat = useMemo(() => flattenTree(fullTree), [fullTree]);
   const folderPaths = useMemo(() => flat.map((n) => n.path), [flat]);
   const unfiled = counts.get('') ?? 0;
   const currentNode: FolderNode | undefined = folder ? flat.find((n) => n.path === folder) : undefined;
@@ -197,6 +227,7 @@ export function LibraryPage() {
   );
   const clearSelection = useCallback(() => {
     setPickedIds(new Set());
+    setSelectMode(false);
     anchor.current = null;
   }, []);
 
@@ -370,16 +401,20 @@ export function LibraryPage() {
   const crumbs = folder ? breadcrumbs(folder) : [];
   const resetFilters = () => {
     setFolder(null);
-    setChips(new Set());
+    setKind('all');
+    setOnlyUnused(false);
     setTag('');
     setSearch('');
   };
-  const toggleChip = (id: ChipId) =>
-    setChips((current) => {
-      const next = new Set(current);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+  const saveTile = (value: number) => {
+    const next = Math.min(TILE_MAX, Math.max(TILE_MIN, value));
+    setTile(next);
+    try {
+      localStorage.setItem(TILE_KEY, String(next));
+    } catch {
+      // Sin almacenamiento, el tamaño vale solo para esta visita.
+    }
+  };
   const pickFolder = (next: string | null) => {
     setFolder(next);
     clearSelection();
@@ -397,19 +432,62 @@ export function LibraryPage() {
     receiveFiles(uploadFolder, Array.from(event.dataTransfer.files));
   };
 
-  const headerMore: MoreMenuItem[] = canEdit
-    ? [
-        canUseDrive
-          ? { id: 'drive', label: 'Traer de Google Drive', icon: HardDrive, onSelect: () => setDrivePicking(true), testId: 'library-drive' }
-          : null,
-        mediaWorkerEnabled()
-          ? { id: 'reels', label: 'Montar un reel', icon: Clapperboard, onSelect: () => navigate('reels'), testId: 'library-reels' }
-          : null,
-      ]
-    : [];
+  const sortItem = (key: SortKey, icon: LucideIcon): MoreMenuItem =>
+    key === 'usage' && !usageKnown
+      ? null
+      : {
+          id: `sort-${key}`,
+          label: `${effectiveSort === key ? '✓ ' : ''}Ordenar: ${SORT_LABEL[key].toLowerCase()}`,
+          icon,
+          onSelect: () => setSort(key),
+          testId: `library-sort-${key}`,
+        };
+  const headerMore: MoreMenuItem[] = [
+    sortItem('date', Clock),
+    sortItem('name', ArrowDownAZ),
+    sortItem('usage', Flame),
+    null,
+    facets.data?.tags.length
+      ? {
+          id: 'tag',
+          label: tag ? `Etiqueta: ${tag}` : 'Filtrar por etiqueta…',
+          icon: Tag,
+          onSelect: () => setChoosingTag(true),
+          testId: 'library-tag-filter',
+        }
+      : null,
+    usageKnown
+      ? {
+          id: 'unused',
+          label: onlyUnused ? 'Ver también las que se usan' : 'Solo las que no se usan',
+          icon: EyeOff,
+          onSelect: () => setOnlyUnused((v) => !v),
+          testId: 'library-unused',
+        }
+      : null,
+    tile < TILE_MAX
+      ? { id: 'bigger', label: 'Miniaturas más grandes', icon: ZoomIn, onSelect: () => saveTile(tile + TILE_STEP), testId: 'library-tile-bigger' }
+      : null,
+    tile > TILE_MIN
+      ? { id: 'smaller', label: 'Miniaturas más pequeñas', icon: ZoomOut, onSelect: () => saveTile(tile - TILE_STEP), testId: 'library-tile-smaller' }
+      : null,
+    null,
+    canEdit && !selectMode
+      ? { id: 'select', label: 'Elegir varias', icon: CheckSquare, onSelect: () => setSelectMode(true), testId: 'library-select-mode' }
+      : null,
+    null,
+    ...folderMenu,
+    null,
+    canEdit && canUseDrive
+      ? { id: 'drive', label: 'Traer de Google Drive', icon: HardDrive, onSelect: () => setDrivePicking(true), testId: 'library-drive' }
+      : null,
+    canEdit && mediaWorkerEnabled()
+      ? { id: 'reels', label: 'Montar un reel', icon: Clapperboard, onSelect: () => navigate('reels'), testId: 'library-reels' }
+      : null,
+  ];
 
   const selecting = selection.size > 0;
-  const showUsageChips = usageKnown;
+  const stopSelecting = clearSelection;
 
   return (
     <div
@@ -428,8 +506,8 @@ export function LibraryPage() {
             {everything.isPending
               ? 'Cargando…'
               : filtering
-                ? `${plural(rows.length, 'archivo', 'archivos')} de ${all.length}`
-                : plural(all.length, 'archivo', 'archivos')}
+                ? `${plural(rows.length, 'archivo', 'archivos')} de ${libraryTotal}`
+                : plural(libraryTotal, 'archivo', 'archivos')}
           </span>
         }
         action={
@@ -440,7 +518,7 @@ export function LibraryPage() {
             </Button>
           )
         }
-        more={canEdit ? headerMore : undefined}
+        more={headerMore}
         moreTestId="library-more"
       />
 
@@ -467,8 +545,9 @@ export function LibraryPage() {
           )}
           <FolderTree
             tree={tree}
-            total={all.length}
+            total={libraryTotal}
             unfiled={unfiled}
+            madeHere={madeHere}
             selected={folder}
             onSelect={pickFolder}
             canDrop={canEdit}
@@ -480,7 +559,14 @@ export function LibraryPage() {
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" aria-label="Archivos">
           {/* Móvil: selector de carpeta */}
           <div className="lg:hidden">
-            <FolderSelect tree={tree} total={all.length} unfiled={unfiled} selected={folder} onSelect={pickFolder} />
+            <FolderSelect
+              tree={tree}
+              total={libraryTotal}
+              unfiled={unfiled}
+              selected={folder}
+              onSelect={pickFolder}
+              madeHere={madeHere}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -499,57 +585,6 @@ export function LibraryPage() {
                 data-testid="library-search"
               />
             </div>
-            <Select
-              aria-label="Filtrar por etiqueta"
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              disabled={!facets.data?.tags.length}
-              className="hidden w-44 sm:block"
-            >
-              <option value="">Todas las etiquetas</option>
-              {facets.data?.tags.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Ordenar por"
-              value={effectiveSort}
-              onChange={(e) => setSort(e.target.value as SortKey)}
-              className="w-36"
-              data-testid="library-sort"
-            >
-              {(Object.keys(SORT_LABEL) as SortKey[])
-                .filter((k) => k !== 'usage' || usageKnown)
-                .map((k) => (
-                  <option key={k} value={k}>
-                    {SORT_LABEL[k]}
-                  </option>
-                ))}
-            </Select>
-            <label className="hidden items-center gap-2 text-xs text-muted md:flex">
-              Tamaño
-              <input
-                type="range"
-                min={TILE_MIN}
-                max={TILE_MAX}
-                step={8}
-                value={tile}
-                onChange={(e) => {
-                  const value = Number(e.target.value);
-                  setTile(value);
-                  try {
-                    localStorage.setItem(TILE_KEY, String(value));
-                  } catch {
-                    // Sin almacenamiento, el tamaño vale solo para esta visita.
-                  }
-                }}
-                aria-label="Tamaño de las miniaturas"
-                className="w-24 accent-primary"
-                data-testid="library-tile-size"
-              />
-            </label>
           </div>
 
           {selecting ? (
@@ -578,41 +613,57 @@ export function LibraryPage() {
                 <Trash2 className="h-4 w-4" aria-hidden />
                 Eliminar
               </Button>
-              <Button size="icon" variant="ghost" onClick={clearSelection} aria-label="Quitar la selección" title="Quitar la selección (Esc)">
+              <Button size="icon" variant="ghost" onClick={stopSelecting} aria-label="Quitar la selección" title="Quitar la selección (Esc)">
                 <X className="h-4 w-4" aria-hidden />
               </Button>
             </div>
           ) : (
-            // Sin barra de scroll nativa: en móvil la fila se desplaza con el dedo (barra oculta; el relleno de
-            // 2 px deja sitio al contorno del foco); desde tablet los filtros saltan de línea y se ven todos.
-            <div
-              className="-m-0.5 flex gap-2 overflow-x-auto p-0.5 [scrollbar-width:none] sm:m-0 sm:flex-wrap sm:overflow-visible sm:p-0 [&::-webkit-scrollbar]:hidden"
-              role="group"
-              aria-label="Filtros rápidos"
-              data-testid="library-chips"
-            >
-              {CHIPS.filter((c) => showUsageChips || c.id !== 'unused').map((chip) => {
-                const on = chips.has(chip.id);
-                return (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex gap-1.5" role="group" aria-label="Tipo de archivo" data-testid="library-chips">
+                {KIND_TABS.map((tab) => (
                   <button
-                    key={chip.id}
+                    key={tab.id}
                     type="button"
-                    aria-pressed={on}
-                    onClick={() => toggleChip(chip.id)}
-                    data-testid={`chip-${chip.id}`}
+                    aria-pressed={kind === tab.id}
+                    onClick={() => setKind(tab.id)}
+                    data-testid={`library-kind-${tab.id}`}
                     className={cn(
                       'min-h-[2.25rem] shrink-0 rounded-full border px-3 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
-                      on ? 'border-primary bg-primary-soft font-medium text-primary' : 'border-border bg-surface hover:bg-subtle',
+                      kind === tab.id
+                        ? 'border-primary bg-primary-soft font-medium text-primary'
+                        : 'border-border bg-surface hover:bg-subtle',
                     )}
                   >
-                    {chip.label}
+                    {tab.label}
                   </button>
-                );
-              })}
+                ))}
+              </div>
+              {(tag || onlyUnused) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTag('');
+                    setOnlyUnused(false);
+                  }}
+                  className="inline-flex min-h-[2.25rem] items-center gap-1 rounded-full bg-primary-soft px-3 text-sm text-primary"
+                  data-testid="library-extra-filters"
+                >
+                  {[tag && `Etiqueta: ${tag}`, onlyUnused && 'Sin usar'].filter(Boolean).join(' · ')}
+                  <X className="h-3.5 w-3.5" aria-label="Quitar" />
+                </button>
+              )}
+              {selectMode && !selecting && (
+                <span className="flex items-center gap-2 text-sm text-muted" data-testid="library-select-hint">
+                  Toca las que quieras
+                  <Button size="sm" variant="ghost" onClick={stopSelecting}>
+                    Cancelar
+                  </Button>
+                </span>
+              )}
             </div>
           )}
 
-          {(folder !== null || canEdit) && (
+          {folder !== null && (
             <div className="flex items-center justify-between gap-2" data-testid="library-breadcrumbs">
               <nav aria-label="Dónde estás" className="min-w-0 truncate text-sm">
                 <ol className="flex min-w-0 items-center gap-1 text-muted">
@@ -649,8 +700,22 @@ export function LibraryPage() {
                   ))}
                 </ol>
               </nav>
-              {canEdit && folder !== '' && <MoreMenu items={folderMenu} label="Acciones de la carpeta" testId="folder-menu" size="sm" />}
             </div>
+          )}
+
+          {folder === null && exportsNode && (
+            <p className="text-xs text-muted" data-testid="library-exports-hint">
+              Las imágenes que exporta el editor no salen aquí ni al elegir fotos: están en «{MADE_HERE_LABEL}»,{' '}
+              <button
+                type="button"
+                className="font-medium text-primary underline"
+                onClick={() => pickFolder(EXPORTS_FOLDER)}
+                data-testid="library-exports-open"
+              >
+                {EXPORTS_FOLDER} ({exportsNode.total})
+              </button>
+              .
+            </p>
           )}
 
           {everything.data?.truncated && (
@@ -660,7 +725,7 @@ export function LibraryPage() {
           )}
           {usageQuery.isError && (
             <p className="text-xs text-muted" data-testid="library-usage-missing">
-              No se ha podido saber en qué piezas se usa cada archivo; por eso no salen «Sin usar» ni «Más usadas».
+              No se ha podido saber en qué piezas se usa cada archivo; por eso no se puede ver «Solo las que no se usan» ni ordenar por uso.
             </p>
           )}
 
@@ -717,6 +782,11 @@ export function LibraryPage() {
                   selection={selection}
                   openId={openId}
                   canSelect={canEdit}
+                  showChecks={selectMode || selecting}
+                  onLongPress={(id: string) => {
+                    setSelectMode(true);
+                    select(id, 'toggle');
+                  }}
                   canDrag={canEdit}
                   onOpen={setOpenId}
                   onSelect={select}
@@ -789,6 +859,35 @@ export function LibraryPage() {
             )
           }
         />
+      )}
+      {choosingTag && (
+        <Dialog
+          open
+          onOpenChange={setChoosingTag}
+          title="Filtrar por etiqueta"
+          footer={
+            <Button variant="secondary" onClick={() => setChoosingTag(false)}>
+              Hecho
+            </Button>
+          }
+        >
+          <Select
+            aria-label="Etiqueta"
+            value={tag}
+            onChange={(e) => {
+              setTag(e.target.value);
+              setChoosingTag(false);
+            }}
+            data-testid="library-tag-select"
+          >
+            <option value="">Todas las etiquetas</option>
+            {facets.data?.tags.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+        </Dialog>
       )}
       {creatingFolder && (
         <FolderNameDialog
