@@ -1184,7 +1184,7 @@ De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de 
      pruebas en rojo). Ahora usa `seedWeek` (`src/test/semana.ts`), con las funciones del calendario y
      la zona de la marca. Los demás bancos no tienen ese borde (el Inicio siembra respecto a «ahora» y
      la analítica cuenta los días en UTC, como la pantalla).
-- **Probado**: `npm test` (1956 pasan, 151 archivos), con casos nuevos en `integraciones.test.tsx`, `usoInterno.test.tsx`,
+- **Probado**: `npm test` (1959 pasan, 151 archivos), con casos nuevos en `integraciones.test.tsx`, `usoInterno.test.tsx`,
   `selectorUnico.test.tsx`, `cupo.test.ts`, `listaContenidos.test.tsx` y `semana.test.ts`; base de datos
   (`tests/db/integraciones.test.ts`: sondas por tarjeta con proveedores **simulados**, la función y la
   migración, que también pasa `migraciones.test.ts`); maquetación en Chromium real (112 pasan con `--workers=2`): la
