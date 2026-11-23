@@ -476,6 +476,9 @@ export function brandOutro(kit: BrandReelKit, cta?: string | null, seconds = 2):
 const CALL_TO_ACTION =
   /\b(reserva|reservar|pide|pídelo|llama|llámanos|visítanos|ven|venid|encarga|compra|apúntate|escríbenos|enlace|bio|te esperamos|pruébalo)\b/i;
 
+/** ¿El texto es una llamada a la acción («Reserva tu mesa», «Te esperamos»…)? */
+export const isCallToAction = (text: string) => CALL_TO_ACTION.test(text);
+
 /**
  * Añade al plan el cierre con la marca. Si el último texto del reel ya es la
  * llamada («Reserva tu mesa» sobre el último plano), pasa al cierre en lugar de

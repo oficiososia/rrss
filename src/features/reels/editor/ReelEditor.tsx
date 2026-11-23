@@ -928,6 +928,9 @@ function Editor({
       ...(defaultFont ? { font: { path: defaultFont.path, family: defaultFont.family } } : {}),
     };
   };
+  /** Rellena un hueco del guion con su encuadre guardado (punto de interés y máscara), como al añadir a mano. */
+  const fillGuide = (p: ReelProject, shotId: string, asset: Parameters<typeof fillGuideShot>[2]) =>
+    applySavedFraming(fillGuideShot(p, shotId, asset, template, guideLook()), framing.focal, framing.masks);
   /** Las piezas elegidas entran en el orden de la elección; en un reel vacío, con el estilo y el texto de partida. */
   const addMedia = (assets: ReelSourceAsset[]) => {
     if (assets.length === 0) return;
@@ -1628,7 +1631,7 @@ function Editor({
               error={sources.error}
               readOnly={readOnly}
               labelOf={labelOf}
-              onFill={(shotId, asset) => apply((p) => fillGuideShot(p, shotId, asset, template, guideLook()))}
+              onFill={(shotId, asset) => apply((p) => fillGuide(p, shotId, asset))}
               onSelectClip={(id) => select({ kind: 'clip', id })}
             />
           )}
@@ -1761,7 +1764,7 @@ function Editor({
                     error={sources.error}
                     readOnly={readOnly}
                     labelOf={labelOf}
-                    onFill={(shotId, asset) => apply((p) => fillGuideShot(p, shotId, asset, template, guideLook()))}
+                    onFill={(shotId, asset) => apply((p) => fillGuide(p, shotId, asset))}
                     onSelectClip={(id) => select({ kind: 'clip', id })}
                   />
                 )
