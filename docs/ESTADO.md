@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 22/11/2026 (rama `f40/campanas-voz`; antes, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
+Última actualización: 23/11/2026 (rama `f46/pulido`; antes, `f40/campanas-voz`, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1139,3 +1139,52 @@ Detalle, patrones adoptados y fuentes en `docs/editor-reels.md` §10.
   de uso comercial); rotar textos, curvas de velocidad, pegatinas y varias pistas de vídeo (el trabajador no
   los monta).
 - **Para staging**: migración → redesplegar el trabajador (el anterior rechaza los campos nuevos) → Vercel.
+
+## Pulido de interfaz: siete arreglos (rama `f46/pulido`, 23/11/2026)
+
+De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de maquetación.
+
+- **Implementado**
+  1. **Integraciones: cada tarjeta prueba y enseña solo su proveedor.** La de Claude ya no enseña la
+     prueba de OpenAI (ni fal.ai la de «Otras imágenes con IA»): «Probar conexión» manda la tarjeta
+     (`service`) y el servidor prueba, devuelve y anota solo lo suyo. Migración
+     `20270105010000_pruebas_por_tarjeta.sql` (fila propia de última prueba para Claude y fal.ai; vuelta
+     atrás en `supabase/rollbacks/`). Detalle en `docs/integraciones-sencillas.md`.
+  2. **Autogestión sin planes, cupos ni márgenes.** Con `work_mode = 'self'`: sin pestaña «Plan», sin la
+     tarjeta «Cupo de IA», avisos de la IA sin cupos ni planes («tope de gasto»), y en Plataforma (uso
+     interno) cupos, margen y planes plegados, «Gasto y uso» sin cupos ni planes e Integraciones sin
+     cobros. El gasto real se sigue viendo. Solo visibilidad. Detalle en `docs/modo-de-trabajo.md`, §3.
+  3. **Un solo selector de marca**: el de organización desaparece; el de marca lista las marcas de
+     todas las organizaciones (agrupadas si hay más de una) y la organización se lee bajo la marca.
+  4. **«Nueva idea»**: la barra fija de «Cancelar / Crear y abrir» tapa hasta el borde del diálogo.
+  5. **Coste de «Hacer un reel como este»**: «Cuesta unos céntimos.» en autogestión; con agencia,
+     «Gasta menos del 1 % del cupo de este mes.» (`src/features/ai/cupo.ts`).
+  6. **Biblioteca**: la fila de filtros ya no enseña la barra de scroll nativa (salta de línea desde
+     tablet; en móvil se desplaza con la barra oculta).
+  7. **Banco de maquetación del calendario**: sembraba «la semana de hoy» con el lunes en UTC y, entre
+     las 00:00 y la 01:00 (02:00 en verano) de un lunes en Madrid, dejaba el calendario vacío (10
+     pruebas en rojo). Ahora usa `seedWeek` (`src/test/semana.ts`), con las funciones del calendario y
+     la zona de la marca. Los demás bancos no tienen ese borde (el Inicio siembra respecto a «ahora» y
+     la analítica cuenta los días en UTC, como la pantalla).
+- **Probado**: `npm test` (1956 pasan, 151 archivos), con casos nuevos en `integraciones.test.tsx`, `usoInterno.test.tsx`,
+  `selectorUnico.test.tsx`, `cupo.test.ts`, `listaContenidos.test.tsx` y `semana.test.ts`; base de datos
+  (`tests/db/integraciones.test.ts`: sondas por tarjeta con proveedores **simulados**, la función y la
+  migración, que también pasa `migraciones.test.ts`); maquetación en Chromium real (112 pasan con `--workers=2`): la
+  barra del diálogo a 375, 768 y 1366 px, los filtros de la biblioteca a 375, 800, 900, 1024 y 1180 px
+  y el calendario un lunes a las 00:39 de Madrid (dentro del borde). El banco se pasó en otro puerto
+  (5396) porque el 5391 lo ocupaba el banco de otro trabajo: `playwright.layout.config.ts` reutiliza
+  el servidor que encuentre y probaría el código de esa otra carpeta.
+- **Pendiente**
+  - Redesplegar la función `platform-integrations` y aplicar la migración `20270105010000` en staging
+    (en cualquier orden: sin la migración, la prueba de Claude y la de fal.ai se hacen y se enseñan,
+    pero no quedan anotadas).
+  - Textos con «cupo» o «plan» que quedan en autogestión porque viven en zonas que no se tocaron en
+    esta rama: editor de reels («Cuenta en el cupo de IA…»), «Hacer un reel como este» (su página),
+    «Editar foto» («se descuenta del cupo…»), copiloto, importar publicaciones («Ocupan espacio de
+    tu plan») y el aviso «Cambiar de plan» del calendario (lleva a una pestaña que en autogestión ya
+    no existe y vuelve a General).
+  - El criterio de «uso interno» de Plataforma mira las organizaciones de quien abre la pantalla, no
+    todas las de la instalación (la lista de Plataforma no trae el modo de trabajo).
+- **Sin probar**: nada contra un proveedor real (las sondas, con respuestas HTTP simuladas); las e2e
+  01, 06 y 08, adaptadas al selector único **sin ejecutar** (necesitan el Supabase local); un
+  navegador y un móvil reales fuera del banco.
