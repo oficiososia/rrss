@@ -165,15 +165,19 @@ export function drawSpecShape(context: Context, shape: Shape, spec: NodeSpec, im
     return;
   }
   if (spec.kind !== 'image') return;
+  if (spec.frame === 'empty') {
+    drawEmptyFrame(context._context, width, height, spec.placeholder);
+    return;
+  }
   if (isDrawable(image)) {
     const native = context._context;
     if (spec.backdrop) drawBackdrop(native, spec.backdrop, image, spec, width, height);
     native.save();
     if (spec.shadow) applyNativeShadow(native, spec.shadow);
     if (spec.blur > 0) {
-      drawBlurredImage(native, image, spec.fit, spec.focus, spec.blur, width, height);
+      drawBlurredImage(native, image, spec.fit, spec.focus, spec.blur, width, height, spec.zoom);
     } else {
-      drawFitted(native, image, spec.fit, spec.focus, 0, 0, width, height);
+      drawFitted(native, image, spec.fit, spec.focus, 0, 0, width, height, spec.zoom);
     }
     native.restore();
     return;
@@ -196,6 +200,83 @@ export function drawSpecShape(context: Context, shape: Shape, spec: NodeSpec, im
   native.restore();
 }
 
+/**
+ * Marco de foto todavía vacío: un hueco claro con borde discontinuo y su nombre
+ * («Foto de antes», «Retrato»…). Solo se ve en el editor: la exportación no
+ * dibuja los marcos vacíos. El botón «Poner foto» no va aquí sino encima de
+ * todo el diseño (`drawFramePill`), para que no lo tape un velo ni un titular.
+ */
+export function drawEmptyFrame(native: CanvasRenderingContext2D, width: number, height: number, name: string): void {
+  const side = Math.min(width, height);
+  native.save();
+  native.fillStyle = 'rgba(226, 232, 240, 0.92)';
+  native.fillRect(0, 0, width, height);
+  const line = Math.max(2, side / 180);
+  native.strokeStyle = 'rgba(71, 85, 105, 0.9)';
+  native.lineWidth = line;
+  native.setLineDash([line * 5, line * 4]);
+  native.strokeRect(line / 2, line / 2, width - line, height - line);
+  native.setLineDash([]);
+  const label = name.trim();
+  const font = Math.max(18, Math.min(34, side / 12));
+  if (label && height > font * 3 && width > font * 4) {
+    native.fillStyle = 'rgba(30, 41, 59, 0.85)';
+    native.font = `${font}px sans-serif`;
+    native.textAlign = 'left';
+    native.textBaseline = 'top';
+    native.fillText(label, font * 0.6, font * 0.5, width - font * 1.2);
+  }
+  native.restore();
+}
+
+/** Texto del botón de un marco vacío. */
+export const FRAME_PILL_LABEL = 'Poner foto';
+/** Medidas del botón en píxeles de pantalla (no cambian con el zoom). */
+export const FRAME_PILL = { height: 36, font: 14, padX: 14, plus: 11, gap: 7 } as const;
+
+/** Ancho del botón «Poner foto» en píxeles de pantalla; solo la cruz si no cabe el texto. */
+export function framePillWidth(textWidth: number, compact: boolean): number {
+  return compact ? FRAME_PILL.height : FRAME_PILL.padX * 2 + FRAME_PILL.plus + FRAME_PILL.gap + textWidth;
+}
+
+/**
+ * El botón «Poner foto» de un marco vacío: una pastilla oscura con una cruz,
+ * centrada en (0, 0). `unit` es cuántas unidades del lienzo mide un píxel de
+ * pantalla (1 / escala), para que se vea igual de grande con cualquier zoom.
+ */
+export function drawFramePill(native: CanvasRenderingContext2D, unit: number, compact: boolean): void {
+  const { height, font, padX, plus, gap } = FRAME_PILL;
+  native.save();
+  native.scale(unit, unit);
+  native.font = `600 ${font}px system-ui, sans-serif`;
+  const textWidth = compact ? 0 : native.measureText(FRAME_PILL_LABEL).width;
+  const width = framePillWidth(textWidth, compact);
+  native.shadowColor = 'rgba(15, 23, 42, 0.35)';
+  native.shadowBlur = 8;
+  native.shadowOffsetY = 2;
+  native.fillStyle = '#1F2937';
+  roundedRect(native, -width / 2, -height / 2, width, height, height / 2);
+  native.fill();
+  native.shadowColor = 'transparent';
+  native.strokeStyle = '#FFFFFF';
+  native.lineWidth = 2;
+  native.lineCap = 'round';
+  const plusX = compact ? 0 : -width / 2 + padX + plus / 2;
+  native.beginPath();
+  native.moveTo(plusX - plus / 2, 0);
+  native.lineTo(plusX + plus / 2, 0);
+  native.moveTo(plusX, -plus / 2);
+  native.lineTo(plusX, plus / 2);
+  native.stroke();
+  if (!compact) {
+    native.fillStyle = '#FFFFFF';
+    native.textAlign = 'left';
+    native.textBaseline = 'middle';
+    native.fillText(FRAME_PILL_LABEL, plusX + plus / 2 + gap, 1);
+  }
+  native.restore();
+}
+
 /** Dibuja la imagen en una zona (`x`, `y`, `w`, `h`) llenándola (`cover`) o entera (`contain`). */
 function drawFitted(
   target: CanvasRenderingContext2D,
@@ -206,10 +287,11 @@ function drawFitted(
   y: number,
   w: number,
   h: number,
+  zoom = 1,
 ): void {
   const natural = naturalSize(image);
   if (fit === 'cover') {
-    const crop = coverCrop(natural, { width: w, height: h }, focus);
+    const crop = coverCrop(natural, { width: w, height: h }, focus, zoom);
     target.drawImage(image, crop.x, crop.y, crop.width, crop.height, x, y, w, h);
   } else {
     const box = containBox(natural, { width: w, height: h });
@@ -294,6 +376,7 @@ function drawBlurredImage(
   radius: number,
   width: number,
   height: number,
+  zoom = 1,
 ): void {
   const margin = radius * 2;
   const outer = { width: width + margin * 2, height: height + margin * 2 };
@@ -304,7 +387,7 @@ function drawBlurredImage(
   const scale = contextScale(native);
   if (supportsCanvasFilter(native)) {
     native.filter = `blur(${Math.max(0.5, radius * scale).toFixed(2)}px)`;
-    drawFitted(native, image, fit, focus, -margin, -margin, outer.width, outer.height);
+    drawFitted(native, image, fit, focus, -margin, -margin, outer.width, outer.height, zoom);
   } else {
     // Aproximación: a 1/(radio) del tamaño y de vuelta, con suavizado.
     const factor = Math.max(1, radius * scale);
@@ -313,7 +396,7 @@ function drawBlurredImage(
     small.height = Math.max(1, Math.round((outer.height * scale) / factor));
     const smallContext = small.getContext('2d');
     if (smallContext) {
-      drawFitted(smallContext, image, fit, focus, 0, 0, small.width, small.height);
+      drawFitted(smallContext, image, fit, focus, 0, 0, small.width, small.height, zoom);
       native.imageSmoothingEnabled = true;
       native.drawImage(small, -margin, -margin, outer.width, outer.height);
     }

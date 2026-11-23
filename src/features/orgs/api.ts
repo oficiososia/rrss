@@ -31,6 +31,7 @@ export const keys = {
   platformAdmin: (userId: string) => ['platform-admin', userId] as const,
   members: (orgId: string) => ['org', orgId, 'members'] as const,
   brands: (orgId: string) => ['org', orgId, 'brands'] as const,
+  brandsElsewhere: (orgIds: string[]) => ['brands-elsewhere', ...orgIds] as const,
   myBrandRoles: (orgId: string, userId: string) => ['org', orgId, 'my-brand-roles', userId] as const,
   invitations: (orgId: string) => ['org', orgId, 'invitations'] as const,
   audit: (orgId: string, brandId: string | null, page: number) => ['org', orgId, 'audit', brandId, page] as const,
@@ -119,6 +120,26 @@ export function useBrands(orgId: string) {
     queryKey: keys.brands(orgId),
     queryFn: async (): Promise<BrandRow[]> =>
       unwrap(await supabase.from('brands').select('*').eq('organization_id', orgId).order('name')),
+  });
+}
+
+/**
+ * Las marcas (sin las archivadas) de las DEMÁS organizaciones a las que se pertenece, para el selector
+ * único de marcas: se cambia de marca sin pasar antes por «cambiar de organización». Las que deja ver
+ * la base de datos (RLS), y solo de las organizaciones pedidas. Con una sola organización no pregunta.
+ */
+export function useBrandsElsewhere(orgIds: string[]) {
+  return useQuery({
+    queryKey: keys.brandsElsewhere(orgIds),
+    enabled: orgIds.length > 0,
+    queryFn: async (): Promise<Pick<BrandRow, 'id' | 'name' | 'organization_id' | 'status'>[]> =>
+      unwrap(
+        await supabase
+          .from('brands')
+          .select('id, name, organization_id, status')
+          .in('organization_id', orgIds)
+          .order('name'),
+      ).filter((b) => b.status !== 'archived'),
   });
 }
 

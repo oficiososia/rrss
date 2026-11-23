@@ -8,7 +8,10 @@ import { abrir, dato, sinErrores, sql } from './apoyo';
 //
 // Ana abre «Nueva idea», marca «Empezar desde una plantilla», ve la plantilla con
 // su análisis, la elige y crea la pieza: nace con el documento de la plantilla
-// (la foto como marcador, el texto y el pie como guía) en la versión 1.
+// en la versión 1. La plantilla es de las antiguas (documento v3, con la foto
+// como una forma llamada «Foto (sustituir)» y la indicación en el pie): al
+// leerla, el marcador pasa a ser un marco de foto vacío y el pie, un pie de
+// ejemplo que no se publica.
 
 test.describe.configure({ mode: 'serial' });
 
@@ -94,10 +97,19 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
 
-  const versiones = await sql<{ version: number; change_note: string; capas: string[]; pie: string }>(
+  const versiones = await sql<{
+    version: number;
+    change_note: string;
+    capas: string[];
+    pie: string;
+    ejemplo: string;
+    foto: { type: string; frame: boolean; source: { kind: string }; name: string };
+  }>(
     `select version, change_note,
             array(select l ->> 'id' from jsonb_array_elements(data #> '{pages,0,layers}') l) as capas,
-            data #>> '{copy,caption}' as pie
+            data #>> '{copy,caption}' as pie,
+            data #>> '{copy,captionHint}' as ejemplo,
+            data #> '{pages,0,layers,0}' as foto
      from public.content_versions where content_id = $1 order by version`,
     [id],
   );
@@ -105,9 +117,19 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
   expect(versiones[0]).toMatchObject({
     version: 1,
     capas: ['marcador-foto', 'titular'],
-    pie: 'Hoy sale del horno: …',
+    // El pie de la plantilla no es el texto de la pieza: llega como ejemplo y el pie, vacío.
+    pie: '',
+    ejemplo: 'Hoy sale del horno: …',
+    // El marcador es ya un marco de foto vacío.
+    foto: { type: 'image', frame: true, source: { kind: 'empty' }, name: 'Foto' },
   });
   expect(versiones[0]?.change_note).toContain('Titular sobre foto');
+
+  // En el editor: falta una foto (se dice arriba) y el pie de ejemplo se ve en gris, sin ser el pie.
+  await expect(page.getByTestId('editor-empty-frames')).toHaveText('Falta 1 foto');
+  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await expect(page.getByTestId('copy-caption')).toHaveValue('');
+  await expect(page.getByTestId('copy-caption')).toHaveAttribute('placeholder', 'Hoy sale del horno: …');
 
   sinErrores(s);
   await s.context.close();

@@ -32,8 +32,7 @@ import { APP_NAME } from '@/config/app';
 import { campaignsAvailable } from '@/features/campaigns/labels';
 import { useUser } from '@/features/auth/AuthProvider';
 import { LegalFooter } from '@/features/legal/LegalFooter';
-import { useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
-import { ORG_ROLE_LABEL } from '@/features/permissions/roles';
+import { useBrandsElsewhere, useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
 import { useUnreadRequestNotifications } from '@/features/requests/notifications';
 import type { BrandRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -77,44 +76,30 @@ function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 
 }
 
 const switcherButton =
-  'flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-2 text-left text-sm hover:bg-subtle';
+  'flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left text-sm hover:bg-subtle';
 
-function OrgSwitcher({ orgs, org }: { orgs: MyOrganization[]; org: MyOrganization }) {
-  const navigate = useNavigate();
-  return (
-    <Menu>
-      <MenuTrigger
-        className={switcherButton}
-        data-testid="org-switcher"
-        aria-label={`Organización: ${org.name}. Cambiar`}
-      >
-        <Building2 className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-        <span className="min-w-0 flex-1 truncate font-medium">{org.name}</span>
-        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-      </MenuTrigger>
-      <MenuContent>
-        <MenuLabel>Organizaciones</MenuLabel>
-        {orgs.map((o) => (
-          <MenuItem key={o.id} onSelect={() => navigate(`/o/${o.id}`)} data-testid={`org-option-${o.id}`}>
-            <span className="min-w-0 flex-1 truncate">{o.name}</span>
-            <span className="text-xs text-muted">{ORG_ROLE_LABEL[o.role]}</span>
-            {o.id === org.id && <Check className="h-4 w-4 text-primary" aria-label="Seleccionada" />}
-          </MenuItem>
-        ))}
-        <MenuSeparator />
-        <MenuItem onSelect={() => navigate('/bienvenida')}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Crear organización
-        </MenuItem>
-      </MenuContent>
-    </Menu>
-  );
-}
-
-function BrandSwitcher({ org, brands, brand }: { org: MyOrganization; brands: BrandRow[]; brand: BrandRow | null }) {
+/**
+ * El ÚNICO selector: todas las marcas a las que se tiene acceso, sean de la organización que sean.
+ * Antes había dos (organización y marca) y para ir a una marca de otra organización había que cambiar
+ * primero de organización. La organización ya no se elige: se lee (debajo del nombre de la marca) y,
+ * con más de una, agrupa las marcas del menú.
+ */
+function BrandSwitcher({
+  orgs,
+  org,
+  brands,
+  brand,
+}: {
+  orgs: MyOrganization[];
+  org: MyOrganization;
+  brands: BrandRow[];
+  brand: BrandRow | null;
+}) {
   const navigate = useNavigate();
   const visible = brands.filter((b) => b.status !== 'archived' || b.id === brand?.id);
   const canCreate = org.role === 'owner' || org.role === 'admin';
+  const others = orgs.filter((o) => o.id !== org.id);
+  const elsewhere = useBrandsElsewhere(others.map((o) => o.id));
   return (
     <Menu>
       <MenuTrigger
@@ -123,35 +108,71 @@ function BrandSwitcher({ org, brands, brand }: { org: MyOrganization; brands: Br
         aria-label={brand ? `Marca: ${brand.name}. Cambiar` : 'Elegir marca'}
       >
         <Palette className="h-4 w-4 shrink-0 text-muted" aria-hidden />
-        <span className={cn('min-w-0 flex-1 truncate', brand ? 'font-medium' : 'text-muted')}>
-          {brand ? brand.name : 'Elegir marca'}
+        <span className="min-w-0 flex-1">
+          <span className={cn('block truncate', brand ? 'font-medium' : 'text-muted')}>
+            {brand ? brand.name : 'Elegir marca'}
+          </span>
+          <span className="block truncate text-xs text-muted" data-testid="org-name">
+            {org.name}
+          </span>
         </span>
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted" aria-hidden />
       </MenuTrigger>
       <MenuContent>
-        <MenuLabel>Marcas</MenuLabel>
-        {visible.length === 0 && <p className="px-2.5 py-2 text-sm text-muted">Todavía no hay marcas.</p>}
-        {visible.map((b) => (
-          <MenuItem
-            key={b.id}
-            onSelect={() => navigate(`/o/${org.id}/m/${b.id}/inicio`)}
-            data-testid={`brand-option-${b.id}`}
-          >
-            <span className="min-w-0 flex-1 truncate">{b.name}</span>
-            {b.id === brand?.id && <Check className="h-4 w-4 text-primary" aria-label="Seleccionada" />}
+        <div data-testid="brand-menu">
+          <MenuLabel>{others.length > 0 ? org.name : 'Marcas'}</MenuLabel>
+          {visible.length === 0 && <p className="px-2.5 py-2 text-sm text-muted">Todavía no hay marcas.</p>}
+          {visible.map((b) => (
+            <MenuItem
+              key={b.id}
+              onSelect={() => navigate(`/o/${org.id}/m/${b.id}/inicio`)}
+              data-testid={`brand-option-${b.id}`}
+            >
+              <span className="min-w-0 flex-1 truncate">{b.name}</span>
+              {b.id === brand?.id && <Check className="h-4 w-4 text-primary" aria-label="Seleccionada" />}
+            </MenuItem>
+          ))}
+          {others.map((other) => {
+            const theirs = (elsewhere.data ?? []).filter((b) => b.organization_id === other.id);
+            return (
+              <div key={other.id} data-testid={`brand-group-${other.id}`}>
+                <MenuSeparator />
+                <MenuLabel>{other.name}</MenuLabel>
+                {theirs.map((b) => (
+                  <MenuItem
+                    key={b.id}
+                    onSelect={() => navigate(`/o/${other.id}/m/${b.id}/inicio`)}
+                    data-testid={`brand-option-${b.id}`}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                  </MenuItem>
+                ))}
+                {/* Sin marcas (o sin haberlas leído todavía), se entra a la organización: allí se crean. */}
+                {theirs.length === 0 && (
+                  <MenuItem onSelect={() => navigate(`/o/${other.id}`)} data-testid={`org-option-${other.id}`}>
+                    <Building2 className="h-4 w-4" aria-hidden />
+                    {elsewhere.isPending ? 'Abrir' : 'Todavía sin marcas: abrir'}
+                  </MenuItem>
+                )}
+              </div>
+            );
+          })}
+          <MenuSeparator />
+          <MenuItem onSelect={() => navigate(`/o/${org.id}`)}>
+            <LayoutGrid className="h-4 w-4" aria-hidden />
+            Ver todas las marcas
           </MenuItem>
-        ))}
-        <MenuSeparator />
-        <MenuItem onSelect={() => navigate(`/o/${org.id}`)}>
-          <LayoutGrid className="h-4 w-4" aria-hidden />
-          Ver todas las marcas
-        </MenuItem>
-        {canCreate && (
-          <MenuItem onSelect={() => navigate(`/o/${org.id}/marcas/nueva`)}>
-            <Plus className="h-4 w-4" aria-hidden />
-            Nueva marca
+          {canCreate && (
+            <MenuItem onSelect={() => navigate(`/o/${org.id}/marcas/nueva`)}>
+              <Plus className="h-4 w-4" aria-hidden />
+              Nueva marca
+            </MenuItem>
+          )}
+          <MenuItem onSelect={() => navigate('/bienvenida')} data-testid="new-organization">
+            <Building2 className="h-4 w-4" aria-hidden />
+            Crear organización
           </MenuItem>
-        )}
+        </div>
       </MenuContent>
     </Menu>
   );
@@ -292,12 +313,7 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
           {!collapsed && <span className="flex-1 text-base font-semibold tracking-tight">{APP_NAME}</span>}
           <SidebarToggle collapsed={collapsed} onToggle={toggle} />
         </div>
-        {!collapsed && (
-          <div className="space-y-2">
-            <OrgSwitcher orgs={orgs} org={org} />
-            <BrandSwitcher org={org} brands={brands} brand={brand} />
-          </div>
-        )}
+        {!collapsed && <BrandSwitcher orgs={orgs} org={org} brands={brands} brand={brand} />}
         <nav aria-label="Principal" className="w-full flex-1 space-y-1 overflow-y-auto">
           {items.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
@@ -331,11 +347,10 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
       </aside>
 
       <div className={cn('min-w-0', working && 'flex h-dvh min-h-0 flex-col')}>
-        {/* Móvil y tablet: cabecera con los selectores */}
+        {/* Móvil y tablet (sin menú lateral): cabecera con el mismo selector único */}
         <header className="sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 py-2 backdrop-blur lg:hidden">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2">
-            <OrgSwitcher orgs={orgs} org={org} />
-            <BrandSwitcher org={org} brands={brands} brand={brand} />
+          <div className="min-w-0 flex-1">
+            <BrandSwitcher orgs={orgs} org={org} brands={brands} brand={brand} />
           </div>
           <UserMenu compact />
         </header>

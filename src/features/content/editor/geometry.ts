@@ -112,13 +112,18 @@ export function fitScale(canvas: { width: number; height: number }, available: {
   return Math.min(1, available.width / canvas.width, available.height / canvas.height);
 }
 
-/** Recorte de una imagen para llenar una caja (`cover`) respetando el punto de interés. */
+/**
+ * Recorte de una imagen para llenar una caja (`cover`) respetando el punto de
+ * interés. Con `zoom` (1 o más) la foto se amplía dentro de la caja: se ve una
+ * parte más pequeña, alrededor del mismo punto.
+ */
 export function coverCrop(
   image: { width: number; height: number },
   box: { width: number; height: number },
   focus: { x: number; y: number },
+  zoom = 1,
 ) {
-  const scale = Math.max(box.width / image.width, box.height / image.height);
+  const scale = Math.max(box.width / image.width, box.height / image.height) * Math.max(1, zoom);
   const width = box.width / scale;
   const height = box.height / scale;
   const x = Math.min(image.width - width, Math.max(0, focus.x * image.width - width / 2));

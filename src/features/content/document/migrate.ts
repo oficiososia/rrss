@@ -24,6 +24,36 @@ const V5_LAYER_FIELDS = [
   'background',
 ] as const;
 
+/** Campos que llegan con la versión 6. */
+const V6_LAYER_FIELDS = ['frame', 'zoom'] as const;
+
+/**
+ * Marcador de foto de las plantillas hasta la versión 5: un rectángulo cuyo
+ * nombre acaba en «(sustituir)» («Foto (sustituir)», «Retrato (sustituir)»…).
+ * Era la convención del catálogo porque no había marcos.
+ */
+const PHOTO_PLACEHOLDER = /\s*\(sustituir\)\s*$/i;
+
+/** El marcador de foto convertido en un marco vacío: misma caja, giro, anclaje y grupo. */
+function placeholderToFrame(layer: Record<string, unknown>): Record<string, unknown> {
+  const frame: Record<string, unknown> = {
+    id: layer.id,
+    type: 'image',
+    name: String(layer.name).replace(PHOTO_PLACEHOLDER, '').slice(0, 120),
+    x: layer.x,
+    y: layer.y,
+    width: layer.width,
+    height: layer.height,
+    source: { kind: 'empty' },
+    frame: true,
+    fit: 'cover',
+  };
+  for (const key of ['rotation', 'visible', 'locked', 'anchor', 'groupId']) {
+    if (layer[key] !== undefined) frame[key] = layer[key];
+  }
+  return frame;
+}
+
 export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
   // 1 → 2: llegan los grupos de capas. Un documento de la 1 no tiene ninguno; si
   // alguna capa trajera ya un `groupId` (no debería), se quita para que no se
@@ -83,6 +113,39 @@ export const DOCUMENT_MIGRATIONS: Record<number, DocumentMigration> = {
         })
       : document.pages;
     return { ...document, pages };
+  },
+  // 5 → 6: llegan los marcos de foto y el pie de ejemplo. Un documento de la 5
+  // no tiene ninguno; si alguna capa trajera ya `frame` o `zoom`, o una imagen
+  // sin foto (no debería), se quita. Los marcadores de foto del catálogo (un
+  // rectángulo llamado «… (sustituir)») pasan a ser marcos vacíos: es lo que
+  // querían ser.
+  5: (document) => {
+    const pages = Array.isArray(document.pages)
+      ? document.pages.map((page: unknown) => {
+          if (typeof page !== 'object' || page === null || !Array.isArray((page as { layers?: unknown }).layers)) {
+            return page;
+          }
+          const layers = (page as { layers: unknown[] }).layers.map((layer: unknown) => {
+            if (typeof layer !== 'object' || layer === null) return layer;
+            const rest = { ...(layer as Record<string, unknown>) };
+            for (const field of V6_LAYER_FIELDS) delete rest[field];
+            if (
+              rest.type === 'shape' &&
+              rest.shape === 'rectangle' &&
+              PHOTO_PLACEHOLDER.test(String(rest.name ?? ''))
+            ) {
+              return placeholderToFrame(rest);
+            }
+            return rest;
+          });
+          return { ...(page as Record<string, unknown>), layers };
+        })
+      : document.pages;
+    const copy =
+      typeof document.copy === 'object' && document.copy !== null
+        ? (({ captionHint: _hint, ...rest }) => rest)(document.copy as Record<string, unknown>)
+        : document.copy;
+    return { ...document, pages, ...(copy === undefined ? {} : { copy }) };
   },
 };
 

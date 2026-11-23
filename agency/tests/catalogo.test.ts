@@ -1,6 +1,6 @@
 // Catálogo de plantillas de la agencia: recorre TODAS las plantillas de los
 // cuatro juegos con varios temas y las pasa por los validadores de la
-// aplicación (documento v5, análisis, plantilla de reel, plan v2 del reel), y
+// aplicación (documento v6, análisis, plantilla de reel, plan v2 del reel), y
 // comprueba la carga en seco y la carga de verdad contra el Supabase simulado.
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -155,7 +155,7 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
           }
         });
 
-        it('las publicaciones son documentos v5 válidos: capas dentro del lienzo y carruseles de 2 a 10 páginas', () => {
+        it('las publicaciones son documentos v6 válidos: capas dentro del lienzo y carruseles de 2 a 10 páginas', () => {
           for (const template of catalog.publications.templates) {
             const { document } = template;
             expect(document.schemaVersion, template.key).toBe(DOCUMENT_SCHEMA_VERSION);
@@ -174,6 +174,12 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
                 expect(layer.y, where).toBeGreaterThanOrEqual(0);
                 expect(layer.x + layer.width, where).toBeLessThanOrEqual(1080);
                 expect(layer.y + layer.height, where).toBeLessThanOrEqual(1350);
+                // Las fotos son marcos vacíos (nunca un recurso que la marca no tiene) con su nombre.
+                if (layer.type === 'image') {
+                  expect(layer.source, where).toEqual({ kind: 'empty' });
+                  expect(layer.frame, where).toBe(true);
+                  expect(layer.name.trim().length, where).toBeGreaterThan(0);
+                }
                 if (layer.type === 'text') {
                   expect(layer.text.trim().length, where).toBeGreaterThan(0);
                   // El texto cabe en su caja con un ancho medio de letra de 0,56 del cuerpo.
@@ -183,6 +189,9 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
                 }
               }
             }
+            // El pie es una indicación (se ve en gris en el editor), no el texto que se publicaría.
+            expect(document.copy.caption, template.key).toBe('');
+            expect(document.copy.captionHint?.length ?? 0, template.key).toBeGreaterThan(10);
             // Para qué sirve, cuándo usarla y qué material necesita van en el resumen del análisis.
             expect(template.analysis.summary, template.key).toMatch(/Cuándo: .+ Material: /);
             expect(template.source).toBe('manual');

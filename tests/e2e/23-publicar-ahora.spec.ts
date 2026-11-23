@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql } from './apoyo';
+import { abrir, accionDelMenu, aviso, dato, sinErrores, sql } from './apoyo';
 
 // «Publicar ahora» de extremo a extremo, contra el Supabase LOCAL y la Graph API
 // de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts, activada
@@ -33,7 +33,6 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   await page.getByRole('tab', { name: 'Publicación' }).click();
   await page.getByTestId('copy-caption').fill('El pan de centeno acaba de salir del horno.');
   await page.getByTestId('editor-save').click();
-  await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 1 guardada');
   await page.getByTestId('status-approved').click();
   await aviso(page, 'Aprobada');
@@ -45,7 +44,7 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   );
   expect(antes).toEqual({ n: 0 });
 
-  await page.getByTestId('editor-publish-now').click();
+  await accionDelMenu(page, 'editor-share', 'editor-publish-now');
   await expect(page.getByTestId('publish-now-warning')).toContainText(
     'Se publicará ahora en @cuenta_simulada. No se puede deshacer desde aquí.',
   );

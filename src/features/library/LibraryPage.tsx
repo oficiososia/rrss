@@ -577,7 +577,14 @@ export function LibraryPage() {
               </Button>
             </div>
           ) : (
-            <div className="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Filtros rápidos" data-testid="library-chips">
+            // Sin barra de scroll nativa: en móvil la fila se desplaza con el dedo (barra oculta; el relleno de
+            // 2 px deja sitio al contorno del foco); desde tablet los filtros saltan de línea y se ven todos.
+            <div
+              className="-m-0.5 flex gap-2 overflow-x-auto p-0.5 [scrollbar-width:none] sm:m-0 sm:flex-wrap sm:overflow-visible sm:p-0 [&::-webkit-scrollbar]:hidden"
+              role="group"
+              aria-label="Filtros rápidos"
+              data-testid="library-chips"
+            >
               {CHIPS.filter((c) => showUsageChips || c.id !== 'unused').map((chip) => {
                 const on = chips.has(chip.id);
                 return (

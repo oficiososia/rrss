@@ -1,4 +1,9 @@
-import { contentDocumentSchema, pageView, type ContentDocument } from '@/features/content/document';
+import {
+  contentDocumentSchema,
+  DOCUMENT_SCHEMA_VERSION,
+  pageView,
+  type ContentDocument,
+} from '@/features/content/document';
 import { renderDocument } from '@/features/content/editor/canvas/exporter';
 import { describeDocument } from '@/features/content/editor/canvas/nodes';
 import { Scene } from '@/features/content/editor/canvas/scene';
@@ -146,7 +151,7 @@ const SCENES: Record<string, unknown[]> = {
 
 function documentFor(name: string): ContentDocument {
   return contentDocumentSchema.parse({
-    schemaVersion: 5,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: { aspectRatio: '1:1', width: SIDE, height: SIDE, backgroundColor: '#FFFFFF' },
     pages: [{ id: 'p1', layers: SCENES[name] }],
   });

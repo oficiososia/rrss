@@ -8,6 +8,9 @@
 import type { IntegrationAvailability, IntegrationStatus } from './api';
 import { TEXT_TASKS, UI_INTEGRATIONS, type AiTextTask, type IntegrationId, type UiGroup } from './catalog';
 
+/** Parte de una integración compartida que prueba una tarjeta (lo mismo que en el servidor, probes.ts). */
+export type ProbeScope = 'openai' | 'claude' | 'images_other' | 'fal';
+
 export type ServiceId =
   | 'openai'
   | 'claude'
@@ -47,6 +50,13 @@ export interface ServiceDef {
   optional?: boolean;
   /** Integración cuya prueba lanza «Probar conexión». */
   testIntegration: IntegrationId;
+  /**
+   * Cuando varias tarjetas comparten integración (OpenAI y Claude; fal.ai y las
+   * demás de imagen): qué parte prueba esta. El servidor prueba solo eso.
+   */
+  testScope?: ProbeScope;
+  /** Fila donde queda la última prueba de esta tarjeta, si no es la de la integración. */
+  testRecord?: string;
   /** Qué hace la prueba, en una frase (y si gasta algo, cuánto). */
   testHint: string;
   /** Ajustes de la vista sencilla, en orden. */
@@ -82,6 +92,7 @@ export const SERVICES: ServiceDef[] = [
     title: 'OpenAI',
     blurb: 'Textos, copiloto, imágenes y subtítulos, con una sola clave.',
     testIntegration: 'ai_text',
+    testScope: 'openai',
     testHint: `Pregunta a OpenAI qué modelos ve tu clave y comprueba que puede generar. ${AI_TEXT_TEST_COST}`,
     simple: ['OPENAI_API_KEY'],
     required: ['OPENAI_API_KEY'],
@@ -147,7 +158,9 @@ export const SERVICES: ServiceDef[] = [
     blurb: 'Otra forma de redactar y montar piezas. No hace falta para empezar.',
     optional: true,
     testIntegration: 'ai_text',
-    testHint: `Si alguna tarea usa Claude, comprueba su acceso y que puede generar. ${AI_TEXT_TEST_COST}`,
+    testScope: 'claude',
+    testRecord: 'ai_text_claude',
+    testHint: `Comprueba el acceso de Claude y, si alguna tarea lo usa, que puede generar. No prueba OpenAI. ${AI_TEXT_TEST_COST}`,
     simple: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     required: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     keys: [
@@ -256,6 +269,8 @@ export const SERVICES: ServiceDef[] = [
     blurb: 'Convierte una foto en un vídeo corto con IA. Procesa fuera de la UE.',
     optional: true,
     testIntegration: 'ai_image',
+    testScope: 'fal',
+    testRecord: 'ai_image_fal',
     testHint: 'Consulta el precio de sus modelos de animar fotos. No genera nada.',
     simple: ['FAL_KEY'],
     required: ['FAL_KEY'],
@@ -334,6 +349,7 @@ export const SERVICES: ServiceDef[] = [
     blurb: 'Google (Gemini), Black Forest Labs (FLUX) e Ideogram, para crear imágenes. Opcional.',
     optional: true,
     testIntegration: 'ai_image',
+    testScope: 'images_other',
     testHint: 'Pide un token a Google o el saldo a Black Forest Labs. No genera nada.',
     simple: ['BFL_API_KEY'],
     required: ['BFL_API_KEY'],
@@ -461,6 +477,17 @@ export const SUMMARY: SummaryItem[] = [
   { label: 'Cobrar los planes', on: (a) => a.billing, needs: 'stripe' },
 ];
 
+/** La última prueba guardada de ESTA tarjeta (no la de otra tarjeta de la misma integración). */
+export function lastTestOf(service: ServiceDef, status: IntegrationStatus) {
+  const record = service.testRecord ?? service.testIntegration;
+  return status.tests.find((t) => t.integration === record);
+}
+
+/** Cómo se llama en la actividad una prueba anotada en la fila propia de una tarjeta. */
+export const TEST_RECORD_TITLE: Record<string, string> = Object.fromEntries(
+  SERVICES.filter((s) => s.testRecord).map((s) => [s.testRecord!, s.title]),
+);
+
 /** Lo que la tarjeta sabe de la configuración (sin valores secretos). */
 export function buildServiceCtx(service: ServiceDef, status: IntegrationStatus): ServiceCtx {
   const stored = new Map(status.settings.map((s) => [s.setting_key, s]));
@@ -469,12 +496,9 @@ export function buildServiceCtx(service: ServiceDef, status: IntegrationStatus):
     const row = stored.get(key);
     return row && !row.is_secret ? (row.value ?? undefined) : undefined;
   };
-  const usesClaude = ['AI_TEXT_PROVIDER', ...UI_INTEGRATIONS.flatMap((i) =>
-    i.groups.flatMap((g) => g.fields.map((f) => f.key).filter((k) => k.endsWith('_PROVIDER') && k.startsWith('AI_TEXT_'))),
-  )].some((k) => (value(k) ?? '').startsWith('anthropic'));
-  const test = status.tests.find((t) => t.integration === service.testIntegration);
-  // La prueba de «IA de texto» es de todos los proveedores: a Claude solo le sirve si alguna tarea lo usa.
-  const lastTest = test && (service.id !== 'claude' || usesClaude) ? { ok: test.ok, message: test.message } : null;
+  // Cada tarjeta mira su propia prueba: la de Claude ya no hereda la de OpenAI.
+  const test = lastTestOf(service, status);
+  const lastTest = test ? { ok: test.ok, message: test.message } : null;
   return {
     availability: status.availability,
     has: (key) => stored.has(key) || fromEnv.has(key),

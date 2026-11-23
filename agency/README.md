@@ -141,7 +141,7 @@ Ejemplo completo: [`ejemplos/entrega.json`](./ejemplos/entrega.json).
 
 `agency/catalogo/` trae cuatro juegos de plantillas listos para cargar en una marca. Cada uno lleva **10
 plantillas de reel** (con estructura: planos, duraciones, textos animados, movimiento de cámara, música
-sugerida y portada) y **10 de publicación o carrusel** (documentos v5 del editor):
+sugerida y portada) y **10 de publicación o carrusel** (documentos v6 del editor, con marcos de foto):
 
 | Juego | Para quién |
 | --- | --- |
@@ -182,8 +182,13 @@ npm run agencia -- cargar-catalogo - restaurante --perfil perfil.json
 - Cargar otra vez el mismo juego **actualiza** las mismas plantillas (misma clave): no duplica. Cada juego
   usa su prefijo (`rest-`, `coct-`, `gim-`, `gen-`), así que una marca puede tener el de su sector y el genérico.
 - Hace falta poder **editar** la marca. Tope: 60 plantillas de reel por marca.
-- Las fotos de las publicaciones son marcadores («Foto (sustituir)»): una plantilla solo puede llevar
-  recursos de la biblioteca de la marca.
+- Las fotos de las publicaciones son **marcos de foto vacíos** (una imagen con `source: { "kind": "empty" }`
+  y `frame: true`): una plantilla solo puede llevar recursos de la biblioteca de la marca, y el catálogo no
+  tiene ninguno. En el editor el marco enseña «Poner foto» y la foto lo rellena. El pie va como
+  `copy.captionHint` (una indicación que se ve en gris y no se publica), no como `copy.caption`.
+  Para aceptar estos documentos la base de datos necesita la migración `20270103010000`. Las plantillas
+  ya entregadas con el marcador antiguo (una forma llamada «… (sustituir)») siguen valiendo: la
+  aplicación las convierte en marcos al leerlas.
 - Por qué estas plantillas: `docs/plantillas-competencia.md`. El formato de las de reel:
   `docs/editor-reels.md`, sección 9.
 

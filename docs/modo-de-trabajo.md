@@ -51,8 +51,24 @@ existentes (el cupo de IA, la reserva y el coste no cambian).
 | Marca → Identidad visual → Plantillas | Botón «Cargar plantillas del catálogo»; las manuales se llaman «Nuestra» | Sin botón (la carga se hace con la herramienta de la agencia); «De la agencia» |
 | Contenidos → «Desde una plantilla» | «Nuestra», «Propuesta:», textos de ayuda sin agencia | «De la agencia» y textos de siempre |
 | Conexión avanzada de Instagram (token) | «Conexión avanzada (con clave)» y sin hablar de agencias | «Conexión avanzada (agencia)» |
-| Configuración → Consumo de IA | Además, «Gasto del mes» (solo propietario) | Igual que antes |
+| Configuración → Consumo de IA | «Gasto del mes» (solo propietario), coste por marca y por mes. **Sin la tarjeta «Cupo de IA»** (ni plan, ni barra): solo un aviso en llano si el tope de gasto falta, pasa del 80 % o se alcanza | Igual que antes (cupo, plan, barra) |
+| Configuración → Plan | **No existe**: sin pestaña, y su dirección vuelve a General | Igual que antes |
+| Avisos de la IA («descuenta del cupo…», cupo agotado, «tu plan no incluye…») | No nombran cupos ni planes: el límite es un «tope de gasto de IA» y solo se menciona cuando se alcanza o falta | Igual que antes |
+| «Hacer un reel como este» en «Nueva idea» | «Cuesta unos céntimos.» (el coste máximo, en llano; `src/features/ai/cupo.ts`) | «Gasta menos del 1 % del cupo de este mes.» |
 | Inicio de organización | «Las marcas de X» | «Las marcas que gestiona X» si es de tipo agencia |
+
+**Plataforma en uso interno (23/11/2026, rama `f46/pulido`).** Las pantallas de Plataforma no son de
+ninguna organización: miran las de quien las abre (`useInternalUse`, `src/features/orgs/workMode.ts`).
+Si lleva alguna y **todas** están en autogestión, es uso interno:
+
+| Pantalla | Uso interno | Con alguna organización en modo agencia |
+| --- | --- | --- |
+| Plataforma | «Cupo mensual de IA», «Ingresos, coste y margen» y «Planes» quedan plegados en «Opciones avanzadas: límites de cada organización» (cerrado no se pinta ni se pide nada) | A la vista, como antes |
+| Plataforma → Gasto y uso | El gasto real por tipo, el trabajador y lo que ocupa cada marca. Sin la columna «Cupo consumido», sin el nombre del plan ni sus etiquetas y sin el límite de almacenamiento del plan | Igual que antes |
+| Plataforma → Integraciones | Sin la tarjeta de pagos (Stripe) ni «Cobrar los planes» | Igual que antes |
+
+Es **solo visibilidad**: no se ha borrado código ni tablas, y los límites (tope de gasto de IA, plan)
+siguen actuando en el servidor. El tope se sube desde Plataforma → «Opciones avanzadas».
 
 Textos como «Pedir a la agencia» o «lo hace la agencia» solo aparecen con una marca en modo agencia
 (`brand.ai_mode = 'agency'`), así que en autogestión no salen.

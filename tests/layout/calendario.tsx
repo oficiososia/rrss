@@ -2,8 +2,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from '@/App';
 import '@/index.css';
 import type { ContentItemRow, ScheduledPublicationRow, SocialAccountRow } from '@/lib/database.types';
+import { safeZone } from '@/features/social/zone';
 import { fake } from '@/test/fakeSupabase';
-import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
+import { BRAND_BASE, BRAND_ID, brandRow, ORG_ID, seedWorkspace } from '@/test/fixtures';
+import { seedWeek } from '@/test/semana';
 
 // Banco de maquetación del Calendario: la aplicación real con el Supabase simulado y una
 // semana CARGADA (la de hoy): un día con ocho piezas, dos el mismo día con títulos largos,
@@ -11,13 +13,11 @@ import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
 seedWorkspace({ orgRole: 'owner' });
 
-const monday = (() => {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d;
-})();
-const at = (day: number, hour: number) => new Date(monday.getTime() + day * 86_400_000 + hour * 3_600_000);
+// La semana de hoy EN LA ZONA DE LA MARCA y con las funciones del calendario (src/test/semana.ts).
+// Calculada en UTC, entre las 00:00 y la 01:00 (o las 02:00 en verano) de un lunes en Madrid salía
+// la semana anterior y el calendario quedaba vacío.
+const week = seedWeek(safeZone(brandRow().timezone));
+const at = (day: number, hour: number) => week.at(day, hour);
 
 const titles = [
   'Chuletón de la casa con patatas panaderas y pimientos del padrón',
@@ -125,7 +125,6 @@ fake.tables.social_accounts = [
   } as SocialAccountRow,
 ];
 fake.tables.media_assets = [];
-const iso = (d: Date) => d.toISOString().slice(0, 10);
 fake.tables.campaigns = [
   {
     id: 'camp-1',
@@ -134,8 +133,8 @@ fake.tables.campaigns = [
     title: 'Menú de otoño con producto de proximidad',
     instruction: '',
     networks: ['instagram'],
-    starts_on: iso(at(1, 0)),
-    ends_on: iso(at(4, 0)),
+    starts_on: week.dayKey(1),
+    ends_on: week.dayKey(4),
     origin: 'ai',
     status: 'accepted',
     current_plan_version: 1,

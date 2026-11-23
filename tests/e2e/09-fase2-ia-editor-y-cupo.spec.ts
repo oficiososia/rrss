@@ -181,7 +181,7 @@ test('generar el texto con IA para dos marcas: cada una respeta su propio perfil
   await a.page.getByTestId('redo').click();
   await expect(a.page.getByTestId('copy-caption')).toHaveValue(new RegExp(PERFIL.A.mensaje));
   // Se guarda como primera versión de la pieza.
-  await a.page.getByTestId('editor-save').click();
+  await accionDelMenu(a.page, 'editor-more', 'editor-save-note');
   await a.page.getByTestId('save-note').fill('Texto redactado con IA');
   await a.page.getByTestId('save-confirm').click();
   await aviso(a.page, 'Versión 1 guardada');
@@ -236,7 +236,7 @@ test('editar la pieza (texto y una capa), guardar otra versión y ver el histori
   await pie.fill(`${await pie.inputValue()} Ahora más barato.`);
   await expect(page.getByTestId('counter-caption')).toContainText('/ 2200');
 
-  await page.getByTestId('editor-save').click();
+  await accionDelMenu(page, 'editor-more', 'editor-save-note');
   await page.getByTestId('save-note').fill('Titular en el lienzo y retoque del pie');
   await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 2 guardada');

@@ -304,7 +304,12 @@ export function Section({
           </span>
         )}
         {!summary && <span className="flex-1" />}
-        <span aria-hidden className="text-base leading-none text-muted transition-transform group-open:rotate-90">
+        {/* Una caja cuadrada que no encoge, con margen a la derecha: girada (abierta) ocupa lo mismo y, mientras
+            gira, lo que crece cabe en el margen. Sin esto la flecha asomaba fuera del panel a 375 px. */}
+        <span
+          aria-hidden
+          className="mr-1.5 inline-flex h-4 w-4 shrink-0 items-center justify-center text-base leading-none text-muted transition-transform group-open:rotate-90 motion-reduce:transition-none"
+        >
           ›
         </span>
       </summary>

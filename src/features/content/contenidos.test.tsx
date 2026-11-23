@@ -393,8 +393,10 @@ describe('Editor: versiones', () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
     expect(screen.getByTestId('editor-save')).toBeDisabled();
     await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-save'));
+    await chooseEditorAction(user, 'editor-save-note');
     const dialog = within(await screen.findByRole('dialog'));
+    // El foco cae en la nota y no en «Cerrar»: Intro ya no cierra el diálogo sin guardar.
+    await waitFor(() => expect(dialog.getByTestId('save-note')).toHaveFocus());
     await user.type(dialog.getByTestId('save-note'), 'Añado el horario');
     await user.click(dialog.getByTestId('save-confirm'));
 
@@ -411,6 +413,19 @@ describe('Editor: versiones', () => {
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
   });
 
+  it('«Guardar versión» guarda al momento, sin diálogo ni nota', async () => {
+    const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
+    await user.click(screen.getByTestId('add-text'));
+    await user.click(screen.getByTestId('editor-save'));
+    expect(await screen.findByText('Versión 2 guardada')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(fake.callsTo('save_content_version', 'rpc')[0]!.payload).toMatchObject({
+      p_change_note: '',
+      p_expected_version: 1,
+    });
+    expect(screen.getByTestId('editor-saved')).toHaveTextContent('Guardado');
+  });
+
   it('si otra persona guardó antes, avisa sin perder los cambios y deja guardar encima', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     // Mientras tanto, otra persona guarda la versión 2.
@@ -419,7 +434,6 @@ describe('Editor: versiones', () => {
 
     await user.click(screen.getByTestId('add-text'));
     await user.click(screen.getByTestId('editor-save'));
-    await user.click(within(await screen.findByRole('dialog')).getByTestId('save-confirm'));
 
     const alert = await screen.findByTestId('editor-conflict');
     expect(alert).toHaveTextContent('Otra persona ha guardado una versión más reciente');
@@ -441,7 +455,6 @@ describe('Editor: versiones', () => {
     fake.rows('content_items')[0]!.current_version = 2;
     await user.click(screen.getByTestId('add-text'));
     await user.click(screen.getByTestId('editor-save'));
-    await user.click(within(await screen.findByRole('dialog')).getByTestId('save-confirm'));
     await user.click(await screen.findByTestId('conflict-load-latest'));
     await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '0'));
     expect(screen.getByTestId('editor-version')).toHaveTextContent('Versión 2');
@@ -500,29 +513,57 @@ describe('Editor: Publicar ahora', () => {
     fake.tables.media_assets = [];
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('editor-title');
-    await user.click(screen.getByTestId('editor-publish-now'));
+    await chooseEditorAction(user, 'editor-publish-now');
     expect(await screen.findByTestId('publish-now-warning')).toHaveTextContent(
       'Se publicará ahora en @casa_demo. No se puede deshacer desde aquí.',
     );
-    expect(screen.getByTestId('publish-now-export-note')).toHaveTextContent(/se exportará a JPEG/);
+    expect(screen.getByTestId('publish-now-export-note')).toHaveTextContent(/La imagen se prepara ahora/);
     vi.unstubAllEnvs();
   });
 
-  it('no aparece sin aprobar, sin la publicación activa ni para quien no edita', async () => {
+  it('sin aprobar, quien puede aprobar la aprueba y la publica desde el mismo botón', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    await openEditor({ orgRole: 'owner' }, { status: 'draft' });
+    seedContent({ orgRole: 'owner' }, { status: 'draft' });
+    fake.tables.social_accounts = [account];
+    fake.tables.scheduled_publications = [];
+    fake.tables.media_assets = [];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    await openMoreMenu(user, 'editor-share');
+    expect(screen.getByTestId('editor-publish-now')).toHaveTextContent('Aprobar y publicar ahora…');
+    await user.click(screen.getByTestId('editor-publish-now'));
+    // Se aprueba la versión que se ve y se abre la confirmación de publicar (nada se publica aún).
+    expect(await screen.findByTestId('publish-now-warning')).toBeInTheDocument();
+    expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
+      p_status: 'approved',
+      p_expected_version: 1,
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it('quien edita pero no aprueba no puede publicar sin aprobar: se le dice por qué', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' }, { status: 'draft' });
+    await openMoreMenu(user, 'editor-share');
     expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+    expect(screen.queryByTestId('editor-schedule')).toBeNull();
+    expect(screen.getByTestId('editor-share-note')).toHaveTextContent(/antes tiene que aprobarla/);
     vi.unstubAllEnvs();
   });
 
   it('sin la publicación activa en el entorno no se ofrece', async () => {
-    await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    const { user } = await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    await openMoreMenu(user, 'editor-share');
     expect(screen.queryByTestId('editor-publish-now')).toBeNull();
+    // Ver cómo queda y descargar, siempre.
+    expect(screen.getByTestId('editor-preview')).toBeInTheDocument();
+    expect(screen.getByTestId('editor-export')).toHaveTextContent('Descargar la imagen');
   });
 
   it('quien solo ve no puede publicar', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'approved' });
+    const { user } = await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'approved' });
+    await openMoreMenu(user, 'editor-share');
     expect(screen.queryByTestId('editor-publish-now')).toBeNull();
     vi.unstubAllEnvs();
   });
@@ -541,10 +582,18 @@ describe('Editor: estados según el rol', () => {
     });
   });
 
-  it('con cambios sin guardar no se puede cambiar el estado', async () => {
+  it('con cambios sin guardar, cambiar el estado guarda antes la versión', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
     await user.click(screen.getByTestId('add-text'));
-    expect(screen.getByTestId('status-in_review')).toBeDisabled();
+    await user.click(screen.getByTestId('status-in_review'));
+    expect(await screen.findByText('Enviada a revisión')).toBeInTheDocument();
+    expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
+    // Se envía a revisión la versión recién guardada, no la anterior.
+    expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toEqual({
+      p_content_id: 'content-1',
+      p_status: 'in_review',
+      p_expected_version: 2,
+    });
   });
 
   it('quien revisa no edita, pero aprueba o devuelve a borrador', async () => {
@@ -612,14 +661,13 @@ describe('Editor: una sola acción principal según el estado', () => {
   it('borrador con permiso de aprobar: «Aprobar» es la principal; lo demás, en «⋯» y separado', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     expect(screen.getByTestId('status-approved')).toHaveTextContent('Aprobar');
-    expect(visibleActions()).toEqual(['Guardar versión', 'Aprobar', '']);
+    expect(visibleActions()).toEqual(['Guardar versión', 'Aprobar', 'Publicar o compartir', '']);
     await openMoreMenu(user, 'editor-more');
     const menu = within(screen.getByRole('menu'));
     const items = menu.getAllByRole('menuitem').map((i) => i.textContent);
     expect(items).toEqual([
-      'Vista previa',
+      'Guardar versión con una nota…',
       'Historial',
-      'Exportar imagen',
       'Enviar a revisión',
       'Nombre y red',
       'Desde una plantilla',
@@ -637,7 +685,7 @@ describe('Editor: una sola acción principal según el estado', () => {
     expect(screen.queryByTestId('status-approved')).toBeNull();
   });
 
-  it('aprobada y publicable: «Publicar ahora» es la principal; Programar y Retirar la aprobación, en «⋯»', async () => {
+  it('aprobada y publicable: «Publicar o compartir» reúne publicar, programar, ver y descargar; retirar la aprobación, en «⋯»', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seedContent({ orgRole: 'owner' }, { status: 'approved' });
     fake.tables.social_accounts = [igAccount];
@@ -645,10 +693,19 @@ describe('Editor: una sola acción principal según el estado', () => {
     fake.tables.media_assets = [];
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('editor-title');
-    expect(await screen.findByTestId('editor-publish-now')).toHaveTextContent('Publicar ahora');
+    // Ya aprobada no hay cambio de estado que proponer: lo principal es el único botón de «Publicar o compartir».
+    expect(visibleActions()).toEqual(['Guardar versión', 'Publicar o compartir', '']);
     await openMoreMenu(user, 'editor-more');
-    expect(screen.getByTestId('editor-schedule')).toHaveTextContent('Programar');
     expect(screen.getByTestId('status-draft')).toHaveTextContent('Retirar la aprobación');
+    await user.keyboard('{Escape}');
+    await openMoreMenu(user, 'editor-share');
+    const share = within(screen.getByRole('menu'));
+    expect(share.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+      'Ver cómo quedará',
+      'Descargar la imagen',
+      'Programar…',
+      'Publicar ahora…',
+    ]);
     // «Programar» abre el diálogo con la pieza ya elegida.
     await user.click(screen.getByTestId('editor-schedule'));
     expect(await screen.findByTestId('schedule-content')).toHaveValue('content-1');
@@ -656,18 +713,25 @@ describe('Editor: una sola acción principal según el estado', () => {
   });
 
   it('aprobada sin la publicación activa: no hay botón principal que no funcione', async () => {
-    await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    const { user } = await openEditor({ orgRole: 'owner' }, { status: 'approved' });
+    expect(visibleActions()).toEqual(['Guardar versión', 'Publicar o compartir', '']);
+    await openMoreMenu(user, 'editor-share');
     expect(screen.queryByTestId('editor-publish-now')).toBeNull();
     expect(screen.queryByTestId('editor-schedule')).toBeNull();
-    expect(visibleActions()).toEqual(['Guardar versión', '']);
   });
 
-  it('con cambios sin guardar, la principal se desactiva y dice por qué', async () => {
+  it('con cambios sin guardar, la principal sigue activa: guarda la versión y aprueba', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     await user.click(screen.getByTestId('add-text'));
-    expect(screen.getByTestId('status-approved')).toBeDisabled();
-    expect(screen.getByTestId('status-approved')).toHaveAttribute('title', 'Guarda los cambios antes');
-    expect(screen.getByTestId('editor-save')).toBeEnabled();
+    expect(screen.getByTestId('status-approved')).toBeEnabled();
+    expect(screen.getByTestId('status-approved')).toHaveAttribute('title', 'Guarda los cambios como versión y sigue');
+    await user.click(screen.getByTestId('status-approved'));
+    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1));
+    expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
+    expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
+      p_status: 'approved',
+      p_expected_version: 2,
+    });
   });
 
   it('el menú «⋯» se maneja con el teclado y devuelve el foco al cerrarlo', async () => {
@@ -688,7 +752,7 @@ describe('Editor: una sola acción principal según el estado', () => {
   it('archivada: la principal es «Recuperar»', async () => {
     await openEditor({ orgRole: 'owner' }, { archived: true });
     expect(screen.getByTestId('editor-archive')).toHaveTextContent('Recuperar');
-    expect(visibleActions()).toEqual(['Recuperar', '']);
+    expect(visibleActions()).toEqual(['Recuperar', 'Publicar o compartir', '']);
   });
 
   it('desde un aviso del calendario («Exportar») abre el diálogo de exportar', async () => {

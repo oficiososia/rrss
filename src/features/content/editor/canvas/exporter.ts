@@ -156,7 +156,10 @@ export async function renderDocument(
   lookup: ImageLookup,
   options: ExportOptions,
 ): Promise<RenderResult> {
-  const specs = describeDocument(document, lookup, true).filter((spec) => spec.visible);
+  // Un marco de foto sin foto es un hueco del editor: no forma parte de la imagen.
+  const specs = describeDocument(document, lookup, true).filter(
+    (spec) => spec.visible && !(spec.kind === 'image' && spec.frame === 'empty'),
+  );
   const layerIndex = new Map(document.layers.map((layer, index) => [layer.id, index] as const));
   const nameOf = (id: string) => {
     const index = layerIndex.get(id) ?? 0;

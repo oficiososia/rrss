@@ -68,6 +68,8 @@ export function PieceSettingsDialog({
               value={draft.title}
               maxLength={200}
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              // El foco, en el nombre (no en «Cerrar»): Intro guarda.
+              data-autofocus
               data-testid="piece-title"
             />
           )}

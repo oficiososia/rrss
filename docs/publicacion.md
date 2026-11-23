@@ -27,7 +27,11 @@ Instagram. Estado a 19/11/2026:
    programado para esa cuenta.
 2. **Calendario.** Una pieza se pone en el calendario con su fecha, su cuenta,
    la versión aprobada y la exportación JPEG de esa versión (o el vídeo, en un
-   reel). Vistas de mes, semana, día y por red; arrastrar y soltar para cambiar
+   reel). Desde el editor de la pieza («Publicar o compartir → Programar») no
+   hace falta exportar antes: si la versión aprobada no tiene esa imagen (o solo
+   la tiene en PNG), el navegador la prepara y la guarda en la biblioteca al
+   guardar en el calendario, igual que «Publicar ahora». Desde el calendario no
+   se puede (no tiene el diseño abierto): dice que se haga desde el editor. Vistas de mes, semana, día y por red; arrastrar y soltar para cambiar
    la fecha; filtros por red y por estado; aprobar varias a la vez; ficha con
    intentos, comentarios, mover, cancelar y reintentar.
 3. **Publicador.** Cada minuto, pg_cron encola las publicaciones cuya hora ha

@@ -258,6 +258,19 @@ export type ContentVersionRow = {
   created_at: string;
 };
 
+/** Borrador del editor de una pieza: uno por pieza y persona (migración 20270103010000). No es una versión. */
+export type ContentDraftRow = {
+  content_id: string;
+  brand_id: string;
+  organization_id: string;
+  user_id: string;
+  /** Versión de la pieza sobre la que se empezó a trabajar. */
+  base_version: number;
+  schema_version: number;
+  data: Json;
+  updated_at: string;
+};
+
 type ContentTables = {
   content_items: Table<
     ContentItemRow,
@@ -265,6 +278,8 @@ type ContentTables = {
     { title?: string; network?: string; format?: string }
   >;
   content_versions: Table<ContentVersionRow>;
+  // Solo lectura y borrado del propio; se escribe con save_content_draft().
+  content_drafts: Table<ContentDraftRow>;
 };
 
 type ContentFunctions = {
@@ -289,6 +304,11 @@ type ContentFunctions = {
     Returns: ContentItemRow;
   };
   archive_content_item: { Args: { p_content_id: string; p_archived?: boolean }; Returns: ContentItemRow };
+  // Guarda (o sustituye) el borrador de quien llama. Solo quien edita la marca.
+  save_content_draft: {
+    Args: { p_content_id: string; p_data: Json; p_schema_version: number; p_base_version: number };
+    Returns: ContentDraftRow;
+  };
 };
 
 type ContentEnums = {

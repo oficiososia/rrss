@@ -89,7 +89,6 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
 
   await page.getByTestId('editor-save').click();
-  await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 1 guardada');
   const [version] = await sql<{
     capas: { type: string; source?: { kind: string; assetId?: string } }[];
@@ -103,7 +102,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   expect(version!.capas.some((c) => c.type === 'image' && c.source?.assetId === version!.recurso)).toBe(true);
 
   // Exportar lee la imagen del lienzo: si la de Drive llegara sin CORS, el lienzo quedaría «manchado» y fallaría.
-  await accionDelMenu(page, 'editor-more', 'editor-export');
+  await accionDelMenu(page, 'editor-share', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();

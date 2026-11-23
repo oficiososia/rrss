@@ -45,6 +45,7 @@ import { useWorkMode, WORK_MODE_OPTIONS } from './workMode';
 
 export function SettingsLayout() {
   const { org, isAdmin } = useOrg();
+  const { selfManaged } = useWorkMode();
   const base = `/o/${org.id}/ajustes`;
   const drive = useFeature('drive');
   const tabs = [
@@ -52,7 +53,8 @@ export function SettingsLayout() {
     { to: `${base}/equipo`, label: 'Equipo' },
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
     ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
-    ...(isAdmin ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
+    // Planes de pago: en autogestión no pintan nada (el gasto real está en «Consumo de IA»).
+    ...(isAdmin && !selfManaged ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
     // Biblioteca con Google Drive: solo si el entorno la tiene y está configurada.
     ...(drive ? [{ to: `${base}/drive`, label: 'Google Drive' }] : []),
     // RGPD: exportar y borrar la organización, solo propietarios.

@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (rama `f48/copiloto-ajustes`; antes, `f40/campanas-voz`, `f38/autogestion`, `f37/copiloto-herramientas` y `f36/reel-como-este`).
+Última actualización: 23/11/2026 (ramas `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -13,7 +13,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Área | Implementado | Probado | Pendiente | Bloqueado |
 | --- | --- | --- | --- | --- |
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
-| Editor de piezas | Capas, documento v5, páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz | Unitarias, componentes, base de datos, `test:layout` en Chromium real y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migración `20261220010000` (renombrar y duplicar plantillas) sin aplicar en staging | Dictado real y proveedor de IA real |
+| Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
 | Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
@@ -1157,6 +1157,125 @@ Detalle, patrones adoptados y fuentes en `docs/editor-reels.md` §10.
   de uso comercial); rotar textos, curvas de velocidad, pegatinas y varias pistas de vídeo (el trabajador no
   los monta).
 - **Para staging**: migración → redesplegar el trabajador (el anterior rechaza los campos nuevos) → Vercel.
+
+## Editor de piezas «tan fácil como Canva» (rama `f44/editor-canva`, 23/11/2026)
+
+Tanda A de la auditoría de usabilidad (`rrss-recursos-comparativa/auditoria-ux/INFORME.md`:
+H2, H6, H7, H10, H12, H13, H16 y parte de H18 y H24). Se toman de Canva las formas de trabajar,
+no su aspecto.
+
+- **Marcos de foto (documento v6).** Una imagen puede ser un hueco sin foto
+  (`source: { kind: 'empty' }`, con la marca `frame`) y la foto se amplía dentro de su caja (`zoom`).
+  El hueco enseña «Poner foto» (un botón dibujado encima de todo el diseño, para que no lo tape un
+  velo ni un titular); al pulsarlo, o al soltar una foto encima, la foto **rellena el marco**. Doble
+  clic en una foto (también a través de una forma que la tape) la **encuadra**: se arrastra dentro
+  del marco y se amplía con la rueda o el deslizador, sin mover la caja. «Sustituir» conserva el
+  marco y los efectos (luz, filtro, sombra, fondo) y quita lo que era de la foto anterior (recorte,
+  giro, encuadre). «Imagen», pegar y la imagen con IA van al hueco vacío de la página si lo hay; si
+  no, la foto entra con su proporción y al 70 % del lienzo (antes, a lienzo completo y encima de
+  todo). Un hueco vacío **no sale en la imagen exportada** y la cabecera avisa («Falta 1 foto»).
+  Las plantillas del catálogo (`agency/catalogo`) usan ya marcos; las antiguas (una forma llamada
+  «… (sustituir)») se convierten al leerlas (`document/migrate.ts`, 5 → 6), también en las piezas
+  ya creadas.
+- **Guardado automático.** Lo que no es una versión se guarda solo como **borrador** a los 1,5 s
+  del último cambio, al esconder la pestaña y al salir del editor (tabla `content_drafts`, uno por
+  pieza y persona; no cambia el estado ni entra en el historial). La cabecera dice «Guardando…»,
+  «Borrador guardado», «Guardado» o «Sin guardar · Reintentar». Al volver a abrir la pieza se
+  sigue donde se dejó (con «Descartarlos»). Salir ya no pregunta, salvo que el borrador no se haya
+  podido guardar. «Guardar versión» (y Ctrl+S) guarda **al momento**, sin diálogo; la nota, en
+  «⋯ → Guardar versión con una nota…», con el foco en la nota. Los diálogos pueden marcar dónde
+  cae el foco (`data-autofocus`); también «Nombre y red».
+- **Esc al escribir en el lienzo** termina y conserva lo escrito (se deshace con Ctrl+Z).
+- **Barra de acciones sobre lo elegido**, también en el móvil: foto (Sustituir, Editar foto,
+  Recortar, Quitar fondo, Duplicar, Borrar), texto (Escribir, tipografía, tamaño −/+, color,
+  alineación), forma (color), varias (Agrupar) y «⋯» con orden, alinear, repartir, bloquear, copiar
+  y «Todas las opciones». Se coloca encima del elemento, debajo si no cabe, y nunca se sale del
+  lienzo; el tirador de girar pasa abajo para dejarle sitio. El mismo menú sale con el botón derecho.
+- **Publicar sin tropiezos.** Un botón «Publicar o compartir» (ver cómo quedará, descargar,
+  programar, publicar ahora). Quien puede aprobar tiene «Aprobar y publicar ahora…» y «Aprobar y
+  programar…»: guarda la versión, la aprueba y sigue. Cambiar de estado con cambios sin versión los
+  guarda antes en vez de bloquear. «Programar» desde el editor ya no rechaza la pieza por tener la
+  exportación en PNG: **prepara sola la imagen** al guardar, como «Publicar ahora», y propone ya
+  marcada la que hubiera. El pie de una plantilla es un **pie de ejemplo** (`copy.captionHint`): se
+  ve en gris en el campo y nunca se publica.
+- **Lo habitual.** Ctrl+C / Ctrl+X / Ctrl+V entre páginas (y entre piezas de la misma marca, en la
+  misma pestaña), Ctrl+D, Ctrl+A, pegar una imagen del portapapeles y soltar archivos sobre el
+  lienzo (se suben a la biblioteca), rueda del ratón para acercar hacia el cursor, Espacio para
+  arrastrar la vista, bloquear y agrupar. El panel de fotos de la biblioteca (`PhotoPanel`) está
+  conectado dentro de «Diseño» («Fotos de la marca», sin nada elegido o con un hueco vacío
+  elegido): tocar una foto la pone y se puede arrastrar a un marco. No es una pestaña más: con
+  cinco, «Marca» dejaba de verse en el panel de escritorio.
+- **Migración** `20270103010000_editor_frames_drafts.sql` (vuelta atrás en `supabase/rollbacks/`):
+  las plantillas aceptan el documento v6 y se crea `content_drafts` con RLS (solo los propios, y
+  solo donde se edita), `save_content_draft()` y el disparador que borra el borrador al guardar una
+  versión. **Sin aplicar en staging.** Hasta aplicarla: el editor funciona, pero el borrador no se
+  guarda (dice «Sin guardar» y vuelve a preguntar al salir) y no se pueden cargar las plantillas
+  del catálogo ni guardar una plantilla nueva desde el editor (son documentos v6).
+- **Probado:** componentes (`marcos.test.tsx`, `guardadoAutomatico.test.tsx`,
+  `barraFlotante.test.tsx`, `publicarCompartir.test.tsx` y las de siempre, adaptadas), base de
+  datos (`marcos-borradores.test.ts`, 12 casos, con la vuelta atrás), agencia (catálogo con marcos)
+  y Chromium real sin Supabase (`tests/layout/editor-marcos.spec.ts`: poner la foto bajo un velo,
+  encuadrar con doble clic, barra a 375 px, Esc, zoom con rueda, mano con Espacio y botón derecho).
+  La comparación de píxeles lienzo/exportación sigue pasando.
+- **Sin probar:** contra Supabase de verdad (las e2e 09, 13, 19, 20, 21, 23, 27 y 28 están
+  adaptadas pero aquí no corren: necesitan el stack local); arrastrar con el dedo en un móvil real
+  (encuadre, pellizco); pegar imágenes desde otras aplicaciones en Safari y Firefox; dos personas
+  editando la misma pieza a la vez con borradores; y la distinción entre rueda de ratón y panel
+  táctil (se decide por el tamaño del gesto).
+- **Decisiones tomadas y límites:** el borrador es por persona (dos personas no ven el borrador de
+  la otra; al guardar una versión, la otra ve el aviso de conflicto de siempre). Los borradores no
+  entran en la descarga de datos del RGPD (son trabajo a medias, se borran con la pieza y con la
+  cuenta). Una pieza ya creada desde una plantilla antigua conserva su pie: no hay forma de saber si
+  es la indicación o un pie escrito a mano. Aprobar no se bloquea por tener un hueco vacío.
+
+## Pulido de interfaz: siete arreglos (rama `f46/pulido`, 23/11/2026)
+
+De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de maquetación.
+
+- **Implementado**
+  1. **Integraciones: cada tarjeta prueba y enseña solo su proveedor.** La de Claude ya no enseña la
+     prueba de OpenAI (ni fal.ai la de «Otras imágenes con IA»): «Probar conexión» manda la tarjeta
+     (`service`) y el servidor prueba, devuelve y anota solo lo suyo. Migración
+     `20270105010000_pruebas_por_tarjeta.sql` (fila propia de última prueba para Claude y fal.ai; vuelta
+     atrás en `supabase/rollbacks/`). Detalle en `docs/integraciones-sencillas.md`.
+  2. **Autogestión sin planes, cupos ni márgenes.** Con `work_mode = 'self'`: sin pestaña «Plan», sin la
+     tarjeta «Cupo de IA», avisos de la IA sin cupos ni planes («tope de gasto»), y en Plataforma (uso
+     interno) cupos, margen y planes plegados, «Gasto y uso» sin cupos ni planes e Integraciones sin
+     cobros. El gasto real se sigue viendo. Solo visibilidad. Detalle en `docs/modo-de-trabajo.md`, §3.
+  3. **Un solo selector de marca**: el de organización desaparece; el de marca lista las marcas de
+     todas las organizaciones (agrupadas si hay más de una) y la organización se lee bajo la marca.
+  4. **«Nueva idea»**: la barra fija de «Cancelar / Crear y abrir» tapa hasta el borde del diálogo.
+  5. **Coste de «Hacer un reel como este»**: «Cuesta unos céntimos.» en autogestión; con agencia,
+     «Gasta menos del 1 % del cupo de este mes.» (`src/features/ai/cupo.ts`).
+  6. **Biblioteca**: la fila de filtros ya no enseña la barra de scroll nativa (salta de línea desde
+     tablet; en móvil se desplaza con la barra oculta).
+  7. **Banco de maquetación del calendario**: sembraba «la semana de hoy» con el lunes en UTC y, entre
+     las 00:00 y la 01:00 (02:00 en verano) de un lunes en Madrid, dejaba el calendario vacío (10
+     pruebas en rojo). Ahora usa `seedWeek` (`src/test/semana.ts`), con las funciones del calendario y
+     la zona de la marca. Los demás bancos no tienen ese borde (el Inicio siembra respecto a «ahora» y
+     la analítica cuenta los días en UTC, como la pantalla).
+- **Probado**: `npm test` (1959 pasan, 151 archivos), con casos nuevos en `integraciones.test.tsx`, `usoInterno.test.tsx`,
+  `selectorUnico.test.tsx`, `cupo.test.ts`, `listaContenidos.test.tsx` y `semana.test.ts`; base de datos
+  (`tests/db/integraciones.test.ts`: sondas por tarjeta con proveedores **simulados**, la función y la
+  migración, que también pasa `migraciones.test.ts`); maquetación en Chromium real (112 pasan con `--workers=2`): la
+  barra del diálogo a 375, 768 y 1366 px, los filtros de la biblioteca a 375, 800, 900, 1024 y 1180 px
+  y el calendario un lunes a las 00:39 de Madrid (dentro del borde). El banco se pasó en otro puerto
+  (5396) porque el 5391 lo ocupaba el banco de otro trabajo: `playwright.layout.config.ts` reutiliza
+  el servidor que encuentre y probaría el código de esa otra carpeta.
+- **Pendiente**
+  - Redesplegar la función `platform-integrations` y aplicar la migración `20270105010000` en staging
+    (en cualquier orden: sin la migración, la prueba de Claude y la de fal.ai se hacen y se enseñan,
+    pero no quedan anotadas).
+  - Textos con «cupo» o «plan» que quedan en autogestión porque viven en zonas que no se tocaron en
+    esta rama: editor de reels («Cuenta en el cupo de IA…»), «Hacer un reel como este» (su página),
+    «Editar foto» («se descuenta del cupo…»), copiloto, importar publicaciones («Ocupan espacio de
+    tu plan») y el aviso «Cambiar de plan» del calendario (lleva a una pestaña que en autogestión ya
+    no existe y vuelve a General).
+  - El criterio de «uso interno» de Plataforma mira las organizaciones de quien abre la pantalla, no
+    todas las de la instalación (la lista de Plataforma no trae el modo de trabajo).
+- **Sin probar**: nada contra un proveedor real (las sondas, con respuestas HTTP simuladas); las e2e
+  01, 06 y 08, adaptadas al selector único **sin ejecutar** (necesitan el Supabase local); un
+  navegador y un móvil reales fuera del banco.
 
 ## Ajustes del copiloto tras la prueba real (rama `f48/copiloto-ajustes`, 23/11/2026)
 

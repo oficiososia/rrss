@@ -244,10 +244,16 @@ export function validateTemplate(
   let document: ContentDocument | null = null;
   const documentRaw = input.document;
   const schemaVersion = (documentRaw as { schemaVersion?: unknown } | null)?.schemaVersion;
-  if (schemaVersion !== 3 && schemaVersion !== 4 && schemaVersion !== DOCUMENT_SCHEMA_VERSION) {
+  // De la 3 a la vigente: las anteriores a la vigente se convierten al leerlas.
+  if (
+    typeof schemaVersion !== 'number' ||
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 3 ||
+    schemaVersion > DOCUMENT_SCHEMA_VERSION
+  ) {
     issues.push({
       path: `${at}.document.schemaVersion`,
-      message: `el documento debe ser de la versión 3, 4 o ${DOCUMENT_SCHEMA_VERSION}`,
+      message: `el documento debe ser de la versión 3 a la ${DOCUMENT_SCHEMA_VERSION}`,
     });
   } else {
     // Un documento v3 (una página) o v4 se guarda ya convertido a la versión vigente.

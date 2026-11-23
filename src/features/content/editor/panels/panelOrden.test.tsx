@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { contentDocumentSchema, type Canvas, type Layer } from '../../document';
+import { contentDocumentSchema, DOCUMENT_SCHEMA_VERSION, type Canvas, type Layer } from '../../document';
 import { editorReducer, initEditor, type EditorAction } from '../history';
 import { adjustSummary, geometrySummary } from './panelSummary';
 import { PropertiesPanel } from './PropertiesPanel';
@@ -174,7 +174,7 @@ describe('barra de acciones de la capa', () => {
 
   it('duplicar crea una copia desplazada, elegida y fuera del grupo', () => {
     const doc = contentDocumentSchema.parse({
-      schemaVersion: 5,
+      schemaVersion: DOCUMENT_SCHEMA_VERSION,
       canvas,
       pages: [
         {

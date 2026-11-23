@@ -8,12 +8,13 @@ import { Text } from 'konva/lib/shapes/Text';
 import { Transformer } from 'konva/lib/shapes/Transformer';
 import type { Rect as Bounds } from '../../safeZones';
 import { layersInRect, normalizeRect, snapBox, snapGroup, snapTargets } from '../arrange';
+import { framePillSpot, layerContains } from '../frames';
 import { layerToNodeBox, nodeToLayerBox, type Guides } from '../geometry';
 import type { LayerPatch } from '../history';
 import { ImageStore } from './imageStore';
 import { editKey, editNeedsPixels } from '../imageEffects/imageEdit';
 import { BitmapCache, EDITOR_BITMAP_SIDE, prepareBitmap } from '../imageEffects/prepare';
-import { applySpecAttrs, drawSpecShape, type LoadedImage } from './draw';
+import { applySpecAttrs, drawFramePill, drawSpecShape, FRAME_PILL, framePillWidth, type LoadedImage } from './draw';
 import type { NodeSpec } from './nodes';
 import type { SafeZoneOverlay, SelectOptions } from './types';
 
@@ -28,6 +29,14 @@ export interface SceneCallbacks {
   onSelectMany: (ids: string[], additive: boolean) => void;
   onChange: (changes: { id: string; patch: LayerPatch }[]) => void;
   onEditText: (id: string) => void;
+  /** Clic (sin arrastrar) en un marco de foto vacío: poner su foto. */
+  onFrameClick?: (id: string) => void;
+  /** Doble clic en una foto: recolocarla o ampliarla dentro de su caja. */
+  onEditImage?: (id: string) => void;
+  /** Botón derecho (o pulsación larga): `id` es la capa bajo el puntero, o null en el fondo. */
+  onContextMenu?: (target: { id: string | null; clientX: number; clientY: number }) => void;
+  /** Empieza o termina un arrastre, giro o cambio de tamaño (para esconder lo que flota encima). */
+  onGesture?: (active: boolean) => void;
 }
 
 export interface SceneInput {
@@ -40,6 +49,8 @@ export interface SceneInput {
   readOnly: boolean;
   /** Escala de pantalla: píxeles por unidad del lienzo. */
   scale: number;
+  /** Marco sobre el que se está arrastrando una foto (se resalta); null si ninguno. */
+  dropTargetId?: string | null;
 }
 
 type AnyNode = Shape;
@@ -48,6 +59,8 @@ const SELECTION = '#2563EB';
 const GUIDE = '#EC4899';
 const UNSAFE = 'rgba(220, 38, 38, 0.18)';
 const UNSAFE_LINE = 'rgba(220, 38, 38, 0.85)';
+/** Distancia, en píxeles, del tirador de girar al borde de abajo de la selección. */
+export const ROTATE_ANCHOR_OFFSET = 28;
 
 const boxOf = (node: AnyNode) =>
   nodeToLayerBox({
@@ -83,6 +96,9 @@ export class Scene {
   private dragStart: { origin: { x: number; y: number }; ids: Set<string>; boxes: ReturnType<typeof boxOf>[] } | null =
     null;
   private zone: Konva.Shape[] = [];
+  private dropMark: Rect;
+  /** Botón «Poner foto» de cada marco vacío: va en la capa de encima para que nada lo tape. */
+  private pills = new Map<string, Konva.Shape>();
   private marquee: Rect;
   private marqueeStart: { x: number; y: number; additive: boolean } | null = null;
   private nodes = new Map<string, AnyNode>();
@@ -109,11 +125,19 @@ export class Scene {
       anchorStroke: SELECTION,
       anchorSize: typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? 22 : 10,
       rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315],
+      // El tirador de girar va debajo: encima queda libre para la barra de acciones del elemento.
+      rotateAnchorAngle: 180,
+      rotateAnchorOffset: ROTATE_ANCHOR_OFFSET,
       boundBoxFunc: (oldBox, newBox) => (Math.abs(newBox.width) < 4 || Math.abs(newBox.height) < 4 ? oldBox : newBox),
     });
     // Konva avisa del final de la transformación al transformador y a cada nodo:
     // se escucha solo aquí para mandar un único cambio con todas las capas.
-    this.transformer.on('transformend', () => this.emitNodes(this.transformer.nodes() as AnyNode[]));
+    this.transformer.on('transformstart', () => this.callbacks.onGesture?.(true));
+    this.transformer.on('transformend', () => {
+      this.callbacks.onGesture?.(false);
+      this.emitNodes(this.transformer.nodes() as AnyNode[]);
+    });
+    this.dropMark = new Rect({ visible: false, stroke: SELECTION, fill: 'rgba(37, 99, 235, 0.14)', listening: false });
     this.marquee = new Rect({
       visible: false,
       fill: 'rgba(37, 99, 235, 0.08)',
@@ -121,8 +145,16 @@ export class Scene {
       dash: [6, 4],
       listening: false,
     });
-    this.overlay.add(this.transformer, this.marquee);
+    this.overlay.add(this.transformer, this.dropMark, this.marquee);
     this.stage.add(this.content, this.overlay);
+
+    // Botón derecho: menú de la capa bajo el puntero (o del lienzo, en el fondo).
+    this.stage.on('contextmenu', (event) => {
+      if (!this.callbacks.onContextMenu) return;
+      event.evt.preventDefault();
+      const id = this.nodes.has(event.target.id()) ? event.target.id() : null;
+      this.callbacks.onContextMenu({ id, clientX: event.evt.clientX, clientY: event.evt.clientY });
+    });
 
     // En el vacío o en el fondo: rectángulo de selección; un clic sin arrastrar quita la selección.
     this.stage.on('mousedown touchstart', (event) => {
@@ -186,6 +218,8 @@ export class Scene {
 
     this.renderSelection(input);
     this.renderSafeZone(input);
+    this.renderFramePills(input);
+    this.renderDropTarget(input);
     this.content.batchDraw();
     this.overlay.batchDraw();
   }
@@ -198,8 +232,25 @@ export class Scene {
     return this.stage.toCanvas({ pixelRatio });
   }
 
+  /**
+   * Proporción (ancho / alto) de la foto de una capa tal como se dibuja (ya
+   * girada o recortada); null si aún no se ha cargado. La usa el encuadre dentro del marco.
+   */
+  imageAspect(id: string): number | null {
+    const spec = this.specs.get(id);
+    if (!spec) return null;
+    const image = this.imageFor(spec);
+    if (image instanceof HTMLImageElement) {
+      return image.naturalWidth > 0 && image.naturalHeight > 0 ? image.naturalWidth / image.naturalHeight : null;
+    }
+    if (image instanceof HTMLCanvasElement)
+      return image.width > 0 && image.height > 0 ? image.width / image.height : null;
+    return null;
+  }
+
   destroy(): void {
     this.stage.destroy();
+    this.pills.clear();
     this.nodes.clear();
     this.specs.clear();
     this.bitmaps.clear();
@@ -225,6 +276,110 @@ export class Scene {
       rotateEnabled: editable,
       borderDash: editable ? [] : [6, 4],
     });
+  }
+
+  /**
+   * El botón «Poner foto» de cada marco vacío, encima de todo el diseño: en una
+   * plantilla de «titular sobre foto» el hueco queda debajo de un velo y de los
+   * textos, y ahí dentro no se vería ni se podría pulsar. Mide lo mismo en
+   * pantalla con cualquier zoom; si el hueco es muy pequeño, queda solo la cruz.
+   */
+  private renderFramePills(input: SceneInput): void {
+    const unit = 1 / Math.max(input.scale, 0.05);
+    const wanted = new Set<string>();
+    input.nodes.forEach((spec, index) => {
+      if (spec.kind !== 'image' || spec.frame !== 'empty' || !spec.visible || !spec.editable) return;
+      wanted.add(spec.id);
+      const frame = specBox(spec);
+      // Ancho aproximado del texto (se mide de verdad al dibujar): basta para decidir si cabe.
+      const full = framePillWidth(FRAME_PILL.font * 5.4, false) * unit;
+      const compact = full > frame.width * 0.94;
+      const width = (compact ? FRAME_PILL.height : full / unit) * unit;
+      const height = FRAME_PILL.height * unit;
+      const covering = input.nodes
+        .slice(index + 1)
+        .filter((other) => other.kind === 'text' && other.visible)
+        .map(specBox);
+      const spot = framePillSpot(frame, covering, { width, height });
+      let pill = this.pills.get(spec.id);
+      if (!pill) {
+        pill = new Konva.Shape({
+          name: 'frame-pill',
+          sceneFunc: (context, shape) =>
+            drawFramePill(context._context, shape.getAttr('unit'), shape.getAttr('compact')),
+          hitFunc: (context, shape) => {
+            context.beginPath();
+            context.rect(-shape.width() / 2, -shape.height() / 2, shape.width(), shape.height());
+            context.closePath();
+            context.fillStrokeShape(shape);
+          },
+        });
+        const id = spec.id;
+        pill.on('click tap', (event) => {
+          if ((event.evt as MouseEvent).button > 0) return;
+          this.callbacks.onSelect(id);
+          this.callbacks.onFrameClick?.(id);
+        });
+        pill.on('mouseenter', () => (this.stage.container().style.cursor = 'pointer'));
+        pill.on('mouseleave', () => (this.stage.container().style.cursor = ''));
+        this.pills.set(spec.id, pill);
+        this.overlay.add(pill);
+      }
+      // El desplazamiento respecto al centro del marco se guarda para que el botón lo siga al arrastrarlo.
+      const center = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
+      pill.setAttrs({
+        x: spot.x,
+        y: spot.y,
+        width,
+        height,
+        unit,
+        compact,
+        dx: spot.x - center.x,
+        dy: spot.y - center.y,
+        visible: spec.id !== input.dropTargetId,
+      });
+      pill.moveToBottom();
+    });
+    for (const [id, pill] of this.pills) {
+      if (!wanted.has(id)) {
+        pill.destroy();
+        this.pills.delete(id);
+      }
+    }
+  }
+
+  /** Mientras se arrastra o se transforma un marco vacío, su botón va con él. */
+  private followPill(node: AnyNode): void {
+    const pill = this.pills.get(node.id());
+    if (!pill) return;
+    pill.position({ x: node.x() + (pill.getAttr('dx') ?? 0), y: node.y() + (pill.getAttr('dy') ?? 0) });
+  }
+
+  /** La foto (con encaje «llenar» y sin bloquear) que hay justo debajo de una capa en ese punto, si la hay. */
+  private imageBelow(id: string, point: { x: number; y: number }): string | null {
+    const order = this.input?.nodes ?? [];
+    const from = order.findIndex((spec) => spec.id === id);
+    for (let index = from - 1; index >= 0; index--) {
+      const spec = order[index]!;
+      if (spec.kind !== 'image' || !spec.visible || !spec.editable) continue;
+      if (layerContains(specBox(spec), point)) return spec.id;
+    }
+    return null;
+  }
+
+  /** Resalta el marco que va a recibir la foto que se está arrastrando. */
+  private renderDropTarget(input: SceneInput): void {
+    const spec = input.dropTargetId ? this.specs.get(input.dropTargetId) : undefined;
+    if (!spec) {
+      this.dropMark.visible(false);
+      return;
+    }
+    this.dropMark.setAttrs({
+      ...spec.box,
+      visible: true,
+      strokeWidth: 4 / Math.max(input.scale, 0.05),
+    });
+    this.dropMark.moveToTop();
   }
 
   private renderSafeZone(input: SceneInput): void {
@@ -293,13 +448,36 @@ export class Scene {
       }
     });
     node.on('dblclick dbltap', () => {
-      if (this.specs.get(spec.id)?.kind === 'text' && this.specs.get(spec.id)?.editable) {
-        this.callbacks.onEditText(spec.id);
+      const current = this.specs.get(spec.id);
+      if (!current?.editable) return;
+      if (current.kind === 'text') this.callbacks.onEditText(spec.id);
+      else if (current.kind === 'image') {
+        if (current.frame !== 'empty') this.callbacks.onEditImage?.(spec.id);
+      } else {
+        // Doble clic en una forma (el velo de una plantilla) que tapa una foto: es la foto lo que se quiere encuadrar.
+        const point = this.pointer();
+        const below = point ? this.imageBelow(spec.id, point) : null;
+        if (below) this.callbacks.onEditImage?.(below);
       }
     });
-    node.on('dragstart', () => this.startGroupDrag(node));
-    node.on('dragmove', () => this.snap(node));
+    // Un clic sin arrastrar en un marco vacío pide su foto (arrastrarlo lo mueve, como cualquier capa).
+    node.on('click tap', (event) => {
+      const current = this.specs.get(spec.id);
+      if ((event.evt as MouseEvent).button > 0 || withModifier(event)) return;
+      if (current?.kind === 'image' && current.frame === 'empty' && current.editable) {
+        this.callbacks.onFrameClick?.(spec.id);
+      }
+    });
+    node.on('dragstart', () => {
+      this.callbacks.onGesture?.(true);
+      this.startGroupDrag(node);
+    });
+    node.on('dragmove', () => {
+      this.snap(node);
+      this.followPill(node);
+    });
     node.on('dragend', () => {
+      this.callbacks.onGesture?.(false);
       this.dragStart = null;
       this.clearGuides();
       const attached = this.transformer.nodes() as AnyNode[];
@@ -310,6 +488,7 @@ export class Scene {
     node.on('transform', () => {
       const next = layerToNodeBox(boxOf(node));
       node.setAttrs({ ...next, scaleX: 1, scaleY: 1 });
+      this.followPill(node);
     });
     return node;
   }

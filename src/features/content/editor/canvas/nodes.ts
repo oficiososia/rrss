@@ -8,6 +8,7 @@ import {
   type ShapeKind,
 } from '../../document';
 import { layerToNodeBox, type NodeBox } from '../geometry';
+import { frameLabel } from '../frames';
 import { editOf, type ImageEdit } from '../imageEffects/imageEdit';
 import { isSticker, type StickerKind } from './stickers';
 
@@ -60,6 +61,14 @@ export type NodeSpec =
       focus: { x: number; y: number };
       /** Texto del marcador mientras no hay imagen. */
       placeholder: string;
+      /**
+       * Marco de foto: `empty` si todavía no tiene foto (se dibuja el hueco con
+       * «Poner foto» y no sale al exportar), `filled` si ya la tiene; null si es
+       * una imagen suelta.
+       */
+      frame: 'empty' | 'filled' | null;
+      /** Ampliación de la foto dentro de la caja (1 = sin ampliar). */
+      zoom: number;
       /** Radio del desenfoque en unidades del lienzo (0 = nítida). Ver `blurRadius`. */
       blur: number;
       /** Ajustes, giro y recorte de la foto; null si se dibuja tal cual. */
@@ -117,7 +126,14 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
         url: layer.source.kind === 'asset' ? (images.get(layer.source.assetId) ?? null) : null,
         fit: layer.fit,
         focus: layer.focus,
-        placeholder: layer.source.kind === 'asset' ? 'Imagen' : 'Imagen generada',
+        placeholder:
+          layer.source.kind === 'asset'
+            ? 'Imagen'
+            : layer.source.kind === 'empty'
+              ? frameLabel(layer)
+              : 'Imagen generada',
+        frame: layer.source.kind === 'empty' ? 'empty' : layer.frame ? 'filled' : null,
+        zoom: layer.zoom ?? 1,
         blur: blurRadius(layer.blur, layer),
         edit: editOf(layer),
         backdrop: layer.backdrop
@@ -135,6 +151,8 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
         fit: 'contain',
         focus: { x: 0.5, y: 0.5 },
         placeholder: 'Logotipo',
+        frame: null,
+        zoom: 1,
         blur: 0,
         edit: null,
         backdrop: null,

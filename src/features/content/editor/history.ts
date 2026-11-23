@@ -4,6 +4,7 @@ import {
   clampPageIndex,
   duplicatePage,
   isNeutralAdjust,
+  MAX_FRAME_ZOOM,
   MAX_IMAGE_BLUR,
   MAX_LAYERS,
   movePage,
@@ -12,6 +13,7 @@ import {
   removePage,
   withPageLayers,
   type AspectRatio,
+  type Canvas,
   type ContentDocument,
   type ImageLayer,
   type Layer,
@@ -88,6 +90,8 @@ export type EditorAction =
   /** Elige varias (rectángulo de selección). Con `additive` se suman a las que ya había. */
   | { type: 'selectMany'; ids: string[]; additive?: boolean }
   | { type: 'add'; layer: Layer }
+  /** Varias capas nuevas en un solo paso (pegar): quedan delante y elegidas. Las que no caben no se añaden. */
+  | { type: 'addMany'; layers: Layer[] }
   | { type: 'update'; id: string; patch: LayerPatch; key?: string }
   /** Varios cambios de capa como un solo paso de deshacer (mover o transformar varias a la vez). */
   | { type: 'updateMany'; changes: { id: string; patch: LayerPatch }[]; key?: string }
@@ -100,6 +104,8 @@ export type EditorAction =
   | { type: 'nudgeSelection'; dx: number; dy: number }
   /** Borra las capas elegidas que no estén bloqueadas. */
   | { type: 'removeSelection' }
+  /** Copia de todas las capas elegidas (con sus grupos), un poco desplazada y ya elegida. */
+  | { type: 'duplicateSelection' }
   /** Alinea las capas elegidas entre sí (o una sola respecto al lienzo). */
   | { type: 'align'; to: AlignTarget }
   /** Reparte el espacio entre tres o más capas elegidas. */
@@ -190,6 +196,11 @@ export function applyLayerPatch(layer: Layer, patch: LayerPatch): Layer {
   }
   if (next.type === 'image') {
     // Una edición que no cambia nada no se guarda: la capa queda como si no se hubiera tocado.
+    if (next.zoom !== undefined) {
+      const zoom = Math.min(MAX_FRAME_ZOOM, Math.max(1, Number.isFinite(next.zoom) ? next.zoom : 1));
+      if (zoom > 1) next.zoom = zoom;
+      else delete next.zoom;
+    }
     if (isNeutralAdjust(next.adjust)) delete next.adjust;
     if (isFullCrop(next.crop)) delete next.crop;
     if (!next.straighten || Math.abs(next.straighten) < 0.01) delete next.straighten;
@@ -243,6 +254,31 @@ export function newGroupId(layers: readonly Layer[]): string {
     id = `g${Date.now().toString(36)}${groupCounter.toString(36)}`;
   } while (taken.has(id));
   return id;
+}
+
+/**
+ * Copias de varias capas listas para añadir a una página: identificadores
+ * nuevos (también los de sus grupos, para que la copia no se agrupe con el
+ * original), sin bloqueo, desplazadas `shift` y sin salirse del lienzo.
+ */
+export function cloneLayers(layers: readonly Layer[], taken: readonly Layer[], canvas: Canvas, shift: number): Layer[] {
+  const used: Layer[] = [...taken];
+  const groups = new Map<string, string>();
+  return layers.map((source) => {
+    const copy = { ...structuredClone(source), id: newLayerId(used), locked: false } as Layer;
+    if (source.groupId) {
+      let groupId = groups.get(source.groupId);
+      if (!groupId) {
+        groupId = newGroupId(used);
+        groups.set(source.groupId, groupId);
+      }
+      copy.groupId = groupId;
+    }
+    copy.x = Math.round(Math.min(Math.max(source.x + shift, 20 - source.width), canvas.width - 20));
+    copy.y = Math.round(Math.min(Math.max(source.y + shift, 20 - source.height), canvas.height - 20));
+    used.push(copy);
+    return copy;
+  });
 }
 
 /** Selección normalizada: solo capas que existen en la página, en su orden, y la única si hay una. */
@@ -380,6 +416,37 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       if (layers.length >= MAX_LAYERS) return state;
       if (pageIndexOfLayer(state.document, action.layer.id) >= 0) return state;
       return commitLayers(state, [...layers, action.layer], null, [action.layer.id]);
+    }
+    case 'addMany': {
+      const everywhere = new Set(state.document.pages.flatMap((page) => page.layers.map((layer) => layer.id)));
+      const fresh = action.layers.filter((layer) => !everywhere.has(layer.id)).slice(0, MAX_LAYERS - layers.length);
+      if (fresh.length === 0) return state;
+      return commitLayers(
+        state,
+        dropLoneGroups([...layers, ...fresh]),
+        null,
+        fresh.map((layer) => layer.id),
+      );
+    }
+    case 'duplicateSelection': {
+      const chosen = selectedLayers(state);
+      if (chosen.length === 0 || layers.length + chosen.length > MAX_LAYERS) return state;
+      const step = Math.max(10, Math.round(Math.min(state.document.canvas.width, state.document.canvas.height) * 0.03));
+      const copies = cloneLayers(
+        chosen,
+        state.document.pages.flatMap((page) => page.layers),
+        state.document.canvas,
+        step,
+      ).map((copy, index) => {
+        const name = chosen[index]!.name;
+        return name ? ({ ...copy, name: `${name} (copia)`.slice(0, 120) } as Layer) : copy;
+      });
+      return commitLayers(
+        state,
+        dropLoneGroups([...layers, ...copies]),
+        null,
+        copies.map((layer) => layer.id),
+      );
     }
     case 'update':
       return commitLayers(

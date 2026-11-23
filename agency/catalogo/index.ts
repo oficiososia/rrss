@@ -68,7 +68,7 @@ function analysisOf(draft: PostDraft, document: ContentDocumentInput, theme: The
     `Cuándo: ${draft.whenToUse}`,
     `Material: ${draft.material}`,
     pages > 1 ? `${pages} páginas.` : '',
-    'Del catálogo de plantillas: los textos son de muestra y las fotos, marcadores.',
+    'Del catálogo de plantillas: los textos son de muestra y las fotos, huecos para poner las tuyas.',
   ]
     .filter(Boolean)
     .join(' ')
@@ -113,7 +113,15 @@ function documentOf(draft: PostDraft, theme: Theme): ContentDocumentInput {
         draft.background === 'accent' ? theme.accent : draft.background === 'light' ? theme.light : theme.dark,
     },
     pages: draft.pages,
-    copy: { caption: draft.caption, hashtags: [], mentions: [], altText: '', callToAction: { label: '', url: '' } },
+    // El pie del catálogo es una indicación de qué escribir: va como pie de ejemplo, nunca como texto que se publica.
+    copy: {
+      caption: '',
+      captionHint: draft.caption,
+      hashtags: [],
+      mentions: [],
+      altText: '',
+      callToAction: { label: '', url: '' },
+    },
   };
 }
 

@@ -172,5 +172,6 @@ export function layerLabel(layer: Layer): string {
     if (layer.shape === 'ellipse') return 'Elipse';
     return isSticker(layer.shape) ? STICKER_LABEL[layer.shape] : 'Rectángulo';
   }
+  if (layer.type === 'image' && layer.source.kind === 'empty') return 'Hueco de foto';
   return LAYER_TYPE_LABEL[layer.type];
 }

@@ -13,7 +13,10 @@ async function open(page: Page, view?: 'week' | 'month' | 'agenda') {
   if (view) await page.addInitScript((v) => window.localStorage.setItem('rrss.calendar.view', JSON.stringify(v)), view);
   await page.goto('/calendario.html');
   await expect(page.getByTestId('calendar-page')).toBeVisible();
-  await expect(page.getByTestId('calendar-entry').first().or(page.getByTestId('calendar-month'))).toBeVisible();
+  // Lo primero que salga: una publicación o la rejilla del mes. En la vista de mes pueden salir LAS DOS
+  // cosas (visto un lunes, día en que el banco siembra publicaciones para hoy): con el `.first()` dentro
+  // del `.or()` la prueba fallaba por «dos elementos»; va fuera.
+  await expect(page.getByTestId('calendar-entry').or(page.getByTestId('calendar-month')).first()).toBeVisible();
 }
 
 const pageScroll = (page: Page) =>

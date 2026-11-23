@@ -18,7 +18,7 @@ test('ajustes: cambiar el nombre de la organización y los datos de una marca', 
   await page.getByTestId('org-settings-name').fill(nombreNuevo());
   await page.getByTestId('org-settings-save').click();
   await aviso(page, 'Cambios guardados');
-  await expect(page.getByTestId('org-switcher').first()).toContainText(nombreNuevo());
+  await expect(page.getByTestId('org-name').first()).toContainText(nombreNuevo());
   await expect(page.getByText(`Organización ${nombreNuevo()}`)).toBeVisible();
   await page.reload();
   await expect(page.getByTestId('org-settings-name')).toHaveValue(nombreNuevo());
