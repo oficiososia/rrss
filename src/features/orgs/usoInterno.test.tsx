@@ -347,7 +347,7 @@ describe('Plataforma en uso interno (todas las organizaciones propias en autoges
     expect(screen.getByTestId('gasto-page')).not.toHaveTextContent(/cupo|plan\b|planes/i);
   });
 
-  it('Integraciones: sin la tarjeta de pagos ni «Cobrar los planes»', async () => {
+  it('Integraciones: sin la fila de pagos ni «Cobrar los planes»', async () => {
     seedPlatform('self');
     fake.fn('platform-integrations', (raw) => {
       const body = raw as { action: string };
@@ -368,10 +368,9 @@ describe('Plataforma en uso interno (todas las organizaciones propias en autoges
     });
     renderApp('/plataforma/integraciones');
     const summary = await screen.findByTestId('working-now');
-    expect(summary).toHaveTextContent('7 de 7 funciones están listas.');
-    expect(summary).not.toHaveTextContent('Cobrar los planes');
-    expect(screen.queryByTestId('integration-stripe')).toBeNull();
-    expect(screen.getByTestId('integration-openai')).toBeInTheDocument();
+    expect(summary).toHaveTextContent('7 de 7 funciones listas');
+    expect(screen.queryByTestId('integration-row-stripe')).toBeNull();
+    expect(screen.getByTestId('integration-row-openai')).toBeInTheDocument();
     expect(screen.getByRole('main')).not.toHaveTextContent(/Stripe|Cobrar los planes/);
   });
 });

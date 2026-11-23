@@ -34,16 +34,20 @@ test('la superadministradora guarda la aplicación de Meta, la prueba y la ve co
   await page.goto('/plataforma');
   await page.getByTestId('platform-integrations-link').click();
   await expect(page).toHaveURL(/\/plataforma\/integraciones$/);
-  const meta = page.getByTestId('integration-meta');
-  await expect(meta).toBeVisible();
+  // Una fila por función; arriba, cuántas están listas. El detalle técnico está en «Opciones avanzadas».
+  await expect(page.getByTestId('working-now')).toContainText('funciones listas');
   // En la prueba local la publicación ya funciona (Graph API simulada): se enseña.
-  // «Qué funciona ahora», arriba, resume en llano lo que ya funciona; el detalle técnico está en «Opciones avanzadas».
-  await expect(page.getByTestId('working-now')).toContainText('Publicar en Instagram');
   await expect(page.getByTestId('integration-flags')).toContainText('Se enseña');
+  // Tocar la fila abre la hoja del servicio.
+  await page.getByTestId('integration-row-meta').click();
+  const hoja = page.getByRole('dialog');
+  const meta = hoja.getByTestId('integration-meta');
+  await expect(meta).toBeVisible();
 
   await meta.getByTestId('setting-META_APP_ID').getByRole('textbox').fill(APP_ID);
   await meta.getByLabel('App Secret').fill(APP_SECRET);
-  await meta.getByTestId('integration-save').click();
+  // Un solo botón: guarda y, después, prueba lo guardado.
+  await hoja.getByTestId('integration-save').click();
   await aviso(page, 'Guardado');
 
   const estado = meta.getByTestId('setting-state-META_APP_SECRET');
@@ -52,17 +56,19 @@ test('la superadministradora guarda la aplicación de Meta, la prueba y la ve co
   await expect(meta.getByLabel('App Secret')).toHaveValue('');
   await expect(meta.getByTestId('setting-META_APP_ID').getByRole('textbox')).toHaveValue(APP_ID);
 
-  await meta.getByTestId('integration-test').click();
   const resultado = meta.getByTestId('integration-test-result');
   await expect(resultado).toContainText('Funciona');
   await expect(resultado).toContainText('Aplicación simulada');
 
   // Tras recargar, sigue configurada y la última prueba queda anotada.
   await page.reload();
-  await expect(page.getByTestId('integration-meta').getByTestId('setting-state-META_APP_SECRET')).toContainText(
-    'Configurado',
-  );
-  await expect(page.getByTestId('integration-meta').getByTestId('integration-last-test')).toContainText('Funcionaba');
+  await expect(page.getByTestId('integration-row-meta').getByTestId('service-status-meta')).toContainText('Funciona');
+  await page.getByTestId('integration-row-meta').click();
+  const otraVez = page.getByRole('dialog').getByTestId('integration-meta');
+  await expect(otraVez.getByTestId('setting-state-META_APP_SECRET')).toContainText('Configurado');
+  await expect(otraVez.getByTestId('integration-last-test')).toContainText('Funcionaba');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByTestId('integration-audit')).toContainText('META_APP_SECRET');
 
   // El navegador nunca ha recibido el secreto: ni en la página ni en ninguna respuesta.
@@ -88,9 +94,10 @@ test('un secreto mal escrito no se guarda y quien no es superadministrador no en
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto('/plataforma/integraciones');
-  const stripe = page.getByTestId('integration-stripe');
+  await page.getByTestId('integration-row-stripe').click();
+  const stripe = page.getByRole('dialog').getByTestId('integration-stripe');
   await stripe.getByLabel('Clave secreta').fill('esto-no-es-una-clave');
-  await stripe.getByTestId('integration-save').click();
+  await page.getByRole('dialog').getByTestId('integration-save').click();
   await expect(stripe.getByRole('alert')).toContainText('sk_test_');
   await expect(stripe.getByTestId('setting-state-STRIPE_SECRET_KEY')).toContainText('Sin configurar');
   sinErrores(s, [/status of 400/]);

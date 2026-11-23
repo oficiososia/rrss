@@ -18,7 +18,7 @@ import {
   type MicroPrice,
 } from './api';
 
-// Lo que la tarjeta de OpenAI y la de Claude enseñan de modelos y precios: qué
+// Lo que la hoja de OpenAI y la de Claude enseñan, dentro de «Opciones avanzadas», de modelos y precios: qué
 // modelo se sugiere para cada tarea y cuánto cuesta un uso, los precios al día
 // frente a los cargados en la aplicación, y lo que cuesta de verdad este mes.
 // Todo lo calcula el servidor; aquí solo se enseña.
@@ -229,7 +229,7 @@ export function AiAdvisor({ provider, keyReady }: { provider: AiProviderId; keyR
                 , sin contar: {p.monthly.notCounted.join(', ').toLowerCase()} (la fuente no da precio por imagen)
               </>
             )}
-            . Es una estimación con supuestos de uso (ver «Opciones avanzadas» y docs/modelos-ia-comparativa.md).
+            . Es una estimación con supuestos de uso (docs/modelos-ia-comparativa.md).
           </p>
         )}
         {src.fetchedAt ? (
@@ -271,11 +271,8 @@ export function AiAdvisor({ provider, keyReady }: { provider: AiProviderId; keyR
         )}
       </div>
 
-      <details className="rounded-lg border border-border" data-testid={`ai-details-${provider}`}>
-        <summary className="cursor-pointer px-3.5 py-2.5 text-sm font-medium">
-          Modelos recomendados, precios y coste real
-        </summary>
-        <div className="space-y-5 border-t border-border px-3.5 py-3.5">
+      <div className="space-y-5" data-testid={`ai-details-${provider}`}>
+        <div className="space-y-5">
           <div className="space-y-1">
             <h4 className="text-sm font-semibold">Qué modelo usar para cada cosa</h4>
             {provider === 'claude' && (
@@ -362,7 +359,7 @@ export function AiAdvisor({ provider, keyReady }: { provider: AiProviderId; keyR
 
           <RealCost provider={provider} />
         </div>
-      </details>
+      </div>
     </div>
   );
 }

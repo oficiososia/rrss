@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f58/integraciones-simple`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -633,6 +633,17 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
 
+### Integraciones: una fila por función y una hoja con «Guardar y probar» (rama `f58/integraciones-simple`, 23/11/2026)
+
+Cambio 10 (I1–I4) de la propuesta de simplificación aceptada. Detalle en `docs/integraciones-sencillas.md` §0.
+
+- **Antes:** 115 controles en 7.591 px (9.589 px en móvil) y unas 1.250 palabras. **Ahora:** 10 controles en 792 px a 1366 px (872 px a 375 px), unas 80 palabras; 9 en uso interno.
+- **Lista:** «N de M funciones listas» y una fila por función (OpenAI, Instagram, R2, Fly, Drive y, si no es uso interno, Stripe) con su estado y una acción; Claude, fal.ai, ComfyUI y «Otras imágenes» en «Opcionales», plegado. Fuera «Con esto se enciende» y la lista de 8 funciones.
+- **Hoja** (al tocar la fila): estado, última prueba, la clave y un único botón **«Guardar y probar»**; borrar en «⋯»; modelos, región, URL, precios (US$, LiteLLM), «Usar estos precios» y coste real en «Opciones avanzadas». Cada hoja sigue probando solo su proveedor; el aviso de coste va junto al botón.
+- **I4:** ya estaba hecho por `f50/menu-simple` (Integraciones en el menú de la cuenta); no se ha tocado.
+- **Probado:** componentes (`integraciones.test.tsx`, `usoInterno.test.tsx`) y `test:layout` en Chromium real (`tests/layout/integraciones.spec.ts`, banco `integraciones.html`: a 375 y 1366 px, ≤ 11 controles, sin scroll lateral, hoja con «Opciones avanzadas» abierto que cabe a lo ancho). Solo interfaz: sin cambios en funciones ni migraciones.
+- **Sin probar:** e2e 18 y 21 (adaptadas; necesitan Supabase local); a mano en un navegador o un teléfono reales.
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
@@ -649,7 +660,7 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 | Subtítulos automáticos con OpenAI (`gpt-transcribe`)                                       | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave                                                                                                                                    | `docs/editor-reels.md`                     |
 | IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar                                                                                                                         | `docs/ia-medios.md` §13                    |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar)                               | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar                                                                                                                  | `docs/edicion-fotos.md`                    |
-| «Probar conexión» de Integraciones                                                         | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI                                                                                                                                 | `docs/05-puesta-en-marcha.md`              |
+| «Guardar y probar» de Integraciones                                                        | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI                                                                                                                                 | `docs/05-puesta-en-marcha.md`              |
 
 ## En staging
 
