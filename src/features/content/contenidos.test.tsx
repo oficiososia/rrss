@@ -336,7 +336,8 @@ describe('Crear una idea', () => {
       network: 'instagram',
       format: 'reel',
     });
-    expect(screen.getByTestId('reel-version')).toHaveTextContent('Sin guardar');
+    // Cabecera del editor de reels: un único «Exportar» (la versión ya no se enseña: se guarda sola).
+    expect(screen.getByTestId('reel-export')).toHaveTextContent('Exportar');
     expect(screen.getByText('Empieza tu reel en tres pasos')).toBeInTheDocument();
     // Sin IA conectada todavía: no hay botón de generar.
     expect(screen.queryByRole('button', { name: /IA/ })).not.toBeInTheDocument();

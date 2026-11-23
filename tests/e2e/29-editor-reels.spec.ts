@@ -9,9 +9,10 @@ import { abrir, archivoPng, aviso, dato, png, sinErrores, sql } from './apoyo';
 // Editor de reels de punta a punta contra el Supabase LOCAL: una pieza de
 // formato reel, una foto y un clip con voz en la línea de tiempo, un texto,
 // subtítulos automáticos (función ai-transcribe con la transcripción SIMULADA,
-// que solo arranca contra un Supabase local), uno corregido a mano, guardar la
-// versión, aprobarla y montarla con el trabajador de verdad (FFmpeg). El vídeo
-// llega a la biblioteca unido a la pieza y a la versión, y la transcripción
+// que solo arranca contra un Supabase local), uno corregido a mano y un único
+// «Exportar», que guarda la versión y la monta con el trabajador de verdad
+// (FFmpeg). El vídeo llega a la biblioteca unido a la pieza y a la versión, la
+// hoja lo enseña listo, «Publicar o programar» pide el pie, y la transcripción
 // queda en el registro de IA de la organización.
 //
 // Requisitos, además de los de la tanda: los de 11-reels.spec.ts (Node ≥ 22.18,
@@ -118,15 +119,13 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   await page.getByTestId('reel-cue-text').first().fill('Buenos días desde el obrador');
   await expect(page.getByTestId('reel-cue-block').first()).toHaveText('Buenos días desde el obrador');
 
-  // 5. Guardar la versión y aprobarla.
-  await page.getByTestId('reel-save').click();
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: /Guardar/ })
-    .click();
-  await aviso(page, /Versión 1 guardada/);
-  await page.getByTestId('reel-status-approved').click();
-  await expect(page.getByTestId('reel-status')).toHaveText('Aprobada');
+  // 5. «Exportar»: guarda la versión 1 y encarga el montaje (sin más botones).
+  await page.getByTestId('reel-export').click();
+  const hoja = page.getByTestId('reel-export-sheet');
+  await expect(hoja.getByTestId('reel-render-state')).toContainText('Montando el vídeo');
+  await expect
+    .poll(async () => (await sql(`select 1 from public.content_versions where content_id = $1`, [contentId])).length)
+    .toBe(1);
 
   const [version] = await sql<{ schema_version: number; data: { kind: string; plan: { version: number } } }>(
     `select schema_version, data from public.content_versions where content_id = $1 and version = 1`,
@@ -141,16 +140,18 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
   expect(transcripcion).toMatchObject({ task: 'transcription', provider: 'simulated', status: 'succeeded' });
   expect(Number(transcripcion!.cost_micros)).toBeGreaterThan(0);
 
-  // 6. Montar la versión guardada con el trabajador de verdad.
-  await page.getByTestId('reel-render').click();
-  await aviso(page, /Montaje encargado/);
+  // 6. El trabajador de verdad monta el vídeo; la hoja lo enseña listo con sus tres salidas.
   const { codigo, salida } = await trabajadorLocal();
   expect(codigo, salida).toBe(0);
   expect(salida).toContain('"outcome":"succeeded"');
-  // El estado del montaje está siempre arriba; la lista de montajes, en el panel con nada elegido.
-  await expect(page.getByTestId('reel-render-view')).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId('reel-bar-back').click();
-  await expect(page.getByTestId('reel-piece-job').first()).toContainText('Listo');
+  await expect(hoja).toHaveAttribute('data-state', 'ready', { timeout: 30_000 });
+  await expect(hoja.getByTestId('reel-viewer')).toBeVisible();
+  await expect(hoja.getByTestId('reel-export-library')).toHaveAttribute('href', /biblioteca\?recurso=/);
+  // «Publicar o programar»: el pie se escribe ahí mismo (sin aprobar nada todavía).
+  await hoja.getByTestId('reel-export-publish').click();
+  await expect(page.getByTestId('reel-publish-panel')).toBeVisible();
+  await page.getByTestId('reel-caption').fill('Pan recién hecho, ven a por él.');
+  await expect(page.getByTestId('reel-caption')).toHaveValue('Pan recién hecho, ven a por él.');
 
   const [trabajo] = await sql<{ id: string; result: { subtitles?: number; plan?: { version: number } } }>(
     `select id, result from public.jobs where brand_id = $1 and payload -> 'content' ->> 'id' = $2
