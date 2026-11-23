@@ -5,12 +5,16 @@
 //   POST …/social-import/step   { runId } sesión de quien gestiona la marca → hace UN paso
 //                               acotado y devuelve el avance (la interfaz repite mientras haya trabajo)
 //   POST …/social-import/pause  { runId } → detiene la importación (nada se pierde)
+//   POST …/social-import/recent { accountId } sesión de quien edita la marca → lee las
+//                               publicaciones más recientes de la cuenta (una página), sin
+//                               tocar ninguna importación («Terminar en Instagram», editor de reels)
 //
 // El token de la cuenta se descifra solo dentro del paso, en el servidor: la
 // respuesta lleva únicamente cifras y mensajes. Las funciones de base de datos
 // vuelven a comprobar que quien llama gestiona la marca.
 import type { RpcClient } from '../_shared/ai/contract.ts';
 import type { ImportRun, StepResult } from '../_shared/social/importer.ts';
+import type { RecentResult } from '../_shared/social/recent.ts';
 
 export interface SocialImportDeps {
   /** Usuario del token de sesión, o null si no vale. */
@@ -19,6 +23,8 @@ export interface SocialImportDeps {
   userRpc(accessToken: string): RpcClient;
   /** Hace un paso con las dependencias del servidor; null si el entorno no tiene la publicación configurada. */
   step(runId: string, userId: string): Promise<StepResult> | null;
+  /** Lee las últimas publicaciones de la cuenta; null si el entorno no tiene la publicación configurada. */
+  recent?(accountId: string, userId: string): Promise<RecentResult> | null;
   allowedOrigin?: string;
   log?: (event: string, data: Record<string, unknown>) => void;
 }
@@ -120,6 +126,25 @@ export function createSocialImportHandler(deps: SocialImportDeps): (request: Req
           message: result.message ?? null,
           retryAfterSeconds: result.retryAfterSeconds ?? null,
         });
+      }
+      if (route === 'recent') {
+        if (typeof body.accountId !== 'string' || !UUID.test(body.accountId)) {
+          throw new HttpError(400, 'bad_request', 'Falta la cuenta.');
+        }
+        const recent = deps.recent?.(body.accountId, user.userId) ?? null;
+        if (!recent) {
+          throw new HttpError(503, 'not_configured', 'La conexión con Instagram no está configurada en este entorno.');
+        }
+        let result: RecentResult;
+        try {
+          result = await recent;
+        } catch (e) {
+          const code = (e as { code?: string }).code;
+          if (code === '42501' || code === '28000') throw new HttpError(403, 'forbidden', (e as Error).message);
+          if (code === 'P0001') throw new HttpError(409, 'refused', (e as Error).message);
+          throw e;
+        }
+        return json(200, { outcome: result.outcome, saved: result.saved, message: result.message ?? null });
       }
       throw new HttpError(404, 'not_found', 'Ruta no encontrada.');
     } catch (e) {
