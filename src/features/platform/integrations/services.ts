@@ -1,7 +1,7 @@
-// Las tarjetas de la vista sencilla de «Plataforma → Integraciones»: una por
-// servicio, con un nombre llano, para qué sirve, el campo o campos
-// imprescindibles y qué funciones de la aplicación enciende. Todo lo demás
-// (cada ajuste del catálogo) cuelga de «Opciones avanzadas» de su tarjeta.
+// Los servicios de «Plataforma → Integraciones»: una fila por servicio, con lo
+// que hace en palabras del dueño, su estado y una acción; al tocarla, una hoja
+// con el campo o campos imprescindibles y «Guardar y probar». Todo lo demás
+// (cada ajuste del catálogo) cuelga de «Opciones avanzadas» de esa hoja.
 //
 // Lógica pura, sin React: la usan la pantalla y sus pruebas. Cada ajuste del
 // catálogo (catalog.ts) pertenece a UNA tarjeta; una prueba lo comprueba.
@@ -30,25 +30,27 @@ export interface ServiceCtx {
   has(key: string): boolean;
   /** Valor guardado de un ajuste que no es secreto. */
   value(key: string): string | undefined;
-  /** Última prueba de «Probar conexión» de la integración que prueba esta tarjeta. */
+  /** Última prueba («Guardar y probar») de la integración que prueba esta tarjeta. */
   lastTest: { ok: boolean; message: string } | null;
-}
-
-export interface Unlock {
-  label: string;
-  on(ctx: ServiceCtx): boolean;
-  /** Por qué no está activa (en llano). */
-  why: string;
 }
 
 export interface ServiceDef {
   id: ServiceId;
+  /** Título de la hoja (el servicio, con su nombre de siempre). */
   title: string;
+  /** Lo que hace, en palabras del dueño: el texto de su fila. */
+  does: string;
+  /** Con qué lo hace (el proveedor), debajo, en pequeño. */
+  provider: string;
+  /** `optional`: va en el grupo plegado «Opcionales» de la lista. */
+  tier: 'main' | 'optional';
+  /** Cómo se nombra en el resumen del grupo «Opcionales» (si no, el proveedor). */
+  short?: string;
   /** Para qué sirve, en una frase. */
   blurb: string;
   /** Opcional: sin configurar no es un problema. */
   optional?: boolean;
-  /** Integración cuya prueba lanza «Probar conexión». */
+  /** Integración cuya prueba lanza «Guardar y probar». */
   testIntegration: IntegrationId;
   /**
    * Cuando varias tarjetas comparten integración (OpenAI y Claude; fal.ai y las
@@ -71,7 +73,6 @@ export interface ServiceDef {
   extraMissing?(ctx: ServiceCtx): string[];
   /** ¿Está configurada por otro camino? (p. ej. por Bedrock en lugar de por Vertex). */
   configuredAlso?(ctx: ServiceCtx): boolean;
-  unlocks: Unlock[];
 }
 
 /**
@@ -81,19 +82,21 @@ export interface ServiceDef {
  * al botón, tal cual.
  */
 export const AI_TEXT_TEST_COST =
-  'Probar conexión hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero.';
+  'La prueba hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero.';
 
-const taskLive = (ctx: ServiceCtx, task: AiTextTask) => ctx.availability.aiTextTasks?.[task] ?? ctx.availability.aiText;
 const taskKeys = TEXT_TASKS.flatMap((t) => [`${t.prefix}_PROVIDER`, `${t.prefix}_MODEL`]);
 
 export const SERVICES: ServiceDef[] = [
   {
     id: 'openai',
     title: 'OpenAI',
+    does: 'Textos, copiloto, imágenes y subtítulos',
+    provider: 'OpenAI',
+    tier: 'main',
     blurb: 'Textos, copiloto, imágenes y subtítulos, con una sola clave.',
     testIntegration: 'ai_text',
     testScope: 'openai',
-    testHint: `Pregunta a OpenAI qué modelos ve tu clave y comprueba que puede generar. ${AI_TEXT_TEST_COST}`,
+    testHint: AI_TEXT_TEST_COST,
     simple: ['OPENAI_API_KEY'],
     required: ['OPENAI_API_KEY'],
     keys: [
@@ -124,43 +127,19 @@ export const SERVICES: ServiceDef[] = [
       if (!ctx.has('AI_PRICES')) out.push('los precios');
       return out;
     },
-    unlocks: [
-      {
-        label: 'Pies de foto y textos de las piezas',
-        on: (c) => taskLive(c, 'post.caption'),
-        why: 'falta la clave o el modelo de texto',
-      },
-      {
-        label: 'Copiloto por voz del editor',
-        on: (c) => taskLive(c, 'editor.copilot'),
-        why: 'falta la clave o el modelo de texto',
-      },
-      {
-        label: 'Revisión de marca, planes de campaña y lectura de la analítica',
-        on: (c) => taskLive(c, 'brand.check') && taskLive(c, 'campaign.plan') && taskLive(c, 'analytics.summary'),
-        why: 'falta la clave o el modelo de texto',
-      },
-      {
-        label: 'Crear y editar imágenes con IA',
-        on: (c) => c.availability.aiImage,
-        why: 'falta la clave, el modelo de imagen o el permiso de región',
-      },
-      {
-        label: 'Subtítulos automáticos de los reels',
-        on: (c) => c.availability.reelSubtitles,
-        why: 'falta la clave, la región o el precio de la transcripción',
-      },
-    ],
   },
   {
     id: 'claude',
     title: 'Claude (Anthropic / Google Cloud)',
+    does: 'Otra IA para redactar',
+    provider: 'Claude',
+    tier: 'optional',
     blurb: 'Otra forma de redactar y montar piezas. No hace falta para empezar.',
     optional: true,
     testIntegration: 'ai_text',
     testScope: 'claude',
     testRecord: 'ai_text_claude',
-    testHint: `Comprueba el acceso de Claude y, si alguna tarea lo usa, que puede generar. No prueba OpenAI. ${AI_TEXT_TEST_COST}`,
+    testHint: `No prueba OpenAI. ${AI_TEXT_TEST_COST}`,
     simple: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     required: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
     keys: [
@@ -180,17 +159,13 @@ export const SERVICES: ServiceDef[] = [
       AI_VERTEX_SERVICE_ACCOUNT_JSON: 'la cuenta de servicio de Google',
     },
     configuredAlso: (c) => c.has('ANTHROPIC_API_KEY') || (c.has('AI_BEDROCK_REGION') && c.has('AI_BEDROCK_BEARER_TOKEN')),
-    unlocks: [
-      {
-        label: 'Usar Claude en alguna tarea de texto (se elige en «Opciones avanzadas» de OpenAI)',
-        on: (c) => c.has('AI_VERTEX_SERVICE_ACCOUNT_JSON') && c.availability.aiText,
-        why: 'hace falta el acceso de Google Cloud y elegir Claude para una tarea',
-      },
-    ],
   },
   {
     id: 'meta',
     title: 'Instagram (Meta)',
+    does: 'Publicar en Instagram',
+    provider: 'Meta',
+    tier: 'main',
     blurb: 'Conectar cuentas de Instagram para publicar y medir.',
     testIntegration: 'meta',
     testHint: 'Pregunta a Meta si reconoce la aplicación. No publica nada.',
@@ -211,14 +186,13 @@ export const SERVICES: ServiceDef[] = [
       SOCIAL_APP_URL: 'la dirección de la aplicación',
       SOCIAL_TOKEN_KEYS: 'la clave de cifrado de las cuentas',
     },
-    unlocks: [
-      { label: 'Publicar y programar en Instagram', on: (c) => c.availability.publishing, why: 'falta la clave de cifrado' },
-      { label: 'Botón «Conectar con Meta»', on: (c) => c.availability.socialOAuth, why: 'falta la aplicación de Meta o su dirección' },
-    ],
   },
   {
     id: 'storage',
     title: 'Almacenamiento (Cloudflare R2)',
+    does: 'Guardar fotos y vídeos',
+    provider: 'Cloudflare R2',
+    tier: 'main',
     blurb: 'Dónde se guardan las fotos, los vídeos y las exportaciones.',
     optional: true,
     testIntegration: 'r2',
@@ -232,17 +206,13 @@ export const SERVICES: ServiceDef[] = [
       R2_ACCESS_KEY_ID: 'la clave de acceso',
       R2_SECRET_ACCESS_KEY: 'la clave secreta',
     },
-    unlocks: [
-      {
-        label: 'Guardar fotos, vídeos y exportaciones en Cloudflare (en lugar de Supabase)',
-        on: (c) => c.availability.mediaStorage,
-        why: 'faltan datos del cubo',
-      },
-    ],
   },
   {
     id: 'video',
     title: 'Máquina de vídeo (Fly.io)',
+    does: 'Montar los reels',
+    provider: 'Fly.io',
+    tier: 'main',
     blurb: 'Monta los reels, recorta fondos y genera los informes en PDF.',
     testIntegration: 'media_worker',
     testHint: 'Pregunta a Fly si la máquina existe y el token sirve. No la arranca.',
@@ -255,17 +225,14 @@ export const SERVICES: ServiceDef[] = [
       FLY_MACHINE_ID: 'el identificador de la máquina',
       WORKER_GATEWAY_TOKEN: 'el token del trabajador',
     },
-    unlocks: [
-      {
-        label: 'Montar reels, recortar fondos y generar informes en PDF',
-        on: (c) => ['FLY_API_TOKEN', 'FLY_APP', 'FLY_MACHINE_ID', 'WORKER_GATEWAY_TOKEN'].every((k) => c.has(k)),
-        why: 'faltan datos de la máquina',
-      },
-    ],
   },
   {
     id: 'fal',
+    short: 'animar fotos',
     title: 'fal.ai — animar fotos',
+    does: 'Animar fotos',
+    provider: 'fal.ai',
+    tier: 'optional',
     blurb: 'Convierte una foto en un vídeo corto con IA. Procesa fuera de la UE.',
     optional: true,
     testIntegration: 'ai_image',
@@ -278,17 +245,13 @@ export const SERVICES: ServiceDef[] = [
     names: { FAL_KEY: 'la clave de fal.ai' },
     extraMissing: (c) =>
       c.has('FAL_KEY') && c.value('AI_MEDIA_ALLOW_NON_EU') !== 'true' ? ['el permiso de procesar fuera de la UE'] : [],
-    unlocks: [
-      {
-        label: 'Animar una foto con IA',
-        on: (c) => c.has('FAL_KEY') && c.value('AI_MEDIA_ALLOW_NON_EU') === 'true',
-        why: 'falta la clave o permitir el tratamiento fuera de la UE',
-      },
-    ],
   },
   {
     id: 'drive',
     title: 'Google Drive',
+    does: 'Fotos desde Google Drive',
+    provider: 'Google',
+    tier: 'main',
     blurb: 'Usar las fotos de Drive en la biblioteca sin copiarlas.',
     optional: true,
     testIntegration: 'google_drive',
@@ -304,13 +267,13 @@ export const SERVICES: ServiceDef[] = [
       c.has('GOOGLE_DRIVE_CLIENT_ID') && c.has('GOOGLE_DRIVE_CLIENT_SECRET') && !c.availability.drive
         ? ['la dirección de la aplicación o la clave de cifrado de las cuentas']
         : [],
-    unlocks: [
-      { label: 'Elegir fotos desde Google Drive', on: (c) => c.availability.drive, why: 'falta alguno de los datos de Google' },
-    ],
   },
   {
     id: 'stripe',
     title: 'Pagos (Stripe)',
+    does: 'Cobrar los planes',
+    provider: 'Stripe',
+    tier: 'main',
     blurb: 'Cobrar los planes a las organizaciones.',
     testIntegration: 'stripe',
     testHint: 'Lee los datos de la cuenta de Stripe. No cobra nada.',
@@ -322,11 +285,13 @@ export const SERVICES: ServiceDef[] = [
       STRIPE_WEBHOOK_SECRET: 'el secreto de los avisos de Stripe',
       BILLING_APP_URL: 'la dirección de la aplicación',
     },
-    unlocks: [{ label: 'Cobrar los planes con tarjeta', on: (c) => c.availability.billing, why: 'faltan datos de Stripe' }],
   },
   {
     id: 'comfyui',
     title: 'ComfyUI propio',
+    does: 'Imágenes con tu propio servidor',
+    provider: 'ComfyUI',
+    tier: 'optional',
     blurb: 'Crear imágenes con modelos abiertos en tu propio servidor.',
     optional: true,
     testIntegration: 'comfyui',
@@ -335,17 +300,14 @@ export const SERVICES: ServiceDef[] = [
     required: ['COMFYUI_BASE_URL'],
     keys: ['COMFYUI_BASE_URL', 'COMFYUI_API_TOKEN', 'COMFYUI_DATA_REGION'],
     names: { COMFYUI_BASE_URL: 'la dirección del servidor' },
-    unlocks: [
-      {
-        label: 'Crear imágenes con tu ComfyUI',
-        on: (c) => c.has('COMFYUI_BASE_URL'),
-        why: 'falta la dirección del servidor',
-      },
-    ],
   },
   {
     id: 'images_other',
+    short: 'otras imágenes',
     title: 'Otras imágenes con IA',
+    does: 'Otras imágenes con IA',
+    provider: 'Google, Black Forest Labs e Ideogram',
+    tier: 'optional',
     blurb: 'Google (Gemini), Black Forest Labs (FLUX) e Ideogram, para crear imágenes. Opcional.',
     optional: true,
     testIntegration: 'ai_image',
@@ -363,13 +325,6 @@ export const SERVICES: ServiceDef[] = [
     ],
     names: { BFL_API_KEY: 'la clave de Black Forest Labs' },
     configuredAlso: (c) => c.has('GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON') || c.has('IDEOGRAM_API_KEY'),
-    unlocks: [
-      {
-        label: 'Más modelos de imagen para crear',
-        on: (c) => c.has('BFL_API_KEY') || c.has('GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON') || c.has('IDEOGRAM_API_KEY'),
-        why: 'falta la clave de algún proveedor',
-      },
-    ],
   },
 ];
 
@@ -444,10 +399,17 @@ export function serviceStatus(service: ServiceDef, ctx: ServiceCtx): ServiceStat
     const extra = service.extraMissing?.(ctx) ?? [];
     if (extra.length > 0) return { word: 'Falta algo', tone: 'warning', detail: `Falta ${list(extra)}.` };
   }
-  if (!ctx.lastTest) return { word: 'Sin probar', tone: 'neutral', detail: 'Pulsa «Probar conexión» para comprobarlo.' };
+  if (!ctx.lastTest) return { word: 'Sin probar', tone: 'neutral', detail: 'Pulsa «Guardar y probar» para comprobarlo.' };
   return ctx.lastTest.ok
     ? { word: 'Funciona', tone: 'success', detail: null }
     : { word: 'No funciona', tone: 'danger', detail: ctx.lastTest.message };
+}
+
+/** La única acción de la fila, según su estado. */
+export function rowAction(word: StatusWord): string {
+  if (word === 'Falta la clave' || word === 'Sin configurar') return 'Conectar';
+  if (word === 'Falta algo') return 'Completar';
+  return 'Cambiar';
 }
 
 // ───────────────────────────── resumen de arriba ─────────────────────────────

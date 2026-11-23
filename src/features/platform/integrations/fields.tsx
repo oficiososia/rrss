@@ -9,8 +9,8 @@ import { useGenerateTokenKey, useGenerateWorkerToken, useSaveIntegration } from 
 import type { UiField } from './catalog';
 
 // Los campos de Integraciones: un ajuste suelto, el solo-lectura, las claves de
-// cifrado de los tokens y el token del trabajador. Los usa la tarjeta de cada
-// servicio, tanto en la vista sencilla como en «Opciones avanzadas».
+// cifrado de los tokens y el token del trabajador. Los usa la hoja de cada
+// servicio, tanto a la vista como en «Opciones avanzadas».
 
 function storedLine(row: IntegrationSettingRow | undefined, fromEnv: boolean, secret: boolean, plain = false) {
   if (row) {
@@ -98,9 +98,10 @@ export function SettingField({
         }
       </Field>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted" data-testid={`setting-state-${field.key}`}>
-        {!plain && <code className="rounded bg-subtle px-1.5 py-0.5">{field.key}</code>}
+        {!plain && <code className="break-all rounded bg-subtle px-1.5 py-0.5">{field.key}</code>}
         {storedLine(row, fromEnv, field.secret, plain)}
-        {row && (
+        {/* En la vista sencilla, borrar está en el «⋯» de la hoja. */}
+        {row && !plain && (
           <Button variant="ghost" size="sm" onClick={() => onRemove(!removing)}>
             {removing ? 'No borrar' : 'Borrar'}
           </Button>
@@ -124,7 +125,7 @@ export function ReadOnlySetting({
     <div className="space-y-1 text-sm">
       <p className="font-medium">{field.label}</p>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <code className="rounded bg-subtle px-1.5 py-0.5">{field.key}</code>
+        <code className="break-all rounded bg-subtle px-1.5 py-0.5">{field.key}</code>
         {row?.value && <span className="font-mono text-fg">{row.value}</span>}
         {storedLine(row, fromEnv, false)}
       </div>
@@ -145,7 +146,7 @@ export function TokenKeys({
   return (
     <div className="space-y-2 text-sm" data-testid="setting-SOCIAL_TOKEN_KEYS">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        {plain ? <span className="font-medium text-fg">Clave de cifrado de las cuentas</span> : <code className="rounded bg-subtle px-1.5 py-0.5">SOCIAL_TOKEN_KEYS</code>}
+        {plain ? <span className="font-medium text-fg">Clave de cifrado de las cuentas</span> : <code className="break-all rounded bg-subtle px-1.5 py-0.5">SOCIAL_TOKEN_KEYS</code>}
         {storedLine(row, fromEnv, false, plain)}
       </div>
       {fromEnv && !row && (
@@ -193,7 +194,7 @@ export function WorkerGatewayToken({ row, plain = false }: { row: IntegrationSet
     <div className="space-y-2 text-sm" data-testid="setting-WORKER_GATEWAY_TOKEN">
       <p className="font-medium">Token del trabajador</p>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        {!plain && <code className="rounded bg-subtle px-1.5 py-0.5">WORKER_GATEWAY_TOKEN</code>}
+        {!plain && <code className="break-all rounded bg-subtle px-1.5 py-0.5">WORKER_GATEWAY_TOKEN</code>}
         {row ? (
           <>
             <Badge tone="success">Generado</Badge>
