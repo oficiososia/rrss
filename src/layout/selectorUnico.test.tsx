@@ -123,4 +123,50 @@ describe('un solo selector de marca', () => {
     expect(within(switcher!).getByTestId('org-name')).toHaveTextContent('Grupo Demo');
     expect(screen.queryByTestId('org-switcher')).toBeNull();
   });
+
+  it('una organización con una sola marca del mismo nombre sale una vez, y se pulsa (fallo 22)', async () => {
+    seedWorkspace({ orgRole: 'owner', workMode: 'self' });
+    fake.rows('organizations').push({
+      id: OTHER_ORG,
+      name: 'EnerGym',
+      kind: 'business',
+      work_mode: 'self',
+      settings: {},
+      created_by: null,
+      created_at: '2026-10-01T09:00:00Z',
+      updated_at: '2026-10-01T09:00:00Z',
+    });
+    fake.rows('organization_members').push({
+      organization_id: OTHER_ORG,
+      user_id: ME.id,
+      role: 'owner',
+      created_at: '2026-10-01T09:00:00Z',
+    });
+    fake.rows('brands').push(brandRow({ id: 'brand-gym', organization_id: OTHER_ORG, name: 'EnerGym' }));
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    let menu = await openSwitcher(user);
+    await menu.findByTestId('brand-option-brand-gym');
+    // Un solo «EnerGym» en todo el menú, y es la marca (se pulsa), no un título que no hace nada.
+    expect(menu.getAllByText('EnerGym')).toHaveLength(1);
+    expect(menu.getByRole('menuitem', { name: 'EnerGym' })).toBeInTheDocument();
+    // La organización en la que se está, con varias marcas o nombre distinto, sigue con su título.
+    expect(menu.getByText('Grupo Demo')).toBeInTheDocument();
+
+    await user.click(menu.getByRole('menuitem', { name: 'EnerGym' }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/o/${OTHER_ORG}/m/brand-gym/inicio`));
+    // Ya dentro: el selector dice «EnerGym» una vez (sin repetir la organización debajo)…
+    await waitFor(() => expect(screen.getAllByTestId('brand-switcher')[0]).toHaveTextContent('EnerGym'));
+    expect(within(screen.getAllByTestId('brand-switcher')[0]!).queryByTestId('org-name')).toBeNull();
+    // …y en el menú, «Grupo Demo» sale como grupo con su marca, y «EnerGym» una sola vez.
+    menu = await openSwitcher(user);
+    expect(menu.getAllByText('EnerGym')).toHaveLength(1);
+    await user.keyboard('{Escape}');
+
+    // El menú de la cuenta habla de la organización actual, no de otra ni del nombre de la persona.
+    const account = screen.getAllByTestId('user-menu')[0]!;
+    expect(account).toHaveAccessibleName(/organización EnerGym/);
+    expect(account.getAttribute('aria-label')).not.toMatch(/^Cuenta de/);
+    await user.click(account);
+    expect(await screen.findByTestId('user-menu-org')).toHaveTextContent('Organización: EnerGym');
+  });
 });

@@ -94,3 +94,40 @@ for (const size of SIZES) {
     });
   });
 }
+
+// La barra inferior del móvil a 360 y 402 px: «Calendario» y «Biblioteca» se tocaban y se leían
+// «CalendarioBiblioteca». Cada etiqueta cabe en su botón, separada de la siguiente, y el área
+// táctil sigue siendo de al menos 44 px.
+for (const width of [360, 402]) {
+  test(`barra inferior a ${width} px: cada etiqueta cabe en su botón y no se toca con la de al lado`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/calendario.html');
+    const nav = page.getByTestId('mobile-nav');
+    await expect(nav).toBeVisible();
+    const links = await nav.getByRole('link').all();
+    expect(links).toHaveLength(4);
+    const labels: { x: number; right: number }[] = [];
+    for (const link of links) {
+      const box = (await link.boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      const label = link.getByTestId('mobile-nav-label');
+      const text = (await label.boundingBox())!;
+      // Dentro de su botón.
+      expect(text.x).toBeGreaterThanOrEqual(box.x - 0.5);
+      expect(text.x + text.width).toBeLessThanOrEqual(box.x + box.width + 0.5);
+      // Lo que se pinta no se sale de la caja de la etiqueta (si no cabe, se corta con «…»).
+      const overflow = await label.evaluate((el) => el.scrollWidth - el.clientWidth);
+      if (overflow > 0) await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+      labels.push({ x: text.x, right: text.x + text.width });
+    }
+    labels.sort((a, b) => a.x - b.x);
+    for (let i = 1; i < labels.length; i++) expect(labels[i]!.x - labels[i - 1]!.right).toBeGreaterThanOrEqual(4);
+    await expect(nav.getByRole('link', { name: 'Calendario' })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Biblioteca' })).toBeVisible();
+    const scroll = await pageScroll(page);
+    expect(scroll.horizontal).toBeLessThanOrEqual(0);
+  });
+}

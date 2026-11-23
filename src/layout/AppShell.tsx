@@ -89,6 +89,26 @@ function accountItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
   ];
 }
 
+/** ¿Se llaman igual? (sin mayúsculas, tildes ni espacios de más: «EnerGym» = «energym »). */
+function sameName(a: string, b: string): boolean {
+  const norm = (t: string) =>
+    t
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .trim()
+      .toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Una organización con UNA sola marca que se llama igual que ella («EnerGym» en «EnerGym») sale una
+ * vez, como marca que se pulsa, sin el título del grupo encima (antes salía dos veces y el primer
+ * «EnerGym», el título, no hacía nada).
+ */
+function isSoloBrand(orgName: string, brands: Pick<BrandRow, 'name'>[]): boolean {
+  return brands.length === 1 && sameName(orgName, brands[0]!.name);
+}
+
 const switcherButton =
   'flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left text-sm hover:bg-subtle';
 
@@ -126,15 +146,20 @@ function BrandSwitcher({
           <span className={cn('block truncate', brand ? 'font-medium' : 'text-muted')}>
             {brand ? brand.name : 'Elegir marca'}
           </span>
-          <span className="block truncate text-xs text-muted" data-testid="org-name">
-            {org.name}
-          </span>
+          {/* El nombre de la organización solo si dice algo más que el de la marca. */}
+          {!(brand && sameName(brand.name, org.name)) && (
+            <span className="block truncate text-xs text-muted" data-testid="org-name">
+              {org.name}
+            </span>
+          )}
         </span>
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted" aria-hidden />
       </MenuTrigger>
       <MenuContent>
         <div data-testid="brand-menu">
-          <MenuLabel>{others.length > 0 ? org.name : 'Marcas'}</MenuLabel>
+          {!(others.length > 0 && isSoloBrand(org.name, visible)) && (
+            <MenuLabel>{others.length > 0 ? org.name : 'Marcas'}</MenuLabel>
+          )}
           {visible.length === 0 && <p className="px-2.5 py-2 text-sm text-muted">Todavía no hay marcas.</p>}
           {visible.map((b) => (
             <MenuItem
@@ -151,7 +176,7 @@ function BrandSwitcher({
             return (
               <div key={other.id} data-testid={`brand-group-${other.id}`}>
                 <MenuSeparator />
-                <MenuLabel>{other.name}</MenuLabel>
+                {!isSoloBrand(other.name, theirs) && <MenuLabel>{other.name}</MenuLabel>}
                 {theirs.map((b) => (
                   <MenuItem
                     key={b.id}
@@ -210,8 +235,11 @@ export function UserMenu({
   compact = false,
   settings = [],
   sections = [],
+  orgName,
 }: {
   compact?: boolean;
+  /** La organización en la que se está: el menú lo dice, para no confundirla con el nombre de la persona. */
+  orgName?: string;
   /** Marca, Equipo y Configuración (según la marca y la organización a la vista). */
   settings?: NavItem[];
   /** Secciones que no están en la barra inferior del móvil (Resultados, Encargos). */
@@ -248,7 +276,7 @@ export function UserMenu({
     <Menu>
       <MenuTrigger
         data-testid="user-menu"
-        aria-label={`Cuenta de ${display}${unread ? ` (${unread} ${unread === 1 ? 'aviso sin leer' : 'avisos sin leer'})` : ''}`}
+        aria-label={`Tu usuario: ${display}${orgName ? ` · organización ${orgName}` : ''}${unread ? ` (${unread} ${unread === 1 ? 'aviso sin leer' : 'avisos sin leer'})` : ''}`}
         className={cn(
           'flex min-w-0 items-center gap-2.5 rounded-lg text-left text-sm hover:bg-subtle',
           compact ? 'p-1' : 'w-full px-2 py-2',
@@ -266,6 +294,14 @@ export function UserMenu({
         )}
       </MenuTrigger>
       <MenuContent align="end">
+        {orgName && (
+          <>
+            <MenuLabel>
+              <span data-testid="user-menu-org">Organización: {orgName}</span>
+            </MenuLabel>
+            <MenuSeparator />
+          </>
+        )}
         {sections.length > 0 && (
           <>
             {sections.map(linkItem)}
@@ -407,7 +443,7 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
           ))}
         </nav>
         <div className="w-full border-t border-border pt-3">
-          <UserMenu compact={collapsed} settings={settings} />
+          <UserMenu compact={collapsed} settings={settings} orgName={org.name} />
         </div>
       </aside>
 
@@ -417,7 +453,7 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
           <div className="min-w-0 flex-1">
             <BrandSwitcher orgs={orgs} org={org} brands={brands} brand={brand} />
           </div>
-          <UserMenu compact settings={settings} sections={mobileExtra} />
+          <UserMenu compact settings={settings} sections={mobileExtra} orgName={org.name} />
         </header>
 
         {working ? (
