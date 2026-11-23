@@ -1,28 +1,31 @@
 // Editor de reels: una pieza de formato reel cuyas versiones son montajes
-// (proyecto con el plan v2). Pantalla organizada como los editores de móvil
-// (docs/editor-reels.md §10): vista previa grande arriba, línea de tiempo
-// debajo con el cabezal fijo, y una barra de herramientas que cambia con lo
-// elegido; en escritorio, además, el panel de propiedades al lado y atajos de
-// teclado. El montaje se guarda solo como borrador mientras se edita; las
-// versiones, la aprobación y el montaje del vídeo por el trabajador siguen
-// como siempre.
+// (proyecto con el plan v2). Pantalla como la de CapCut (docs/editor-reels.md
+// §10 y §11): vista previa grande arriba, línea de tiempo debajo con el
+// cabezal fijo y una sola barra de herramientas que cambia con lo elegido;
+// cada herramienta abre solo su ajuste (panel estrecho al lado en escritorio,
+// hoja en móvil). Arriba, lo mínimo: volver, nombre, guardado (automático),
+// deshacer y un único «Exportar», que monta el vídeo si hace falta y reúne
+// descargar, biblioteca y publicar o programar. En móvil ocupa la pantalla
+// entera, sin la cabecera ni la barra de la aplicación.
+//
+// Aprobación: en autogestión (`organizations.work_mode = 'self'`) no se ve;
+// «Publicar o programar» aprueba por debajo con los pasos que exige la base
+// de datos. En modo agencia se conserva el flujo de siempre (enviar a
+// revisión, aprobar), en «⋯» y en la hoja «Exportar».
 import {
   Archive,
   ArchiveRestore,
   CheckCircle2,
   ChevronLeft,
-  Clapperboard,
   CloudOff,
-  Download,
   History,
   Loader2,
   Maximize2,
   PencilLine,
   Redo2,
   Save,
-  Send,
+  ScanLine,
   SendHorizontal,
-  TriangleAlert,
   Undo2,
   Upload,
   X,
@@ -36,7 +39,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type ReactNode,
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -76,11 +78,12 @@ import {
   statusChangedMessage,
   type StatusAction,
 } from '@/features/content/status';
-import { assetKeys, uploadAsset, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { assetKeys, uploadAsset, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { useFeature } from '@/features/platform/integrations/useFeature';
-import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
-import { PublishNowDialog } from '@/features/social/PublishNowDialog';
+import { socialKeys } from '@/features/social/api';
+import { ScheduleDialog } from '@/features/social/ScheduleDialog';
 import { useWorkspaceMode } from '@/layout/workspace';
 import type { ContentItemRow, ContentStatus, ContentVersionRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -112,7 +115,9 @@ import {
 } from './missing';
 import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
-import { barKind, ContextBar, contextActions, type BarAction } from './ContextBar';
+import { barKind, ContextBar, contextActions, panelTitle, type BarAction } from './ContextBar';
+import { ExportSheet, type PreviousRender } from './ExportSheet';
+import { exportState, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
 import {
@@ -314,6 +319,8 @@ function Editor({
   const paths = contentPaths(org.id, brand.id);
   const canEdit = can('edit');
   const canApprove = can('approve');
+  // Autogestión: sin paso de aprobación a la vista ni textos de cupo.
+  const { selfManaged } = useWorkMode();
   const readOnly = !canEdit || Boolean(item.archived_at);
   const [state, dispatch] = useReducer(editorReducer, boot.initial, initEditor);
   const { project, selection } = state;
@@ -325,19 +332,26 @@ function Editor({
   const [playing, setPlaying] = useState(false);
   const [stopAt, setStopAt] = useState<number | null>(null);
   const [pps, setPps] = useState<number>(ZOOM.initial);
-  /** Sección del panel abierta (en móvil, la hoja). */
+  /** Ajuste abierto desde la barra (panel estrecho al lado en escritorio; hoja en móvil). Null = ninguno. */
   const [panel, setPanel] = useState<string | null>(() => (boot.initial.guide ? 'guide' : null));
   const [saveOpen, setSaveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   /** Selector de fotos y clips: para añadir o para sustituir un elemento. */
   const [media, setMedia] = useState<{ mode: 'add' } | { mode: 'replace'; id: string } | null>(null);
   const [musicOpen, setMusicOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
-  /** Vídeo montado que se está viendo dentro del editor (su recurso de la biblioteca). */
-  const [watching, setWatching] = useState<string | null>(null);
+  /** Hoja «Exportar» (con la portada desplegada si se abre para arreglarla). */
+  const [exportOpen, setExportOpen] = useState<false | 'open' | 'cover'>(false);
+  /** Versión cuyo montaje se acaba de encargar (hasta que el trabajo aparece en la lista). */
+  const [requestedVersion, setRequestedVersion] = useState<number | null>(null);
+  /** Se ha pulsado «Exportar»: se monta en cuanto se sepa si hace falta (al llegar la lista de montajes). */
+  const exportWanted = useRef(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [safeZones, setSafeZones] = useState(false);
+  const narrow = useNarrow();
   const [busyStatus, setBusyStatus] = useState<ContentStatus | null>(null);
-  const [styleOpen, setStyleOpen] = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
+  /** «Estilo»: los estilos de la aplicación o las plantillas de reel de la marca. */
+  const [styleOpen, setStyleOpen] = useState<false | 'styles' | 'templates'>(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [staleDraft, setStaleDraft] = useState(boot.staleDraft);
@@ -455,7 +469,12 @@ function Editor({
     mimeOf: (path) => byPath.get(path)?.mime_type ?? null,
   });
   const render = renderOfVersion(jobs.data ?? [], expectedVersion);
-  const rendering = (jobs.data ?? []).some((j) => isActive(j) && jobContentVersion(j) === expectedVersion);
+  // Montando: hay un trabajo en marcha de la versión vigente, o se acaba de encargar y aún no ha llegado a la lista.
+  const versionJob = (jobs.data ?? []).find((j) => jobContentVersion(j) === expectedVersion && expectedVersion > 0);
+  const versionView = versionJob ? describeJob(versionJob) : null;
+  const rendering =
+    (jobs.data ?? []).some((j) => isActive(j) && jobContentVersion(j) === expectedVersion) ||
+    (requestedVersion === expectedVersion && !versionJob);
 
   // Guardado automático: el borrador de la pieza, un momento después de cada cambio.
   const autosaveOn = boot.autosave && !readOnly;
@@ -470,12 +489,13 @@ function Editor({
     initialSnapshot: draftSnapshot,
   });
 
-  const apply: Apply = useCallback((change, merge) => dispatch({ type: 'change', change, merge }), []);
+  const apply: Apply = useCallback((change, merge) => dispatch({ type: 'change', change, merge }), [dispatch]);
+  // Elegir algo cambia la barra y cierra el ajuste abierto. Una transición solo tiene un ajuste: se abre ya.
   const select = useCallback((next: Selection) => {
     dispatch({ type: 'select', selection: next });
-    setPanel(null);
-  }, []);
-  const commit = useCallback(() => dispatch({ type: 'commit' }), []);
+    setPanel(next?.kind === 'transition' ? 'transition' : null);
+  }, [dispatch, setPanel]);
+  const commit = useCallback(() => dispatch({ type: 'commit' }), [dispatch]);
 
   const seek = useCallback(
     (seconds: number) => {
@@ -557,8 +577,10 @@ function Editor({
       dispatch({ type: 'select', selection: { kind: 'music' } });
       setPanel(null);
     } else {
+      // La portada se elige al exportar.
       dispatch({ type: 'select', selection: null });
-      setPanel('cover');
+      setPanel(null);
+      setExportOpen('cover');
     }
   };
   const replaceMissing = (target: MissingItem) => {
@@ -680,7 +702,8 @@ function Editor({
     section?.scrollIntoView?.({ block: 'nearest' });
   }, [panel, selection]);
 
-  async function save(note: string): Promise<number | null> {
+  /** Guarda lo que se ve como versión nueva. `announce`: decirlo (al marcarla a mano; al exportar, no hace falta). */
+  async function save(note: string, announce = true): Promise<number | null> {
     try {
       const row = await saveReel.mutateAsync({ contentId: item.id, project, note, expectedVersion });
       setExpectedVersion(row.version);
@@ -691,7 +714,7 @@ function Editor({
       setStaleDraft(null);
       dispatch({ type: 'commit' });
       setSaveOpen(false);
-      toast.success(`Versión ${row.version} guardada.`);
+      if (announce) toast.success(`Versión ${row.version} guardada.`);
       return row.version;
     } catch (error) {
       toast.error(
@@ -726,29 +749,29 @@ function Editor({
         idempotencyKey: crypto.randomUUID(),
       },
       {
+        // Cómo avanza se ve en la hoja «Exportar» (y en el botón, si se cierra).
         onSuccess: () => {
+          setRequestedVersion(version);
           void queryClient.invalidateQueries({ queryKey: pieceJobKeys(brand.id, item.id) });
-          toast.success(
-            'Montaje encargado. Aquí verás cómo avanza; el vídeo llegará a la biblioteca (carpeta «Reels»).',
-          );
         },
         onError: (error) => toast.error(translateError(error)),
       },
     );
   }
 
-  /** Un solo botón: si hay cambios los guarda como versión nueva y después monta. */
+  /** Monta lo que se ve: si hay cambios, los guarda antes como versión nueva. */
   async function saveAndRender() {
     if (problems.length > 0 || rendering) return;
     // Con un archivo borrado no se encarga: el servidor lo rechazaría. Se dice qué pasa y se va a él.
     if (missingText) {
       toast.error(missingText);
+      setExportOpen(false);
       goToMissing();
       return;
     }
     let version = expectedVersion;
     if (dirty || version === 0) {
-      const saved = await save('Antes de montar el vídeo');
+      const saved = await save('Exportado', false);
       if (saved === null) return;
       version = saved;
     }
@@ -901,7 +924,7 @@ function Editor({
       },
       select: null,
     });
-    setTemplateOpen(false);
+    setStyleOpen(false);
     seek(0);
     const music = chosen.template.music?.suggestion;
     toast.success(
@@ -910,24 +933,104 @@ function Editor({
   };
 
   const actions = statusActions(item, { edit: canEdit, approve: canApprove });
-  const canPublish =
-    publishingOn &&
-    canEdit &&
-    !item.archived_at &&
-    item.status === 'approved' &&
-    PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`);
   const empty = project.plan.clips.length === 0;
 
-  // ── Cabecera: una acción principal; lo demás, en «⋯» ──
-  const primary = editorPrimaryAction(item, actions, { edit: canEdit, publishNow: canPublish, schedule: false });
+  // ── Exportar: en qué punto está el vídeo de lo que se ve ──
+  const exportNow = exportState({
+    empty,
+    // Un archivo borrado también impide montar: va primero.
+    problems: notices,
+    worker,
+    checking: worker && jobs.isPending,
+    busy: saveReel.isPending || request.isPending,
+    rendering,
+    renderLabel: versionView?.label,
+    dirty,
+    version: expectedVersion,
+    render,
+    failed: versionView?.tone === 'danger' ? { detail: versionView.detail } : null,
+  });
+  /** «Exportar»: abre la hoja y monta el vídeo si lo que se ve todavía no lo tiene. */
+  function openExport() {
+    setPlaying(false);
+    setExportOpen('open');
+    if (readOnly) return;
+    exportWanted.current = true;
+    if (jobsKnown) exportStep.current();
+  }
+  // En cuanto se sabe si lo que se ve ya tiene vídeo, se monta si hace falta (una vez por pulsación).
+  const exportStep = useRef<() => void>(() => {});
+  useEffect(() => {
+    exportStep.current = () => {
+      if (!exportWanted.current) return;
+      exportWanted.current = false;
+      if (shouldRenderOnExport(exportNow)) void saveAndRender();
+    };
+  });
+  const jobsKnown = !jobs.isPending;
+  useEffect(() => {
+    if (jobsKnown) exportStep.current();
+  }, [jobsKnown]);
+
+  /**
+   * «Publicar o programar»: abre el calendario con esta pieza. En autogestión, antes la aprueba por debajo
+   * (la base de datos solo publica lo aprobado); en modo agencia, el estado lo decide quien revisa.
+   */
+  async function publishOrSchedule() {
+    if (selfManaged) {
+      setApproving(true);
+      try {
+        for (const to of selfApprovalSteps(item.status)) {
+          await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion });
+        }
+      } catch (error) {
+        toast.error(translateError(error));
+        return;
+      } finally {
+        setApproving(false);
+      }
+    }
+    // El calendario tiene que ver el estado nuevo y el vídeo recién montado.
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: socialKeys.candidates(brand.id) }),
+      queryClient.invalidateQueries({ queryKey: socialKeys.media(brand.id) }),
+    ]);
+    setExportOpen(false);
+    setScheduleOpen(true);
+  }
+
+  const previousRenders: PreviousRender[] = (jobs.data ?? []).map((job) => {
+    const view = describeJob(job);
+    return {
+      id: job.id,
+      version: jobContentVersion(job),
+      label: view.label,
+      tone: view.tone,
+      createdAt: job.created_at,
+      detail: view.detail,
+      assetId: view.assetId,
+    };
+  });
+  const publishHint = !publishingOn
+    ? 'Publicar no está activado en esta instalación.'
+    : !canEdit || item.archived_at
+      ? 'No puedes publicar este reel.'
+      : selfManaged && !canApprove
+        ? 'Tu papel en la marca no deja publicar: pídeselo a quien la gestiona.'
+        : undefined;
+
+  // ── Aprobación (solo en modo agencia): el siguiente paso, en «Exportar»; los demás, en «⋯» ──
+  const primary = selfManaged
+    ? null
+    : editorPrimaryAction(item, actions, { edit: canEdit, publishNow: false, schedule: false });
+  const primaryStatus = primary?.kind === 'status' ? primary.action : null;
   const statusBlocked = (action: StatusAction) =>
     dirty
-      ? 'Guarda antes la versión'
+      ? 'Antes, exporta los cambios'
       : action.needsVersion && expectedVersion === 0
-        ? 'Hace falta guardar una versión antes'
+        ? 'Antes, exporta el reel'
         : undefined;
   const FORWARD = new Set<ContentStatus>(['in_review', 'approved']);
-  const primaryStatus = primary?.kind === 'status' ? primary.action.to : null;
   const statusItem = (action: StatusAction) => ({
     id: `status-${action.to}`,
     label: action.label,
@@ -937,31 +1040,64 @@ function Editor({
     hint: statusBlocked(action),
     testId: `reel-status-${action.to}`,
   });
+  const menuStatus = selfManaged ? [] : actions.filter((a) => a.to !== primaryStatus?.to);
+  const approval = selfManaged ? undefined : (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-xl bg-subtle px-3 py-2 text-sm"
+      data-testid="reel-approval"
+    >
+      <span className="text-muted">Estado:</span>
+      <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
+      {primaryStatus && (
+        <Button
+          size="sm"
+          className="ml-auto"
+          onClick={() => void changeStatus(primaryStatus.to)}
+          disabled={Boolean(statusBlocked(primaryStatus)) || busyStatus !== null}
+          loading={busyStatus === primaryStatus.to}
+          title={statusBlocked(primaryStatus)}
+          data-testid={`reel-status-${primaryStatus.to}`}
+        >
+          {primaryStatus.to === 'approved' ? (
+            <CheckCircle2 className="h-4 w-4" aria-hidden />
+          ) : (
+            <SendHorizontal className="h-4 w-4" aria-hidden />
+          )}
+          {primaryStatus.label}
+        </Button>
+      )}
+    </div>
+  );
+
+  // ── «⋯» de la cabecera: lo que se usa poco ──
   const moreActions: MoreMenuItem[] = [
+    // En un móvil no cabe «Rehacer» junto a «Deshacer».
+    ...(narrow && !readOnly
+      ? [
+          {
+            id: 'redo',
+            label: 'Rehacer',
+            icon: Redo2,
+            onSelect: () => dispatch({ type: 'redo' }),
+            disabled: state.future.length === 0,
+            testId: 'reel-redo-menu',
+          },
+        ]
+      : []),
     {
       id: 'history',
       label: 'Historial',
       icon: History,
       onSelect: () => setHistoryOpen(true),
-      disabled: item.current_version === 0,
       testId: 'reel-history',
     },
-    null,
-    ...actions.filter((a) => a.to !== primaryStatus && FORWARD.has(a.to)).map(statusItem),
-    ...(canPublish && primary?.kind !== 'publishNow'
-      ? [
-          {
-            id: 'publish-now',
-            label: 'Publicar ahora',
-            icon: Send,
-            onSelect: () => setPublishOpen(true),
-            disabled: !render,
-            hint: render ? undefined : 'Monta antes el vídeo de esta versión',
-            testId: 'reel-publish-now',
-          },
-        ]
-      : []),
-    null,
+    {
+      id: 'safe-zones',
+      label: safeZones ? 'Ocultar lo que tapa Instagram' : 'Ver lo que tapa Instagram',
+      icon: ScanLine,
+      onSelect: () => setSafeZones((v) => !v),
+      testId: 'reel-safe-toggle',
+    },
     ...(canEdit && !item.archived_at
       ? [
           {
@@ -974,7 +1110,7 @@ function Editor({
         ]
       : []),
     null,
-    ...actions.filter((a) => a.to !== primaryStatus && !FORWARD.has(a.to)).map(statusItem),
+    ...menuStatus.map(statusItem),
     ...(canEdit && !item.archived_at
       ? [
           {
@@ -988,70 +1124,14 @@ function Editor({
         ]
       : []),
   ];
-  const primaryButton = (() => {
-    if (!primary) return null;
-    if (primary.kind === 'restore')
-      return (
-        <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="reel-restore">
-          <ArchiveRestore className="h-4 w-4" aria-hidden />
-          Recuperar
-        </Button>
-      );
-    if (primary.kind === 'publishNow')
-      return (
-        <Button
-          size="sm"
-          onClick={() => setPublishOpen(true)}
-          disabled={!render}
-          title={render ? undefined : 'Monta antes el vídeo de esta versión'}
-          data-testid="reel-publish-now"
-        >
-          <Send className="h-4 w-4" aria-hidden />
-          Publicar ahora
-        </Button>
-      );
-    if (primary.kind === 'status') {
-      const { action } = primary;
-      return (
-        <Button
-          size="sm"
-          onClick={() => void changeStatus(action.to)}
-          disabled={Boolean(statusBlocked(action)) || busyStatus !== null}
-          loading={busyStatus === action.to}
-          title={statusBlocked(action)}
-          data-testid={`reel-status-${action.to}`}
-        >
-          {action.to === 'approved' ? (
-            <CheckCircle2 className="h-4 w-4" aria-hidden />
-          ) : (
-            <SendHorizontal className="h-4 w-4" aria-hidden />
-          )}
-          {action.label}
-        </Button>
-      );
-    }
-    return null;
-  })();
-
-  // ── Estado del montaje de la versión que se ve ──
-  const versionJob = (jobs.data ?? []).find((j) => jobContentVersion(j) === expectedVersion && expectedVersion > 0);
-  const versionView = versionJob ? describeJob(versionJob) : null;
-  const renderBlockedBy = empty
-    ? 'Añade fotos o clips.'
-    : problems.length > 0
-      ? 'Arregla antes lo que se marca en «Avisos».'
-      : null;
 
   // ── Barra de herramientas: lo que se puede hacer con lo elegido ──
   const kind = barKind(project, selection);
-  const hasRenders = worker && (jobs.data ?? []).length > 0;
   const bar = contextActions({
     project,
     selection,
     readOnly,
     canSplit: true,
-    hasBrandTemplates: (brandTemplates.data ?? []).length > 0,
-    hasRenders,
     full: project.plan.clips.length >= REEL_MAX_CLIPS,
   });
   const onBar = (action: BarAction) => {
@@ -1070,10 +1150,7 @@ function Editor({
         setMusicOpen(true);
         return;
       case 'style':
-        setStyleOpen(true);
-        return;
-      case 'template':
-        setTemplateOpen(true);
+        setStyleOpen('styles');
         return;
       case 'subtitles':
         dispatch({ type: 'select', selection: { kind: 'subtitles' } });
@@ -1105,19 +1182,31 @@ function Editor({
     if (width > 0 && timeline.total > 0) setPps(clampZoom((width * 0.9) / timeline.total));
   };
 
-  const autosaveText =
-    autosave.state === 'clean'
+  // Estado del guardado: con el guardado automático, lo que dice; sin él (tabla sin migrar), si hay cambios.
+  const autosaveText = !autosaveOn
+    ? dirty && !readOnly
+      ? 'Sin guardar'
+      : ''
+    : autosave.state === 'clean' || autosave.state === 'saved'
       ? expectedVersion > 0 || !empty
         ? 'Guardado'
         : ''
-      : autosave.state === 'saved'
-        ? 'Borrador guardado'
-        : AUTOSAVE_LABEL[autosave.state];
+      : AUTOSAVE_LABEL[autosave.state];
+  const autosaveState = autosaveOn ? autosave.state : 'error';
 
   return (
-    <div ref={rootRef} className="relative flex min-h-0 flex-1 flex-col gap-2" data-testid="reel-editor">
-      {/* ── Cabecera ── */}
-      <header className="flex shrink-0 items-center gap-2">
+    <div
+      ref={rootRef}
+      className={cn(
+        'relative flex min-h-0 flex-1 flex-col gap-2',
+        // Móvil y tableta: a pantalla completa, por encima de la cabecera y de la barra de la aplicación.
+        'max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:bg-bg max-lg:px-2',
+        'max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:pt-[max(0.5rem,env(safe-area-inset-top))]',
+      )}
+      data-testid="reel-editor"
+    >
+      {/* ── Cabecera: volver, nombre, guardado, deshacer, «⋯» y un único «Exportar» ── */}
+      <header className="flex shrink-0 items-center gap-1.5 sm:gap-2">
         <Link
           to={paths.list}
           className="flex h-9 shrink-0 items-center gap-1 rounded-lg pr-1 text-sm text-muted hover:text-fg"
@@ -1126,143 +1215,93 @@ function Editor({
           <ChevronLeft className="h-5 w-5" aria-hidden />
           <span className="max-lg:hidden">Contenidos</span>
         </Link>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold lg:text-xl">{item.title}</h1>
-        <div className="flex shrink-0 items-center gap-2" data-testid="page-actions">
-          {!readOnly && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setSaveOpen(true)}
-              disabled={!dirty || empty}
-              title="Guardar una versión (para enviarla a revisión, aprobarla o montarla)"
-              data-testid="reel-save"
-            >
-              <Save className="h-4 w-4" aria-hidden />
-              <span className="max-sm:sr-only">Guardar versión</span>
-            </Button>
-          )}
-          {primaryButton}
-          <MoreMenu items={moreActions} label="Más acciones del reel" testId="reel-more" size="sm" />
-        </div>
-      </header>
-
-      {/* ── Estado: guardado, avisos y «Montar el vídeo» siempre a un toque ── */}
-      <div className="flex shrink-0 items-center gap-x-3 gap-y-1 text-xs text-muted sm:flex-wrap">
-        <Badge tone={STATUS_TONE[item.status]}>
-          <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
-        </Badge>
+        <h1 className="min-w-0 truncate text-base font-semibold lg:text-xl" title={item.title}>
+          {item.title}
+        </h1>
+        {/* En modo agencia, el estado de la pieza (en autogestión no hay aprobación a la vista). */}
+        {!selfManaged && (
+          <Badge tone={STATUS_TONE[item.status]} className="shrink-0 max-sm:hidden">
+            <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
+          </Badge>
+        )}
         {item.archived_at && <Badge tone="warning">Archivado</Badge>}
-        <span className="max-sm:sr-only" data-testid="reel-version">
-          {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin guardar'}
-          {dirty && ' · cambios sin guardar como versión'}
-        </span>
-        {autosaveOn && autosaveText && (
+        {autosaveText && (
           <span
-            className={cn('inline-flex items-center gap-1', autosave.state === 'error' && 'text-danger')}
+            className={cn(
+              'inline-flex shrink-0 items-center gap-1 text-xs text-muted',
+              autosaveState === 'error' && 'text-danger',
+            )}
             role="status"
             aria-live="polite"
             title={
-              autosave.state === 'error'
-                ? 'No se ha podido guardar el borrador: se reintenta solo. Revisa la conexión.'
-                : 'El montaje se guarda solo mientras editas. «Guardar versión» lo deja en el historial.'
+              !autosaveOn
+                ? 'Se guarda al exportar, o desde «⋯» → Historial.'
+                : autosave.state === 'error'
+                  ? 'No se ha podido guardar: se reintenta solo. Revisa la conexión.'
+                  : 'El reel se guarda solo mientras editas.'
             }
             data-testid="reel-autosave"
-            data-state={autosave.state}
+            data-state={autosaveState}
           >
-            {autosave.state === 'error' ? (
+            {autosaveState === 'error' ? (
               <CloudOff className="h-3.5 w-3.5" aria-hidden />
-            ) : autosave.state === 'pending' || autosave.state === 'saving' ? (
+            ) : autosaveState === 'pending' || autosaveState === 'saving' ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
               <CheckCircle2 className="h-3.5 w-3.5 text-success" aria-hidden />
             )}
-            {autosaveText}
+            <span className="max-sm:sr-only">{autosaveText}</span>
           </span>
         )}
-        {!empty && (notices.length > 0 || warnings.length > 0) && (
-          <button
-            type="button"
-            className={cn(
-              'inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
-              notices.length > 0 ? 'font-medium text-danger' : 'text-warning',
-            )}
-            onClick={() => {
-              dispatch({ type: 'select', selection: null });
-              setPanel('warnings');
-            }}
-            data-testid="reel-notices-chip"
-          >
-            <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
-            {notices.length > 0 ? notices.length : warnings.length}
-            <span className="max-sm:sr-only">
-              {notices.length > 0 ? ' por arreglar' : warnings.length === 1 ? ' aviso' : ' avisos'}
-            </span>
-          </button>
-        )}
-        {worker && (
-          <span className="ml-auto flex min-w-0 shrink-0 items-center gap-2" data-testid="reel-render-panel">
-            {rendering ? (
-              <span className="flex min-w-0 items-center gap-1" role="status" data-testid="reel-render-state">
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                <span className="truncate">
-                  {versionView?.label ?? 'Montando'}…
-                  <span className="max-sm:sr-only"> Se actualiza solo; puedes seguir editando.</span>
-                </span>
-              </span>
-            ) : versionView?.assetId ? (
-              <span className="flex items-center gap-1" data-testid="reel-render-state">
-                <Badge tone="success">Listo</Badge>
-                <button
-                  type="button"
-                  className="font-medium text-primary hover:underline"
-                  onClick={() => {
-                    setPlaying(false);
-                    setWatching(versionView.assetId);
-                  }}
-                  data-testid="reel-render-view"
-                >
-                  Ver el vídeo
-                </button>
-              </span>
-            ) : versionView?.tone === 'danger' ? (
-              <span className="truncate text-danger" role="alert" data-testid="reel-render-state">
-                No se pudo montar: {versionView.detail}
-              </span>
-            ) : (
-              <span className="truncate max-sm:sr-only" data-testid="reel-render-state">
-                {renderBlockedBy ??
-                  (dirty ? 'Al montar se guarda una versión nueva.' : 'Esta versión todavía no se ha montado.')}
-              </span>
-            )}
-            {!readOnly && (
+        <span className="min-w-0 flex-1" />
+        <div className="flex shrink-0 items-center gap-1" data-testid="page-actions">
+          {!readOnly && (
+            <>
               <Button
-                size="sm"
-                onClick={() => void saveAndRender()}
-                disabled={Boolean(renderBlockedBy) || rendering}
-                loading={request.isPending || saveReel.isPending}
-                title={renderBlockedBy ?? undefined}
-                data-testid="reel-render"
+                variant="ghost"
+                size="icon"
+                aria-label="Deshacer"
+                aria-keyshortcuts="Control+Z"
+                title="Deshacer (Ctrl+Z)"
+                disabled={state.past.length === 0}
+                onClick={() => dispatch({ type: 'undo' })}
+                data-testid="reel-undo"
               >
-                <Clapperboard className="h-4 w-4" aria-hidden />
-                {rendering ? (
-                  'Montando…'
-                ) : dirty || expectedVersion === 0 ? (
-                  <>
-                    <span className="max-sm:sr-only">Guardar y montar el vídeo</span>
-                    <span className="sm:hidden" aria-hidden>
-                      Montar
-                    </span>
-                  </>
-                ) : versionView?.assetId || versionView?.tone === 'danger' ? (
-                  'Montar otra vez'
-                ) : (
-                  'Montar el vídeo'
-                )}
+                <Undo2 className="h-4 w-4" aria-hidden />
               </Button>
-            )}
-          </span>
-        )}
-      </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="max-sm:hidden"
+                aria-label="Rehacer"
+                aria-keyshortcuts="Control+Y"
+                title="Rehacer (Ctrl+Y)"
+                disabled={state.future.length === 0}
+                onClick={() => dispatch({ type: 'redo' })}
+                data-testid="reel-redo"
+              >
+                <Redo2 className="h-4 w-4" aria-hidden />
+              </Button>
+            </>
+          )}
+          <MoreMenu items={moreActions} label="Más acciones del reel" testId="reel-more" size="sm" />
+          {item.archived_at && canEdit ? (
+            <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="reel-restore">
+              <ArchiveRestore className="h-4 w-4" aria-hidden />
+              Recuperar
+            </Button>
+          ) : (
+            <Button size="sm" onClick={openExport} disabled={empty && !render} data-testid="reel-export">
+              {exportNow.kind === 'rendering' ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Upload className="h-4 w-4" aria-hidden />
+              )}
+              Exportar
+            </Button>
+          )}
+        </div>
+      </header>
 
       {/* ── Avisos de la pieza (pocas líneas; si hay muchos, se desplazan dentro) ── */}
       <div className="max-h-24 shrink-0 space-y-1 overflow-y-auto empty:hidden">
@@ -1338,12 +1377,6 @@ function Editor({
             </Notice>
           </div>
         )}
-        {!worker && (
-          <Notice>
-            Puedes montar, previsualizar, guardar y aprobar el reel. El vídeo final lo monta el trabajador de medios, que
-            no está disponible en este entorno.
-          </Notice>
-        )}
       </div>
 
       {empty ? (
@@ -1384,7 +1417,13 @@ function Editor({
         </div>
       ) : (
         <>
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div
+            className={cn(
+              'grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-3',
+              // El ajuste de la herramienta, estrecho y al lado, solo mientras está abierto.
+              panel !== null && 'lg:grid-cols-[minmax(0,1fr)_20rem]',
+            )}
+          >
             {/* ── Vista previa ── */}
             <div className="relative flex min-h-0 flex-col" data-reel-keys>
               {missing.length > 0 && (
@@ -1415,62 +1454,33 @@ function Editor({
                 onTextSize={(id, size, key) => apply((p) => setTextSize(p, id, size), key)}
                 onTextChange={(id, text, key) => apply((p) => updateText(p, id, { text }), key)}
                 onGestureEnd={commit}
-                extra={
-                  !readOnly && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Deshacer"
-                        aria-keyshortcuts="Control+Z"
-                        title="Deshacer (Ctrl+Z)"
-                        disabled={state.past.length === 0}
-                        onClick={() => dispatch({ type: 'undo' })}
-                        data-testid="reel-undo"
-                      >
-                        <Undo2 className="h-4 w-4" aria-hidden />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Rehacer"
-                        aria-keyshortcuts="Control+Y"
-                        title="Rehacer (Ctrl+Y)"
-                        disabled={state.future.length === 0}
-                        onClick={() => dispatch({ type: 'redo' })}
-                        data-testid="reel-redo"
-                      >
-                        <Redo2 className="h-4 w-4" aria-hidden />
-                      </Button>
-                    </>
-                  )
-                }
+                safeZones={safeZones}
               />
             </div>
 
-            {/* ── Panel: al lado en escritorio; en móvil, una hoja que sube al pedir una herramienta ── */}
+            {/* ── Ajuste de la herramienta elegida: panel estrecho al lado en escritorio; hoja en móvil ── */}
             <aside
               ref={asideRef}
-              aria-label="Propiedades"
+              aria-label={panelTitle(bar, panel)}
               className={cn(
                 'min-h-0 overflow-y-auto rounded-xl border border-border bg-surface p-3',
                 'max-lg:absolute max-lg:inset-x-0 max-lg:bottom-0 max-lg:z-30 max-lg:max-h-[58%] max-lg:rounded-b-none max-lg:shadow-pop',
-                panel === null && 'max-lg:hidden',
+                panel === null && 'hidden',
               )}
               data-testid="reel-panel"
               data-open={panel !== null}
             >
-              <div className="mb-2 flex items-center justify-between gap-2 lg:hidden">
-                <span className="text-sm font-semibold">Ajustes</span>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold">{panelTitle(bar, panel)}</span>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setPanel(null)}
-                  aria-label="Cerrar los ajustes"
+                  aria-label="Cerrar el ajuste"
                   data-testid="reel-panel-close"
                 >
                   <X className="h-4 w-4" aria-hidden />
-                  Listo
+                  <span className="lg:sr-only">Listo</span>
                 </Button>
               </div>
               {selection ? (
@@ -1497,172 +1507,68 @@ function Editor({
                   }}
                 />
               ) : (
-                <div className="space-y-3">
-                  {project.guide && (
-                    <PanelSection name="guide" active={panel}>
-                      <GuidePanel
-                        project={project}
-                        sources={sources.data ?? []}
-                        loading={sources.isPending}
-                        error={sources.error}
-                        readOnly={readOnly}
-                        labelOf={labelOf}
-                        onFill={(shotId, asset) => apply((p) => fillGuideShot(p, shotId, asset, template, guideLook()))}
-                        onSelectClip={(id) => select({ kind: 'clip', id })}
-                      />
-                    </PanelSection>
-                  )}
-                  <PanelSection name="warnings" active={panel}>
-                    <h2 className="text-sm font-semibold">Avisos</h2>
-                    {notices.length > 0 && (
-                      <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
-                        {notices.map((p) => (
-                          <li key={p}>{p}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {warnings.length > 0 && (
-                      <div data-testid="reel-preview-warnings">
-                        <p className="text-xs font-medium">Se verá distinto en el vídeo:</p>
-                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-muted">
-                          {warnings.map((w) => (
-                            <li key={w}>{w}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    <p className="text-xs text-muted" data-testid="reel-limits">
-                      {timeline.total > template.timing.maxTotalSeconds
-                        ? `Dura ${fmt(timeline.total)} s; el estilo «${template.name}» está pensado para hasta ${fmt(template.timing.maxTotalSeconds)} s. El máximo es ${REEL_MAX_SECONDS} s.`
-                        : `Máximo ${REEL_MAX_SECONDS} s; el estilo «${template.name}» va bien hasta ${fmt(template.timing.maxTotalSeconds)} s.`}
-                    </p>
-                  </PanelSection>
-                  <PanelSection name="cover" active={panel}>
-                    <CoverSection
-                      clock={clock}
-                      project={project}
-                      total={timeline.total}
-                      readOnly={readOnly}
-                      urlOf={urlOf}
-                      labelOf={labelOf}
-                      apply={apply}
-                      onSeek={seek}
-                    />
-                  </PanelSection>
-                  {hasRenders && (
-                    <PanelSection name="renders" active={panel}>
-                      <h2 className="text-sm font-semibold">Montajes</h2>
-                      <ul className="divide-y divide-border" data-testid="reel-piece-jobs">
-                        {(jobs.data ?? []).map((job) => {
-                          const view = describeJob(job);
-                          return (
-                            <li
-                              key={job.id}
-                              className="flex flex-wrap items-center gap-2 py-2 text-sm"
-                              data-testid="reel-piece-job"
-                            >
-                              <span>Versión {jobContentVersion(job) ?? '?'}</span>
-                              <Badge
-                                tone={
-                                  view.tone === 'success'
-                                    ? 'success'
-                                    : view.tone === 'danger'
-                                      ? 'danger'
-                                      : view.tone === 'progress'
-                                        ? 'primary'
-                                        : 'neutral'
-                                }
-                              >
-                                {view.label}
-                              </Badge>
-                              <span className="text-xs text-muted">{formatDateTime(job.created_at)}</span>
-                              {view.detail && <span className="w-full text-xs text-danger">{view.detail}</span>}
-                              {view.assetId && (
-                                <button
-                                  type="button"
-                                  className="font-medium text-primary hover:underline"
-                                  onClick={() => {
-                                    setPlaying(false);
-                                    setWatching(view.assetId);
-                                  }}
-                                >
-                                  Ver el vídeo
-                                </button>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </PanelSection>
-                  )}
-                  <div className="space-y-1 border-t border-border pt-3 text-xs text-muted max-lg:hidden" data-testid="reel-inspector-empty">
-                    <p>Elige un elemento de la línea de tiempo para cambiarlo.</p>
-                    <p>
-                      Atajos: Espacio reproduce · S divide en el cabezal · Supr borra · ← → un fotograma (Mayús, un
-                      segundo) · Ctrl+Z / Ctrl+Y deshacen y rehacen · Ctrl+D duplica · Ctrl + rueda amplía la línea.
-                    </p>
-                  </div>
-                </div>
+                project.guide &&
+                panel === 'guide' && (
+                  <GuidePanel
+                    project={project}
+                    sources={sources.data ?? []}
+                    loading={sources.isPending}
+                    error={sources.error}
+                    readOnly={readOnly}
+                    labelOf={labelOf}
+                    onFill={(shotId, asset) => apply((p) => fillGuideShot(p, shotId, asset, template, guideLook()))}
+                    onSelectClip={(id) => select({ kind: 'clip', id })}
+                  />
+                )
               )}
             </aside>
           </div>
 
-          {/* ── Barra de herramientas: cambia con lo elegido (en móvil, abajo del todo) ── */}
-          <div className="flex shrink-0 items-center gap-3 max-lg:order-last">
-            <div className="min-w-0 flex-1">
-              <ContextBar
-                kind={kind}
-                actions={bar}
-                activePanel={panel}
-                onAction={onBar}
-                onBack={() => select(null)}
-              />
-            </div>
-            {/* Duración y zoom de la línea de tiempo (en móvil, la duración está en el reloj y el zoom es el pellizco). */}
-            <div className="flex shrink-0 items-center gap-2 text-xs max-lg:hidden">
-              <span className="text-right text-muted">
-                <span className="block" data-testid="reel-duration">
-                  {fmt(timeline.total)} s de {REEL_MAX_SECONDS} s como máximo
-                </span>
-                <span className="block max-xl:hidden">Estilo: {template.name}</span>
-              </span>
-              <span className="flex items-center">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Alejar la línea de tiempo"
-                  disabled={pps <= ZOOM.min}
-                  onClick={() => setPps((z) => clampZoom(z / ZOOM_STEP))}
-                  data-testid="reel-zoom-out"
-                >
-                  <ZoomOut className="h-4 w-4" aria-hidden />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Ver el reel entero en la línea de tiempo"
-                  title="Ajustar: el reel entero a la vista"
-                  onClick={zoomFit}
-                  data-testid="reel-zoom-fit"
-                >
-                  <Maximize2 className="h-4 w-4" aria-hidden />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Acercar la línea de tiempo"
-                  disabled={pps >= ZOOM.max}
-                  onClick={() => setPps((z) => clampZoom(z * ZOOM_STEP))}
-                  data-testid="reel-zoom-in"
-                >
-                  <ZoomIn className="h-4 w-4" aria-hidden />
-                </Button>
-              </span>
-            </div>
+          {/* ── La única barra de herramientas: cambia con lo elegido (en móvil, abajo del todo) ── */}
+          <div className="shrink-0 max-lg:order-last">
+            <ContextBar kind={kind} actions={bar} activePanel={panel} onAction={onBar} onBack={() => select(null)} />
           </div>
 
-          {/* ── Línea de tiempo ── */}
-          <div className="shrink-0" data-reel-keys>
+          {/* ── Línea de tiempo, con su duración y su zoom (en móvil, el zoom es el pellizco) ── */}
+          <div className="shrink-0 space-y-1" data-reel-keys data-testid="reel-timeline-area">
+            <div className="flex items-center gap-2 text-xs text-muted max-lg:hidden">
+              <span className="min-w-0 flex-1 truncate" data-testid="reel-duration">
+                {fmt(timeline.total)} s de {REEL_MAX_SECONDS} s como máximo
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label="Alejar la línea de tiempo"
+                disabled={pps <= ZOOM.min}
+                onClick={() => setPps((z) => clampZoom(z / ZOOM_STEP))}
+                data-testid="reel-zoom-out"
+              >
+                <ZoomOut className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label="Ver el reel entero en la línea de tiempo"
+                title="Ajustar: el reel entero a la vista"
+                onClick={zoomFit}
+                data-testid="reel-zoom-fit"
+              >
+                <Maximize2 className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label="Acercar la línea de tiempo"
+                disabled={pps >= ZOOM.max}
+                onClick={() => setPps((z) => clampZoom(z * ZOOM_STEP))}
+                data-testid="reel-zoom-in"
+              >
+                <ZoomIn className="h-4 w-4" aria-hidden />
+              </Button>
+            </div>
             <div ref={timelineBoxRef}>
               <Timeline
                 plan={project.plan}
@@ -1754,46 +1660,71 @@ function Editor({
         />
       )}
       <Dialog
-        open={styleOpen}
-        onOpenChange={setStyleOpen}
+        open={styleOpen !== false}
+        onOpenChange={(open) => setStyleOpen(open ? 'styles' : false)}
         title="Estilo del reel"
-        description="Cambia el ritmo, las transiciones y el estilo del texto. Pone de nuevo la duración de las fotos y las transiciones del estilo; no toca el orden, los recortes ni lo que escribiste."
+        description={
+          styleOpen === 'templates'
+            ? 'Reparte las fotos y los clips del reel, en su orden, en los planos de una plantilla de la marca, con sus textos de muestra. La música se conserva. Se puede deshacer.'
+            : 'Ritmo, transiciones y letra. No toca el orden, los recortes ni lo que escribiste.'
+        }
         size="lg"
       >
-        <TemplateCards
-          templates={REEL_TEMPLATES}
-          value={template.id}
-          disabled={readOnly}
-          onChange={(id) => {
-            const next = REEL_TEMPLATES.find((t) => t.id === id);
-            if (next) apply((p) => applyTemplate(p, next));
-            setStyleOpen(false);
-          }}
-        />
-      </Dialog>
-      <Dialog
-        open={templateOpen}
-        onOpenChange={setTemplateOpen}
-        title="Plantillas de reel de la marca"
-        description="Reparte las fotos y los clips que ya tiene el reel, en su orden, en los planos de la plantilla: con sus duraciones, sus transiciones y sus textos de muestra (sustituyen a los textos de ahora). La música se conserva. Se puede deshacer."
-        size="lg"
-      >
-        <ul className="grid gap-2 sm:grid-cols-2">
-          {(brandTemplates.data ?? []).map((entry) => (
-            <li key={entry.id}>
+        {(brandTemplates.data ?? []).length > 0 && (
+          <div className="mb-3 flex gap-1 rounded-lg bg-subtle p-1" role="tablist" aria-label="Estilo o plantilla">
+            {(
+              [
+                ['styles', 'Estilos'],
+                ['templates', 'Plantillas de la marca'],
+              ] as const
+            ).map(([value, label]) => (
               <button
+                key={value}
                 type="button"
-                className="h-full w-full rounded-xl border border-border p-3 text-left hover:border-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                onClick={() => applyBrandTemplate(entry)}
-                data-testid="reel-apply-template"
+                role="tab"
+                aria-selected={styleOpen === value}
+                className={cn(
+                  'flex-1 rounded-md px-3 py-1.5 text-sm font-medium',
+                  styleOpen === value ? 'bg-surface shadow-card' : 'text-muted hover:text-fg',
+                )}
+                onClick={() => setStyleOpen(value)}
+                data-testid={`reel-style-tab-${value}`}
               >
-                <span className="block text-sm font-semibold">{entry.name}</span>
-                <span className="block text-xs text-muted">{entry.template.purpose}</span>
-                <span className="mt-1 block text-xs">Necesita: {describeNeeds(entry.template)}</span>
+                {label}
               </button>
-            </li>
-          ))}
-        </ul>
+            ))}
+          </div>
+        )}
+        {styleOpen === 'templates' ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {(brandTemplates.data ?? []).map((entry) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  disabled={readOnly || empty}
+                  className="h-full w-full rounded-xl border border-border p-3 text-left hover:border-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50"
+                  onClick={() => applyBrandTemplate(entry)}
+                  data-testid="reel-apply-template"
+                >
+                  <span className="block text-sm font-semibold">{entry.name}</span>
+                  <span className="block text-xs text-muted">{entry.template.purpose}</span>
+                  <span className="mt-1 block text-xs">Necesita: {describeNeeds(entry.template)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <TemplateCards
+            templates={REEL_TEMPLATES}
+            value={template.id}
+            disabled={readOnly}
+            onChange={(id) => {
+              const next = REEL_TEMPLATES.find((t) => t.id === id);
+              if (next) apply((p) => applyTemplate(p, next));
+              setStyleOpen(false);
+            }}
+          />
+        )}
       </Dialog>
       {renameOpen && (
         <RenameDialog
@@ -1813,22 +1744,6 @@ function Editor({
         loading={mutations.archive.isPending}
         onConfirm={toggleArchive}
       />
-      {watching && (
-        <RenderViewer
-          brandId={brand.id}
-          assetId={watching}
-          libraryPath={`/o/${org.id}/m/${brand.id}/biblioteca?recurso=${watching}`}
-          onClose={() => setWatching(null)}
-          onPublish={
-            canPublish && watching === render
-              ? () => {
-                  setWatching(null);
-                  setPublishOpen(true);
-                }
-              : undefined
-          }
-        />
-      )}
       <MusicPicker
         open={musicOpen}
         onOpenChange={setMusicOpen}
@@ -1849,33 +1764,68 @@ function Editor({
         brandId={brand.id}
         contentId={item.id}
         current={expectedVersion}
+        dirty={dirty}
+        onMark={
+          readOnly || empty
+            ? undefined
+            : () => {
+                setHistoryOpen(false);
+                setSaveOpen(true);
+              }
+        }
         canRestore={!readOnly}
         restoring={mutations.restore.isPending}
         onRestore={(v) => void restore(v)}
       />
-      {canPublish && render && (
-        <PublishNowDialog
+      <ExportSheet
+        open={exportOpen !== false}
+        onOpenChange={(open) => setExportOpen(open ? 'open' : false)}
+        key={exportOpen === 'cover' ? 'cover' : 'sheet'}
+        coverOpen={exportOpen === 'cover'}
+        brandId={brand.id}
+        state={exportNow}
+        canRender={!readOnly}
+        onRender={() => void saveAndRender()}
+        onFix={
+          missing.length > 0
+            ? () => {
+                setExportOpen(false);
+                goToMissing();
+              }
+            : undefined
+        }
+        libraryPathOf={(assetId) => `/o/${org.id}/m/${brand.id}/biblioteca?recurso=${assetId}`}
+        warnings={warnings}
+        publish={{
+          disabled: Boolean(publishHint),
+          hint: publishHint,
+          busy: approving,
+          onPublish: () => void publishOrSchedule(),
+        }}
+        approval={approval}
+        cover={
+          <CoverSection
+            clock={clock}
+            project={project}
+            total={timeline.total}
+            readOnly={readOnly}
+            urlOf={urlOf}
+            labelOf={labelOf}
+            apply={apply}
+            onSeek={seek}
+          />
+        }
+        previous={previousRenders}
+      />
+      {scheduleOpen && (
+        <ScheduleDialog
           brandId={brand.id}
-          open={publishOpen}
-          onOpenChange={setPublishOpen}
-          contentId={item.id}
-          assetIds={[render]}
-          editorPath={paths.item(item.id)}
+          open={scheduleOpen}
+          onOpenChange={setScheduleOpen}
+          initialContentId={item.id}
         />
       )}
     </div>
-  );
-}
-
-/** Un bloque del panel general. En la hoja de móvil solo se ve el que se pidió desde la barra. */
-function PanelSection({ name, active, children }: { name: string; active: string | null; children: ReactNode }) {
-  return (
-    <section
-      className={cn('space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0', active !== name && 'max-lg:hidden')}
-      data-section={name}
-    >
-      {children}
-    </section>
   );
 }
 
@@ -1915,82 +1865,6 @@ function CoverSection({
       }
       onSeek={onSeek}
     />
-  );
-}
-
-/** El vídeo montado, dentro del editor: grande, con descargar, abrir en la biblioteca y publicar. */
-function RenderViewer({
-  brandId,
-  assetId,
-  libraryPath,
-  onClose,
-  onPublish,
-}: {
-  brandId: string;
-  assetId: string;
-  libraryPath: string;
-  onClose: () => void;
-  /** Solo si esta versión se puede publicar ya. */
-  onPublish?: () => void;
-}) {
-  const assets = useAssetsByIds(brandId, [assetId]);
-  const asset = assets.data?.[0];
-  const signed = useSignedUrls(asset ? [asset.storage_path] : []);
-  const url = asset ? signed.data?.get(asset.storage_path) : undefined;
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => !open && onClose()}
-      title="Vídeo montado"
-      description={asset?.file_name ?? 'El vídeo de esta versión, tal como ha quedado.'}
-      size="lg"
-      footer={
-        <>
-          <Link to={libraryPath} className="mr-auto self-center text-sm text-muted hover:text-fg hover:underline">
-            Abrir en la biblioteca
-          </Link>
-          {url && (
-            <a
-              href={url}
-              download={asset?.file_name ?? 'reel.mp4'}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-medium hover:bg-subtle"
-              data-testid="reel-viewer-download"
-            >
-              <Download className="h-4 w-4" aria-hidden />
-              Descargar
-            </a>
-          )}
-          {onPublish && (
-            <Button onClick={onPublish} data-testid="reel-viewer-publish">
-              <Send className="h-4 w-4" aria-hidden />
-              Publicar ahora
-            </Button>
-          )}
-        </>
-      }
-    >
-      <div className="flex justify-center" data-testid="reel-viewer">
-        {assets.isError || signed.isError ? (
-          <ErrorState error={assets.error ?? signed.error} />
-        ) : url ? (
-          <video
-            src={url}
-            controls
-            autoPlay
-            playsInline
-            className="aspect-[9/16] max-h-[62dvh] rounded-xl bg-black"
-            aria-label="Vídeo montado del reel"
-            data-testid="reel-viewer-video"
-          />
-        ) : assets.isSuccess && !asset ? (
-          <p className="text-sm text-muted">El vídeo ya no está en la biblioteca.</p>
-        ) : (
-          <Skeleton className="aspect-[9/16] h-[50dvh]" />
-        )}
-      </div>
-    </Dialog>
   );
 }
 
@@ -2175,6 +2049,8 @@ function VersionsDialog({
   brandId,
   contentId,
   current,
+  dirty,
+  onMark,
   canRestore,
   restoring,
   onRestore,
@@ -2184,6 +2060,10 @@ function VersionsDialog({
   brandId: string;
   contentId: string;
   current: number;
+  /** Lo que se ve tiene cambios que no están en ninguna versión. */
+  dirty: boolean;
+  /** Guarda lo que se ve como versión con una nota (para poder volver a ella). */
+  onMark?: () => void;
   canRestore: boolean;
   restoring: boolean;
   onRestore: (version: number) => void;
@@ -2191,7 +2071,19 @@ function VersionsDialog({
   const versions = useContentVersions(brandId, contentId, open);
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title="Historial de versiones">
-      {versions.isPending ? (
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="min-w-0 flex-1 text-muted" data-testid="reel-version">
+          {current > 0 ? `Ahora: versión ${current}` : 'Todavía sin versiones'}
+          {dirty && ' · con cambios sin marcar como versión'}
+        </span>
+        {onMark && (
+          <Button variant="secondary" size="sm" onClick={onMark} disabled={!dirty && current > 0} data-testid="reel-save">
+            <Save className="h-4 w-4" aria-hidden />
+            Marcar esta versión
+          </Button>
+        )}
+      </div>
+      {current === 0 ? null : versions.isPending ? (
         <Skeleton className="h-24" />
       ) : versions.isError ? (
         <ErrorState error={versions.error} />
@@ -2261,4 +2153,19 @@ function RenameDialog({
       </Field>
     </Dialog>
   );
+}
+
+/** ¿Pantalla de móvil (menos de 640 px)? Ahí «Rehacer» pasa al «⋯» para que la cabecera quepa. */
+function useNarrow(): boolean {
+  const query = '(max-width: 639px)';
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const list = window.matchMedia?.(query);
+    if (!list) return;
+    const onChange = () => setNarrow(list.matches);
+    onChange();
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, []);
+  return narrow;
 }

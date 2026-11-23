@@ -10,7 +10,7 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // puede fabricar en el navegador—, y fotos y música hechas aquí al vuelo), así
 // que en el navegador se ven las miniaturas, se reproduce la vista previa y se
 // dibuja la onda de la música.
-// Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo)
+// Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo) · ?modo=propio (autogestión)
 //   · ?borrada=1 (la foto del primer elemento se ha borrado de la biblioteca)
 const params = new URLSearchParams(window.location.search);
 const count = Math.max(1, Math.min(30, Number(params.get('clips') ?? '12')));
@@ -143,10 +143,29 @@ const project = {
   },
 };
 
-seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
+// ?modo=propio: organización en autogestión (sin aprobación a la vista); si no, modo agencia.
+seedWorkspace({ orgRole: 'member', brandRole: 'editor', workMode: params.get('modo') === 'propio' ? 'self' : 'agency' });
 fake.rpc('brand_reel_font_info', () => []);
 fake.rpc('save_reel_draft', () => '2026-11-22T12:00:00Z');
 fake.rpc('discard_reel_draft', () => null);
+// «Exportar»: el montaje se encarga y queda en cola (aquí no hay trabajador que lo monte).
+fake.rpc('request_media_job', (args) => {
+  const job = {
+    id: `job-${(fake.tables.jobs ?? []).length + 1}`,
+    organization_id: ORG_ID,
+    brand_id: BRAND_ID,
+    kind: 'media.reel.template',
+    payload: args.p_input,
+    status: 'queued',
+    attempts: 0,
+    max_attempts: 3,
+    last_error: null,
+    result: null,
+    created_at: '2026-11-22T12:00:00Z',
+  };
+  fake.tables.jobs = [...(fake.tables.jobs ?? []), job];
+  return job;
+});
 fake.tables.media_assets = [
   ...clips.map((clip, i) =>
     clip.type === 'video'
