@@ -277,7 +277,7 @@ describe('modo en seco', () => {
     const text = formatDryReport(report);
     expect(text).toContain(`los ${BENCH_CASES.length} casos cuadran de principio a fin`);
     expect(text).toMatch(new RegExp(`^plan\\s+${PLAN_CASES.length}\\s+0\\s+${PLAN_CASES.length}$`, 'm'));
-    expect(text).toContain(`Planes (órdenes que montan una pieza): ${PLAN_CASES.length} casos.`);
+    expect(text).toContain(`Planes (órdenes que montan una pieza): ${BENCH_CASES.filter((item) => item.plan).length} casos.`);
     expect(text).toContain('el banco no genera imágenes ni recorta');
     expect(text).toMatch(new RegExp(`^multi\\s+${MULTI_CASES.length}\\s+0\\s+\\d+$`, 'm'));
     expect(text).toContain(`así se han probado ${stepwise.length} casos de entre 2 y ${MAX_TOOL_TURNS} acciones.`);
@@ -416,7 +416,7 @@ describe('modo en seco', () => {
     const base = byId('simple-titulo');
     const invented = await dryRunCase({ ...base, expected: [{ op: 'add_text', text: 'Cerrado por vacaciones', style: 'title' }] }, 'tools');
     expect(invented.ok).toBe(false);
-    expect(invented.problems.join(' ')).toMatch(/ha descartado «add_text»: El texto no está en lo dictado/);
+    expect(invented.problems.join(' ')).toMatch(/ha descartado «add_text»: No he puesto «.+»: no lo has dicho tú/);
 
     const missing = await dryRunCase({ ...byId('simple-sube-titulo'), expected: [{ op: 'move_layer', target: 'no-existe', dy: -2 }] }, 'json');
     expect(missing.ok).toBe(false);
@@ -565,24 +565,24 @@ describe('órdenes que montan una pieza: se evalúa el plan, sin ejecutar nada',
     expect(nothing.ok).toBe(true);
     const missing = planProblemsFor({ ...menu, plan: { ...menu.plan!, library: 'vacia' } }, evaluateResponse(menu, body(good)).operations);
     // Sin fotos tampoco hay recortes: faltan también pasos.
-    expect(missing).toEqual(['Se esperaban entre 1 y 3 fotos de la biblioteca y el plan colocaría 0.', 'Se esperaban entre 5 y 7 pasos y el plan tiene 4.']);
+    expect(missing).toEqual(['Se esperaban entre 1 y 3 fotos de la biblioteca y el plan colocaría 0.', 'Se esperaban entre 6 y 8 pasos y el plan tiene 5.']);
     // Sin fotos esperadas (biblioteca vacía), el caso sin fotos sí cuadra, y con fotos no.
     const empty = plan('plan-sin-fotos');
     expect((await perfect('plan-sin-fotos')).evaluation.problems).toEqual([]);
     expect(planProblemsFor({ ...empty, plan: { ...empty.plan!, library: 'hosteleria' } }, (await perfect('plan-sin-fotos')).evaluation.operations)).toEqual([
       'Se esperaban 0 fotos de la biblioteca y el plan colocaría 3.',
       // Las tres irían recortadas (van sobre el fondo creado con IA): tres pasos más.
-      'Se esperaban 4 pasos y el plan tiene 7.',
+      'Se esperaban 5 pasos y el plan tiene 8.',
     ]);
     // Pasos fuera de lo esperado.
     const steps = planProblemsFor({ ...menu, plan: { ...menu.plan!, steps: 4 } }, evaluateResponse(menu, body(good)).operations);
-    expect(steps).toEqual(['Se esperaban 4 pasos y el plan tiene 7.']);
+    expect(steps).toEqual(['Se esperaban 4 pasos y el plan tiene 8.']);
     // Sobre el fondo creado con IA las fotos van recortadas aunque la respuesta diga `cutout: false`
     // (lo que mandó el modelo en la prueba real del 23/11/2026): los recortes cuentan igual como pasos.
     const uncut = good.map((operation) => (operation.op === 'place_photos' ? { ...operation, cutout: false } : operation));
     expect(evaluateResponse(menu, body(uncut))).toMatchObject({ ok: true, problems: [] });
     expect(planProblemsFor({ ...menu, plan: { ...menu.plan!, steps: 4 } }, evaluateResponse(menu, body(uncut)).operations)).toEqual([
-      'Se esperaban 4 pasos y el plan tiene 7.',
+      'Se esperaban 4 pasos y el plan tiene 8.',
     ]);
     expect(planProblemsFor({ ...menu, plan: { ...menu.plan!, cutout: false } }, evaluateResponse(menu, body(uncut)).operations)).toEqual([
       'Se esperaba que las fotos fuesen enteras y el plan las recorta.',
@@ -594,15 +594,15 @@ describe('órdenes que montan una pieza: se evalúa el plan, sin ejecutar nada',
       { op: 'place_photos', layout: 'center', cutout, on: false },
       { op: 'add_text', text: 'Paella de domingo', style: 'title' },
     ];
-    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 3, cutout: false } }, evaluateResponse(paella, body(placing(false), 'No genero comida.')).operations)).toEqual([]);
-    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 4, cutout: true } }, evaluateResponse(paella, body(placing(true), 'No genero comida.')).operations)).toEqual([]);
+    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 4, cutout: false } }, evaluateResponse(paella, body(placing(false), 'No genero comida.')).operations)).toEqual([]);
+    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 5, cutout: true } }, evaluateResponse(paella, body(placing(true), 'No genero comida.')).operations)).toEqual([]);
     expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, cutout: true } }, evaluateResponse(paella, body(placing(false), 'No genero comida.')).operations)).toEqual([
       'Se esperaba que las fotos fuesen recortadas (van sobre un fondo de imagen) y el plan las coloca enteras.',
     ]);
     // Un plan con más pasos que el tope del editor no se podría ejecutar.
     const texts = Array.from({ length: 8 }, () => ({ op: 'add_text', text: 'Menú de otoño', style: 'body' }));
     const huge = planProblemsFor(menu, evaluateResponse(menu, body([...good, ...texts])).operations);
-    expect(huge.join(' | ')).toMatch(/El plan no se podría ejecutar: El plan tiene 15 pasos y el tope es 12/);
+    expect(huge.join(' | ')).toMatch(/El plan no se podría ejecutar: El plan tiene 16 pasos y el tope es 12/);
   });
 
   it('con `--apply` solo se llama al copiloto: ni `ai-media` ni ninguna otra función, y se evalúa el plan devuelto', async () => {

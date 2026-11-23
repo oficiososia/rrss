@@ -453,6 +453,8 @@ describe('copiloto por teclado: lo demás va a la IA', () => {
     const item = await lastOrder('nothing');
     const notes = within(within(item).getByTestId('copilot-notes')).getAllByRole('listitem').map((note) => note.textContent);
     expect(notes).toEqual([
+      // Sin cambios, se dice con todas las letras antes de los motivos.
+      'No he cambiado nada.',
       'No hay nada que deshacer.',
       'Eso hay que hacerlo desde el editor.',
       'Eso hay que hacerlo desde el editor.',
@@ -460,7 +462,7 @@ describe('copiloto por teclado: lo demás va a la IA', () => {
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it('la nota de la IA y lo que descartó el servidor se enseñan; un texto no dictado no llega al diseño', async () => {
+  it('lo que descartó el servidor se enseña, la nota de la IA que dice haber hecho algo no; un texto no dictado no llega al diseño', async () => {
     mocks.request.mockResolvedValue(
       answer(
         [
@@ -474,9 +476,11 @@ describe('copiloto por teclado: lo demás va a la IA', () => {
     await order('Baja la opacidad del título a la mitad y publícalo');
     const item = await lastOrder('applied');
     const notes = within(item).getByTestId('copilot-notes');
-    expect(notes).toHaveTextContent('He bajado la opacidad del título.');
+    // Lo hecho lo cuenta el editor con lo que de verdad ha aplicado, no la nota de la IA (fallo 6 de la prueba real).
+    expect(notes).not.toHaveTextContent('He bajado la opacidad del título.');
+    expect(within(item).getByTestId('copilot-changes')).toHaveTextContent('opacidad');
     expect(notes).toHaveTextContent('La IA ha pedido una operación que no existe.');
-    expect(notes).toHaveTextContent('Se ha quitado un texto que no estaba en lo dictado.');
+    expect(notes).toHaveTextContent('Se ha quitado un texto que no estaba en lo dictado: el copiloto no redacta.');
     const [document] = onApply.mock.calls[0] as [ContentDocument];
     expect(document.pages[0]!.layers).toHaveLength(1);
     expect(titleOf(document).opacity).toBe(0.5);

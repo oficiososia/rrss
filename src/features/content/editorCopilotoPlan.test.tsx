@@ -232,7 +232,7 @@ describe('Editor: orden del copiloto que monta una pieza', () => {
     // El tono del fondo nuevo no se puede medir aquí (el almacenamiento simulado no firma direcciones):
     // no se adivina; el titular lleva un contorno que se lee sobre cualquier fondo, y se dice.
     expect(within(order).getByTestId('copilot-changes')).toHaveTextContent(
-      'Texto «menú de otoño» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
+      'Texto «Menú de otoño» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
     );
 
     // La pieza lleva la marca de contenido generado con IA, por el fondo (se ve en «Compartir»).

@@ -260,7 +260,7 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   );
   const orden = page.getByTestId('copilot-order').first();
   await expect(orden).toHaveAttribute('data-status', 'applied');
-  await expect(orden.getByTestId('copilot-notes')).toContainText('no está en lo dictado');
+  await expect(orden.getByTestId('copilot-notes')).toContainText('no lo has dicho tú');
   await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
   await page.getByTestId('editor-layers').click();
   await expect(page.getByText('Cena de empresa').first()).toBeVisible();

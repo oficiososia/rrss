@@ -13,7 +13,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { STORAGE_BUCKET } from '@/config/app';
 import { AiRequestError, toAiError } from '@/features/ai/api';
 import { sweepStorageCleanup } from '@/features/library/api';
-import type { Json, ReelReferenceRow } from '@/lib/database.types';
+import { signedUrlFor } from '@/features/photo-edit/api';
+import type { Json, MediaAssetRow, ReelReferenceRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { REFERENCE_LIMITS, type ReelLikeResult } from '../../../../supabase/functions/_shared/reels/like';
@@ -31,6 +32,87 @@ export const REFERENCE_POLL_MS = 3000;
 export function reelLikePaths(orgId: string, brandId: string) {
   const reels = `/o/${orgId}/m/${brandId}/biblioteca/reels`;
   return { reels, start: `${reels}/como-este`, reference: (id: string) => `${reels}/como-este/${id}` };
+}
+
+/** Parámetro con el nombre que se escribió en «Nuevo reel»: viaja hasta la pieza que se crea. */
+export const NAME_PARAM = 'nombre';
+
+/** La dirección con el nombre de la pieza, si lo hay (`?nombre=…`). */
+export function withName(path: string, name: string | null | undefined): string {
+  const clean = (name ?? '').trim().slice(0, 200);
+  return clean ? `${path}?${NAME_PARAM}=${encodeURIComponent(clean)}` : path;
+}
+
+/**
+ * Redes que no dejan descargar sus vídeos desde un enlace (sin sesión, sin
+ * JavaScript): se dice ANTES de pegar el enlace y no se manda a estudiar.
+ */
+const CLOSED_HOSTS: Array<[RegExp, string]> = [
+  [/(^|\.)instagram\.com$/, 'Instagram'],
+  [/(^|\.)tiktok\.com$/, 'TikTok'],
+  [/(^|\.)(youtube\.com|youtu\.be)$/, 'YouTube'],
+  [/(^|\.)(facebook\.com|fb\.watch)$/, 'Facebook'],
+];
+
+/** La red de un enlace que no deja descargar su vídeo, o null si puede que sí. */
+export function closedNetwork(value: string): string | null {
+  try {
+    const host = new URL(value.trim()).hostname.toLowerCase();
+    return CLOSED_HOSTS.find(([pattern]) => pattern.test(host))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Un vídeo de la biblioteca de la marca que se puede estudiar. */
+export type LibraryVideo = Pick<
+  MediaAssetRow,
+  'id' | 'file_name' | 'mime_type' | 'bytes' | 'duration_ms' | 'storage_path' | 'folder' | 'created_at'
+>;
+
+/** Los vídeos de la biblioteca de la marca, los más nuevos primero (para estudiar uno como referencia). */
+export function useLibraryVideos(brandId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...likeKeys.library(brandId), 'videos'] as const,
+    enabled,
+    queryFn: async (): Promise<LibraryVideo[]> =>
+      unwrap(
+        await supabase
+          .from('media_assets')
+          .select('id, file_name, mime_type, bytes, duration_ms, storage_path, folder, created_at')
+          .eq('brand_id', brandId)
+          .eq('kind', 'video')
+          .order('created_at', { ascending: false })
+          .limit(200),
+      ) as LibraryVideo[],
+  });
+}
+
+/** Por qué un vídeo de la biblioteca no vale como referencia (formato, peso, duración), o null si vale. */
+export function libraryVideoProblem(
+  video: LibraryVideo,
+  limits: { maxUploadBytes: number; maxSeconds: number },
+): string | null {
+  const problem = referenceFileProblem({ size: video.bytes, type: video.mime_type }, limits.maxUploadBytes);
+  if (problem) return problem;
+  if (video.duration_ms !== null && video.duration_ms / 1000 > limits.maxSeconds + 0.5) {
+    return `Dura ${Math.round(video.duration_ms / 1000)} s y el máximo son ${limits.maxSeconds} s.`;
+  }
+  return null;
+}
+
+/**
+ * Trae un vídeo de la biblioteca como archivo, para estudiarlo por el mismo
+ * camino que uno subido: se copia a la carpeta privada de referencias y el
+ * original de la biblioteca no se toca (ni se borra al terminar).
+ */
+export async function fetchLibraryVideo(video: LibraryVideo, signal?: AbortSignal): Promise<File> {
+  const url = await signedUrlFor(video.storage_path);
+  if (!url) throw new Error('No se ha podido abrir el vídeo de la biblioteca.');
+  const response = await fetch(url, signal ? { signal } : undefined);
+  if (!response.ok) throw new Error('No se ha podido leer el vídeo de la biblioteca.');
+  const blob = await response.blob();
+  return new File([blob], video.file_name, { type: video.mime_type });
 }
 
 export const likeKeys = {
@@ -74,7 +156,14 @@ const NOT_AVAILABLE: ReelLikeOptions = {
 };
 
 /** Códigos propios de `ai-reel-like`: su mensaje ya está escrito para la persona. */
-const OWN_CODES = new Set(['not_measured', 'busy', 'files_missing', 'reference_closed', 'reference_not_found', 'agency_mode']);
+const OWN_CODES = new Set([
+  'not_measured',
+  'busy',
+  'files_missing',
+  'reference_closed',
+  'reference_not_found',
+  'agency_mode',
+]);
 
 /** Error de la función → `AiRequestError` (el cupo y lo demás, como en el resto de la IA). */
 export async function toLikeError(error: unknown): Promise<AiRequestError> {
@@ -193,7 +282,8 @@ export interface StartAnalysisInput {
 /** Motivo por el que un archivo no vale como referencia, o null si vale. */
 export function referenceFileProblem(file: { size: number; type: string }, maxBytes: number): string | null {
   if (!(file.type in REFERENCE_LIMITS.mimeTypes)) return 'Sube un vídeo en MP4, MOV o WebM.';
-  if (file.size > maxBytes) return `El vídeo pesa más de ${Math.round(maxBytes / (1024 * 1024))} MB. Sube uno más corto o más ligero.`;
+  if (file.size > maxBytes)
+    return `El vídeo pesa más de ${Math.round(maxBytes / (1024 * 1024))} MB. Sube uno más corto o más ligero.`;
   if (file.size === 0) return 'El archivo está vacío.';
   return null;
 }
@@ -244,7 +334,11 @@ export function useStartAnalysis(brandId: string) {
       });
       if (requested.error) {
         // Sin encargo, el vídeo subido no pinta nada en el almacenamiento.
-        if (uploaded) await supabase.storage.from(STORAGE_BUCKET).remove([uploaded]).catch(() => undefined);
+        if (uploaded)
+          await supabase.storage
+            .from(STORAGE_BUCKET)
+            .remove([uploaded])
+            .catch(() => undefined);
         throw requested.error;
       }
       const job = requested.data;
@@ -254,7 +348,12 @@ export function useStartAnalysis(brandId: string) {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: likeKeys.all(brandId) }),
   });
-  return { mutateAsync: mutation.mutateAsync, isPending: mutation.isPending, error: mutation.error, reset: mutation.reset };
+  return {
+    mutateAsync: mutation.mutateAsync,
+    isPending: mutation.isPending,
+    error: mutation.error,
+    reset: mutation.reset,
+  };
 }
 
 export interface StudyResult {
@@ -272,7 +371,12 @@ export function useStudyReference(brandId: string) {
     onSettled: (_data, _error, referenceId) =>
       queryClient.invalidateQueries({ queryKey: likeKeys.reference(brandId, referenceId) }),
   });
-  return { mutateAsync: mutation.mutateAsync, isPending: mutation.isPending, error: mutation.error, reset: mutation.reset };
+  return {
+    mutateAsync: mutation.mutateAsync,
+    isPending: mutation.isPending,
+    error: mutation.error,
+    reset: mutation.reset,
+  };
 }
 
 /** Descarta un análisis: lo borra y limpia sus archivos (también el vídeo guardado). */
@@ -320,4 +424,28 @@ export function useSaveReferenceTemplate(brandId: string) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: reelTemplateKeys.all(brandId) }),
   });
   return { mutateAsync: mutation.mutateAsync, isPending: mutation.isPending, error: mutation.error };
+}
+
+/**
+ * La pieza que ya se hizo con un análisis, si sigue viva: ni borrada ni
+ * archivada. Solo para ofrecer volver a ella; «Abrir en el editor» crea
+ * siempre una nueva.
+ */
+export function useLinkedPiece(brandId: string, contentId: string | null) {
+  const query = useQuery({
+    queryKey: [...likeKeys.all(brandId), 'piece', contentId] as const,
+    enabled: Boolean(contentId),
+    queryFn: async (): Promise<{ id: string; title: string } | null> => {
+      const row = unwrap(
+        await supabase
+          .from('content_items')
+          .select('id, title, archived_at')
+          .eq('brand_id', brandId)
+          .eq('id', contentId!)
+          .maybeSingle(),
+      ) as { id: string; title: string; archived_at: string | null } | null;
+      return row && !row.archived_at ? { id: row.id, title: row.title } : null;
+    },
+  });
+  return query.data ?? null;
 }

@@ -37,8 +37,24 @@ const MEASUREMENT = {
   shots: [
     { index: 0, start: 0, end: 2, seconds: 2, motion: 0.7, still: false },
     { index: 1, start: 2, end: 3.5, seconds: 1.5, motion: 0, still: true, transitionIn: { type: 'cut', seconds: 0 } },
-    { index: 2, start: 3.5, end: 5.75, seconds: 2.25, motion: 0.7, still: false, transitionIn: { type: 'cut', seconds: 0 } },
-    { index: 3, start: 5.75, end: 7.5, seconds: 1.75, motion: 0, still: true, transitionIn: { type: 'fade', seconds: 0.5 } },
+    {
+      index: 2,
+      start: 3.5,
+      end: 5.75,
+      seconds: 2.25,
+      motion: 0.7,
+      still: false,
+      transitionIn: { type: 'cut', seconds: 0 },
+    },
+    {
+      index: 3,
+      start: 5.75,
+      end: 7.5,
+      seconds: 1.75,
+      motion: 0,
+      still: true,
+      transitionIn: { type: 'fade', seconds: 0.5 },
+    },
   ],
   frames: [0, 1, 2, 3].map((shot) => ({ path: `${DIR}/f-0${shot + 1}.jpg`, at: shot + 0.5, shot })),
   audio: { present: true, silent: false, bpm: 120, confidence: 0.8, cutsOnBeat: 0.67, beatsPerCut: 4, speech: [] },
@@ -55,10 +71,42 @@ const RESULT = buildReelLikeResult(
     title: 'Así hacemos la hogaza',
     idea: 'El proceso del pan de los sábados.',
     shots: [
-      { index: 1, kind: 'detalle', media: 'video', description: 'Plano cerrado del producto', what: 'La hogaza recién salida', tip: 'Luz de ventana', search: ['pan'] },
-      { index: 2, kind: 'general', media: 'foto', description: 'El local', what: 'El obrador entero', tip: 'Desde la puerta', search: ['obrador'] },
-      { index: 3, kind: 'persona', media: 'video', description: 'Alguien trabajando', what: 'Amasando a mano', tip: 'Plano medio', search: ['amasar'] },
-      { index: 4, kind: 'texto', media: 'foto', description: 'Cierre con rótulo', what: 'El escaparate con el horario', tip: '', search: ['escaparate'] },
+      {
+        index: 1,
+        kind: 'detalle',
+        media: 'video',
+        description: 'Plano cerrado del producto',
+        what: 'La hogaza recién salida',
+        tip: 'Luz de ventana',
+        search: ['pan'],
+      },
+      {
+        index: 2,
+        kind: 'general',
+        media: 'foto',
+        description: 'El local',
+        what: 'El obrador entero',
+        tip: 'Desde la puerta',
+        search: ['obrador'],
+      },
+      {
+        index: 3,
+        kind: 'persona',
+        media: 'video',
+        description: 'Alguien trabajando',
+        what: 'Amasando a mano',
+        tip: 'Plano medio',
+        search: ['amasar'],
+      },
+      {
+        index: 4,
+        kind: 'texto',
+        media: 'foto',
+        description: 'Cierre con rótulo',
+        what: 'El escaparate con el horario',
+        tip: '',
+        search: ['escaparate'],
+      },
     ],
     texts: [
       { role: 'gancho', position: 'top', size: 'grande', fromShot: 1, toShot: 1, value: 'El pan de los sábados' },
@@ -151,7 +199,13 @@ function seed(options: { reply?: unknown; role?: 'owner' | 'member'; brandRole?:
     if (request.action === 'options') return { status: 200, body: options.reply ?? OPTIONS };
     // La parte de IA: el servidor deja el análisis listo y borra sus archivos.
     const row = fake.rows('reel_references').find((r) => r.id === request.referenceId)!;
-    Object.assign(row, { status: 'ready', result: RESULT, cost_micros: 31_000, source_path: null, files_released_at: 'ahora' });
+    Object.assign(row, {
+      status: 'ready',
+      result: RESULT,
+      cost_micros: 31_000,
+      source_path: null,
+      files_released_at: 'ahora',
+    });
     return { status: 200, body: { status: 'ready', result: RESULT, costMicros: 31_000 } };
   });
 }
@@ -252,28 +306,20 @@ describe('«Hacer un reel como este»: subir o pegar el enlace', () => {
     expect(items.map((li) => li.getAttribute('data-state'))).toEqual(['done', 'active', 'pending', 'pending']);
     expect(items[1]).toHaveTextContent('Medir los cortes, los planos y el ritmo');
     expect(items[1]).toHaveTextContent('Sin IA');
-    expect(fake.callsTo('ai-reel-like', 'function').filter((c) => (c.payload as { action: string }).action === 'create')).toHaveLength(0);
+    expect(
+      fake.callsTo('ai-reel-like', 'function').filter((c) => (c.payload as { action: string }).action === 'create'),
+    ).toHaveLength(0);
     vi.restoreAllMocks();
   });
 
-  it('un enlace se manda tal cual; si la red no deja descargarlo, se dice claro y se pide el archivo', async () => {
+  it('los enlaces de Instagram, TikTok o YouTube se avisan ANTES de pegarlos y no se mandan a estudiar', async () => {
     seed();
-    fake.rpc('request_media_job', (args) => {
-      fake.rows('reel_references').push(
-        reference({
-          source_kind: 'link',
-          source_host: 'www.instagram.com',
-          source_path: null,
-          status: 'failed',
-          error:
-            'Instagram no deja descargar este vídeo desde un enlace (su robots.txt no admite descargas automáticas). Descarga el vídeo en tu dispositivo y súbelo aquí como archivo.',
-        }) as unknown as Record<string, unknown>,
-      );
-      return { id: 'job-1', kind: args.p_kind, payload: { reference: { id: REF } } };
-    });
     renderApp(START);
     fireEvent.click(await screen.findByTestId('reel-like-mode-link'));
-    expect(screen.getByText(/casi nunca dejan descargar el vídeo desde un enlace/)).toBeInTheDocument();
+    // El aviso está antes de pegar nada.
+    expect(screen.getByTestId('reel-like-link-notice')).toHaveTextContent(
+      'Los enlaces de Instagram, TikTok, YouTube y Facebook no se pueden descargar',
+    );
     const url = screen.getByTestId('reel-like-url');
     fireEvent.change(url, { target: { value: 'instagram reel' } });
     expect(screen.getByText('Pega la dirección completa, empezando por https://')).toBeInTheDocument();
@@ -281,16 +327,109 @@ describe('«Hacer un reel como este»: subir o pegar el enlace', () => {
     // Con un enlace no se ofrece guardar el vídeo.
     expect(screen.queryByTestId('reel-like-keep')).not.toBeInTheDocument();
     fireEvent.change(url, { target: { value: 'https://www.instagram.com/reel/AbC123/' } });
-    fireEvent.click(screen.getByTestId('reel-like-start'));
+    expect(screen.getByText(/Instagram no deja descargar sus vídeos desde un enlace/)).toBeInTheDocument();
+    expect(screen.getByTestId('reel-like-start')).toBeDisabled();
+    fireEvent.change(url, { target: { value: 'https://youtu.be/abc' } });
+    expect(screen.getByText(/YouTube no deja descargar sus vídeos/)).toBeInTheDocument();
+    expect(fake.callsTo('request_media_job', 'rpc')).toHaveLength(0);
+  });
 
+  it('un enlace directo se manda tal cual; si no se puede descargar, se dice claro y se pide el archivo', async () => {
+    seed();
+    fake.rpc('request_media_job', (args) => {
+      fake.rows('reel_references').push(
+        reference({
+          source_kind: 'link',
+          source_host: 'videos.ejemplo.es',
+          source_path: null,
+          status: 'failed',
+          error:
+            'No se ha podido descargar el vídeo de ese enlace. Descárgalo en tu dispositivo y súbelo aquí como archivo.',
+        }) as unknown as Record<string, unknown>,
+      );
+      return { id: 'job-1', kind: args.p_kind, payload: { reference: { id: REF } } };
+    });
+    renderApp(START);
+    fireEvent.click(await screen.findByTestId('reel-like-mode-link'));
+    fireEvent.change(screen.getByTestId('reel-like-url'), { target: { value: 'https://videos.ejemplo.es/reel.mp4' } });
+    fireEvent.click(screen.getByTestId('reel-like-start'));
     const failed = await screen.findByTestId('reel-like-failed');
     expect(fake.callsTo('request_media_job', 'rpc')[0]!.payload).toMatchObject({
-      p_input: { source: { url: 'https://www.instagram.com/reel/AbC123/' }, speech: true },
+      p_input: { source: { url: 'https://videos.ejemplo.es/reel.mp4' }, speech: true },
     });
-    expect(failed).toHaveTextContent('Instagram no deja descargar este vídeo desde un enlace');
+    expect(failed).toHaveTextContent('No se ha podido descargar el vídeo de ese enlace');
     expect(within(failed).getByRole('link', { name: 'Subir el archivo' })).toHaveAttribute('href', START);
     const items = within(screen.getByTestId('reel-like-steps')).getAllByRole('listitem');
     expect(items.map((li) => li.getAttribute('data-state'))).toEqual(['done', 'failed', 'pending', 'pending']);
+  });
+
+  it('un vídeo de la biblioteca: se elige, se estudia una copia en la carpeta de referencias y el original no se toca', async () => {
+    seed();
+    const uploads: Array<{ path: string; file: File }> = [];
+    const storage = fake.storage.from();
+    vi.spyOn(fake.storage, 'from').mockReturnValue({
+      ...storage,
+      upload: async (...args: unknown[]) => {
+        uploads.push({ path: String(args[0]), file: args[1] as File });
+        return { data: null, error: null };
+      },
+      // La dirección firmada del vídeo de la biblioteca (para leerlo y copiarlo).
+      createSignedUrls: async (paths: string[]) => ({
+        data: paths.map((item) => ({ path: item, signedUrl: 'https://archivos.test/clip.mp4' })),
+        error: null,
+      }),
+    } as unknown as ReturnType<typeof fake.storage.from>);
+    const fetchVideo = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['vídeo'], { type: 'video/mp4' }) }));
+    vi.stubGlobal('fetch', fetchVideo);
+    fake.rpc('request_media_job', (args) => {
+      fake.rows('reel_references').push(reference() as unknown as Record<string, unknown>);
+      return { id: 'job-1', kind: args.p_kind, payload: { reference: { id: REF } } };
+    });
+    renderApp(START);
+    fireEvent.click(await screen.findByTestId('reel-like-mode-library'));
+    const list = await screen.findByTestId('reel-like-library');
+    // Solo los vídeos de la marca, no las fotos.
+    expect(within(list).getAllByTestId('reel-like-library-video')).toHaveLength(1);
+    expect(list).toHaveTextContent('IMG_0001.mp4');
+    expect(screen.getByTestId('reel-like-start')).toBeDisabled();
+    fireEvent.click(within(list).getByTestId('reel-like-library-video'));
+    // Su duración ajusta el coste de la voz: 8 s a 100 micros por segundo.
+    expect(screen.getByTestId('reel-like-cost')).toHaveTextContent('Transcribir la voz (hasta 8 s)');
+    fireEvent.click(screen.getByTestId('reel-like-start'));
+    await screen.findByTestId('reel-like-steps');
+    expect(fetchVideo).toHaveBeenCalledTimes(1);
+    expect(String((fetchVideo.mock.calls[0] as unknown[])[0])).toBe('https://archivos.test/clip.mp4');
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]!.path).toMatch(new RegExp(`^${ORG_ID}/${BRAND_ID}/referencias/[0-9a-f-]{36}\\.mp4$`));
+    expect(uploads[0]!.file.name).toBe('IMG_0001.mp4');
+    // Se estudia la copia, que se borra al terminar: nunca se pide guardarla.
+    const [call] = fake.callsTo('request_media_job', 'rpc');
+    expect(call!.payload).toMatchObject({ p_input: { source: { path: uploads[0]!.path }, speech: true } });
+    expect((call!.payload as { p_input: Record<string, unknown> }).p_input).not.toHaveProperty('keepSource');
+    expect(fake.rows('media_assets')).toHaveLength(3);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('el nombre escrito en «Nuevo reel» llega a la pantalla y viaja con el análisis', async () => {
+    seed();
+    fake.rpc('request_media_job', (args) => {
+      fake.rows('reel_references').push(reference() as unknown as Record<string, unknown>);
+      return { id: 'job-1', kind: args.p_kind, payload: { reference: { id: REF } } };
+    });
+    const storage = fake.storage.from();
+    vi.spyOn(fake.storage, 'from').mockReturnValue({
+      ...storage,
+      upload: async () => ({ data: null, error: null }),
+    } as unknown as ReturnType<typeof fake.storage.from>);
+    const { user } = renderApp(`${START}?nombre=${encodeURIComponent('Reel del pan')}`);
+    expect(await screen.findByTestId('reel-like-name')).toHaveValue('Reel del pan');
+    await user.upload(screen.getByTestId('reel-like-file'), new File(['vídeo'], 'reel.mp4', { type: 'video/mp4' }));
+    await waitFor(() => expect(screen.getByTestId('reel-like-start')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('reel-like-start'));
+    await screen.findByTestId('reel-like-steps');
+    expect(window.location.search).toBe(`?nombre=${encodeURIComponent('Reel del pan')}`);
+    vi.restoreAllMocks();
   });
 });
 
@@ -303,9 +442,57 @@ describe('«Hacer un reel como este»: resultado', () => {
     return app;
   }
 
+  it('con un reel ya hecho (y archivado), el botón crea una pieza NUEVA con el nombre escrito, no abre la vieja', async () => {
+    seed();
+    const OLD = '7c1d2e3f-4a5b-4c6d-8e7f-8091a2b3c4d5';
+    fake.tables.content_items = [
+      {
+        id: OLD,
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        title: 'Prueba UX reel como este',
+        network: 'instagram',
+        format: 'reel',
+        status: 'draft',
+        current_version: 0,
+        archived_at: '2026-11-22T12:00:00Z',
+        created_by: ME.id,
+        created_at: '2026-11-22T11:00:00Z',
+        updated_at: '2026-11-22T12:00:00Z',
+      } satisfies ContentItemRow as unknown as Record<string, unknown>,
+    ];
+    fake.tables.reel_references = [
+      reference({ status: 'ready', result: RESULT as never, cost_micros: 31_000, source_path: null, content_id: OLD }),
+    ];
+    fake.rpc('set_reel_reference_content', (args) => {
+      Object.assign(fake.rows('reel_references')[0]!, { content_id: args.p_content_id });
+      return fake.rows('reel_references')[0];
+    });
+    renderApp(`${START}/${REF}?nombre=${encodeURIComponent('Reel del pan')}`);
+    const button = await screen.findByTestId('reel-like-open-editor');
+    expect(button).toHaveTextContent('Hacer otro reel con esto');
+    // La archivada no se ofrece.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId('reel-like-previous')).not.toBeInTheDocument();
+    fireEvent.click(button);
+    await screen.findByTestId('reel-editor');
+    const items = fake.rows('content_items') as unknown as ContentItemRow[];
+    expect(items).toHaveLength(2);
+    const created = items.find((item) => item.id !== OLD)!;
+    expect(created).toMatchObject({ title: 'Reel del pan', format: 'reel' });
+    expect(created.archived_at ?? null).toBeNull();
+    expect(fake.callsTo('set_reel_reference_content', 'rpc')[0]!.payload).toEqual({
+      p_reference_id: REF,
+      p_content_id: created.id,
+    });
+    expect(window.location.pathname).toContain(created.id);
+  });
+
   it('con el vídeo medido, la IA empieza sola (una vez) y salen las cuatro salidas', async () => {
     await openMeasured();
-    const creates = fake.callsTo('ai-reel-like', 'function').filter((c) => (c.payload as { action: string }).action === 'create');
+    const creates = fake
+      .callsTo('ai-reel-like', 'function')
+      .filter((c) => (c.payload as { action: string }).action === 'create');
     expect(creates).toHaveLength(1);
     expect(creates[0]!.payload).toEqual({ action: 'create', brandId: BRAND_ID, referenceId: REF });
 
@@ -343,7 +530,9 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(screen.getByTestId('reel-like-draft-shot-s1')).toHaveTextContent('Encaja por etiqueta «Panes»');
     expect(screen.getByTestId('reel-like-draft-shot-s2')).toHaveTextContent('carpeta «Obrador»');
     expect(screen.getByTestId('reel-like-draft-shot-s3')).toHaveTextContent('Falta grabar: Amasando a mano');
-    expect(screen.getByTestId('reel-like-draft-shot-s4')).toHaveTextContent('Falta grabar: El escaparate con el horario');
+    expect(screen.getByTestId('reel-like-draft-shot-s4')).toHaveTextContent(
+      'Falta grabar: El escaparate con el horario',
+    );
 
     // 4 · Textos con el tono de la marca.
     const texts = screen.getByTestId('reel-like-texts');
@@ -370,15 +559,25 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(name).toHaveValue('Gancho + 2 pasos + cierre');
     fireEvent.change(name, { target: { value: 'Mi estructura de pasos' } });
     fireEvent.click(screen.getByTestId('reel-like-template-confirm'));
-    expect(await screen.findByTestId('reel-like-template-saved')).toHaveTextContent('Guardada como «Mi estructura de pasos»');
+    expect(await screen.findByTestId('reel-like-template-saved')).toHaveTextContent(
+      'Guardada como «Mi estructura de pasos»',
+    );
 
     const [call] = fake.callsTo('deliver_reel_templates', 'rpc');
-    const payload = call!.payload as { p_brand_id: string; p_source: string; p_templates: Array<{ key: string; name: string; document: Record<string, unknown> }> };
+    const payload = call!.payload as {
+      p_brand_id: string;
+      p_source: string;
+      p_templates: Array<{ key: string; name: string; document: Record<string, unknown> }>;
+    };
     expect(payload).toMatchObject({ p_brand_id: BRAND_ID, p_source: 'reference' });
     expect(payload.p_templates).toHaveLength(1);
     expect(payload.p_templates[0]!.key).toMatch(/^ref-mi-estructura-de-pasos-[a-z0-9]{8}$/);
     expect(payload.p_templates[0]!.name).toBe('Mi estructura de pasos');
-    const document = payload.p_templates[0]!.document as { kind: string; slots: Array<{ seconds: number; shot: string }>; texts: Array<{ role: string; text: string }> };
+    const document = payload.p_templates[0]!.document as {
+      kind: string;
+      slots: Array<{ seconds: number; shot: string }>;
+      texts: Array<{ role: string; text: string }>;
+    };
     expect(document.kind).toBe('rrss.reel-template');
     expect(document.slots.map((s) => [s.seconds, s.shot])).toEqual([
       [2, 'detail'],
@@ -417,14 +616,21 @@ describe('«Hacer un reel como este»: resultado', () => {
     // La pieza se crea con el título del guion y queda apuntada en el análisis.
     const item = fake.rows('content_items')[0] as unknown as ContentItemRow;
     expect(item).toMatchObject({ title: 'Así hacemos la hogaza', format: 'reel', network: 'instagram' });
-    expect(fake.callsTo('set_reel_reference_content', 'rpc')[0]!.payload).toEqual({ p_reference_id: REF, p_content_id: item.id });
+    expect(fake.callsTo('set_reel_reference_content', 'rpc')[0]!.payload).toEqual({
+      p_reference_id: REF,
+      p_content_id: item.id,
+    });
     expect(window.location.search).toBe(`?referencia=${REF}`);
 
     // Línea de tiempo: los dos planos con material, con la duración de la plantilla.
-    const clips = screen.getAllByTestId('reel-clip').map((c) => within(c).getAllByRole('button')[0]!.getAttribute('aria-label'));
+    const clips = screen
+      .getAllByTestId('reel-clip')
+      .map((c) => within(c).getAllByRole('button')[0]!.getAttribute('aria-label'));
     expect(clips).toEqual(['1. Clip IMG_0001.mp4, 2 s', '2. Foto IMG_0002.jpg, 1,5 s']);
     expect(screen.getAllByTestId('reel-text-block')).toHaveLength(1);
-    expect(screen.getByTestId('reel-like-draft-notice')).toHaveTextContent('2 planos con material de tu biblioteca y 2 por grabar');
+    expect(screen.getByTestId('reel-like-draft-notice')).toHaveTextContent(
+      '2 planos con material de tu biblioteca y 2 por grabar',
+    );
 
     // Guion: hechos y huecos.
     expect(screen.getByTestId('reel-guide-summary')).toHaveTextContent('Faltan 2 planos por grabar de 4.');
@@ -456,22 +662,39 @@ describe('«Hacer un reel como este»: resultado', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /Guardar/ }));
     await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
     const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {
-      p_data: { plan: { clips: Array<{ path: string }>; texts: unknown[] }; guide: { referenceId: string; shots: Array<{ id: string; clipId?: string }> } };
+      p_data: {
+        plan: { clips: Array<{ path: string }>; texts: unknown[] };
+        guide: { referenceId: string; shots: Array<{ id: string; clipId?: string }> };
+      };
     };
-    expect(saved.p_data.plan.clips.map((c) => c.path)).toEqual([path('IMG_0001.mp4'), path('IMG_0002.jpg'), path('fachada-nueva.jpg')]);
+    expect(saved.p_data.plan.clips.map((c) => c.path)).toEqual([
+      path('IMG_0001.mp4'),
+      path('IMG_0002.jpg'),
+      path('fachada-nueva.jpg'),
+    ]);
     expect(saved.p_data.guide.referenceId).toBe(REF);
+    // El pie y los hashtags que propuso el análisis van en la pieza: se publica con ellos (prueba real, fallo 5).
+    expect((saved.p_data as unknown as { copy?: unknown }).copy).toEqual({
+      caption: 'Pan hecho hoy, con masa madre.',
+      hashtags: ['masamadre'],
+      aiGenerated: true,
+    });
     expect(saved.p_data.guide.shots.map((s) => Boolean(s.clipId))).toEqual([true, true, false, true]);
   });
 
   it('quien solo ve la marca ve el resultado, pero no gasta, ni guarda, ni abre el editor', async () => {
     seed({ role: 'member', brandRole: 'viewer' });
-    fake.tables.reel_references = [reference({ status: 'ready', result: RESULT as never, cost_micros: 31_000, source_path: null })];
+    fake.tables.reel_references = [
+      reference({ status: 'ready', result: RESULT as never, cost_micros: 31_000, source_path: null }),
+    ];
     renderApp(`${START}/${REF}`);
     await screen.findByTestId('reel-like-result');
     expect(screen.queryByTestId('reel-like-open-editor')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reel-like-save-template')).not.toBeInTheDocument();
     expect(screen.queryByTestId('reel-like-discard')).not.toBeInTheDocument();
-    expect(fake.callsTo('ai-reel-like', 'function').some((c) => (c.payload as { action: string }).action === 'create')).toBe(false);
+    expect(
+      fake.callsTo('ai-reel-like', 'function').some((c) => (c.payload as { action: string }).action === 'create'),
+    ).toBe(false);
   });
 
   it('si la IA falla, se explica (el cupo, aparte) y se puede reintentar; descartar borra el análisis', async () => {
@@ -483,9 +706,23 @@ describe('«Hacer un reel como este»: resultado', () => {
       if (request.action === 'options') return { status: 200, body: OPTIONS };
       attempts += 1;
       if (attempts === 1) {
-        return { status: 402, body: { error: { code: 'quota_exhausted', message: 'El cupo de IA de este mes está agotado', retryable: false } } };
+        return {
+          status: 402,
+          body: {
+            error: { code: 'quota_exhausted', message: 'El cupo de IA de este mes está agotado', retryable: false },
+          },
+        };
       }
-      return { status: 409, body: { error: { code: 'files_missing', message: 'Los fotogramas de este análisis ya no están. Vuelve a subir el vídeo.', retryable: false } } };
+      return {
+        status: 409,
+        body: {
+          error: {
+            code: 'files_missing',
+            message: 'Los fotogramas de este análisis ya no están. Vuelve a subir el vídeo.',
+            retryable: false,
+          },
+        },
+      };
     });
     renderApp(`${START}/${REF}`);
     expect(await screen.findByTestId('ai-quota-error')).toHaveTextContent('El cupo de IA de este mes está agotado');

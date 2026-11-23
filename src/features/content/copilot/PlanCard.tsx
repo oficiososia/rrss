@@ -1,5 +1,6 @@
 import { CheckCircle2, Circle, ImagePlus, Loader2, MinusCircle, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui';
+import { formatMicros } from '@/features/ai/money';
 import type { CopilotAssetInfo } from './apply';
 import { COPILOT_MAX_PLAN_PHOTOS } from './operations';
 import { describePlan, type CopilotPlan, type PlanStepStatus } from './plan';
@@ -60,10 +61,17 @@ export interface PlanCardProps {
   onRemovePhoto: (id: string) => void;
   /** El interruptor «Recortar las fotos»: recortadas (sin su fondo) o enteras. Solo cambia algo antes del «sí». */
   onCutoutChange: (cutout: boolean) => void;
+  /**
+   * El interruptor «Crear el fondo con IA» cuando la orden no pedía un fondo: lo
+   * primero es una foto real que llena el lienzo; el fondo con IA es opcional.
+   */
+  onAiBackgroundChange?: (on: boolean) => void;
 }
 
-export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, onCutoutChange }: PlanCardProps) {
-  const { plan, photos, phase } = pending;
+export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, onCutoutChange, onAiBackgroundChange }: PlanCardProps) {
+  const { plan, phase } = pending;
+  // Una foto que llena el lienzo es UNA: la primera que casa (quitándola, se ve la siguiente).
+  const photos = plan.placement?.layout === 'fill' ? pending.photos.slice(0, 1) : pending.photos;
   const known = phase === 'preparing' ? undefined : photos.length;
   const steps = describePlan(plan, known);
   const cost = planCost(plan, known, pending.backgroundMicros);
@@ -141,8 +149,32 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
         </div>
       )}
 
+      {/* La orden no pedía un fondo: va una foto real; el fondo creado con IA es opcional y se marca aquí. */}
+      {plan.aiAlternative && onAiBackgroundChange && (
+        <div className="space-y-0.5">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={plan.aiAlternative.active}
+              disabled={!ready}
+              aria-describedby="copilot-plan-ai-hint"
+              onChange={(event) => onAiBackgroundChange(event.target.checked)}
+              data-testid="copilot-plan-ai-background"
+            />
+            Crear el fondo con IA en vez de usar tu foto
+            {typeof pending.backgroundMicros === 'number' && ` (≈ ${formatMicros(pending.backgroundMicros)})`}
+          </label>
+          <p id="copilot-plan-ai-hint" className="pl-[1.375rem] text-xs text-muted">
+            {plan.aiAlternative.active
+              ? 'Se crea un fondo con IA (sin comida ni productos) y tus fotos van encima, recortadas.'
+              : 'Sin marcar, no se gasta nada: una foto tuya llena el lienzo de borde a borde.'}
+          </p>
+        </div>
+      )}
+
       {/* Recortadas (lo normal sobre una imagen de fondo) o enteras: se decide aquí, antes del «sí». */}
-      {plan.placement && plan.canCutout && (
+      {plan.placement && plan.placement.layout !== 'fill' && plan.canCutout && (
         <div className="space-y-0.5">
           <label className="flex items-center gap-1.5">
             <input

@@ -54,8 +54,11 @@ export type CopilotOp = (typeof COPILOT_OPS)[number];
 
 /** Pasos de plan: crear el fondo con IA, buscar fotos en la biblioteca y colocarlas. */
 export const COPILOT_PLAN_OPS = ['generate_background', 'find_photos', 'place_photos'] as const;
-/** Disposición de las fotos que coloca un plan. */
-export const COPILOT_LAYOUTS = ['center', 'row', 'grid', 'fan'] as const;
+/**
+ * Disposición de las fotos que coloca un plan. `fill`: UNA foto real llena el
+ * lienzo de borde a borde, de fondo (lo que se pide con «hazme algo bonito»).
+ */
+export const COPILOT_LAYOUTS = ['center', 'row', 'grid', 'fan', 'fill'] as const;
 export type CopilotLayout = (typeof COPILOT_LAYOUTS)[number];
 /** Igual que en el servidor (`MAX_BACKGROUND_PROMPT_CHARS`, `MAX_PHOTO_QUERY_CHARS`, `MAX_PLAN_PHOTOS`). */
 export const COPILOT_MAX_BACKGROUND_PROMPT = 400;
@@ -68,7 +71,8 @@ export const COPILOT_ALIGNS = ['left', 'center', 'right'] as const;
 export const COPILOT_EFFECTS = ['outline', 'shadow', 'background'] as const;
 export const COPILOT_ORDERS = ['front', 'forward', 'backward', 'back'] as const;
 export const COPILOT_FLIPS = ['horizontal', 'vertical'] as const;
-export const COPILOT_FITS = ['cover', 'contain'] as const;
+/** `canvas`: la foto llena TODO el lienzo, de borde a borde, recortando lo que sobre. */
+export const COPILOT_FITS = ['cover', 'contain', 'canvas'] as const;
 export const COPILOT_CROPS = ['1:1', '4:5', '9:16', '16:9', '3:2', 'none'] as const;
 export const COPILOT_BACKDROPS = ['none', 'color', 'gradient', 'blur'] as const;
 export const COPILOT_FILTERS = [...IMAGE_FILTERS, 'none'] as const;

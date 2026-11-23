@@ -805,13 +805,20 @@ describe('tarea editor.copilot por herramientas', () => {
       out({ op: 'add_text', text: 'Menú de otoño', style: 'title' }),
       out({ op: 'add_text', text: 'menú de otoño\nraciones para compartir' }),
     ]);
-    const notDictated = 'El texto no está en lo dictado: el copiloto no redacta, solo coloca lo que se dice.';
-    expect(response.body.discarded).toEqual([
-      { index: 0, op: 'add_text', reason: notDictated },
-      { index: 3, op: 'add_text', reason: notDictated },
-      { index: 4, op: 'update_text', reason: notDictated },
-      { index: 5, op: 'add_text', reason: notDictated },
+    // Cada descarte dice QUÉ texto no se ha puesto y qué hacer en su lugar (el copiloto no redacta).
+    const discarded = response.body.discarded as { index: number; op: string; reason: string }[];
+    expect(discarded.map(({ index, op }) => ({ index, op }))).toEqual([
+      { index: 0, op: 'add_text' },
+      { index: 3, op: 'add_text' },
+      { index: 4, op: 'update_text' },
+      { index: 5, op: 'add_text' },
     ]);
+    // El texto vacío, aparte: falta el texto.
+    expect(discarded.at(-1)!.reason).toBe('Falta el texto dictado.');
+    for (const item of discarded.slice(0, -1)) {
+      expect(item.reason).toMatch(/^No he puesto «.+»: no lo has dicho tú y el copiloto no redacta\. Dicta el texto tal cual/);
+      expect(item.reason.length).toBeLessThanOrEqual(300);
+    }
   });
 
   it('colores y tipografías: solo los de la marca (y blanco y negro); el fondo, o es de la paleta o no se cambia', async () => {
@@ -1525,7 +1532,7 @@ describe('pasos de plan: la IA solo crea el fondo; los platos y productos son fo
       count: { type: 'integer', minimum: 1, maximum: 6 },
     });
     expect(spec('place_photos').parameters.properties).toEqual({
-      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan'] },
+      layout: { type: 'string', enum: ['center', 'row', 'grid', 'fan', 'fill'] },
       cutout: { type: 'boolean' },
       on: { type: 'boolean' },
     });
@@ -1894,7 +1901,7 @@ describe('simulado local (el de la e2e) por herramientas', () => {
     expect(operations.some((o) => o.text?.includes('APROBADO'))).toBe(false);
     expect(operations.filter((o) => o.op === 'set_background_image')).toHaveLength(1);
     expect(reasons(response.body)).toEqual([
-      expect.stringMatching(/no está en lo dictado/),
+      expect.stringMatching(/no lo has dicho tú/),
       expect.stringMatching(/no está entre las elegidas/),
     ]);
   });

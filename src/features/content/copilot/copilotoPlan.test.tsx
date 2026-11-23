@@ -359,14 +359,14 @@ describe('plan del copiloto: al confirmar', () => {
     // Los platos son las fotos de la biblioteca, recortadas: nunca una imagen generada.
     expect(placed.map(sourceOf)).toEqual([cutOf(SOUP).id, cutOf(STEW).id]);
     for (const layer of placed) expect(layer.shadow).toBeDefined();
-    expect(layersOf(document).filter((layer) => layer.type === 'text').map((layer) => (layer as TextLayer).text).sort()).toEqual(['Reserva ya', 'menú de otoño']);
+    expect(layersOf(document).filter((layer) => layer.type === 'text').map((layer) => (layer as TextLayer).text).sort()).toEqual(['Menú de otoño', 'Reserva ya']); // El titular dictado en minúscula sale con mayúscula inicial.
     // Lo que había sigue ahí y el documento de partida no se ha tocado.
     expect(layersOf(initial)).toHaveLength(1);
 
     const changes = within(done).getByTestId('copilot-changes');
     expect(changes).toHaveTextContent('Foto de fondo «IA · fondo otoñal.png»');
     expect(changes).toHaveTextContent('Foto «crema-calabaza.jpg (sin fondo).png» añadida encima');
-    expect(changes).toHaveTextContent('Texto «menú de otoño»');
+    expect(changes).toHaveTextContent('Texto «Menú de otoño»');
     // Lo creado queda en la biblioteca, y se dice.
     expect(within(done).getByTestId('copilot-notes')).toHaveTextContent(
       'En la biblioteca queda lo creado: el fondo «IA · fondo otoñal.png», el recorte «crema-calabaza.jpg (sin fondo).png», el recorte «guiso-setas.jpg (sin fondo).png».',

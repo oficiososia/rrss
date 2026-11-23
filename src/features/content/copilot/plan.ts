@@ -6,14 +6,18 @@ import {
   type CopilotPlacement,
   type PlacedCopilotOperation,
 } from './apply';
+import { isAppDesign } from '../../library/filters';
+import { asksForBackground, occasionHeadline } from './intent';
 import { colorRole, type CopilotBrandColor, type MeasuredTone } from './legibility';
 import {
   COPILOT_MAX_PLAN_PHOTOS,
   COPILOT_PLAN_OPS,
   copilotOp,
+  isDictated,
   type CopilotLayout,
   type CopilotOperation,
 } from './operations';
+import type { SubjectBox } from './subject';
 
 // Órdenes que MONTAN una pieza entera («haz el menú de otoño: crea un fondo que
 // parezca otoñal y pon los platos en el centro»), docs/copiloto-voz.md §15.
@@ -175,8 +179,26 @@ export interface PlanPlacement {
   shadow: boolean;
 }
 
-/** Lo que queda de la orden, en su orden: dónde va el fondo, dónde las fotos y las operaciones normales. */
-export type PlanSequenceItem = { kind: 'background' } | { kind: 'photos' } | { kind: 'operation'; operation: CopilotOperation };
+/**
+ * Lo que queda de la orden, en su orden: dónde va el fondo, dónde las fotos y las operaciones normales.
+ * `proposed`: un texto que NO ha dicho la persona y propone el copiloto para completar la pieza: el
+ * titular sacado de la ocasión que nombra la orden (`headline`) o la llamada a la acción del perfil de
+ * la marca (`cta`). Se enseñan como propuestos antes del «sí».
+ */
+export type PlanSequenceItem =
+  | { kind: 'background' }
+  | { kind: 'photos' }
+  | { kind: 'operation'; operation: CopilotOperation; proposed?: 'headline' | 'cta' };
+
+/** El fondo con IA que se ofrece como alternativa (no lo primero) cuando la orden no pide un fondo. */
+export interface PlanAiAlternative {
+  prompt: string;
+  ratio: AspectRatio;
+  /** Cómo irían las fotos encima del fondo creado (recortadas). */
+  placement: PlanPlacement;
+  /** Fotos que se querrían colocar entonces. */
+  wanted: number;
+}
 
 export interface CopilotPlan {
   background: PlanBackground | null;
@@ -198,6 +220,12 @@ export interface CopilotPlan {
   notes: string[];
   /** Por qué el plan no se puede ejecutar tal cual (vacío = se puede). */
   blockers: string[];
+  /**
+   * La orden no pedía un fondo pero la IA lo propuso: el plan usa una foto REAL
+   * que llena el lienzo y deja el fondo con IA como opción (`setPlanAiBackground`).
+   * `active`: la persona lo ha elegido.
+   */
+  aiAlternative?: PlanAiAlternative & { active: boolean };
 }
 
 export interface PlanEnvironment {
@@ -211,6 +239,16 @@ export interface PlanEnvironment {
   canCutout: boolean;
   /** ¿Tiene ya la página una foto de fondo (una imagen que cubre todo el lienzo)? */
   backgroundImage?: boolean;
+  /**
+   * La orden tal como se dijo. Con ella, un fondo con IA que la orden no pide
+   * (`asksForBackground`) no es lo primero: se usa una foto real de la marca.
+   * Sin ella (pruebas antiguas, banco en seco), el plan es el de siempre.
+   */
+  transcript?: string;
+  /** ¿Tiene ya textos la página? Si no, el plan completa la pieza con un titular y la llamada de la marca. */
+  pageHasTexts?: boolean;
+  /** Llamada a la acción del perfil de la marca («Reserva tu mesa»), si la tiene. */
+  callToAction?: string | null;
 }
 
 /**
@@ -226,8 +264,15 @@ export interface CopilotPlanHost {
   canCutout: boolean;
   /** Coste máximo de generar el fondo, en micros, SIN reservar nada. `null` si no se puede saber antes. */
   estimateBackground(ratio: AspectRatio): Promise<number | null>;
-  /** Genera el fondo (gasta cupo de IA) y devuelve el recurso que queda en la biblioteca. */
-  generateBackground(prompt: string, ratio: AspectRatio, signal: AbortSignal): Promise<CopilotAssetInfo>;
+  /**
+   * Genera el fondo (gasta cupo de IA) y devuelve el recurso que queda en la
+   * biblioteca y, si se sabe, lo que ha costado de verdad (`costMicros`).
+   */
+  generateBackground(
+    prompt: string,
+    ratio: AspectRatio,
+    signal: AbortSignal,
+  ): Promise<CopilotAssetInfo & { costMicros?: number | null }>;
   /** Busca fotos reales en la biblioteca de la marca (nombre, etiquetas y carpeta). No gasta. */
   searchLibrary(query: string, count: number): Promise<CopilotAssetInfo[]>;
   /**
@@ -242,6 +287,12 @@ export interface CopilotPlanHost {
    * tarda demasiado): entonces los textos llevan un contorno y se dice.
    */
   measureTone?(image: CopilotAssetInfo, signal: AbortSignal): Promise<MeasuredTone | null>;
+  /**
+   * Dónde está lo recortado dentro de un recorte (la caja de sus píxeles
+   * opacos), para enseñar solo eso y que no quede diminuto. No gasta. `null`
+   * si no se puede leer o si lo recortado ya ocupa casi toda la foto.
+   */
+  measureSubject?(image: CopilotAssetInfo, signal: AbortSignal): Promise<SubjectBox | null>;
 }
 
 /** ¿Queda en el plan algo que confirmar? (un fondo o unas fotos; si no, es una orden normal). */
@@ -267,15 +318,26 @@ export function buildPlan(operations: readonly CopilotOperation[], env: PlanEnvi
   let placement: PlanPlacement | null = null;
   let photosAt = -1;
   const ownPhotoBackground = operations.some((operation) => operation.op === 'set_background_image');
+  // Sin pedir un fondo («hazme algo para el finde que quede bonito»), el fondo con IA no es lo primero:
+  // la pieza se monta con una foto REAL de la marca que llena el lienzo, y el fondo con IA queda como opción.
+  const realPhotoFirst = env.transcript !== undefined && !asksForBackground(env.transcript);
+  let alternative: { prompt: string; ratio: AspectRatio } | null = null;
 
   for (const operation of operations) {
     if (operation.op === 'generate_background') {
       const prompt = (operation.prompt ?? '').replace(/\s+/g, ' ').trim();
-      if (background) notes.push('Solo se crea un fondo por orden: el segundo no se hace.');
+      if (background || alternative) notes.push('Solo se crea un fondo por orden: el segundo no se hace.');
       else if (!prompt) notes.push('Falta la descripción del fondo: ese paso no se hace.');
       else if (namesFoodOrProduct(prompt)) notes.push(BACKGROUND_ONLY_REASON);
       else if (ownPhotoBackground) notes.push('Ya has pedido una foto tuya de fondo: no se genera otro.');
-      else {
+      else if (realPhotoFirst) {
+        alternative = { prompt, ratio: operation.ratio ?? env.canvasRatio };
+        // Donde iba el fondo van ahora las fotos (la de fondo es una de ellas).
+        if (photosAt < 0) {
+          photosAt = sequence.length;
+          sequence.push({ kind: 'photos' });
+        }
+      } else {
         if (env.imageAi.available) {
           background = { mode: 'ai', prompt, ratio: operation.ratio ?? env.canvasRatio };
           sequence.push({ kind: 'background' });
@@ -319,23 +381,108 @@ export function buildPlan(operations: readonly CopilotOperation[], env: PlanEnvi
 
   // Buscar fotos sin decir cómo colocarlas: en el centro, tal cual.
   if (!placement && searches.length > 0) placement = { layout: 'center', cutout: false, shadow: false };
+  const searched = Math.min(
+    searches.reduce((total, search) => total + search.count, 0),
+    COPILOT_MAX_PLAN_PHOTOS,
+  );
+  // El fondo con IA que no se pidió queda como opción; lo primero es UNA foto real a sangre.
+  let aiAlternative: CopilotPlan['aiAlternative'];
+  // Un fondo pedido de verdad manda sobre «una foto que llena el lienzo»: las fotos van encima, en el centro.
+  if (placement?.layout === 'fill' && background) placement = { ...placement, layout: 'center' };
+  if (alternative && env.imageAi.available) {
+    aiAlternative = {
+      ...alternative,
+      placement: { ...(placement ?? { layout: 'center', cutout: true, shadow: false }), cutout: true },
+      wanted: searched,
+      active: false,
+    };
+  }
+  if (alternative) {
+    if (placement?.layout !== 'fill') {
+      notes.push(
+        aiAlternative
+          ? 'No has pedido un fondo: monto la pieza con una foto tuya que llena el lienzo. Si prefieres el fondo creado con IA, márcalo antes de decir que sí.'
+          : 'No has pedido un fondo: monto la pieza con una foto tuya que llena el lienzo.',
+      );
+    }
+    placement = { layout: 'fill', cutout: false, shadow: false };
+  }
+  const fill = placement?.layout === 'fill';
+  if (fill) placement = { layout: 'fill', cutout: false, shadow: false };
+
   // Sobre una IMAGEN de fondo (la que crea este plan, la foto de fondo que pone la orden o la que
   // ya tiene la página), las fotos van recortadas: es lo predeterminado, diga lo que diga la IA
   // (una foto entera encima deja ver un rectángulo con su propio fondo). La persona puede
-  // cambiarlo en la tarjeta. Sobre un lienzo de color liso se respeta lo que diga la IA.
-  const overImage = background?.mode === 'ai' || ownPhotoBackground || env.backgroundImage === true;
+  // cambiarlo en la tarjeta. Sobre un lienzo de color liso se respeta lo que diga la IA. Una foto
+  // que LLENA el lienzo (`fill`) es ella misma el fondo: entera, nunca recortada.
+  const overImage = !fill && (background?.mode === 'ai' || ownPhotoBackground || env.backgroundImage === true);
   if (placement && overImage) placement = { ...placement, cutout: true };
   if (placement?.cutout && !env.canCutout) {
     placement = { ...placement, cutout: false };
     notes.push('Aquí no se puede quitar el fondo de las fotos: se colocan tal cual.');
   }
-  const wanted = Math.min(
-    searches.reduce((total, search) => total + search.count, 0),
-    COPILOT_MAX_PLAN_PHOTOS,
-  );
+  const wanted = fill ? Math.min(searched, 1) : searched;
 
-  const plan: CopilotPlan = { background, searches, wanted, placement, overImage, canCutout: env.canCutout, sequence, notes, blockers };
+  // Una pieza en blanco se completa: el titular de la ocasión que nombra la orden («para el finde» →
+  // «Este finde») si no se ha dictado uno, y la llamada a la acción del perfil de la marca. Se enseñan
+  // en el plan como propuestos antes del «sí»; no los escribe la IA.
+  if ((placement || background) && env.transcript !== undefined && env.pageHasTexts === false) {
+    const texts = sequence.flatMap((item) => (item.kind === 'operation' && item.operation.op === 'add_text' ? [item.operation] : []));
+    const headline = occasionHeadline(env.transcript);
+    if (headline && !texts.some((text) => text.style === 'title')) {
+      sequence.push({ kind: 'operation', operation: copilotOp({ op: 'add_text', text: headline, style: 'title', position: 'top' }), proposed: 'headline' });
+    }
+    const cta = env.callToAction?.replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (cta && !texts.some((text) => text.text !== null && isDictated(cta, text.text))) {
+      sequence.push({ kind: 'operation', operation: copilotOp({ op: 'add_text', text: cta, style: 'subtitle', position: 'bottom' }), proposed: 'cta' });
+    }
+  }
+
+  const plan: CopilotPlan = {
+    background,
+    searches,
+    wanted,
+    placement,
+    overImage,
+    canCutout: env.canCutout,
+    sequence,
+    notes,
+    blockers,
+    ...(aiAlternative ? { aiAlternative } : {}),
+  };
   return { ...plan, blockers: stepBlockers(plan) };
+}
+
+/**
+ * El interruptor «Crear el fondo con IA» de la tarjeta, cuando la orden no
+ * pedía un fondo: con él, el fondo se crea con IA y las fotos van recortadas
+ * encima (lo de antes); sin él, una foto real llena el lienzo. Devuelve el
+ * mismo plan si no hay alternativa o ya estaba así. Sin IA de imagen no hay
+ * alternativa (no se ofrece).
+ */
+export function setPlanAiBackground(plan: CopilotPlan, on: boolean): CopilotPlan {
+  const alternative = plan.aiAlternative;
+  if (!alternative || alternative.active === on) return plan;
+  const next: CopilotPlan = on
+    ? {
+        ...plan,
+        background: { mode: 'ai', prompt: alternative.prompt, ratio: alternative.ratio },
+        placement: { ...alternative.placement, cutout: alternative.placement.cutout && plan.canCutout },
+        wanted: alternative.wanted,
+        overImage: true,
+        sequence: [{ kind: 'background' }, ...plan.sequence],
+        aiAlternative: { ...alternative, active: true },
+      }
+    : {
+        ...plan,
+        background: null,
+        placement: { layout: 'fill', cutout: false, shadow: false },
+        wanted: Math.min(alternative.wanted, 1),
+        overImage: false,
+        sequence: plan.sequence.filter((item) => item.kind !== 'background'),
+        aiAlternative: { ...alternative, active: false },
+      };
+  return { ...next, blockers: stepBlockers(next) };
 }
 
 /** Por qué no se puede ejecutar un plan por su tamaño (vacío = cabe en el tope de pasos). */
@@ -351,7 +498,7 @@ function stepBlockers(plan: CopilotPlan): string[] {
  * si aquí no se puede recortar o si ya estaba así.
  */
 export function setPlanCutout(plan: CopilotPlan, cutout: boolean): CopilotPlan {
-  if (!plan.placement || plan.placement.cutout === cutout || (cutout && !plan.canCutout)) return plan;
+  if (!plan.placement || plan.placement.layout === 'fill' || plan.placement.cutout === cutout || (cutout && !plan.canCutout)) return plan;
   const next: CopilotPlan = { ...plan, placement: { ...plan.placement, cutout } };
   return { ...next, blockers: stepBlockers(next) };
 }
@@ -390,6 +537,7 @@ const LAYOUT_LABEL: Record<CopilotLayout, string> = {
   row: 'en fila',
   grid: 'en rejilla',
   fan: 'en abanico',
+  fill: 'de fondo, llenando el lienzo de borde a borde',
 };
 const TEXT_LABEL: Record<string, string> = { title: 'el titular', subtitle: 'el subtítulo', body: 'el texto', small: 'el texto pequeño' };
 
@@ -453,20 +601,33 @@ export function describePlan(plan: CopilotPlan, photos?: number): PlanStep[] {
       });
     }
     // Cómo van: recortadas (se dice siempre) o, si van sobre una imagen de fondo y se ha pedido dejarlas enteras, también.
-    const one = count === 1;
+    const one = count === 1 || plan.placement.layout === 'fill';
     const how = plan.placement.cutout
       ? `, ${one ? 'recortada' : 'recortadas'}, sin su fondo`
       : plan.overImage
         ? `, ${one ? 'entera' : 'enteras'}, con su fondo`
-        : '';
+        : plan.placement.layout === 'fill'
+          ? ' (se recorta lo que sobre)'
+          : '';
     steps.push({
       id: 'place',
       kind: 'place',
       label: `Colocar ${one ? 'la foto' : 'las fotos'} ${LAYOUT_LABEL[plan.placement.layout]}${how}${plan.placement.shadow ? ', con sombra suave' : ''}`,
     });
   }
+  const proposed = plan.sequence.flatMap((item) => (item.kind === 'operation' ? [item.proposed] : []));
   operationsOf(plan).forEach((operation, index) => {
-    steps.push({ id: `op-${index}`, kind: operation.op === 'add_text' ? 'text' : 'other', label: operationLabel(operation) });
+    const from = proposed[index];
+    steps.push({
+      id: `op-${index}`,
+      kind: operation.op === 'add_text' ? 'text' : 'other',
+      label:
+        from === 'headline'
+          ? `${operationLabel(operation)} (propuesto: no lo has dicho; cámbialo luego si quieres)`
+          : from === 'cta'
+            ? `Poner la llamada de la marca «${(operation.text ?? '').slice(0, 80)}» (de su perfil)`
+            : operationLabel(operation),
+    });
   });
   return steps;
 }
@@ -666,6 +827,11 @@ export interface PlanResources {
   background: CopilotAssetInfo | null;
   /** Las fotos que se colocan, ya recortadas si tocaba. */
   photos: readonly CopilotAssetInfo[];
+  /**
+   * Dónde está lo recortado dentro de cada recorte (por id de recurso): se
+   * enseña solo esa zona para que llene su sitio y no quede diminuto.
+   */
+  subjects?: ReadonlyMap<string, SubjectBox>;
 }
 
 /**
@@ -705,6 +871,14 @@ export function composePlan(
   const photos = plan.placement ? resources.photos.slice(0, COPILOT_MAX_PLAN_PHOTOS) : [];
   if (photos.length === 0 || !plan.placement) return { operations: base, notes };
 
+  // Una foto que LLENA el lienzo: es la foto de fondo (de borde a borde, recortando lo que sobre).
+  // Va donde la orden decía las fotos; los textos quedan encima y se revisa que se lean.
+  if (plan.placement.layout === 'fill') {
+    const fill = copilotOp({ op: 'set_background_image', assetId: photos[0]!.id });
+    const at = photosAt < 0 ? 0 : photosAt;
+    return { operations: [...base.slice(0, at), fill, ...base.slice(at)], notes };
+  }
+
   // Cómo queda la página sin las fotos con unas operaciones: de ahí sale el hueco libre (los textos no dependen de ellas).
   const settled = (operations: PlacedCopilotOperation[]) => {
     const preview = applyCopilotOperations(document, operations, context);
@@ -743,7 +917,11 @@ export function composePlan(
   const boxes = layoutBoxes(canvasArea(layout.canvas), photos.length, plan.placement.layout, layout.occupied);
   const placed: PlacedCopilotOperation[] = photos.map((photo, index) => ({
     ...copilotOp({ op: 'add_image', assetId: photo.id }),
-    place: { ...boxes[index]!, ...(plan.placement!.shadow ? { shadow: true } : {}) },
+    place: {
+      ...boxes[index]!,
+      ...(plan.placement!.shadow ? { shadow: true } : {}),
+      ...(resources.subjects?.get(photo.id) ? { crop: resources.subjects.get(photo.id)! } : {}),
+    },
   }));
   // Donde la orden decía colocarlas. Vayan antes o después, quedan por debajo de los textos (apply.ts).
   const insertAt = before.length - base.length + (photosAt < 0 ? base.length : photosAt);
@@ -838,10 +1016,48 @@ export interface LibraryPhoto extends CopilotAssetInfo {
 const SEARCH_STOPWORDS = new Set([
   'de', 'del', 'la', 'las', 'el', 'los', 'un', 'una', 'unos', 'unas', 'y', 'con', 'para', 'por', 'en', 'que', 'mi', 'mis',
   'foto', 'fotos', 'imagen', 'imagenes', 'nuestro', 'nuestros', 'nuestra', 'nuestras', 'jpg', 'jpeg', 'png', 'webp',
+  'nuestro', 'vuestro', 'vuestra', 'tuyo', 'tuya', 'mio', 'mia', 'algun', 'alguna', 'alguno', 'algunas', 'algunos',
+  'bonita', 'bonito', 'bonitas', 'bonitos', 'chula', 'chulo', 'buena', 'bueno', 'rica', 'rico', 'casa',
 ]);
+
+/**
+ * Lo que una palabra GENÉRICA de la orden abarca en una biblioteca de negocio
+ * (carpetas y etiquetas habituales): «un plato nuestro» busca también carnes,
+ * arroces, postres…; «una foto del gym», la sala, las máquinas… Solo se amplía
+ * desde la palabra genérica (`heads`): «hamburguesas» busca hamburguesas, no
+ * cualquier plato. Vocabulario general del español, no de ningún cliente.
+ * Lo ampliado cuenta menos que la palabra dicha.
+ */
+const SEARCH_FAMILIES: ReadonlyArray<{ heads: readonly string[]; members: readonly string[] }> = [
+  {
+    heads: ['plato', 'comida', 'carta', 'menu', 'cocina'],
+    members: ['carne', 'chuleton', 'solomillo', 'entrecot', 'pescado', 'marisco', 'arroz', 'paella', 'entrante', 'postre', 'tapa', 'racion', 'ensalada', 'guiso', 'cocido'],
+  },
+  { heads: ['carne', 'carnes'], members: ['chuleton', 'solomillo', 'entrecot', 'cordero', 'cochinillo', 'cerdo', 'ternera', 'vaca', 'brasa', 'parrilla', 'asado'] },
+  { heads: ['pescado', 'marisco'], members: ['gamba', 'langosta', 'bogavante', 'pulpo', 'calamar', 'rape', 'merluza', 'bacalao', 'atun'] },
+  { heads: ['postre', 'dulce'], members: ['tarta', 'flan', 'helado', 'coulant', 'pastel'] },
+  { heads: ['bebida', 'copa', 'coctel', 'cocktail', 'combinado', 'trago'], members: ['vino', 'cerveza', 'cafe', 'barra', 'gin', 'mojito', 'vermut'] },
+  { heads: ['gym', 'gimnasio'], members: ['sala', 'maquina', 'pesa', 'rack', 'banco', 'entrenamiento', 'fitness', 'instalacion', 'clase'] },
+  {
+    heads: ['local', 'sitio', 'restaurante', 'establecimiento', 'instalacion', 'negocio'],
+    members: ['sala', 'comedor', 'terraza', 'barra', 'fachada', 'entrada', 'interior', 'ambiente', 'tienda', 'escaparate'],
+  },
+  { heads: ['producto', 'articulo', 'novedad'], members: ['coleccion', 'tienda', 'escaparate'] },
+  { heads: ['equipo', 'personal', 'plantilla'], members: ['cocinero', 'camarero', 'entrenador', 'monitor'] },
+];
 
 const searchWords = (text: string) =>
   (plain(text).match(/[a-z0-9]+/g) ?? []).filter((word) => word.length >= 3 && !SEARCH_STOPWORDS.has(word));
+
+/** Lo que abarca una palabra dicha si es genérica (su familia, sin ella misma); nada si es concreta. */
+function relatedWords(term: string): string[] {
+  const related = new Set<string>();
+  for (const family of SEARCH_FAMILIES) {
+    if (!family.heads.some((word) => sameWord(word, term))) continue;
+    for (const word of [...family.heads, ...family.members]) if (!sameWord(word, term)) related.add(word);
+  }
+  return [...related];
+}
 
 /** ¿Son la misma palabra salvo el plural o una terminación? («platos» y «plato», «otoño» y «otoñal»). */
 function sameWord(a: string, b: string): boolean {
@@ -876,32 +1092,47 @@ export function isPlainCutoutOf(photo: LibraryPhoto, sourceId: string): boolean 
 /**
  * Las fotos de la biblioteca que mejor casan con lo que se busca, por nombre,
  * etiquetas y carpeta (sin tildes ni mayúsculas, y sin distinguir el plural).
- * Nunca devuelve una imagen generada con IA: los platos y productos son fotos
- * reales. Si casan una foto y una edición suya, se queda la original.
+ * Busca también por intención: cada palabra trae su familia («plato» → carnes,
+ * arroces, postres…; «gym» → sala, máquinas…), que cuenta menos que la palabra
+ * dicha. Nunca devuelve una imagen generada con IA (los platos y productos son
+ * fotos reales) ni una pieza ya diseñada o montada por la aplicación
+ * (exportaciones, reels montados, portadas, informes: `isAppDesign`, como los
+ * selectores de fotos). Si casan una foto y una edición suya, se queda la original.
  */
 export function matchLibraryPhotos<T extends LibraryPhoto>(photos: readonly T[], query: string, count: number): T[] {
   const terms = searchWords(query);
   if (terms.length === 0) return [];
-  const scored = photos
-    .filter((photo) => !isAiGenerated(photo))
+  const families = terms.map(relatedWords);
+  const matchedAll = photos
+    .filter((photo) => !isAiGenerated(photo) && !isAppDesign({ provenance: photo.provenance as never, folder: photo.folder ?? '' }))
     .map((photo, order) => {
-      const name = searchWords(photo.name.replace(/\.[a-z0-9]{2,5}$/i, ''));
+      const name = searchWords(photo.name.replace(/.[a-z0-9]{2,5}$/i, ''));
       const tags = (photo.tags ?? []).flatMap(searchWords);
       const folder = searchWords(photo.folder ?? '');
+      // Lo ampliado, más estricto: las cuatro primeras letras iguales («sala» no casa con «salmón»).
+      const hitOf = (term: string, weight: number) => {
+        const like = (word: string) => sameWord(word, term) && (weight === 1 || word.slice(0, 4) === term.slice(0, 4));
+        return Math.max(name.some(like) ? 3 * weight : 0, tags.some(like) ? 3 * weight : 0, folder.some(like) ? 2 * weight : 0);
+      };
       let matched = 0;
       let score = 0;
-      for (const term of terms) {
-        const hit = Math.max(
-          name.some((word) => sameWord(word, term)) ? 3 : 0,
-          tags.some((word) => sameWord(word, term)) ? 3 : 0,
-          folder.some((word) => sameWord(word, term)) ? 2 : 0,
-        );
+      let direct = false;
+      terms.forEach((term, index) => {
+        // La palabra dicha, entera; su familia, a medias.
+        const own = hitOf(term, 1);
+        const hit = Math.max(own, ...families[index]!.map((word) => hitOf(word, 0.5)));
+        if (own > 0) direct = true;
         if (hit > 0) matched += 1;
         score += hit;
-      }
-      return { photo, matched, score, order };
+      });
+      return { photo, matched, score, order, direct };
     })
-    .filter((item) => item.matched > 0)
+    .filter((item) => item.matched > 0);
+  // La familia de una palabra solo entra si la palabra dicha no encuentra nada: «platos» con fotos de platos
+  // trae esas; «un plato nuestro» en una biblioteca ordenada por carpetas (Arroces, Carnes…) trae esas.
+  const anyDirect = matchedAll.some((item) => item.direct);
+  const scored = matchedAll
+    .filter((item) => !anyDirect || item.direct)
     .sort((a, b) => b.matched - a.matched || b.score - a.score || a.order - b.order);
   const found = new Set(scored.map((item) => item.photo.id));
   return scored
@@ -912,3 +1143,4 @@ export function matchLibraryPhotos<T extends LibraryPhoto>(photos: readonly T[],
     .slice(0, Math.max(0, count))
     .map((item) => item.photo);
 }
+

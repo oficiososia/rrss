@@ -216,7 +216,7 @@ describe('tarea editor.copilot', () => {
     expect(operations.some((o) => o.text?.includes('APROBADO'))).toBe(false);
     expect(operations.filter((o) => o.op === 'set_background_image')).toHaveLength(1);
     expect((response.body.discarded as Row[]).map((d) => d.reason)).toEqual([
-      expect.stringMatching(/no está en lo dictado/),
+      expect.stringMatching(/no lo has dicho tú/),
       expect.stringMatching(/no está entre las elegidas/),
     ]);
   });

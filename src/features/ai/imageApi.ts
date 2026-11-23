@@ -225,6 +225,19 @@ export async function generateImageAndWait(
   input: ImageRequestInput,
   options: { signal?: AbortSignal; intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<MediaAssetRow> {
+  return (await generateImageWithCost(brandId, input, options)).asset;
+}
+
+/**
+ * Igual que `generateImageAndWait`, y además lo que ha costado de verdad (lo
+ * que devuelve el servicio o lo anotado en `ai_generations`; `null` si no se
+ * sabe). El copiloto lo enseña junto a la orden que lo gastó.
+ */
+export async function generateImageWithCost(
+  brandId: string,
+  input: ImageRequestInput,
+  options: { signal?: AbortSignal; intervalMs?: number; timeoutMs?: number } = {},
+): Promise<{ asset: MediaAssetRow; costMicros: number | null }> {
   const result = await invokeAiMedia<GenerateImageResult>('image.generate', brandId, input);
   options.signal?.throwIfAborted();
   if (result.status === 'completed') {
@@ -234,14 +247,14 @@ export async function generateImageAndWait(
     if (!asset) {
       throw new AiRequestError('internal', 'La IA generó la imagen, pero no se ha podido leer de la biblioteca.');
     }
-    return asset;
+    return { asset, costMicros: Number.isFinite(result.costMicros) ? result.costMicros : null };
   }
   const deadline = Date.now() + (options.timeoutMs ?? GENERATION_WAIT_MS);
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 3000));
     options.signal?.throwIfAborted();
     const progress = await readGenerationProgress(brandId, result.generationId);
-    if (progress.status === 'completed') return progress.asset;
+    if (progress.status === 'completed') return { asset: progress.asset, costMicros: progress.costMicros };
     if (progress.status === 'failed') throw new AiRequestError('provider_failed', progress.message);
     if (Date.now() > deadline) {
       throw new AiRequestError(

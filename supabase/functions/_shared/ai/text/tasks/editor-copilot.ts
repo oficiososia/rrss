@@ -630,8 +630,9 @@ export function sanitizeOperations(
     if (base.text !== null) {
       const text = base.text.replace(/\r/g, '').trim();
       if (text.split('\n').length > MAX_TEXT_LINES) return drop('El texto tiene demasiadas líneas.');
+      if (!text) return drop('Falta el texto dictado.');
       if (!isDictated(text, context.transcript)) {
-        return drop('El texto no está en lo dictado: el copiloto no redacta, solo coloca lo que se dice.');
+        return drop(notDictatedReason(text));
       }
       base.text = text;
     }
@@ -823,6 +824,16 @@ function checkExtra(op: CopilotOperation, pageCount: number | undefined): string
     default:
       return null;
   }
+}
+
+/**
+ * Motivo con el que se descarta un texto que la persona no ha dicho: cuál y qué
+ * hacer en su lugar (el copiloto no redacta). Cabe en los 300 caracteres del contrato.
+ */
+export function notDictatedReason(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  const shown = [...line].length > 60 ? `${[...line].slice(0, 59).join('')}…` : line;
+  return `No he puesto «${shown}»: no lo has dicho tú y el copiloto no redacta. Dicta el texto tal cual («pon de título: …») o usa «Redactar con IA».`;
 }
 
 /** Motivo con el que se descarta un fondo que nombra comida o productos. */

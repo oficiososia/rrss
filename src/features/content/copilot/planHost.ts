@@ -4,7 +4,7 @@
 // la biblioteca de la marca y la cadena de recorte de «Editar foto»
 // (`runQuickEdit`)— y cada recurso creado queda en la biblioteca con su
 // procedencia de siempre (`ai_generation` el fondo, `photo_edit` los recortes).
-import { generateImageAndWait, invokeAiMedia, type ImageEstimate } from '@/features/ai/imageApi';
+import { generateImageWithCost, invokeAiMedia, type ImageEstimate } from '@/features/ai/imageApi';
 import { fetchRecentImages } from '@/features/library/api';
 import { canEditPhoto, fetchAsset, fetchPhotoEdits, signedUrlFor, type SaveEditInput } from '@/features/photo-edit/api';
 import { canRemoveBackground, describeRemovalError } from '@/features/photo-edit/cutout/remover';
@@ -13,6 +13,7 @@ import type { MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import type { CopilotAssetInfo } from './apply';
 import { measureTone, type MeasuredTone } from './legibility';
+import { subjectBounds, type SubjectBox } from './subject';
 import { isCutout, isPlainCutoutOf, matchLibraryPhotos, type CopilotPlanHost, type LibraryPhoto, type PlanEnvironment } from './plan';
 
 type AssetLike = Pick<MediaAssetRow, 'id' | 'file_name' | 'width' | 'height'> &
@@ -81,6 +82,49 @@ export function readImageTone(url: string, signal?: AbortSignal, timeoutMs = TON
   });
 }
 
+/**
+ * Carga una imagen recortada (con CORS) y dice qué parte ocupa lo que se ve:
+ * la caja de los píxeles opacos, en fracciones. `null` si no se puede leer o
+ * no hay nada que recortar (la foto ya ocupa casi todo).
+ */
+export function readSubjectBounds(url: string, signal?: AbortSignal, timeoutMs = TONE_TIMEOUT_MS): Promise<SubjectBox | null> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined' || typeof document === 'undefined' || signal?.aborted) return resolve(null);
+    const image = new Image();
+    function settle(box: SubjectBox | null) {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', give);
+      image.onload = null;
+      image.onerror = null;
+      resolve(box);
+    }
+    function give() {
+      settle(null);
+    }
+    const timer = setTimeout(give, timeoutMs);
+    signal?.addEventListener('abort', give, { once: true });
+    image.crossOrigin = 'anonymous';
+    image.decoding = 'async';
+    image.onerror = give;
+    image.onload = () => {
+      try {
+        // 256 px de lado mayor: de sobra para saber dónde empieza y acaba lo recortado.
+        const scale = Math.min(1, 256 / Math.max(image.naturalWidth, image.naturalHeight, 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context || !image.naturalWidth || !image.naturalHeight) return settle(null);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        settle(subjectBounds(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height));
+      } catch {
+        settle(null);
+      }
+    };
+    image.src = url;
+  });
+}
+
 export interface PlanHostOptions {
   brandId: string;
   /** ¿Puede esta persona generar imágenes con IA en esta marca? Si no, por qué. */
@@ -107,10 +151,11 @@ export function createCopilotPlanHost({ brandId, imageAi, saveEdit, onLibraryCha
       }
     },
     generateBackground: async (prompt, ratio, signal) => {
-      const asset = await generateImageAndWait(brandId, { prompt, aspectRatio: ratio }, { signal });
+      const { asset, costMicros } = await generateImageWithCost(brandId, { prompt, aspectRatio: ratio }, { signal });
       if (asset.storage_path) generatedPaths.set(asset.id, asset.storage_path);
       onLibraryChange?.();
-      return toInfo(asset);
+      // Lo que ha costado de verdad: el copiloto lo dice junto a la orden (nunca «Sin IA» si se ha gastado).
+      return { ...toInfo(asset), costMicros };
     },
     // El tono del fondo recién generado (medio y por zonas), para que los textos se lean encima. Leer no gasta.
     measureTone: async (image, signal) => {
@@ -118,6 +163,16 @@ export function createCopilotPlanHost({ brandId, imageAi, saveEdit, onLibraryCha
         const path = generatedPaths.get(image.id) ?? (await fetchAsset(brandId, image.id))?.storage_path;
         const url = path ? await signedUrlFor(path) : undefined;
         return url ? await readImageTone(url, signal) : null;
+      } catch {
+        return null;
+      }
+    },
+    // Dónde está lo recortado dentro de un recorte (sin su aire transparente), para que no quede diminuto. Leer no gasta.
+    measureSubject: async (image, signal) => {
+      try {
+        const row = await fetchAsset(brandId, image.id);
+        const url = row?.storage_path ? await signedUrlFor(row.storage_path) : undefined;
+        return url ? await readSubjectBounds(url, signal) : null;
       } catch {
         return null;
       }
