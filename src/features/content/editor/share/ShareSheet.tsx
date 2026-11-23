@@ -38,8 +38,8 @@ export interface ShareSheetProps {
   /** null: no se ofrece (la red no se publica sola, la publicación no está configurada…). */
   publishNow: ShareAction | null;
   schedule: ShareAction | null;
-  /** Por qué no se puede publicar ni programar ahora (sin permiso, sin aprobar…), o null. */
-  blockedNote?: string | null;
+  /** Por qué no se puede publicar ni programar ahora (sin cuenta conectada, sin permiso, sin aprobar…), o null. */
+  blockedNote?: ReactNode;
   onDownload: () => void;
   onCopyText: () => void;
 }

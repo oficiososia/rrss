@@ -129,7 +129,8 @@ import { ApplyTemplateDialog } from './templates/ApplyTemplateDialog';
 import { SaveTemplateDialog } from './templates/SaveTemplateDialog';
 import { PublishNowDialog } from '@/features/social/PublishNowDialog';
 import { ScheduleDialog } from '@/features/social/ScheduleDialog';
-import { EXPORT_PARAM } from '@/features/social/links';
+import { useContentPublication, useSocialAccounts } from '@/features/social/api';
+import { connectedAccountsPath, EXPORT_PARAM } from '@/features/social/links';
 import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
 import { exportForPublishing } from './export/exportForPublishing';
@@ -140,7 +141,7 @@ import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage, type St
 import { useFeature, useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspaceMode } from '@/layout/workspace';
 import type { StickerKind } from './editor/canvas/stickers';
-import { cn } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
@@ -1332,31 +1333,70 @@ function Editor({
     publishable && PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`) && (!needsApproval || canApproveNow);
   const offerSchedule = publishable && (!needsApproval || canApproveNow);
   const sharing = busyStatus !== null || mutations.saveVersion.isPending;
+  // Sin cuenta conectada de la red no se ofrece publicar ni programar (y no se aprueba nada a medias):
+  // se dice antes, con el enlace para conectarla.
+  const socialAccounts = useSocialAccounts(brand.id, publishable);
+  const noAccount =
+    publishable &&
+    socialAccounts.isSuccess &&
+    !socialAccounts.data.some((account) => account.network === item.network && account.status === 'active');
+  // Lo que ya tiene en el calendario: publicada (no se vuelve a ofrecer publicar) o programada.
+  const livePublication = useContentPublication(brand.id, contentId, publishingOn);
+  const publication = livePublication.data ?? null;
+  const alreadyPublished = publication?.status === 'published';
+  const publicationInfo = alreadyPublished ? (
+    <p className="rounded-lg bg-success-soft px-3 py-2 text-sm text-success" data-testid="share-published">
+      Publicada{publication.published_at ? ` el ${formatDateTime(publication.published_at)}` : ''}.{' '}
+      {publication.external_url && (
+        <a href={publication.external_url} target="_blank" rel="noreferrer" className="font-medium underline">
+          Ver en {networkLabel(item.network)}
+        </a>
+      )}
+      <span className="mt-1 block text-xs">
+        No se vuelve a publicar desde aquí: para sacarla otra vez, duplícala en Contenidos.
+      </span>
+    </p>
+  ) : publication?.status === 'scheduled' ? (
+    <p className="rounded-lg bg-subtle px-3 py-2 text-sm" data-testid="share-scheduled">
+      Programada para el {formatDateTime(publication.scheduled_at)}: todavía no está publicada.
+    </p>
+  ) : null;
   const sayApprove = !selfManaged && needsApproval;
-  const publishNowAction: ShareAction | null = offerPublishNow
-    ? {
-        label: sayApprove ? 'Aprobar y publicar ahora' : 'Publicar ahora',
-        onClick: () => void openPublishNow(),
-        disabled: sharing,
-        title: sayApprove
-          ? 'Guarda la versión, la aprueba y pide confirmación antes de publicar'
-          : 'Pide confirmación antes de publicar',
-      }
-    : null;
-  const scheduleAction: ShareAction | null = offerSchedule
-    ? {
-        label: sayApprove ? 'Aprobar y programar…' : 'Programar…',
-        onClick: () => void openSchedule(),
-        disabled: sharing,
-        title: sayApprove ? 'Guarda la versión, la aprueba y abre el calendario' : 'Elegir el día y la hora',
-      }
-    : null;
-  const shareBlockedNote =
-    publishable && !offerSchedule
-      ? selfManaged
-        ? 'Con tu rol no se puede publicar ni programar en esta marca: pídeselo a quien la gestiona.'
-        : 'Para programarla o publicarla, antes tiene que aprobarla alguien con permiso.'
+  const publishNowAction: ShareAction | null =
+    offerPublishNow && !noAccount && !alreadyPublished
+      ? {
+          label: sayApprove ? 'Aprobar y publicar ahora' : 'Publicar ahora',
+          onClick: () => void openPublishNow(),
+          disabled: sharing,
+          title: sayApprove
+            ? 'Guarda la versión, la aprueba y pide confirmación antes de publicar'
+            : 'Pide confirmación antes de publicar',
+        }
       : null;
+  const scheduleAction: ShareAction | null =
+    offerSchedule && !noAccount && !alreadyPublished
+      ? {
+          label: sayApprove ? 'Aprobar y programar…' : 'Programar…',
+          onClick: () => void openSchedule(),
+          disabled: sharing,
+          title: sayApprove ? 'Guarda la versión, la aprueba y abre el calendario' : 'Elegir el día y la hora',
+        }
+      : null;
+  const shareBlockedNote = noAccount ? (
+    <span data-testid="share-no-account">
+      No hay ninguna cuenta de {networkLabel(item.network)} conectada:{' '}
+      <Link to={connectedAccountsPath(org.id, brand.id)} className="font-medium text-primary underline">
+        conéctala en Marca → Cuentas conectadas
+      </Link>
+      .
+    </span>
+  ) : publishable && !offerSchedule && !alreadyPublished ? (
+    selfManaged ? (
+      'Con tu rol no se puede publicar ni programar en esta marca: pídeselo a quien la gestiona.'
+    ) : (
+      'Para programarla o publicarla, antes tiene que aprobarla alguien con permiso.'
+    )
+  ) : null;
 
   /** Por qué no se puede cambiar de estado ahora (o undefined si se puede). Con cambios sin versión, se guardan antes. */
   const statusBlocked = (action: StatusAction) =>
@@ -1494,6 +1534,18 @@ function Editor({
   // La fila del zoom: capas y zonas seguras a la izquierda, el copiloto a la derecha.
   const footerStart = (
     <>
+      {/* En el móvil la cabecera no tiene sitio para el aviso de los huecos vacíos: va aquí abajo. */}
+      {emptyFrames.length > 0 && !readOnly && (
+        <button
+          type="button"
+          className="shrink-0 rounded-full bg-warning-soft px-2 py-1 text-xs font-medium text-warning focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary md:hidden"
+          title="Un hueco de foto vacío no sale en la imagen. Pulsa para ir a él."
+          onClick={goToEmptyFrame}
+          data-testid="editor-empty-frames-mobile"
+        >
+          {emptyFrames.length === 1 ? 'Falta 1 foto' : `Faltan ${emptyFrames.length} fotos`}
+        </button>
+      )}
       <Button
         variant={side === 'layers' ? 'primary' : 'ghost'}
         size="sm"
@@ -2028,7 +2080,14 @@ function Editor({
             </>
           ) : null
         }
-        review={review}
+        review={
+          publicationInfo || review ? (
+            <>
+              {publicationInfo}
+              {review}
+            </>
+          ) : null
+        }
         aiNote={aiLabel ? describeAiReasons(aiReasons) || 'lleva contenido generado con IA.' : null}
         missingPhotos={emptyFrames.length}
         onGoToMissing={goToEmptyFrame}

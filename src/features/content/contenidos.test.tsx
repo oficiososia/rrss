@@ -552,8 +552,9 @@ describe('Editor: Publicar ahora (modo agencia: el flujo de aprobación de siemp
   });
 
   it('quien edita pero no aprueba no puede publicar sin aprobar: se le dice por qué', async () => {
-    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' }, { status: 'draft' });
+    seedPublishing({ orgRole: 'member', brandRole: 'editor' }, { status: 'draft' });
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
     const sheet = await openShareSheet(user);
     expect(sheet.queryByTestId('share-publish-now')).toBeNull();
     expect(sheet.queryByTestId('share-schedule')).toBeNull();
@@ -574,6 +575,59 @@ describe('Editor: Publicar ahora (modo agencia: el flujo de aprobación de siemp
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'approved' });
     const sheet = await openShareSheet(user);
     expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+  });
+});
+
+describe('Editor: antes de publicar, la cuenta y lo ya publicado', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('sin cuenta de Instagram conectada lo dice antes, con el enlace, y no aprueba nada a medias', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'draft' });
+    fake.tables.social_accounts = [];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    const note = await sheet.findByTestId('share-no-account');
+    expect(note).toHaveTextContent('No hay ninguna cuenta de Instagram conectada');
+    expect(within(note).getByRole('link')).toHaveAttribute(
+      'href',
+      `${BRAND_BASE}/marca?seccion=datos#cuentas-conectadas`,
+    );
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.queryByTestId('share-schedule')).toBeNull();
+    expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
+  });
+
+  it('ya publicada: lo dice con la fecha y el enlace, y no ofrece publicar ni programar otra vez', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'approved' });
+    fake.tables.scheduled_publications = [
+      {
+        id: 'pub-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        content_id: 'content-1',
+        content_version: 1,
+        social_account_id: 'acc-1',
+        network: 'instagram',
+        format: 'post',
+        scheduled_at: '2026-11-20T10:00:00Z',
+        media_asset_ids: [],
+        status: 'published',
+        published_at: '2026-11-20T10:00:05Z',
+        external_url: 'https://www.instagram.com/p/abc/',
+      },
+    ];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    const published = await sheet.findByTestId('share-published');
+    expect(published).toHaveTextContent('Publicada el');
+    expect(within(published).getByRole('link', { name: 'Ver en Instagram' })).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/p/abc/',
+    );
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.queryByTestId('share-schedule')).toBeNull();
   });
 });
 

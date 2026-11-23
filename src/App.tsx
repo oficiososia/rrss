@@ -151,7 +151,9 @@ function CampaignsMoved() {
 
 function ThemedToaster() {
   const { choice } = useTheme();
-  return <Toaster position="top-center" richColors closeButton theme={choice} />;
+  // En el móvil, los avisos salen debajo de la cabecera: encima tapaban sus botones («Compartir»,
+  // «Aprobar», «Ver el vídeo») y el toque se perdía.
+  return <Toaster position="top-center" mobileOffset={{ top: 60 }} richColors closeButton theme={choice} />;
 }
 
 export function App() {
