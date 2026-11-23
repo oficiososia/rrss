@@ -340,6 +340,15 @@ describe('Biblioteca: selección y acciones por lotes', () => {
     );
   });
 
+  it('sin trabajador de medios, el «⋯» de la cabecera no ofrece «Montar un reel»', async () => {
+    seed();
+    const { user } = await open();
+    await user.click(screen.getByTestId('library-more'));
+    expect(await screen.findByTestId('library-sort-name')).toBeInTheDocument();
+    expect(screen.queryByTestId('library-reels')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+  });
+
   it('quien solo mira no ve casillas, ni subir, ni crear carpetas', async () => {
     seed({ role: 'viewer' });
     await open();
