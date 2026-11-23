@@ -25,7 +25,7 @@ kill_signal = "SIGTERM"
 kill_timeout = 30
 
 # Margen para FFmpeg con vídeos de móvil grandes: 1 GB de intercambio en el
-# disco de la máquina, además de los 2 GB de memoria.
+# disco de la máquina, además de los 4 GB de memoria.
 swap_size_mb = 1024
 
 [build]
@@ -47,8 +47,14 @@ swap_size_mb = 1024
 
 # shared-cpu-2x con 4 GB: FFmpeg usa los dos núcleos y monta un reel vertical 1080×1920 con 2 GB
 # (worker/README.md, «Tiempos medidos»), pero «Quitar el fondo» (BEN2 con onnxruntime-node, 2 hilos y
-# arena desactivada) llega a ~2,3 GB de pico: con 2 GB se quedaría sin memoria. Solo se paga el rato
-# que la máquina trabaja (docs/alojamiento.md). Cambiarlo: `fly scale memory 4096 -a rrss-worker`.
+# arena desactivada) llega a ~2,3 GB de pico en escritorio y a ~3,1 GB en Fly: con 2 GB se quedaría
+# sin memoria. Solo se paga el rato que la máquina trabaja (docs/alojamiento.md). Cambiarlo:
+# `fly scale memory 4096 -a rrss-worker`.
+#
+# OJO con `shared-cpu-*`: Fly solo garantiza el 6,25 % de cada vCPU (0,125 núcleos entre las dos) y
+# lo demás sale de un saldo de ráfaga. Un recorte de fondo necesita ~40 s de procesador: con el
+# saldo gastado tarda de 3 a 6 minutos en vez de 25 s (docs/alojamiento.md, §3.1, con el coste de
+# pasar a `performance-2x`, que no tiene cuota). No se ha cambiado: lo decide el dueño.
 [[vm]]
   size = "shared-cpu-2x"
   memory = "4gb"

@@ -6,7 +6,9 @@
 //   1. NAVEGADOR con BEN2 (calidad alta): si hay WebGPU, adaptador y memoria.
 //   2. SERVIDOR, trabajo `media.cutout` del trabajador de medios (BEN2 en CPU, calidad alta):
 //      si `VITE_MEDIA_WORKER_ENABLED` está activo y la foto es de la biblioteca de la marca.
-//      Suele tardar menos de un minuto (arranque de la máquina + ~16 s de modelo); se cancela.
+//      Suele tardar menos de un minuto (arranque de la máquina + ~25 s de modelo); se cancela.
+//      Si no responde en el plazo o falla, se sigue con el paso siguiente EN EL ACTO y la barra
+//      de progreso dice por qué (`after` en el progreso).
 //   3. FUNCIÓN DE VERCEL (`api/cutout-mask`, IS-Net): APAGADA por defecto; solo con
 //      `VITE_CUTOUT_SERVER_URL` definida.
 //   4. NAVEGADOR con IS-Net refinado («calidad básica»): último recurso, sin WebGPU ni servidor.
@@ -19,6 +21,7 @@ import {
   describeCutoutError,
   isCutoutCancelled,
   removeBackgroundInBrowser,
+  type CutoutFallback,
   type CutoutProgress,
   type CutoutResult,
   type CutoutSupport,
@@ -134,8 +137,17 @@ export async function removeBackground(
     deps.jobEnabled();
   const vercelOk = Boolean(options.brandId) && deps.serverAvailable();
 
+  // Si el servidor no pudo (plazo o fallo), todo lo que cuenten los motores siguientes lleva ese
+  // motivo: la barra dice «el servidor no ha respondido a tiempo…» en vez de cambiar de texto sin más.
+  let after: CutoutFallback | undefined;
+  // (Las fases del propio trabajo del servidor nunca lo llevan: no vienen «después» de él.)
+  const report = onProgress
+    ? (progress: CutoutProgress) =>
+        onProgress(after && progress.phase !== 'server-job' ? { ...progress, after } : progress)
+    : undefined;
+
   const viaBrowser = (engine: 'ben2' | 'isnet') => async (): Promise<BackgroundRemoval> => {
-    const r = await deps.browser(image, engine, onProgress, signal);
+    const r = await deps.browser(image, engine, report, signal);
     return { pixels: r.pixels, model: r.model, quality: r.quality, where: 'browser' };
   };
   const viaJob = async (): Promise<BackgroundRemoval> => {
@@ -151,7 +163,7 @@ export async function removeBackground(
     const pixels = await deps.server(image, {
       brandId: options.brandId!,
       signal,
-      onProgress: () => onProgress?.({ phase: 'server' }),
+      onProgress: () => report?.({ phase: 'server' }),
     });
     return { pixels, model: CUTOUT_MODEL_NAME, quality: 'basic', where: 'server' };
   };
@@ -170,7 +182,7 @@ export async function removeBackground(
   }
 
   let first: unknown;
-  for (const step of order) {
+  for (const [index, step] of order.entries()) {
     try {
       return await step.run();
     } catch (error) {
@@ -180,6 +192,12 @@ export async function removeBackground(
       console.warn(`[recorte] falla el recorte en ${step.name}`, error);
       // Se enseña el error del primer intento (lo que la persona esperaba que pasara).
       first ??= error;
+      const next = order[index + 1];
+      if (next && step.name.startsWith('servidor')) {
+        after = error instanceof CutoutServerError && error.failure === 'timeout' ? 'server-timeout' : 'server-failed';
+        // Se dice YA, sin esperar a que el motor siguiente dé su primera señal de vida.
+        if (next.name.startsWith('navegador')) report?.({ phase: 'loading' });
+      }
     }
   }
   throw first;

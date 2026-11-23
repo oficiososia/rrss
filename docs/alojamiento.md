@@ -59,6 +59,67 @@ Cálculo (*estimación*): en el contenedor, con 2 CPU, un reel de 10 s tardó 8,
 
 Aunque se multiplicara por diez, quedaría por debajo de 1 $ al mes. Lo único que no se puede estimar bien hoy es la duración de los vídeos de móvil reales (4K, HEVC, varios minutos): el README lo marca como «falta medir».
 
+### 3.1 Por qué «Quitar el fondo» tarda a veces 3 minutos (rama `f47/cutout-lento`, 23/11/2026)
+
+**El síntoma (staging, 22/11/2026).** Un recorte tardó 54 s de principio a fin (ejecución A, 21:15) y otro, con una foto de 1600×1000, llevaba más de 176 s sin terminar cuando el navegador se cansó de esperar y lo canceló (ejecución B, 22:59). Entre `job.started` y `lease_lost` el registro no tenía ni una línea.
+
+**Lo que NO es.** El modelo no se descarga al arrancar: va **dentro de la imagen** (`worker/Dockerfile`, `ADD --checksum=sha256:dfdc25f4…` desde `huggingface.co/onnx-community/BEN2-ONNX`, revisión fijada, 219 121 675 bytes) y el trabajador lo lee del disco. Hugging Face solo interviene al **construir** la imagen. Comprobado: bajar ese archivo desde esta máquina tarda 3,7 s y su sha256 coincide con el del `Dockerfile`.
+
+**La causa más probable: Fly frena el procesador de las máquinas `shared-cpu-*`.** Según la documentación de Fly (<https://docs.fly.io/machines/cpu-performance>, leída el 23/11/2026), cada vCPU compartida tiene garantizado solo el **6,25 %** de un núcleo (5 ms de cada 80 ms); por encima de eso gasta un **saldo de ráfaga** (5 s al empezar, 500 s como máximo, que solo se recarga mientras la máquina usa menos de su cuota). Con el saldo a cero, la máquina corre a su cuota: `shared-cpu-2x` = **0,125 núcleos** en total. Un recorte necesita unos **32–42 s de procesador** (medido en local, abajo; en Fly, con 23 s de inferencia a 2 hilos, hasta ~49 s). A 0,125 núcleos eso son **entre 4 y 6,5 minutos**. Y una máquina que solo vive mientras trabaja casi no recarga saldo: los 30 s de espera antes de apagarse devuelven menos de 4 s de procesador.
+
+**Evidencia.**
+
+1. *Reconstrucción de la ejecución B (deducido del registro y del código, no medido):* la reserva se renueva cada 100 s desde `job.started` (22:59:05,8 → 23:00:45,8 y 23:02:25,8), así que el `lease_lost` de las 23:02:01 no salió de una renovación a su hora. `onnxruntime-node` carga el modelo e infiere de forma **síncrona** (su `run` es una llamada nativa dentro de un `setImmediate`): el proceso estuvo sordo hasta que la inferencia terminó, hacia las 23:02:00, y lo primero que hizo al volver fue hablar con la cola y descubrir que el trabajo ya estaba cancelado. Es decir: cargar el modelo e inferir tardó **~174 s en vez de ~25 s** (7 veces más) y el recorte estaba a **segundos de terminar** cuando el navegador lo canceló. Un cálculo 7 veces más lento, sin nada de red por medio, es procesador (o memoria).
+2. *Encaja con la cuota:* 174 s salen de unos 15 s a toda velocidad y el resto a 0,125 núcleos; equivale a haber empezado con unos 20–30 s de saldo de ráfaga, no con el saldo lleno. La ejecución A tuvo saldo; la B, la mitad.
+3. *Medido en local (23/11/2026):* dentro del proceso del trabajador, el bucle de Node estuvo parado **30,8 s seguidos** durante una inferencia (4 tics de un temporizador de 100 ms en todo el trabajo). Eso explica el silencio del registro.
+
+**Sin comprobar** (hace falta el panel de Fly): que el saldo estuviera gastado a las 22:59 (gráfica «CPU Quota Balance and Throttling» de la app en fly-metrics.net, o la métrica `fly_instance_cpu_throttle`), si el saldo se conserva o se recarga con la máquina parada (la documentación no lo dice) y qué más corrió entre A y B. Causas alternativas que el registro nuevo distingue: falta de memoria (pico de ~3,1 GB en una máquina de 4 GB más 1 GB de intercambio) y disco lento al leer el modelo.
+
+**Tiempos por fase, medidos en local** (Intel Core Ultra 7 258V, Windows, Node 24, `onnxruntime-node` 1.30.0, 2 hilos, foto JPEG de 1600×1000 y 605 KB, `worker/scripts/bench-cutout.ts` con el modelo en un proceso hijo):
+
+| Fase (`cutout.phase`) | Tiempo | Procesador |
+| --- | --- | --- |
+| `download` (la foto; aquí, una carpeta local) | 3 ms | — |
+| `decode` (foto → píxeles y tensor) | 0,14 s | 0,2 s |
+| `model_fetch` (leer los 219 MB del disco) | 0,09–0,19 s | — |
+| `load` (lanzar el proceso y crear la sesión) | 1,6–3,0 s | 1,6–2,3 s |
+| `inference` | 17,3–30,8 s (cuatro medidas) | 30,4–39,5 s |
+| `refine` (máscara → alfa) | 0,12 s | 0,2 s |
+| `encode` (PNG de 2,3 MB) | 0,15 s | 0,16 s |
+| `upload` (aquí, una carpeta local) | 2 ms | — |
+| **Total** | **19,9 s** (la medida más rápida) | **~32–42 s** |
+
+Pico de memoria del proceso del modelo: 2,2 GB; el del trabajador, 0,17 GB. La inferencia es el 90 % del tiempo y casi todo el procesador: es lo único que la cuota de Fly puede multiplicar por siete.
+
+**Qué se ha cambiado en el código** (no arregla la cuota, la hace visible y limita el daño):
+
+- **Registro por fases.** Cada fase escribe `cutout.phase` con `ms`, `cpuMs`, `rssMb` y, en Linux, `stealMs` (procesador que el anfitrión no dio), `iowaitMs` y `swapUsedMb`; mientras una fase sigue en marcha, un latido `cutout.heartbeat` cada 15 s; una fase cortada sale con `ok: false`. Al arrancar, `worker.cutout_model` dice que el modelo está en el disco y cuánto pesa. Sin rutas, nombres de archivo ni URL.
+- **El modelo corre en un proceso hijo** (`worker/src/cutout/process-engine.ts`). El trabajador ya no se queda sordo: renueva la reserva, atiende SIGTERM y escribe el latido mientras el modelo calcula; si el cliente cancela, **mata el hijo** en la siguiente renovación (antes seguía calculando hasta el final, gastando el saldo de ráfaga del trabajo siguiente); si el sistema mata el hijo por falta de memoria, el trabajador sobrevive, lo dice y el trabajo se reintenta. `WORKER_CUTOUT_ISOLATION=inline` vuelve a lo de antes.
+- **En la aplicación**, al vencer el plazo se pasa al recorte del navegador en el acto (ya no espera a que el servidor confirme la cancelación) y la barra lo dice: «El servidor no ha respondido a tiempo; se termina con el recorte de calidad básica.» (`docs/edicion-fotos.md`, §7).
+
+**Cómo leer el registro la próxima vez que tarde:**
+
+| Lo que se ve en `cutout.phase` / `cutout.heartbeat` de `inference` | Qué pasa |
+| --- | --- |
+| `ms` ≈ `cpuMs` ÷ 2 y `stealMs` bajo | Normal: es lo que cuesta |
+| `ms` varias veces mayor que `cpuMs` ÷ 2 y `stealMs` alto (el latido muestra `modelCpuMs` subiendo ~125 ms por segundo) | **Cuota de Fly agotada** |
+| `iowaitMs` alto y `swapUsedMb` de cientos de megas | Falta memoria: está usando el intercambio |
+| `model_fetch` de varios segundos | El disco de la máquina va lento al leer la imagen |
+| `download` o `upload` de muchos segundos | La red, el intermediario o el almacén |
+
+**El arreglo de verdad exige cambiar el tamaño de la máquina, y no se ha hecho** (lo decide el dueño):
+
+| Opción | Qué cambia | Coste (*estimación*; precios de <https://docs.fly.io/about/pricing> el 23/11/2026, +15 % en Fráncfort) |
+| --- | --- | --- |
+| **`performance-2x` con 4 GB** (recomendada si se confirma la cuota) | 2 núcleos dedicados, sin cuota ni saldo: cada recorte tarda lo mismo. `fly scale vm performance-2x --vm-memory 4096 -a rrss-worker` y `size = "performance-2x"` en `fly.toml` | 66 $/mes encendida en Ashburn, ~76 $ en Fráncfort ≈ **0,10 $ por hora**. Solo se paga el rato que trabaja: ~75 s por recorte suelto → **~2,2 $ por cada 1000 recortes** (hoy, con `shared-cpu-2x` de 4 GB a ~0,04 $/h, ~0,85 $). Los reels también irían más rápido |
+| `performance-1x` con 4 GB | 1 núcleo dedicado: la inferencia tarda el doble (~45 s) pero siempre igual | ~52 $/mes en Fráncfort ≈ 0,07 $/h → ~2 $ por cada 1000 recortes. Peor que la anterior |
+| Dejar la máquina compartida encendida siempre | Recarga 0,125 s de procesador por segundo: da para un recorte rápido cada ~6 minutos | ~29 $/mes fijos, y sigue frenándose con dos recortes seguidos. No compensa |
+| Quedarse como está | El primer recorte tras un rato va rápido; los siguientes, lentos, y el navegador los termina con calidad básica | 0 $ |
+
+Un volumen de Fly no arregla nada: el modelo ya está en la imagen y leerlo cuesta décimas.
+
+**El plazo del navegador (180 s) no se ha tocado.** Números para decidirlo: un recorte normal tarda 54 s en total (ejecución A); uno frenado, entre ~3 minutos (ejecución B: habría terminado hacia los 187 s) y ~6,5 (saldo a cero). Subirlo a 4 minutos habría salvado la ejecución B pero no las de saldo a cero, y alarga la peor espera. Bajarlo a 90 s (1,7 veces lo normal) corta antes los recortes frenados —el navegador da uno de calidad básica en menos de medio minuto— a cambio de perder los que habrían llegado entre 90 y 180 s. Con dos medidas no hay base para moverlo: decidirlo con una semana de líneas `cutout.phase`.
+
 ---
 
 ## 4. Paso a paso con Fly.io

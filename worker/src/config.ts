@@ -43,6 +43,12 @@ export const configSchema = z.object({
   WORKER_CUTOUT_MODEL: z.string().min(1).default('/app/models/ben2-base-fp16.onnx'),
   /** Hilos de onnxruntime (shared-cpu-2x: 2). */
   WORKER_CUTOUT_THREADS: int(2, 1, 16),
+  /**
+   * Dónde corre el modelo: `process` (por defecto) en un proceso hijo, para que el trabajador siga
+   * renovando la reserva, escribiendo el registro y pudiendo cancelar mientras onnxruntime calcula;
+   * `inline` en el propio proceso, como antes (solo para comparar o diagnosticar).
+   */
+  WORKER_CUTOUT_ISOLATION: z.enum(['process', 'inline']).default('process'),
   /** Tope de cada archivo subido: el del cubo (50 MB en el plan gratuito de Supabase). */
   WORKER_MAX_UPLOAD_BYTES: int(50 * 1024 * 1024, 1024 * 1024, 5 * 1024 * 1024 * 1024),
   /**

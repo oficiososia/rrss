@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authorizeCutout, bearerToken, finishCutout } from '../../../../api/_lib/cutout/auth';
 import { GET, MAX_BYTES, POST } from '../../../../api/cutout-mask';
 import type { Pixels } from '../pixels';
-import type { CutoutResult } from './engine';
+import type { CutoutProgress, CutoutResult } from './engine';
 import { NoSubjectError } from './mask';
 import {
   describeRemovalError,
@@ -110,6 +110,59 @@ describe('cadena: BEN2 en el navegador → trabajador → (Vercel apagada) → I
     const r2 = await removeBackground(image(), undefined, undefined, OPTS, sin);
     expect(r2).toMatchObject({ where: 'browser', quality: 'basic' });
     expect(sin.job).not.toHaveBeenCalled();
+  });
+
+  it('si el servidor se queda sin plazo, pasa al navegador EN EL ACTO y lo dice: nunca cambia de motor en silencio', async () => {
+    const seen: CutoutProgress[] = [];
+    let seenWhenBrowserStarts = -1;
+    const d = deps({
+      ben2Capable: async () => false,
+      job: vi.fn(async (_image, options) => {
+        options.onProgress?.('running');
+        throw new CutoutServerError('El servidor no ha respondido a tiempo.', 'timeout');
+      }),
+      browser: vi.fn(async (_image, _engine, onProgress) => {
+        seenWhenBrowserStarts = seen.length;
+        onProgress?.({ phase: 'downloading', received: 1, total: 2 });
+        onProgress?.({ phase: 'running' });
+        return { ...browserResult(), model: 'isnet-general-use', quality: 'basic' as const };
+      }),
+    });
+    const r = await removeBackground(image(), (p) => seen.push(p), undefined, OPTS, d);
+    expect(r).toMatchObject({ where: 'browser', quality: 'basic' });
+    expect(seen).toEqual([
+      { phase: 'server-job', state: 'running' },
+      // Antes de que el navegador dé su primera señal ya se ha dicho que el servidor no llegó.
+      { phase: 'loading', after: 'server-timeout' },
+      { phase: 'downloading', received: 1, total: 2, after: 'server-timeout' },
+      { phase: 'running', after: 'server-timeout' },
+    ]);
+    expect(seenWhenBrowserStarts).toBe(2);
+
+    // Un fallo que no es de plazo se cuenta como fallo, no como tardanza.
+    const seen2: CutoutProgress[] = [];
+    const roto = deps({
+      ben2Capable: async () => false,
+      job: vi.fn(async () => {
+        throw new CutoutServerError('El servidor no ha podido quitar el fondo.', 'server');
+      }),
+    });
+    await removeBackground(image(), (p) => seen2.push(p), undefined, OPTS, roto);
+    expect(seen2).toEqual([{ phase: 'loading', after: 'server-failed' }]);
+
+    // Si lo que falla es BEN2 en el navegador y el servidor responde, no hay nada que avisar.
+    const seen3: CutoutProgress[] = [];
+    const sinGpu = deps({
+      browser: vi.fn(async () => {
+        throw new Error('sesión sin soporte');
+      }),
+      job: vi.fn(async (_image, options) => {
+        options.onProgress?.('queued');
+        return image();
+      }),
+    });
+    await removeBackground(image(), (p) => seen3.push(p), undefined, OPTS, sinGpu);
+    expect(seen3).toEqual([{ phase: 'server-job', state: 'queued' }]);
   });
 
   it('el servidor solo se usa con una foto de la biblioteca en JPEG, PNG o WebP y con marca', async () => {
@@ -347,6 +400,36 @@ describe('trabajo media.cutout del servidor (serverJob)', () => {
     const d = jobDeps({ status: vi.fn(async () => ({ status: 'queued' as const, last_error: null, result: null })) });
     await expect(run(d, { timeoutMs: 0 })).rejects.toMatchObject({ failure: 'timeout' });
     expect(d.cancel).toHaveBeenCalledWith('job-1');
+  });
+
+  it('al vencer el plazo NO espera a que el servidor confirme la cancelación: devuelve el error en el acto', async () => {
+    // La cancelación tarda (o no vuelve nunca): antes, la barra se quedaba en «Recortando en el servidor…» hasta que volvía.
+    let confirm: () => void = () => undefined;
+    const d = jobDeps({
+      status: vi.fn(async () => ({ status: 'running' as const, last_error: null, result: null })),
+      cancel: vi.fn(() => new Promise<void>((resolve) => (confirm = resolve))),
+    });
+    const outcome = await Promise.race([
+      run(d, { timeoutMs: 0 }).catch((error: unknown) => error),
+      new Promise((resolve) => setTimeout(() => resolve('sigue esperando al servidor'), 200)),
+    ]);
+    expect(outcome).toMatchObject({ failure: 'timeout', message: 'El servidor no ha respondido a tiempo.' });
+    expect(d.cancel).toHaveBeenCalledWith('job-1');
+    confirm();
+
+    // Si la cancelación llega tarde porque el trabajo acababa de terminar, su PNG se borra igual (en segundo plano).
+    const discard = vi.fn(async () => undefined);
+    const tarde = jobDeps({ discard, cancel: vi.fn(async () => Promise.reject(new Error('Este trabajo ya ha terminado'))) });
+    tarde.status = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'running', last_error: null, result: null })
+      .mockResolvedValue({
+        status: 'succeeded',
+        last_error: null,
+        result: { output: { path: 'org/brand/ediciones/x.png' } },
+      });
+    await expect(run(tarde, { timeoutMs: 0 })).rejects.toMatchObject({ failure: 'timeout' });
+    await vi.waitFor(() => expect(discard).toHaveBeenCalledWith('job-1', 'org/brand/ediciones/x.png'));
   });
 });
 
