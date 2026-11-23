@@ -473,7 +473,7 @@ export function pieceAspect(value: unknown, idea: string): CampaignPiece['aspect
 export function pieceTitle(title: unknown, idea: string): string {
   const own = clipText(title, MAX_PIECE_TITLE_CHARS);
   if (own) return own;
-  const first = idea.split(/[.:;—–(]|\s-\s/)[0] ?? idea;
+  const first = idea.split(/[.:](?:\s|$)|[;—–(]|\s-\s/)[0] ?? idea;
   return clipText(first, MAX_PIECE_TITLE_CHARS);
 }
 

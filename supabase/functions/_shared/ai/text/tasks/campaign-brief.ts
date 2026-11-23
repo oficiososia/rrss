@@ -247,20 +247,26 @@ const numberOf = (word: string): number | null =>
 export function countsInText(text: string): { total: number | null; byGroup: Map<number, number> } {
   const words = canon(text).split('_').filter(Boolean);
   const byGroup = new Map<number, number>();
-  let total: number | null = null;
+  const totals: number[] = [];
   words.forEach((word, i) => {
-    const group = FORMAT_GROUPS.findIndex((g) => g.words.includes(word));
     const isTotal = TOTAL_WORDS.includes(word);
+    const group = isTotal ? -1 : FORMAT_GROUPS.findIndex((g) => g.words.includes(word));
     if (group < 0 && !isTotal) return;
     for (let back = 1; back <= 3 && i - back >= 0; back += 1) {
       const n = numberOf(words[i - back]!);
       if (n === null) continue;
-      if (isTotal) total = total ?? n;
+      if (isTotal) totals.push(n);
       else byGroup.set(group, (byGroup.get(group) ?? 0) + n);
       break;
     }
   });
-  return { total, byGroup };
+  // «dos reels y una publicación»: junto a otros formatos, «publicación» es una foto, no el total.
+  if (byGroup.size > 0 && totals.length > 0) {
+    const post = FORMAT_GROUPS.findIndex((g) => g.formats.includes('post'));
+    byGroup.set(post, (byGroup.get(post) ?? 0) + totals.reduce((a, b) => a + b, 0));
+    return { total: null, byGroup };
+  }
+  return { total: totals[0] ?? null, byGroup };
 }
 
 const groupOf = (format: string): number => FORMAT_GROUPS.findIndex((g) => g.formats.includes(format));

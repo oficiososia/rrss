@@ -1,8 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { STORAGE_BUCKET } from '@/config/app';
 import { AiRequestError, aiErrorMessage, toAiError } from '@/features/ai/api';
+import { parseProfile } from '@/features/brand/profile';
 import { contentKeys } from '@/features/content/api';
 import { formatsOf } from '@/features/content/networks';
+import { isAppDesign } from '@/features/library/filters';
+import { REEL_KIND } from '@/features/reels/api';
+import { readBrandReelTemplates, saveReelVersion } from '@/features/reels/editor/api';
+import { buildRenderRequest } from '@/features/reels/editor/project';
+import { REEL_TEMPLATES } from '@/features/reels/templates';
 import { requestKeys } from '@/features/requests/api';
 import type {
   CampaignContentRow,
@@ -16,7 +22,9 @@ import type {
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import type { PlanAgreement } from './brief';
-import { planToDrafts, type EngineAsset } from './engine';
+import { planToDrafts, type EngineAsset, type EngineLook } from './engine';
+import { buildCampaignReels, type CampaignMaterial } from './reelPieces';
+import { suggestTemplates } from './templateHints';
 import {
   MAX_CAMPAIGN_NETWORKS,
   MAX_INSTRUCTION_CHARS,
@@ -227,6 +235,8 @@ export interface PlanRequestInput {
   useSources?: boolean;
   /** Lo acordado con la IA al rellenar el formulario (duración, ritmo, formatos): el plan lo respeta. */
   agreement?: PlanAgreement;
+  /** A qué se dedica la marca, si no tiene perfil ni sector (lo pide el diálogo antes de gastar). */
+  brandSector?: string;
 }
 
 export function validatePlanRequest(input: PlanRequestInput): string | null {
@@ -281,41 +291,52 @@ async function textSources(brandId: string) {
   return sources;
 }
 
+/**
+ * Lo que la IA puede sugerir de la biblioteca: material (fotos y vídeos), no
+ * piezas ya diseñadas. Antes iban las 60 más recientes y eran casi todas
+ * exportaciones (prueba de calidad del 23/11/2026, fallo 17).
+ */
 async function libraryForAi(brandId: string) {
   const rows = unwrap(
     await supabase
       .from('media_assets')
-      .select('id, file_name, kind, tags, folder')
+      .select('id, file_name, kind, tags, folder, provenance')
       .eq('brand_id', brandId)
       .in('kind', ['image', 'video'])
       .order('created_at', { ascending: false })
-      .limit(MAX_LIBRARY_FOR_AI),
+      .limit(MAX_LIBRARY_FOR_AI * 5),
   );
-  return rows.map((a) => ({ id: a.id, name: a.file_name, kind: a.kind, tags: a.tags ?? [], folder: a.folder ?? '' }));
+  return rows
+    .filter((a) => !isAppDesign({ provenance: a.provenance, folder: a.folder ?? '' }))
+    .slice(0, MAX_LIBRARY_FOR_AI)
+    .map((a) => ({ id: a.id, name: a.file_name, kind: a.kind, tags: a.tags ?? [], folder: a.folder ?? '' }));
 }
 
-/** Pide el plan a la IA (ai-generate, `campaign.plan`). Solo propone: no guarda nada. */
-export async function generateCampaignPlan(input: PlanRequestInput): Promise<GeneratedPlan> {
+/** Lo que viaja a `campaign.plan` (también para calcular su coste antes). */
+export async function planInput(input: PlanRequestInput) {
   const [assets, sources] = await Promise.all([
     libraryForAi(input.brandId),
     input.useSources ? textSources(input.brandId) : Promise.resolve([]),
   ]);
+  return {
+    instruction: input.instruction.trim(),
+    startDate: input.startsOn,
+    endDate: input.endsOn,
+    targets: targetsFor(input.networks),
+    assets,
+    sources,
+    ...(input.agreement ? { agreement: input.agreement } : {}),
+    ...(input.brandSector ? { brandSector: input.brandSector } : {}),
+  };
+}
+
+/** Pide el plan a la IA (ai-generate, `campaign.plan`). Solo propone: no guarda nada. */
+export async function generateCampaignPlan(input: PlanRequestInput): Promise<GeneratedPlan> {
+  const body = await planInput(input);
   let result: { data: unknown; error: unknown };
   try {
     result = await supabase.functions.invoke('ai-generate', {
-      body: {
-        action: 'campaign.plan',
-        brandId: input.brandId,
-        input: {
-          instruction: input.instruction.trim(),
-          startDate: input.startsOn,
-          endDate: input.endsOn,
-          targets: targetsFor(input.networks),
-          assets,
-          sources,
-          ...(input.agreement ? { agreement: input.agreement } : {}),
-        },
-      },
+      body: { action: 'campaign.plan', brandId: input.brandId, input: body },
       timeout: 120_000,
     });
   } catch (error) {
@@ -377,9 +398,21 @@ export function useCampaignMutations(brandId: string) {
     },
   });
 
-  /** El motor: plan revisado → borradores. */
+  /**
+   * El motor: plan revisado → borradores. Después, cada reel del plan se prepara
+   * con una plantilla de la marca y fotos de la biblioteca (versión 2 de la pieza)
+   * y, si se pide, se encarga su montaje al trabajador.
+   */
   const accept = useMutation({
-    mutationFn: async ({ campaign, plan }: { campaign: CampaignRow; plan: unknown }) => {
+    mutationFn: async ({
+      campaign,
+      plan,
+      mountReels = false,
+    }: {
+      campaign: CampaignRow;
+      plan: unknown;
+      mountReels?: boolean;
+    }): Promise<{ campaign: CampaignRow; reels: PreparedReels }> => {
       const ids = [
         ...new Set(
           ((plan as CampaignPlan).pieces ?? []).flatMap((piece) =>
@@ -395,8 +428,8 @@ export function useCampaignMutations(brandId: string) {
       const map = new Map<string, EngineAsset>(
         assets.map((a) => [a.id, { id: a.id, kind: a.kind, name: a.file_name }]),
       );
-      const built = planToDrafts(plan, campaign, map);
-      return unwrap(
+      const built = planToDrafts(plan, campaign, map, await brandLook(brandId));
+      const accepted = unwrap(
         await supabase.rpc('accept_campaign_plan', {
           p_campaign_id: campaign.id,
           p_expected_version: campaign.current_plan_version,
@@ -404,6 +437,11 @@ export function useCampaignMutations(brandId: string) {
           p_drafts: built.drafts as unknown as Json,
         }),
       );
+      // El plan ya está aceptado: si preparar algún reel falla, esa pieza se queda como antes (vacía).
+      const reels = await prepareCampaignReels(brandId, accepted, built.plan, { mount: mountReels }).catch(
+        (): PreparedReels => ({ total: 0, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 }),
+      );
+      return { campaign: accepted, reels };
     },
     onSuccess: async () => {
       await Promise.all([
@@ -423,4 +461,179 @@ export function useCampaignMutations(brandId: string) {
   });
 
   return { createWithAi, requestFromAgency, accept, discard };
+}
+
+// ── Reels de la campaña, listos al aceptar ───────────────────────────────
+
+/** Colores y tipografía de titulares de la marca, para lo que el plan escribe en las piezas. */
+async function brandLook(brandId: string): Promise<EngineLook> {
+  const row = unwrap(
+    await supabase.from('brand_profiles').select('data').eq('brand_id', brandId).eq('status', 'active').maybeSingle(),
+  ) as { data: unknown } | null;
+  if (!row) return { colors: [] };
+  const profile = parseProfile(row.data);
+  const font = profile.visual.fonts[0]?.family;
+  return { colors: profile.visual.colors.map((c) => c.hex), ...(font ? { fontFamily: font } : {}) };
+}
+
+export interface PreparedReels {
+  /** Reels del plan (piezas en formato reel). */
+  total: number;
+  /** Con plantilla y material, guardados como versión 2. */
+  prepared: number;
+  /** Sin ninguna foto o clip que encaje: se quedan vacíos. */
+  withoutMaterial: number;
+  /** No se han podido guardar (se quedan vacíos). */
+  failed: number;
+  /** Montajes encargados al trabajador. */
+  mounted: number;
+}
+
+/** Piezas del plan que se montan en el editor de reels. */
+export const reelIndexes = (plan: CampaignPlan): number[] =>
+  plan.pieces.flatMap((piece, index) => (piece.format === 'reel' ? [index] : []));
+
+/**
+ * Prepara los reels de un plan recién aceptado con el mismo camino que «Desde
+ * una plantilla» (reelPieces.ts → buildReelFromTemplate) y los guarda como
+ * versión 2 de su pieza. Con `mount`, encarga además el montaje de cada uno.
+ */
+export async function prepareCampaignReels(
+  brandId: string,
+  campaign: CampaignRow,
+  plan: CampaignPlan,
+  options: { mount?: boolean } = {},
+): Promise<PreparedReels> {
+  const indexes = reelIndexes(plan);
+  const empty: PreparedReels = { total: indexes.length, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 };
+  if (indexes.length === 0) return empty;
+
+  const [links, library, templateRows, fontInfo] = await Promise.all([
+    supabase
+      .from('campaign_contents')
+      .select('content_id, piece_index, plan_version')
+      .eq('campaign_id', campaign.id)
+      .eq('plan_version', campaign.current_plan_version),
+    supabase
+      .from('media_assets')
+      .select('id, kind, storage_path, file_name, mime_type, duration_ms, created_at, provenance, folder, tags')
+      .eq('brand_id', brandId)
+      .in('kind', ['image', 'video'])
+      .order('created_at', { ascending: false })
+      .limit(300),
+    supabase
+      .from('brand_reel_templates')
+      .select('id, template_key, name, source, document')
+      .eq('brand_id', brandId)
+      .order('name')
+      .limit(60),
+    supabase.rpc('brand_reel_font_info', { p_brand_id: brandId }),
+  ]);
+  const contentOf = new Map(unwrap(links).map((l) => [l.piece_index, l.content_id]));
+  const templates = readBrandReelTemplates(
+    unwrap(templateRows),
+    REEL_TEMPLATES.map((t) => t.id),
+  );
+  const hints = new Map<number, string>();
+  suggestTemplates(plan.pieces, [], templates).forEach((hint, index) => {
+    if (hint?.kind === 'reel') hints.set(index, hint.id);
+  });
+  // La tipografía de los reels de la marca (.ttf u .otf), si la tiene.
+  let font: { path: string; family: string } | undefined;
+  const info = (fontInfo.data as { font_id: string; family: string }[] | null)?.[0];
+  if (info) {
+    const row = await supabase.from('brand_fonts').select('storage_path, family').eq('id', info.font_id).maybeSingle();
+    if (row.data?.storage_path) font = { path: row.data.storage_path, family: row.data.family };
+  }
+
+  const { reels, withoutMaterial } = buildCampaignReels({
+    pieces: plan.pieces,
+    videoIndexes: indexes,
+    templates,
+    hints,
+    library: unwrap(library) as CampaignMaterial[],
+    ...(font ? { font } : {}),
+  });
+
+  const result = { ...empty, withoutMaterial: withoutMaterial.length };
+  for (const reel of reels) {
+    const contentId = contentOf.get(reel.pieceIndex);
+    if (!contentId) {
+      result.failed += 1;
+      continue;
+    }
+    try {
+      const version = await saveReelVersion({
+        contentId,
+        project: reel.project,
+        note: `Reel preparado desde el plan con «${reel.templateName}»`,
+        expectedVersion: 1,
+      });
+      result.prepared += 1;
+      if (options.mount) {
+        const job = await supabase.rpc('request_media_job', {
+          p_brand_id: brandId,
+          p_kind: REEL_KIND,
+          p_input: buildRenderRequest(reel.project, { id: contentId, version: version.version }),
+          p_idempotency_key: `campana-${contentId}-${version.version}`,
+        });
+        if (!job.error) result.mounted += 1;
+      }
+    } catch {
+      result.failed += 1;
+    }
+  }
+  return result;
+}
+
+/** Lo que se dice al aceptar: borradores y, si hay reels, cuántos quedan listos. */
+export function acceptedMessage(reels: PreparedReels): string {
+  if (reels.total === 0) return 'Plan aceptado: sus piezas están en Contenidos como borradores';
+  const ready =
+    reels.prepared === reels.total
+      ? reels.total === 1
+        ? 'el reel ya tiene plantilla y fotos'
+        : `los ${reels.total} reels ya tienen plantilla y fotos`
+      : `${reels.prepared} de ${reels.total} reels tienen plantilla y fotos (a los demás les faltan fotos que encajen)`;
+  const mounted = reels.mounted > 0 ? `; ${reels.mounted === 1 ? 'se está montando 1 vídeo' : `se están montando ${reels.mounted} vídeos`}` : '';
+  return `Plan aceptado: ${ready}${mounted}.`;
+}
+
+// ── Fecha y hora del plan, al programar ──────────────────────────────────
+
+/**
+ * Día y hora que el plan de su campaña propone para una pieza
+ * («AAAA-MM-DDTHH:MM», hora de la marca), o null si la pieza no sale de un
+ * plan. Sin hora en el plan, a las 10:00 (como el calendario).
+ */
+export async function fetchPlannedSlot(contentId: string): Promise<string | null> {
+  const link = unwrap(
+    await supabase
+      .from('campaign_contents')
+      .select('campaign_id, plan_version, piece_index')
+      .eq('content_id', contentId)
+      .limit(1),
+  )[0];
+  if (!link) return null;
+  const row = unwrap(
+    await supabase
+      .from('campaign_plans')
+      .select('data')
+      .eq('campaign_id', link.campaign_id)
+      .eq('version', link.plan_version)
+      .maybeSingle(),
+  ) as { data: unknown } | null;
+  const parsed = row ? campaignPlanSchema.safeParse(row.data) : null;
+  const piece = parsed?.success ? parsed.data.pieces[link.piece_index] : undefined;
+  if (!piece || !isRealDate(piece.date)) return null;
+  return `${piece.date}T${piece.time || '10:00'}`;
+}
+
+export function usePlannedSlot(brandId: string, contentId: string) {
+  return useQuery({
+    queryKey: [...campaignKeys.all(brandId), 'planned-slot', contentId] as const,
+    enabled: Boolean(contentId),
+    staleTime: 60_000,
+    queryFn: () => fetchPlannedSlot(contentId),
+  });
 }
