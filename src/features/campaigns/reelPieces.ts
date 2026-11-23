@@ -1,8 +1,9 @@
 import { isAiMade, isAppDesign, isCutout } from '@/features/library/filters';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { REEL_CAPTION_MAX, REEL_HASHTAGS_MAX, type ReelProject } from '@/features/reels/editor/project';
+import type { BrandReelKit } from '@/features/reels/quality';
 import {
-  buildReelFromTemplate,
+  buildBrandReel,
   reelTemplateNeeds,
   validateReelTemplate,
   type ReelTemplate,
@@ -18,8 +19,9 @@ import { wordsOf } from './templateHints';
 //
 // Cada reel se construye por el MISMO camino que «Desde una plantilla» del
 // editor de reels: una plantilla de reel de la marca + fotos o clips →
-// `buildReelFromTemplate` (plan v2). Aquí solo se decide QUÉ plantilla y QUÉ
-// material, de forma determinista:
+// `buildBrandReel` (plan v2 con la calidad de docs/reels-calidad.md: rótulo por
+// plano, cortes al pulso, puntos y máscaras guardados, colores y cierre de la
+// marca). Aquí solo se decide QUÉ plantilla y QUÉ material, de forma determinista:
 //   * plantilla: la de la marca que más se parece a la pieza, repartiendo para
 //     que la campaña no repita siempre la misma; sin plantillas de la marca, una
 //     sencilla sobre el primer estilo del catálogo;
@@ -164,6 +166,8 @@ export interface CampaignReelsInput {
   library: readonly CampaignMaterial[];
   styles?: readonly ReelTemplateSummary[];
   font?: { path: string; family: string };
+  /** Colores, logotipo, usuario, dirección y llamada de la marca (`brandReelKit`): sin él, sin cierre. */
+  kit?: BrandReelKit | null;
   /** El pie lo redactó la IA (plan de la IA, no de la agencia): se marca como tal. */
   aiGenerated?: boolean;
 }
@@ -200,8 +204,10 @@ export function buildCampaignReels(input: CampaignReelsInput): { reels: Campaign
     }
     for (const asset of material) used.set(asset.id, (used.get(asset.id) ?? 0) + 1);
     if (brandTemplate) templateUses.set(brandTemplate.id, (templateUses.get(brandTemplate.id) ?? 0) + 1);
-    const built = buildReelFromTemplate(templateForPiece(template, piece), material, style, {
+    const built = buildBrandReel(templateForPiece(template, piece), material, style, {
+      library: input.library,
       ...(input.font ? { font: input.font } : {}),
+      ...(input.kit ? { kit: input.kit } : {}),
     });
     // El pie y los hashtags del plan, para publicar el reel con ellos (antes salía sin pie).
     const project: ReelProject = {

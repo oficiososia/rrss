@@ -6,19 +6,14 @@
 //
 // Con el teclado: la caja se alcanza con el tabulador; las flechas la mueven
 // (Mayús = pasos grandes), + y − cambian el tamaño e Intro abre la edición.
-import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@/lib/utils';
+import type { ReelTemplateSummary } from '../templates';
 import { useClockValue, type PlayClock } from './clock';
+import { fittedTexts, type MeasurerFor } from './compose';
 import type { Selection } from './history';
-import {
-  AVERAGE_GLYPH_WIDTH,
-  MAX_TEXT_LINES,
-  REEL_TEXT_MAX_LENGTH,
-  textLayout,
-  textLines,
-  type DraftPlan,
-  type ReelText,
-} from './project';
+import { MAX_TEXT_LINES, REEL_TEXT_MAX_LENGTH, type DraftPlan, type PlanTimeline, type ReelText } from './project';
+import { layoutText, legibleStyle, safeArea, type LaidText } from './textFit';
 
 /** Lienzo de referencia de las cuentas (las proporciones son las mismas a cualquier tamaño). */
 const W = 360;
@@ -32,6 +27,10 @@ const KEY_STEP_BIG = 0.05;
 export interface TextOverlayProps {
   plan: DraftPlan;
   total: number;
+  /** Para colocar las cajas donde el vídeo pone cada texto (apilado o encadenado si choca con otro). */
+  timeline: PlanTimeline;
+  template: ReelTemplateSummary;
+  measurerFor?: MeasurerFor;
   clock: PlayClock;
   selection: Selection;
   readOnly: boolean;
@@ -46,24 +45,42 @@ export interface TextOverlayProps {
   onDragging?: (dragging: boolean) => void;
 }
 
-/** Caja de un texto sobre el lienzo de referencia, con su desplazamiento. */
-export function textBox(text: ReelText) {
-  const { lines } = textLines(text.text || ' ', text.style, text.position, W, H, MAX_TEXT_LINES);
-  const count = Math.max(1, lines.length);
-  const layout = textLayout(text.style, text.position, count, W, H);
-  const longest = Math.max(2, ...lines.map((line) => line.length));
-  const pad = layout.fontSize * 0.35;
-  const width = Math.min(W, longest * layout.fontSize * AVERAGE_GLYPH_WIDTH + pad * 2);
-  const block = layout.lineStep * (count - 1) + layout.fontSize;
+/**
+ * Caja de un texto sobre el lienzo de referencia, donde lo dibujan la vista previa y el vídeo
+ * (textFit.ts): con su tamaño mínimo, su caja o contorno y su desplazamiento. `laid` es su sitio
+ * ya calculado con los demás textos (si chocaba con otro, apilado); sin él, se calcula solo.
+ */
+export function textBox(text: ReelText, laid?: LaidText) {
+  const role = text.role ?? null;
+  const placed =
+    laid ??
+    layoutText(
+      {
+        text: text.text || ' ',
+        style: legibleStyle(text.style, role),
+        position: text.position,
+        role,
+        offset: text.offset,
+        maxLines: MAX_TEXT_LINES,
+      },
+      W,
+      H,
+    );
+  const area = safeArea(W, H);
+  const width = Math.min(W, Math.max(placed.fontSize * 2, placed.blockWidth));
   const ox = (text.offset?.x ?? 0) * W;
-  const oy = (text.offset?.y ?? 0) * H;
+  const centered = (W - width) / 2 + ox;
+  // Como el vídeo: movido a mano, sin salirse de los márgenes laterales.
+  const left = ox === 0 ? centered : Math.min(Math.max(centered, area.left), Math.max(area.left, area.right - width));
+  const top = placed.extent[0];
+  const height = placed.extent[1] - placed.extent[0];
   return {
-    left: W / 2 + ox - width / 2,
-    top: layout.top + oy - pad / 2,
+    left,
+    top,
     width,
-    height: block + pad,
+    height,
     /** Centro del bloque sin el desplazamiento, como fracción del alto. */
-    restCenterY: (layout.top + block / 2) / H,
+    restCenterY: (top + height / 2) / H - (text.offset?.y ?? 0),
   };
 }
 
@@ -105,7 +122,22 @@ export function TextOverlay(props: TextOverlayProps) {
   const [guides, setGuides] = useState<{ vertical: boolean; horizontal: boolean } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
 
-  const visible = plan.texts.filter((t) => time >= t.start - 1e-6 && time <= Math.min(t.end, props.total) + 1e-6);
+  // Dónde y cuándo pone el vídeo cada texto (si chocaba con otro, apilado o encadenado).
+  const fitted = useMemo(
+    () =>
+      new Map(
+        fittedTexts(plan, props.timeline, props.template, { width: W, height: H }, props.measurerFor)
+          .filter((f) => f.kind === 'text')
+          .map((f) => [f.key, f]),
+      ),
+    [plan, props.timeline, props.template, props.measurerFor],
+  );
+  const visible = plan.texts.filter((t) => {
+    const fit = fitted.get(t.id);
+    const start = fit?.start ?? t.start;
+    const end = fit?.end ?? Math.min(t.end, props.total);
+    return time >= start - 1e-6 && time <= end + 1e-6;
+  });
 
   const frameSize = () => {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -120,7 +152,7 @@ export function TextOverlay(props: TextOverlayProps) {
     props.onSelect({ kind: 'text', id: text.id });
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const box = textBox(text);
+    const box = textBox(text, fitted.get(text.id)?.laid);
     const frame = frameSize();
     const current = gesture.current;
     if (current && current.id === text.id && pointers.current.size === 2) {
@@ -244,7 +276,7 @@ export function TextOverlay(props: TextOverlayProps) {
       )}
       {visible.map((text) => {
         const index = plan.texts.indexOf(text);
-        const box = textBox(text);
+        const box = textBox(text, fitted.get(text.id)?.laid);
         const selected = selection?.kind === 'text' && selection.id === text.id;
         const style = {
           left: `${(box.left / W) * 100}%`,

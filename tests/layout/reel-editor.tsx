@@ -14,12 +14,14 @@ import { buildRenderRequest, parseProject } from '@/features/reels/editor/projec
 // Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo) · ?modo=propio (autogestión)
 // · ?montado=1 (el vídeo de lo que se ve ya está montado, con una cuenta de Instagram conectada)
 //   · ?borrada=1 (la foto del primer elemento se ha borrado de la biblioteca)
+// · ?cierre=1 (el reel lleva el cierre con la marca: llamada, usuario y dirección)
 const params = new URLSearchParams(window.location.search);
 const count = Math.max(1, Math.min(30, Number(params.get('clips') ?? '12')));
 const withMusic = params.get('musica') === '1';
 const empty = params.get('vacio') === '1';
 const rendered = params.get('montado') === '1' && !empty;
 const deleted = params.get('borrada') === '1';
+const withOutro = params.get('cierre') === '1';
 
 const path = (name: string) => `${ORG_ID}/${BRAND_ID}/media/${name}`;
 const COLORS = ['#8B3A1E', '#1F4E5F', '#6B4E9B', '#2E6B3A', '#A0522D', '#3B3B6D'];
@@ -131,6 +133,9 @@ const project = {
       { id: 't2', text: 'Reserva tu mesa', start: 2, end: 5, position: 'bottom', style: { ...STYLE, sizeRatio: 0.05 } },
     ],
     subtitles: { enabled: true, position: 'bottom', style: { ...STYLE, sizeRatio: 0.045, marginRatio: 0.12 } },
+    ...(withOutro
+      ? { outro: { cta: 'Reserva tu mesa', handle: '@marca', address: 'Calle Mayor 1', accent: '#C9A04A' } }
+      : {}),
     ...(withMusic
       ? {
           music: {
