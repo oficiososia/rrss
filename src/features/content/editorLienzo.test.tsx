@@ -274,7 +274,7 @@ describe('Campo de texto sobre el lienzo', () => {
       width: 400,
       height: 100,
       transform: 'rotate(15deg)',
-      fontFamily: '"Playfair Display"',
+      fontFamily: '"Playfair Display", Inter, sans-serif',
       fontSize: 40,
       fontWeight: 700,
       fontStyle: 'italic',
