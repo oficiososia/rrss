@@ -1,12 +1,16 @@
 import {
   formatNumber,
+  INTERACTIONS_METRIC,
+  MEDIA_REACH_METRIC,
+  type MediaSummary,
   type MetricTotal,
   type Period,
+  type RankedPost,
 } from '../../../supabase/functions/_shared/analytics/analyst';
 
-// Lo que se ve de un vistazo en Analítica: las cifras grandes del periodo, la frase
-// que las cuenta con palabras y el eje del gráfico. Todo sale de cifras medidas: si
-// no hay cifra, no hay frase (nunca se rellena con ceros ni con ejemplos).
+// Lo que se ve de un vistazo en Resultados: las tres cifras grandes del periodo, la frase
+// que las cuenta con palabras, la nota al pie y el eje del gráfico. Todo sale de cifras
+// medidas: si no hay cifra, no hay frase (nunca se rellena con ceros ni con ejemplos).
 
 export type RangeKey = 'last7' | 'last28' | 'thisMonth' | 'lastMonth';
 
@@ -36,19 +40,24 @@ export const RANGE_VERSUS: Record<RangeKey, string> = {
 /** Las cifras grandes, por orden de importancia, con el nombre que se entiende sin saber de redes. */
 const HEADLINE: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'instagram.account.reach', label: 'Personas alcanzadas' },
-  { id: 'instagram.account.views', label: 'Veces que te han visto' },
   { id: 'instagram.account.total_interactions', label: 'Interacciones' },
   { id: 'instagram.account.followers', label: 'Seguidores' },
 ];
+
+/** Cifras que no van arriba (se ven en «Más detalle»), con su nombre en llano. */
+export const SECONDARY: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'instagram.account.views', label: 'Veces que te han visto' },
+];
+const SECONDARY_IDS = new Set(SECONDARY.map((s) => s.id));
 
 export interface Headline extends MetricTotal {
   /** Nombre corto, en llano. */
   plainLabel: string;
 }
 
-/** De 3 a 4 cifras con dato: primero las de siempre y, si faltan, otras medidas. */
-export function pickHeadlines(totals: readonly MetricTotal[], max = 4): Headline[] {
-  const measured = totals.filter((t) => t.value !== null);
+/** Hasta 3 cifras con dato: primero las de siempre y, si faltan, otras medidas (nunca las de «Más detalle»). */
+export function pickHeadlines(totals: readonly MetricTotal[], max = 3): Headline[] {
+  const measured = totals.filter((t) => t.value !== null && !SECONDARY_IDS.has(t.metricId));
   const chosen: Headline[] = [];
   for (const { id, label } of HEADLINE) {
     const found = measured.find((t) => t.metricId === id);
@@ -94,13 +103,44 @@ export function headlineSentence(totals: readonly MetricTotal[], range: RangeKey
   return `${phrase}: ${formatNumber(n)} ${other.plainLabel.toLowerCase()}${compare(other)}`;
 }
 
-/** Notas cortas de una cifra (estimación de Meta, últimos días provisionales, días sin cifra). */
-export function tileNotes(t: MetricTotal): string[] {
-  const notes: string[] = [];
-  if (t.estimated) notes.push('Estimación de Meta');
-  if (t.provisional) notes.push('Provisional');
-  if (t.aggregation === 'daily' && t.daysWithData < t.days) notes.push(`${t.daysWithData} de ${t.days} días`);
-  return notes;
+/** Las cifras de «Más detalle» que sí tienen dato, con su nombre en llano. */
+export function secondaryFigures(totals: readonly MetricTotal[]): Headline[] {
+  return SECONDARY.flatMap(({ id, label }) => {
+    const found = totals.find((t) => t.metricId === id && t.value !== null);
+    return found ? [{ ...found, plainLabel: label }] : [];
+  });
+}
+
+/**
+ * Una sola nota al pie para las cifras de arriba, en vez de repetir en cada una «Provisional»,
+ * «Estimación de Meta» o «17 de 28 días». Solo dice lo que de verdad pasa con estas cifras.
+ */
+export function footnote(headlines: readonly MetricTotal[], range: RangeKey): string {
+  const parts = ['Cifras de Meta.'];
+  if (headlines.some((t) => t.provisional)) parts.push('Las de los últimos días pueden cambiar.');
+  if (headlines.some((t) => t.estimated)) parts.push('Algunas son estimaciones.');
+  if (headlines.some((t) => t.aggregation === 'daily' && t.daysWithData < t.days))
+    parts.push('Los días sin cifra no cuentan como cero.');
+  if (headlines.some((t) => t.changePct !== null)) parts.push(`Los porcentajes comparan con ${RANGE_VERSUS[range]}.`);
+  return parts.join(' ');
+}
+
+/** Puntuación de una publicación: interacciones si las hay; si no, alcance (igual que el analista). */
+function postScore(m: MediaSummary): { score: number; metric: string } | null {
+  if (typeof m.metrics[INTERACTIONS_METRIC] === 'number') return { score: m.metrics[INTERACTIONS_METRIC]!, metric: INTERACTIONS_METRIC };
+  if (typeof m.metrics[MEDIA_REACH_METRIC] === 'number') return { score: m.metrics[MEDIA_REACH_METRIC]!, metric: MEDIA_REACH_METRIC };
+  return null;
+}
+
+/** Las `size` publicaciones con más respuesta del periodo (solo las que tienen cifra). */
+export function topPosts(media: readonly MediaSummary[], size = 3): RankedPost[] {
+  return media
+    .flatMap((m) => {
+      const s = postScore(m);
+      return s ? [{ ...m, score: s.score, scoreMetric: s.metric }] : [];
+    })
+    .sort((a, b) => b.score - a.score || a.published_at.localeCompare(b.published_at))
+    .slice(0, size);
 }
 
 /** Marcas «redondas» del eje vertical: 0 y hasta `count` más, en números limpios. */
