@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { visibleActions } from './acciones';
 
 // Biblioteca y Analítica en un navegador real, sin Supabase (banco de
 // tests/layout/biblioteca-analitica.tsx). Regla de la casa: el alto de la página
@@ -53,45 +54,56 @@ const chipRow = (page: Page) =>
     };
   });
 
-// El defecto: entre 800 y 1024 px la fila de filtros no cabía y enseñaba una barra de scroll nativa.
-for (const width of [800, 900, 1024, 1180]) {
-  test(`biblioteca a ${width} px: los filtros saltan de línea, sin barra de scroll ni desbordar`, async ({ page }) => {
+// Las cuatro fichas (Todo, Fotos, Vídeos, Audios) caben en una fila a cualquier ancho, sin barra
+// de scroll ni desbordar (antes eran siete y entre 800 y 1024 px enseñaban una barra nativa).
+for (const width of [375, 800, 1024, 1366]) {
+  test(`biblioteca a ${width} px: las cuatro fichas caben en una fila`, async ({ page }) => {
     await page.setViewportSize({ width, height: 768 });
     await open(page, 'biblioteca');
-    await expect(page.getByTestId('chip-photos')).toBeVisible();
+    await expect(page.getByTestId('library-kind-photos')).toBeVisible();
     const row = await chipRow(page);
     expect(row.scrolls, 'la fila no se desplaza de lado').toBe(false);
     expect(row.outside).toBe(0);
     expect(row.beyondPage).toBe(0);
-    expect(row.rows).toBeLessThanOrEqual(2);
-    // Todos los filtros se ven y se pueden pulsar sin desplazar nada.
-    for (const id of ['chip-photos', 'chip-videos', 'chip-logos', 'chip-cutout', 'chip-ai', 'chip-recent']) {
-      await expect(page.getByTestId(id)).toBeInViewport({ ratio: 1 });
+    expect(row.rows).toBe(1);
+    for (const id of ['all', 'photos', 'videos', 'audios']) {
+      await expect(page.getByTestId(`library-kind-${id}`)).toBeInViewport({ ratio: 1 });
     }
-    await page.getByTestId('chip-recent').click();
-    await expect(page.getByTestId('chip-recent')).toHaveAttribute('aria-pressed', 'true');
-    // Y la página sigue sin scroll propio.
+    await page.getByTestId('library-kind-audios').click();
+    await expect(page.getByTestId('library-kind-audios')).toHaveAttribute('aria-pressed', 'true');
     expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
     expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
     expect(await spilling(page)).toEqual([]);
   });
 }
 
-test('biblioteca en móvil: los filtros se desplazan con el dedo, sin barra visible ni desbordar la página', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await open(page, 'biblioteca');
-  await expect(page.getByTestId('chip-photos')).toBeVisible();
-  const row = await chipRow(page);
-  expect(row.rows).toBe(1);
-  expect(row.scrolls).toBe(true);
-  expect(row.barHidden, 'la barra de scroll de la fila está oculta').toBe(true);
-  expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
-  // El último filtro se alcanza desplazando la fila.
-  await page.getByTestId('chip-recent').scrollIntoViewIfNeeded();
-  await expect(page.getByTestId('chip-recent')).toBeInViewport({ ratio: 1 });
-});
+// Simplificación aceptada (CAMBIOS.md, apartado 9): de 66 acciones visibles a 10 en ordenador y 8
+// en móvil, más las miniaturas y las carpetas (el contenido, que se cuenta aparte). Hoy: Subir, «⋯»,
+// Nueva carpeta, Buscar y las cuatro fichas (en móvil, el desplegable «Carpeta» en vez de la barra).
+for (const size of [
+  { width: 1366, height: 768, max: 10 },
+  { width: 375, height: 812, max: 8 },
+]) {
+  test(`biblioteca a ${size.width} px: ${size.max} acciones como mucho, sin casillas en las miniaturas`, async ({ page }) => {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    await open(page, 'biblioteca');
+    await expect(page.getByTestId('library-asset').first()).toBeVisible();
+    const actions = await visibleActions(page, 'main', ['[data-testid="library-grid"]', '[data-testid="library-folders"]']);
+    if (size.width >= 1024) {
+      // Las carpetas, de primer nivel y plegadas: ninguna subcarpeta a la vista de entrada.
+      const names = await page.getByTestId('library-folders').getByRole('treeitem').allTextContents();
+      expect(names.some((n) => n.includes(' / '))).toBe(false);
+      await expect(page.getByTestId('library-folders').getByRole('group')).toHaveCount(0);
+    }
+    console.log(`biblioteca ${size.width}px: ${actions.length} acciones → ${actions.join(' | ')}`);
+    expect(actions.length).toBeLessThanOrEqual(size.max);
+    // Ni casilla visible en cada miniatura, ni orden, etiqueta o tamaño a la vista.
+    const checks = page.getByTestId('library-grid').getByRole('checkbox');
+    expect(await checks.first().evaluate((el) => getComputedStyle(el.closest('label')!).opacity)).toBe('0');
+    await expect(page.getByTestId('library-sort')).toHaveCount(0);
+    await expect(page.getByTestId('library-tile-size')).toHaveCount(0);
+  });
+}
 
 for (const size of SIZES) {
   test.describe(size.name, () => {
@@ -119,7 +131,7 @@ for (const size of SIZES) {
       expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
 
       // Los controles se pueden tocar con el dedo.
-      for (const id of ['chip-photos', 'chip-videos']) {
+      for (const id of ['library-kind-photos', 'library-kind-videos']) {
         expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(36);
       }
     });
@@ -130,6 +142,9 @@ for (const size of SIZES) {
       if (size.width >= 1024) {
         await expect(page.getByTestId('library-folders')).toBeVisible();
         await expect(page.getByTestId('library-folder-select')).toBeHidden();
+        // Las de primer nivel, plegadas: las de dentro se ven al entrar.
+        await expect(page.getByTestId('library-folder-Platos / Mariscos')).toHaveCount(0);
+        await page.getByTestId('library-folder-Platos').click();
         await page.getByTestId('library-folder-Platos / Mariscos').click();
       } else {
         await expect(page.getByTestId('library-folders')).toBeHidden();
@@ -146,6 +161,8 @@ for (const size of SIZES) {
 
     test('biblioteca: elegir archivos muestra la barra de acciones sin mover la página', async ({ page }) => {
       await open(page, 'biblioteca');
+      await page.getByTestId('library-more').click();
+      await page.getByTestId('library-select-mode').click();
       await page.getByRole('checkbox', { name: /^Elegir / }).first().click();
       await page.getByRole('checkbox', { name: /^Elegir / }).nth(1).click();
       const bar = page.getByTestId('library-selection-bar');

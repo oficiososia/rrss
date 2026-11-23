@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 
-/** Cuánto hay que mantener pulsado (en una pantalla táctil) para ver el nombre entero. */
+/** Cuánto hay que mantener pulsado (en una pantalla táctil) para que cuente como pulsación larga. */
 export const LONG_PRESS_MS = 500;
 
 /**
- * Ver el nombre entero de un archivo manteniendo pulsada su tarjeta (en el móvil no hay «pasar el
- * ratón»). Se reparte en el botón de la tarjeta; la pulsación larga NO elige la foto. Con ratón
- * basta el `title` del botón.
+ * Pulsación larga en una pantalla táctil (con ratón no hace nada: para eso están el `title` y el
+ * clic con Ctrl). Se reparte en el botón; soltar después de una pulsación larga NO cuenta como
+ * clic, y el menú del sistema no sale.
  */
-export function useNameReveal() {
-  const [revealed, setRevealed] = useState(false);
+export function useLongPress(onLongPress: () => void) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressed = useRef(false);
+  const callback = useRef(onLongPress);
+  useEffect(() => {
+    callback.current = onLongPress;
+  });
   const clear = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -24,33 +27,38 @@ export function useNameReveal() {
     clear();
     timer.current = setTimeout(() => {
       longPressed.current = true;
-      setRevealed(true);
+      callback.current();
     }, LONG_PRESS_MS);
   }, []);
   const stop = useCallback(() => clear(), []);
   const onClickCapture = useCallback((event: MouseEvent) => {
-    // Soltar tras una pulsación larga solo enseña el nombre: no elige.
     if (longPressed.current) {
       event.preventDefault();
       event.stopPropagation();
       longPressed.current = false;
     }
   }, []);
-  const hide = useCallback(() => setRevealed(false), []);
+  const onContextMenu = useCallback((event: MouseEvent) => {
+    if (longPressed.current || timer.current) event.preventDefault();
+  }, []);
 
   return {
-    revealed,
-    hide,
-    handlers: {
-      onPointerDown,
-      onPointerUp: stop,
-      onPointerLeave: stop,
-      onPointerCancel: stop,
-      onClickCapture,
-      onContextMenu: (event: MouseEvent) => {
-        // El menú del sistema de la pulsación larga taparía el nombre.
-        if (longPressed.current || timer.current) event.preventDefault();
-      },
-    },
+    onPointerDown,
+    onPointerUp: stop,
+    onPointerLeave: stop,
+    onPointerCancel: stop,
+    onClickCapture,
+    onContextMenu,
   };
+}
+
+/**
+ * Ver el nombre entero de un archivo manteniendo pulsada su tarjeta (en el móvil no hay «pasar el
+ * ratón»). La pulsación larga NO elige la foto.
+ */
+export function useNameReveal() {
+  const [revealed, setRevealed] = useState(false);
+  const handlers = useLongPress(() => setRevealed(true));
+  const hide = useCallback(() => setRevealed(false), []);
+  return { revealed, hide, handlers };
 }

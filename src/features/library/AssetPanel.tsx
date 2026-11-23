@@ -31,6 +31,7 @@ import { createPostFromAsset } from './catalog';
 import { CropPanel } from './CropPanel';
 import { canCrop } from './crops';
 import { ASSET_KIND_LABEL, ASSET_KINDS, parseRights, rightsExpired, serializeRights, type AssetRights } from './labels';
+import { readableName } from './readableName';
 
 export interface AssetPanelProps {
   asset: MediaAssetRow;
@@ -195,9 +196,15 @@ export function AssetPanel({
       >
         <div className="flex items-start gap-2 border-b border-border px-4 py-3">
           <div className="min-w-0 flex-1">
+            {/* El título legible (B4); el nombre del archivo, debajo, por si hace falta. */}
             <h2 id={titleId} className="truncate text-base font-semibold" title={asset.file_name}>
-              {asset.file_name}
+              {readableName(asset.file_name)}
             </h2>
+            {readableName(asset.file_name) !== asset.file_name && (
+              <p className="truncate text-xs text-muted" data-testid="asset-file-name">
+                {asset.file_name}
+              </p>
+            )}
             <p className="mt-0.5 text-xs text-muted">
               {position ? `${position.index + 1} de ${position.total} · ` : ''}
               {details.join(' · ')}

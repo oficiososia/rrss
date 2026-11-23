@@ -18,9 +18,10 @@ import { previewPath } from './api';
 import { DRAG_ASSETS } from './FolderTree';
 import { ASSET_KIND_LABEL } from './labels';
 import { AssetName } from './AssetName';
-import { distinctNames, type DistinctName } from './assetNames';
+import { distinctNames, NAME_CHARS, type DistinctName } from './assetNames';
+import { readableName } from './readableName';
 import { ThumbImage } from './ThumbImage';
-import { useNameReveal } from './useNameReveal';
+import { useLongPress, useNameReveal } from './useNameReveal';
 
 /** Cuántas miniaturas se pintan de golpe; al llegar al final de la lista se añaden otras tantas. */
 export const GRID_BATCH = 96;
@@ -42,20 +43,18 @@ const RevealContext = createContext(false);
 /** El botón de la tarjeta: con el ratón, el nombre entero en el título; en el móvil, manteniendo pulsado. */
 function GridTileButton({
   assetName,
+  onLongPress,
   children,
   onClick,
   ...props
-}: { assetName: DistinctName | undefined } & ButtonHTMLAttributes<HTMLButtonElement>) {
+}: { assetName: DistinctName | undefined; onLongPress?: () => void } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  // En la biblioteca, mantener pulsado empieza a elegir varias (el nombre ya es legible); en
+  // quien solo mira, enseña el nombre entero.
   const reveal = useNameReveal();
+  const choose = useLongPress(() => onLongPress?.());
+  const handlers = onLongPress ? choose : reveal.handlers;
   return (
-    <button
-      type="button"
-      {...props}
-      onClick={onClick}
-      {...reveal.handlers}
-      onBlur={reveal.hide}
-      data-testid="library-asset"
-    >
+    <button type="button" {...props} onClick={onClick} {...handlers} onBlur={reveal.hide} data-testid="library-asset">
       <RevealContext.Provider value={reveal.revealed && Boolean(assetName)}>{children}</RevealContext.Provider>
     </button>
   );
@@ -76,6 +75,13 @@ export interface AssetGridProps {
   selection: ReadonlySet<string>;
   openId: string | null;
   canSelect: boolean;
+  /**
+   * Casillas a la vista (B2): solo al «Elegir varias» (o con algo ya elegido). Si no, la miniatura
+   * va limpia; con el ratón, Ctrl/⌘ o Mayús siguen eligiendo.
+   */
+  showChecks?: boolean;
+  /** Pulsación larga en una pantalla táctil: empieza a elegir varias con esa. */
+  onLongPress?: (id: string) => void;
   canDrag: boolean;
   onOpen: (id: string) => void;
   /** `range`: con Mayús, desde la última elegida; `toggle`: casilla o Ctrl/⌘. */
@@ -96,6 +102,8 @@ export function AssetGrid({
   selection,
   openId,
   canSelect,
+  showChecks = false,
+  onLongPress,
   canDrag,
   onOpen,
   onSelect,
@@ -103,11 +111,12 @@ export function AssetGrid({
   onShowMore,
 }: AssetGridProps) {
   const sentinel = useRef<HTMLLIElement>(null);
-  const selecting = selection.size > 0;
+  const selecting = selection.size > 0 || showChecks;
   const shown = assets.slice(0, visible);
   const [dragging, setDragging] = useState<string | null>(null);
-  // Nombres que se distinguen entre sí (tres «Arroz meloso…» no pueden verse iguales).
-  const names = useMemo(() => distinctNames(assets), [assets]);
+  // Nombres legibles (B4: «Portada reel», no «portada-reel-20261123-085833.jpg») que además se
+  // distinguen entre sí (tres «Arroz meloso…» no pueden verse iguales).
+  const names = useMemo(() => distinctNames(assets, NAME_CHARS, (a) => readableName(a.file_name)), [assets]);
 
   useEffect(() => {
     const node = sentinel.current;
@@ -156,6 +165,7 @@ export function AssetGrid({
           <li key={asset.id} className="group relative">
             <GridTileButton
               assetName={names.get(asset.id)}
+              onLongPress={canSelect && onLongPress ? () => onLongPress(asset.id) : undefined}
               title={asset.file_name}
               onClick={(event) => click(event, asset)}
               draggable={canDrag}
@@ -190,8 +200,8 @@ export function AssetGrid({
               <label
                 className={cn(
                   'absolute left-2 top-2 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-surface/90 shadow-card',
-                  // La casilla se ve al pasar el ratón, al enfocarla o cuando ya se está eligiendo.
-                  chosen || selecting ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100',
+                  // Sin casilla en cada miniatura (B2): solo al elegir varias. Con teclado, al enfocarla.
+                  chosen || selecting ? 'opacity-100' : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100',
                 )}
               >
                 <input

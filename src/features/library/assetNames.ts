@@ -38,9 +38,13 @@ const head = (base: string, max: number) => (base.length <= max ? base : `${base
  * Etiqueta de cada archivo para la tarjeta. Los nombres que caben, enteros; los largos, cortados
  * al final salvo que choquen con otro (mismo principio): entonces se enseña la parte que cambia.
  */
-export function distinctNames(assets: readonly Named[], max = NAME_CHARS): Map<string, DistinctName> {
-  // Con la extensión: «.jpg» también es parte del nombre que se reconoce.
-  const bases = new Map(assets.map((a) => [a.id, a.file_name.trim() || a.file_name]));
+export function distinctNames(
+  assets: readonly Named[],
+  max = NAME_CHARS,
+  /** Qué nombre se enseña (por defecto el del archivo, con su extensión). */
+  nameOf: (asset: Named) => string = (a) => a.file_name.trim() || a.file_name,
+): Map<string, DistinctName> {
+  const bases = new Map(assets.map((a) => [a.id, nameOf(a)]));
   // Grupos de nombres que, cortados por el principio, se verían iguales.
   const byHead = new Map<string, Named[]>();
   for (const a of assets) {

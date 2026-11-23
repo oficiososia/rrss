@@ -686,6 +686,40 @@ Fallos 9, 10, 17, 19 y 22 de la prueba de calidad en staging
   `.not('in' | 'like')`. **Sin probar:** contra el Supabase real (el filtro `provenance->>type`
   de PostgREST) y en un móvil real (la pulsación larga).
 
+### Calendario y Biblioteca más sencillos (rama `f57/estados-calendario`, 23/11/2026)
+
+Apartados 8 (L1–L4) y 9 (B1–B4) de `rrss-recursos-comparativa/simplificacion/CAMBIOS.md`.
+
+- **Calendario (L1, L2, L4).** A la vista quedan 9 acciones (antes 33): las pestañas Calendario ·
+  Campañas, «Programar», «⋯», ‹ Hoy › y Semana / Mes. «Programar» abre las piezas sin fecha
+  primero (grupo «Sin fecha (N)»); ya no hay «Por programar» ni «Programar este día» ni el «+» de
+  cada día: un día sin nada se programa tocando su hueco. En «⋯»: preparar un plan con IA (o pedirlo
+  a la agencia), «Objetivo semanal: N» (una ventana pequeña), Filtrar (la red solo si hay más de
+  una), Ver en lista y Aprobar varias. Una línea «Esta semana 1 de 3 · 4 sin fecha». La hora de la
+  marca solo se dice junto al título si no es la del dispositivo (y siempre en la hoja de
+  programar). El mes ya no pliega semanas. En el móvil, la semana como agenda (un día por fila) con
+  «Programar» arriba; la lista de cuatro semanas sigue en «⋯ → Ver en lista».
+- **Plan propuesto (L3).** Una campaña «propuesta» (sin aceptar) sale como aviso arriba del
+  calendario («Plan propuesto «…»: N piezas en gris hasta que lo aceptes» → «Revisar el plan», la
+  ficha de la campaña, que se mantiene) y sus piezas en gris y sin acciones en su día. Se lee de
+  Campañas desde fuera (`useCampaigns`, `useCampaignsOverview`); `src/features/campaigns/**` no se
+  ha tocado. Aceptar o descartar sigue en la ficha.
+- **Biblioteca (B1–B4).** Fichas Todo, Fotos, Vídeos y **Audios** (nueva, para la música de los
+  reels). Orden, «Filtrar por etiqueta…», «Solo las que no se usan», tamaño de las miniaturas,
+  «Elegir varias» y las acciones de la carpeta (nueva, renombrar, eliminar) en el «⋯» de la
+  cabecera; sin casilla visible en cada miniatura (salen al elegir varias, con Ctrl/⌘ o Mayús, o
+  manteniendo pulsada una en el móvil). Carpetas de primer nivel plegadas (las de dentro, al
+  entrar); «Ediciones», «Exportaciones», «IA», «Reels» e «Informes» dentro de «Hechas aquí»; en el
+  móvil, el desplegable «Carpeta». Las miniaturas y la ficha enseñan un nombre legible
+  («Portada reel», no «portada-reel-20261123-085833.jpg»); el del archivo, en la ficha y al pasar
+  el ratón (`library/readableName.ts`). Logotipos, fondo quitado e IA ya no son fichas: están en su
+  carpeta.
+- **Probado:** componentes (`calendarioVistas`, `biblioteca`, `exportacionesYNombres`) y
+  `test:layout` en Chromium real: `calendario.spec.ts` y `biblioteca-analitica.spec.ts` cuentan las
+  acciones visibles a 1366 y 375 px (calendario ≤ 9; biblioteca ≤ 12 y ≤ 9), las cuatro fichas en
+  una fila a 375–1366 px y la semana-agenda del móvil. **Sin probar** en un móvil real ni contra la
+  demo.
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |

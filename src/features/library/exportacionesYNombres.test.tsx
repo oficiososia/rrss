@@ -10,6 +10,7 @@ import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
 import { fetchRecentImages } from './api';
 import { distinctNames, NAME_CHARS } from './assetNames';
+import { readableName } from './readableName';
 import { applyFilters, EMPTY_FILTERS, isExport } from './filters';
 import { PhotoPanel } from './PhotoPanel';
 import { LONG_PRESS_MS } from './useNameReveal';
@@ -120,8 +121,13 @@ describe('Exportaciones aparte (fallo 17)', () => {
     const tree = screen.getByRole('tree', { name: 'Carpetas de la biblioteca' });
     // 8 archivos, 3 son exportaciones (dos en su carpeta y una movida a «Local»).
     expect(within(tree).getByTestId('library-folder-all')).toHaveTextContent('5');
-    const group = within(tree).getByTestId('library-exports-group');
+    // «Hechas aquí» (plegado) reúne lo que guarda la aplicación: Exportaciones y Reels.
+    const group = within(tree).getByTestId('library-made-here');
+    expect(within(tree).queryByTestId('library-folder-Exportaciones')).toBeNull();
+    await user.click(within(group).getByTestId('library-made-here-toggle'));
     expect(within(group).getByTestId('library-folder-Exportaciones')).toHaveTextContent('2');
+    expect(within(group).getByTestId('library-folder-Reels')).toHaveTextContent('1');
+    expect(within(tree).queryByTestId('library-folder-Reels')).toBe(within(group).getByTestId('library-folder-Reels'));
     const titles = () => screen.getAllByTestId('library-asset').map((el) => el.getAttribute('title'));
     expect(titles()).not.toContain('arroz-de-rape-1080x1350-v1.jpg');
     expect(screen.getByTestId('library-exports-hint')).toHaveTextContent('Exportaciones (2)');
@@ -135,7 +141,7 @@ describe('Exportaciones aparte (fallo 17)', () => {
 
     // En el móvil, el selector de carpeta también las pone aparte.
     const select = screen.getByTestId('library-folder-select');
-    expect(within(select).getByRole('group', { name: 'Aparte: lo que exporta el editor' })).toBeInTheDocument();
+    expect(within(select).getByRole('group', { name: 'Hechas aquí' })).toBeInTheDocument();
     expect(within(select).getAllByRole('option')[0]).toHaveTextContent('Toda la biblioteca (5)');
   });
 
@@ -213,5 +219,31 @@ describe('Nombres que se distinguen (fallo 19)', () => {
     // Un toque normal sí la elige.
     await userEvent.setup().click(langosta);
     expect(onPick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Nombres legibles en las miniaturas (simplificación B4)', () => {
+  it('readableName: quita fechas, tamaños y versiones de los nombres técnicos; respeta los escritos a mano', () => {
+    expect(readableName('portada-reel-20261123-085833.jpg')).toBe('Portada reel');
+    expect(readableName('arroz-de-rape-1080x1350-v1.jpg')).toBe('Arroz de rape');
+    expect(readableName('menu_otono-1080x1350-v2-p3.jpg')).toBe('Menu otono');
+    expect(readableName('Sin fondo · chuleta.png')).toBe('Sin fondo · chuleta');
+    expect(readableName('Arroz meloso de langosta.jpg')).toBe('Arroz meloso de langosta');
+    expect(readableName('IMG_1234.jpg')).toBe('IMG 1234');
+    // Si no queda nada que leer, el nombre tal cual (sin extensión).
+    expect(readableName('20261123-085833.jpg')).toBe('20261123-085833');
+  });
+
+  it('distinctNames con nombres legibles: «Portada reel» se distingue por la carpeta si hay dos', () => {
+    const names = distinctNames(
+      [
+        { id: '1', file_name: 'portada-reel-20261123-085833.jpg', folder: 'Reels / Navidad' },
+        { id: '2', file_name: 'portada-reel-20261124-101010.jpg', folder: 'Reels / Otoño' },
+      ],
+      NAME_CHARS,
+      (a) => readableName(a.file_name),
+    );
+    expect(names.get('1')).toEqual({ label: 'Portada reel', full: 'portada-reel-20261123-085833.jpg', folder: 'Navidad' });
+    expect(names.get('2')!.folder).toBe('Otoño');
   });
 });
