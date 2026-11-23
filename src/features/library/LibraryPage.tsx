@@ -15,6 +15,7 @@ import {
   UploadCloud,
   X,
 } from 'lucide-react';
+import { usageWarning } from './usageText';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -305,6 +306,11 @@ export function LibraryPage() {
   };
 
   const usedInChosen = chosen.filter((a) => (usageCounts?.get(a.id) ?? 0) > 0).length;
+  // Qué piezas se quedan con un hueco (las tres primeras y «y N más»).
+  const chosenUsage = useMemo(
+    () => usageWarning(chosen.flatMap((a) => usageQuery.data?.byAsset.get(a.id) ?? []), chosen.length),
+    [chosen, usageQuery.data],
+  );
 
   const createFolder = (name: string) => {
     const path = joinFolder(folder ?? '', name);
@@ -816,7 +822,7 @@ export function LibraryPage() {
         title={`¿Eliminar ${plural(chosen.length, 'archivo', 'archivos')}?`}
         description={`Se borrarán de la biblioteca de forma definitiva. No se puede deshacer.${
           usedInChosen > 0
-            ? ` ${plural(usedInChosen, 'está', 'están')} en alguna pieza: esas piezas perderán la imagen.`
+            ? ` ${plural(usedInChosen, 'está', 'están')} en alguna pieza. ${chosenUsage ?? ''}`
             : ''
         }`}
         confirmLabel="Eliminar"
