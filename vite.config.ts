@@ -1,9 +1,30 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 
-export default defineConfig({
-  plugins: [react()],
+/**
+ * `<link rel="preconnect">` a Supabase en index.html: el navegador abre la conexión (DNS, TCP y TLS)
+ * mientras descarga el JavaScript, y la primera consulta del arranque ya no la espera. Sin
+ * `VITE_SUPABASE_URL` no se añade nada.
+ */
+function preconnectSupabase(url: string | undefined): Plugin {
+  return {
+    name: 'preconectar-supabase',
+    transformIndexHtml() {
+      if (!url) return [];
+      let origin: string;
+      try {
+        origin = new URL(url).origin;
+      } catch {
+        return [];
+      }
+      return [{ tag: 'link', attrs: { rel: 'preconnect', href: origin, crossorigin: '' }, injectTo: 'head-prepend' }];
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), preconnectSupabase(loadEnv(mode, process.cwd(), 'VITE_').VITE_SUPABASE_URL)],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: { port: 5173, strictPort: true },
   // Recorte de fotos en el navegador (onnxruntime-web en un Worker): módulo ES y
@@ -28,4 +49,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));
