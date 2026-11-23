@@ -20,5 +20,5 @@
     "fadeSeconds": 0.3
   },
   "audio": { "musicVolume": 0.35, "clipVolume": 0, "fadeInSeconds": 0.5, "fadeOutSeconds": 1 },
-  "export": { "crf": 21, "preset": "veryfast", "audioBitrateKbps": 128 }
+  "export": { "crf": 18, "preset": "medium", "videoBitrateKbps": 9000, "audioBitrateKbps": 160 }
 }

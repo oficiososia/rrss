@@ -186,9 +186,9 @@ describe('textos animados con FFmpeg: donde dice la cuenta', () => {
     const done = await textBox('typewriter', 2);
     expect(a!.w).toBeLessThan(b!.w);
     expect(b!.w).toBeLessThan(done!.w + 1);
-    // Alineado a la izquierda del ancho útil, sin moverse mientras escribe.
-    const left = Math.round(((1 - STYLE.maxWidthRatio) * W) / 2);
-    for (const box of [a!, b!, done!]) expect(Math.abs(box.minX - left)).toBeLessThan(10);
+    // Alineado a la izquierda del bloque centrado (con el ancho real del texto), sin moverse mientras escribe.
+    for (const box of [a!, b!]) expect(Math.abs(box.minX - done!.minX)).toBeLessThan(4);
+    expect(Math.abs(done!.cx - W / 2)).toBeLessThan(8);
     // La cuenta del modelo dice cuántas letras hay en esos instantes.
     const chars = (t: number) => textAnimState(animation, STYLE, t, 0.5, 3.5, 10).visibleChars;
     expect(chars(0.8)).toBeLessThan(chars(1.2));

@@ -231,13 +231,13 @@ describe('plantilla de reel: montar el reel', () => {
       position: 'center',
       animation: { in: 'zoom' },
     });
-    // El estilo del texto: el del estilo base, lo que cambia la plantilla y la tipografía de la marca.
+    // El estilo del texto: el de su papel (el gancho es un titular), lo que cambia la plantilla y la tipografía de la marca.
     expect(hook!.style).toMatchObject({
       sizeRatio: 0.09,
       color: '#FFFFFF',
       fontPath: 'org/marca/fonts/marca.ttf',
       fontFamily: 'Marca',
-      maxWidthRatio: style('corte-ritmico').text.maxWidthRatio,
+      maxWidthRatio: 0.82,
     });
     expect(step).toMatchObject({ text: 'Tercer paso', start: 6.2, end: 10 });
     expect(cta).toMatchObject({ text: 'Ven a probarlo', start: 10.1, end: 12.6 });

@@ -286,7 +286,7 @@
                   "maximum": 32
                 },
                 "preset": {
-                  "default": "veryfast",
+                  "default": "medium",
                   "type": "string",
                   "enum": [
                     "ultrafast",
@@ -294,11 +294,17 @@
                     "veryfast",
                     "faster",
                     "fast",
-                    "medium"
+                    "medium",
+                    "slow"
                   ]
                 },
+                "videoBitrateKbps": {
+                  "type": "integer",
+                  "minimum": 2000,
+                  "maximum": 20000
+                },
                 "audioBitrateKbps": {
-                  "default": 128,
+                  "default": 160,
                   "type": "integer",
                   "minimum": 64,
                   "maximum": 256

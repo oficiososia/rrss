@@ -18,6 +18,7 @@
 import { z } from 'zod';
 import type { ReelTemplateSummary } from './templates';
 import type { SourceAsset } from './editor/ops';
+import { roleTextStyle, separateTexts, TEMPLATE_ROLE_TO_TEXT_ROLE, uniqueAssets, type BrandColors } from './quality';
 import {
   MAX_CLIP_SEGMENT_SECONDS,
   MIN_SEGMENT_SECONDS,
@@ -31,7 +32,6 @@ import {
   REEL_TEXT_MAX_LENGTH,
   TEXT_POSITIONS,
   planTimeline,
-  templateTextStyle,
   templateTransition,
   textAnimationSchema,
   transitionSchema,
@@ -403,6 +403,10 @@ const round = (n: number, decimals = 2) => Number(n.toFixed(decimals));
 export interface BuildReelOptions {
   /** Tipografía de la marca para los textos (.ttf u .otf de su biblioteca). */
   font?: { path: string; family: string };
+  /** Colores de la marca para las cajas de rótulos, precio y llamada (quality.ts, `brandReelKit`). */
+  colors?: BrandColors;
+  /** Punto de interés guardado de cada foto (ruta → punto), de sus recortes (`savedFocalPoints`). */
+  focalPoints?: ReadonlyMap<string, { x: number; y: number }>;
 }
 
 /**
@@ -411,13 +415,20 @@ export interface BuildReelOptions {
  * transición, y los textos de muestra entran con su plano. El resultado es un
  * proyecto de reel normal (plan v2): sin música (solo se sugiere) y con todo
  * editable después.
+ *
+ * Calidad (docs/reels-calidad.md): la misma foto no ocupa dos planos (si hay
+ * menos fotos distintas que planos, se quitan planos, como con poco material);
+ * cada texto lleva el estilo de su papel (titular, rótulo, llamada) con los
+ * colores de la marca y nunca coincide con otro en la misma franja; cada foto
+ * se encuadra en su punto de interés guardado, si lo tiene.
  */
 export function buildReelFromTemplate(
   template: ReelTemplate,
-  assets: SourceAsset[],
+  chosen: SourceAsset[],
   style: ReelTemplateSummary,
   options: BuildReelOptions = {},
 ): ReelProject {
+  const assets = uniqueAssets(chosen);
   const slots = slotsFor(template, assets.length);
   const files = new Map<string, number>();
   const clips: Clip[] = slots.map((slot, index) => {
@@ -438,10 +449,12 @@ export function buildReelFromTemplate(
         transition,
       };
     }
+    const focal = options.focalPoints?.get(asset.storage_path);
     return {
       id,
       type: 'photo',
       path: asset.storage_path,
+      ...(focal ? { focalPoint: { x: focal.x, y: focal.y } } : {}),
       seconds: Math.min(slot.seconds, PHOTO_SECONDS.max),
       ...(slot.motion ? { motion: slot.motion } : {}),
       ...(slot.motionAmount !== undefined ? { motionAmount: slot.motionAmount } : {}),
@@ -451,7 +464,6 @@ export function buildReelFromTemplate(
 
   const timeline = planTimeline(clips, style, (clip) => files.get(clip.path) ?? null);
   const position = new Map(slots.map((slot, index) => [slot.id, index]));
-  const base = templateTextStyle(style);
   const texts: ReelText[] = [];
   for (const text of template.texts) {
     const from = position.get(text.from);
@@ -462,11 +474,16 @@ export function buildReelFromTemplate(
     const safeStart = round(Math.max(0, Math.min(start, timeline.total - 0.5)));
     const safeEnd = round(Math.min(timeline.total, Math.max(end, safeStart + 0.5)));
     if (!(safeEnd > safeStart)) continue;
+    // El estilo de su papel (con los colores de la marca) y, encima, lo que la plantilla fija.
+    const role = TEMPLATE_ROLE_TO_TEXT_ROLE[text.role];
+    const preset = roleTextStyle(role, options.colors);
     const textStyle: TextStyle = {
-      ...base,
+      ...preset,
       ...(text.style ?? {}),
       ...(options.font ? { fontPath: options.font.path, fontFamily: options.font.family } : {}),
     };
+    // Nunca por debajo del tamaño de su papel: lo pequeño no se lee en un móvil.
+    textStyle.sizeRatio = Math.max(textStyle.sizeRatio, preset.sizeRatio * 0.9);
     textStyle.color = textStyle.color.toUpperCase();
     texts.push({
       id: `t${texts.length + 1}`,
@@ -478,6 +495,10 @@ export function buildReelFromTemplate(
       ...(text.animation ? { animation: { ...text.animation } } : {}),
     });
   }
+
+  const separated = separateTexts(texts).map((t, i) => ({ ...t, id: `t${i + 1}` }));
+  texts.length = 0;
+  texts.push(...separated);
 
   const coverSlot = template.cover ? position.get(template.cover.slot) : undefined;
   const cover =

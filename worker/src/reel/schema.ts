@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { focalPointSchema, storagePathSchema } from '../handlers/shared.ts';
 import { TEXT_IN_ANIMATIONS, TEXT_OUT_ANIMATIONS } from './animation.ts';
+import { TEXT_ROLES } from './textlayout.ts';
 
 export const REEL_TEMPLATE_SCHEMA_VERSION = 1;
 
@@ -108,8 +109,14 @@ export const reelTemplateSchema = z.strictObject({
   export: z.strictObject({
     /** Calidad de H.264: menor = mejor y más pesado. */
     crf: z.number().int().min(16).max(32).default(21),
-    preset: z.enum(['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium']).default('veryfast'),
-    audioBitrateKbps: z.number().int().min(64).max(256).default(128),
+    preset: z.enum(['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow']).default('medium'),
+    /**
+     * Tasa media de vídeo del reel. Instagram vuelve a comprimir lo que recibe, así que
+     * el original va con margen: ~9 Mbps en 1080 × 1920 (perfil High). Si falta, se
+     * usa `crf` (como antes).
+     */
+    videoBitrateKbps: z.number().int().min(2000).max(20000).optional(),
+    audioBitrateKbps: z.number().int().min(64).max(256).default(160),
   }),
 });
 export type ReelTemplate = z.output<typeof reelTemplateSchema>;
@@ -290,6 +297,11 @@ export const clipV2Schema = z.discriminatedUnion('type', [
     motion: clipMotionSchema.optional(),
     /** Cuánto se amplía o se desplaza (0,08 = un 8 %); por defecto, el de la plantilla. */
     motionAmount: z.number().min(0).max(0.3).optional(),
+    /**
+     * Máscara del sujeto (PNG con alfa de «Quitar el fondo» de ESTA foto, de la marca). El
+     * encuadre y el movimiento se centran en lo opaco. Sin ella, encuadre por saliencia.
+     */
+    subjectMaskPath: storagePathSchema.nullable().default(null),
   }),
   z.strictObject({
     ...clipBase,
@@ -322,9 +334,42 @@ export const textV2Schema = z
     animation: textAnimationSchema.optional(),
     /** Colocado a mano en la vista previa: desplazamiento desde `position`. */
     offset: textOffsetSchema.optional(),
+    /**
+     * Papel del texto (titular, rótulo, precio o llamada final): fija el tamaño mínimo,
+     * cuántas líneas caben y la animación por defecto. Sin él, se deduce (textlayout.ts).
+     */
+    role: z.enum(TEXT_ROLES).nullable().default(null),
   })
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
 export type ReelTextV2 = z.output<typeof textV2Schema>;
+
+/** Gradación de color de todo el reel: ligera y la misma en todos los planos. */
+export const REEL_GRADES = ['natural', 'warm', 'none'] as const;
+export const gradeSchema = z.enum(REEL_GRADES);
+export type ReelGrade = z.output<typeof gradeSchema>;
+
+/**
+ * Cierre con la marca: logotipo, llamada grande y, si los hay, usuario y dirección,
+ * durante 1,5 a 3 s después del último plano.
+ */
+export const outroSchema = z.strictObject({
+  seconds: z.number().min(1.5).max(3).default(2),
+  /** La llamada: «Reserva tu mesa». */
+  cta: z.string().min(1).max(60),
+  /** Usuario de la red («@casatomas»). */
+  handle: z.string().min(1).max(60).nullable().default(null),
+  /** Dirección o ciudad. */
+  address: z.string().min(1).max(120).nullable().default(null),
+  /** Logotipo de la marca (imagen de su biblioteca; mejor PNG con transparencia). */
+  logoPath: storagePathSchema.nullable().default(null),
+  /** Fondo; sin él, la última foto desenfocada y oscurecida. */
+  background: hexColor.nullable().default(null),
+  /** Color de la caja de la llamada (el de la marca). */
+  accent: hexColor.nullable().default(null),
+  /** Color de la letra de la llamada (sobre `accent`). */
+  accentText: hexColor.nullable().default(null),
+});
+export type ReelOutro = z.output<typeof outroSchema>;
 
 export const reelPlanV2Schema = z
   .strictObject({
@@ -350,6 +395,10 @@ export const reelPlanV2Schema = z
     cover: coverSchema.optional(),
     /** Tipografía por defecto de la marca (la pone la base de datos si hay textos o subtítulos). */
     fontPath: fontPathSchema.optional(),
+    /** Cierre con la marca (opcional). */
+    outro: outroSchema.nullable().default(null),
+    /** Gradación de color; sin ella, `natural`. */
+    grade: gradeSchema.nullable().default(null),
   })
   .superRefine((plan, ctx) => {
     plan.clips.forEach((clip, index) => {
@@ -403,7 +452,12 @@ export function migratePlanV1(plan: ReelPlan, template: ReelTemplate): ReelPlanV
         transition: { ...transition },
       };
       if (item.type === 'photo') {
-        return { ...base, type: 'photo', seconds: item.seconds ?? template.timing.photoSeconds };
+        return {
+          ...base,
+          type: 'photo',
+          seconds: item.seconds ?? template.timing.photoSeconds,
+          subjectMaskPath: null,
+        };
       }
       const seconds = item.seconds ?? template.timing.maxClipSeconds;
       return {
@@ -421,7 +475,10 @@ export function migratePlanV1(plan: ReelPlan, template: ReelTemplate): ReelPlanV
       end: text.end,
       position: text.position ?? template.text.position,
       style: templateTextStyle(template),
+      role: null,
     })),
+    outro: null,
+    grade: null,
     ...(plan.music
       ? {
           music: {

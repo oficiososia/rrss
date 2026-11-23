@@ -29,7 +29,6 @@ import {
   REEL_MAX_SECONDS,
   REEL_PLAN_VERSION,
   REEL_TEXT_MAX_LENGTH,
-  templateTextStyle,
   type Clip,
   type GuideShot,
   type GuideText,
@@ -40,6 +39,7 @@ import {
   type Transition,
 } from '../editor/project';
 import type { ReelTemplateSummary } from '../templates';
+import { reelAssetScore, roleTextStyle, separateTexts, type ReelTextRole } from '../quality';
 
 /** Lo que se necesita de un recurso de la biblioteca para saber si encaja. */
 export interface LibraryAsset {
@@ -52,6 +52,10 @@ export interface LibraryAsset {
   folder: string;
   tags: string[];
   created_at: string;
+  /** Medidas y peso, para preferir las fotos nítidas y con resolución (quality.ts). */
+  width?: number | null;
+  height?: number | null;
+  bytes?: number | null;
 }
 
 export interface ShotMatch {
@@ -126,22 +130,33 @@ export function scoreAsset(
   return { score: Math.max(score, 0.5), reasons: [...new Set(reasons)] };
 }
 
+/** Cuánto pesa la calidad (de 0 a 100, `reelAssetScore`) frente a las palabras: desempata y aparta lo flojo. */
+const QUALITY_WEIGHT = 0.04;
+
 /**
- * Para cada plano, el recurso que mejor encaja (cada uno, una sola vez). Se
- * reparte por orden de plano; a igualdad, gana el más reciente.
+ * Para cada plano, el recurso que mejor encaja (cada uno, una sola vez, y nunca
+ * dos veces el mismo archivo). Se reparte por orden de plano; cuenta lo que
+ * encaja por palabras y, además, la calidad de la foto (resolución, nitidez,
+ * proporción y que no sea un recorte o una captura): entre dos que encajan
+ * igual, gana la mejor; a igualdad, la más reciente.
  */
 export function matchShots(result: ReelLikeResult, assets: LibraryAsset[]): ShotMatch[] {
   const used = new Set<string>();
   const recent = [...assets].sort((a, b) => b.created_at.localeCompare(a.created_at));
   return result.template.shots.map((shot, index) => {
     const search = result.script.shots[index]?.search ?? [];
-    let best: { asset: LibraryAsset; score: number; reasons: string[] } | null = null;
+    let best: { asset: LibraryAsset; score: number; rank: number; reasons: string[] } | null = null;
     for (const asset of recent) {
-      if (used.has(asset.id)) continue;
+      if (used.has(asset.id) || used.has(asset.storage_path)) continue;
       const scored = scoreAsset({ media: shot.media, seconds: shot.seconds, search }, asset);
-      if (scored.score > 0 && (!best || scored.score > best.score)) best = { asset, ...scored };
+      if (scored.score <= 0) continue;
+      const rank = scored.score + reelAssetScore(asset) * QUALITY_WEIGHT;
+      if (!best || rank > best.rank) best = { asset, rank, ...scored };
     }
-    if (best) used.add(best.asset.id);
+    if (best) {
+      used.add(best.asset.id);
+      used.add(best.asset.storage_path);
+    }
     return { shot: shot.id, asset: best?.asset ?? null, score: best?.score ?? 0, reasons: best?.reasons ?? [] };
   });
 }
@@ -155,7 +170,8 @@ export interface BrandLook {
   font?: { path: string; family: string };
 }
 
-const SIZE_RATIO: Record<TextSize, number> = { grande: 0.085, normal: 0.06, pequeno: 0.045 };
+/** Tamaño pedido por el análisis → papel del texto en el vídeo (quality.ts). */
+const SIZE_ROLE: Record<TextSize, ReelTextRole> = { grande: 'headline', normal: 'label', pequeno: 'label' };
 
 function luminance(hex: string): number {
   const channel = (i: number) => {
@@ -172,23 +188,30 @@ export function contrast(a: string, b: string): number {
 }
 
 /**
- * Estilo de un texto del guion: el del estilo de partida, con el tamaño pedido,
- * la tipografía de la marca y, si el texto va sobre una franja, la franja del
- * color principal de la marca cuando se lee bien encima.
+ * Estilo de un texto del guion: el de su papel (titular para lo «grande», rótulo
+ * en caja para lo demás, con letra que se lee en un móvil), la tipografía de la
+ * marca y, si el texto va en caja, la caja del color principal de la marca cuando
+ * se lee bien encima. Un texto que cierra el reel con una llamada («Reserva…»)
+ * va como llamada final. `template` queda por compatibilidad: el papel manda.
  */
-export function guideTextStyle(size: TextSize, template: ReelTemplateSummary, look: BrandLook = {}): TextStyle {
-  const base = templateTextStyle(template);
-  const style: TextStyle = { ...base, sizeRatio: SIZE_RATIO[size] };
-  if (look.font) {
-    style.fontPath = look.font.path;
-    style.fontFamily = look.font.family;
-  }
-  const brand = (look.colors ?? []).find((c) => /^#[0-9a-fA-F]{6}$/.test(c));
-  if (base.box && brand && contrast(base.color, brand) >= 4.5) {
-    style.box = { ...base.box, color: brand.toUpperCase(), opacity: Math.max(base.box.opacity, 0.85) };
+export function guideTextStyle(
+  size: TextSize,
+  template: ReelTemplateSummary,
+  look: BrandLook = {},
+  role: ReelTextRole = SIZE_ROLE[size],
+): TextStyle {
+  void template;
+  const brand = (look.colors ?? []).find((c) => /^#[0-9a-fA-F]{6}$/.test(c))?.toUpperCase();
+  const style = roleTextStyle(role, { ...(brand ? { accent: brand } : {}) }, look.font);
+  if (role === 'label' && style.box && brand && contrast(style.color, brand) >= 4.5) {
+    style.box = { ...style.box, color: brand, opacity: Math.max(style.box.opacity, 0.85) };
   }
   return style;
 }
+
+/** ¿El texto es una llamada a la acción? */
+const CALL_TO_ACTION =
+  /\b(reserva|reservar|pide|pídelo|llama|llámanos|visítanos|ven|venid|encarga|compra|apúntate|escríbenos|enlace|bio)\b/i;
 
 // ───────────────────────────── Borrador ─────────────────────────────
 
@@ -307,16 +330,18 @@ function placeGuideTexts(
     if (placed.has(text.id) || !add(text)) continue;
     const at = span(text);
     if (!at) continue;
+    const isLast = at.end >= timeline.total - 0.05;
+    const role: ReelTextRole = isLast && CALL_TO_ACTION.test(text.text) ? 'cta' : SIZE_ROLE[text.size];
     texts.push({
       id: text.id,
       text: text.text.slice(0, REEL_TEXT_MAX_LENGTH),
       ...at,
-      position: text.position,
-      style: guideTextStyle(text.size, template, look),
+      position: role === 'cta' && text.position === 'top' ? 'bottom' : text.position,
+      style: guideTextStyle(text.size, template, look, role),
     });
   }
-  texts.sort((a, b) => a.start - b.start);
-  return { ...project, plan: { ...project.plan, texts } };
+  // Dos textos nunca a la vez en la misma franja.
+  return { ...project, plan: { ...project.plan, texts: separateTexts(texts) } };
 }
 
 export interface DraftOptions {

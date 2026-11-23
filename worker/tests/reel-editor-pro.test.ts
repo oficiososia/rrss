@@ -98,10 +98,12 @@ describe('plan v2 ampliado (sin FFmpeg)', () => {
     expect(build.filterGraph).toContain('[0:a]atrim=duration=1.4,asetpts=PTS-STARTPTS,aresample');
     // c2 está silenciado: no entra en la mezcla.
     expect(build.filterGraph).not.toContain('[1:a]');
-    // Texto en el centro, +10 % del ancho a la derecha y −25 % del alto.
-    expect(build.filterGraph).toContain("x='(w-text_w)/2+108'");
-    const y = Math.round((1920 - 108) / 2) - 480;
-    expect(build.filterGraph).toContain(`:y=${y}:`);
+    // Texto en el centro, +10 % del ancho a la derecha (sin salirse de los márgenes) y −25 % del alto,
+    // pero nunca dentro de la zona que tapa Instagram arriba (250 px).
+    expect(build.filterGraph).toContain("x='clip((w-text_w)/2+108,");
+    const placed = build.texts.find((t) => t.kind === 'text')!;
+    expect(placed.top).toBeGreaterThanOrEqual(250);
+    expect(placed.top).toBeLessThan(Math.round((1920 - 108) / 2));
   });
 
   it('con sonido, un clip a otra velocidad lleva atempo; todos los filtros tienen su cadena', () => {
@@ -227,12 +229,15 @@ describe('media.reel.template: velocidad, división, volumen, filtros y textos c
   });
 
   it('los filtros de color cambian la imagen: blanco y negro quita el color; cálido y frío tiran a su lado', async () => {
-    await run({ version: 2, clips: [video({ out: 1, volume: 0, filter: 'bw' })] }, 'bn');
+    // Sin la gradación del reel, para medir solo el filtro.
+    await run({ version: 2, clips: [video({ out: 1, volume: 0, filter: 'bw' })], grade: 'none' }, 'bn');
     const gray = await averageColor(out('bn'), undefined, 0.5);
     expect(Math.abs(gray[0] - gray[2])).toBeLessThan(12);
     const photo = (filter?: string) => ({
       version: 2,
-      clips: [{ id: 'p', type: 'photo', path: inBrand('plato.jpg'), seconds: 1, motion: 'none', ...(filter ? { filter } : {}) }],
+      // Recorte por el centro (como antes del encuadre por sujeto) y sin gradación: se mide solo el filtro.
+      clips: [{ id: 'p', type: 'photo', path: inBrand('plato.jpg'), seconds: 1, motion: 'none', focalPoint: { x: 0.5, y: 0.5 }, ...(filter ? { filter } : {}) }],
+      grade: 'none',
     });
     await run(photo(), 'foto');
     const plain = await averageColor(out('foto'), undefined, 0.5);
