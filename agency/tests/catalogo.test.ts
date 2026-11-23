@@ -223,10 +223,12 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
             for (const text of template.texts) {
               const words = text.text.split(/\s+/).length;
               expect(words, `${entry.key}/${text.id}`).toBeLessThanOrEqual(8);
-              // Fuera de lo que tapa Instagram: 14 % arriba y 35 % abajo.
+              // Fuera de lo que tapa Instagram: 250 px arriba y 400 px abajo en 1080 × 1920 (docs/reels-calidad.md).
               const margin = text.style?.marginRatio ?? style.text.marginRatio;
-              if (text.position === 'top') expect(margin, `${entry.key}/${text.id}`).toBeGreaterThanOrEqual(0.14);
-              if (text.position === 'bottom') expect(margin, `${entry.key}/${text.id}`).toBeGreaterThanOrEqual(0.35);
+              if (text.position === 'top') expect(margin, `${entry.key}/${text.id}`).toBeGreaterThanOrEqual(250 / 1920);
+              if (text.position === 'bottom') expect(margin, `${entry.key}/${text.id}`).toBeGreaterThanOrEqual(400 / 1920);
+              // Letra que se lee en un móvil: nada por debajo de ~60 px en 1080 de ancho.
+              expect(text.style?.sizeRatio ?? style.text.sizeRatio, `${entry.key}/${text.id}`).toBeGreaterThanOrEqual(0.055);
             }
 
             for (const count of [needs.min, needs.max]) {

@@ -4,12 +4,15 @@ import { existsSync } from 'node:fs';
 import { copyFile, open, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PermanentError } from '../errors.ts';
-import { orientationFilters, takeJpegOrientation } from '../ffmpeg/exif.ts';
+import { orientationFilters, orientationSwapsAxes, takeJpegOrientation } from '../ffmpeg/exif.ts';
+import { findLabelFont } from '../ffmpeg/fonts.ts';
+import { readFontMetrics, type FontMetrics } from '../ffmpeg/fontmetrics.ts';
 import { probeMedia } from '../ffmpeg/probe.ts';
 import { num, runFfmpeg } from '../ffmpeg/run.ts';
 import type { Handler, HandlerContext } from '../handler.ts';
-import { buildReel, type ResolvedClip, type ResolvedPlan } from '../reel/build.ts';
+import { buildReel, type ResolvedClip, type ResolvedOutro, type ResolvedPlan } from '../reel/build.ts';
 import { planAsV2, reelPayloadSchema, type ReelTemplate } from '../reel/schema.ts';
+import { detectSubject, subjectFromMask, type Subject } from '../reel/subject.ts';
 import { findTemplate, loadTemplates } from '../reel/templates.ts';
 import {
   assertOutputPaths,
@@ -24,6 +27,7 @@ import {
 export const REEL_TEMPLATE_KIND = 'media.reel.template';
 
 const FONT_NAME = 'font.ttf';
+const LABEL_FONT_NAME = 'font-label.ttf';
 
 /** Firma de un archivo TrueType u OpenType (lo que lee FFmpeg con FreeType sin sorpresas). */
 export function isTrueTypeOrOpenType(head: Uint8Array): boolean {
@@ -105,6 +109,7 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
       // ── Bajar y medir los elementos ────────────────────────────────────
       const downloadStartedAt = Date.now();
       const clips: ResolvedClip[] = [];
+      const subjectWarnings: string[] = [];
       for (const [index, item] of plan.clips.entries()) {
         const file = await fetchInput(context, item.path, `media-${index}`);
         const orientation = item.type === 'photo' ? await takeJpegOrientation(file) : 1;
@@ -112,6 +117,19 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
         if (!info.video) throw new PermanentError(`La pieza ${index + 1} no tiene imagen`);
         const name = path.basename(file);
         if (item.type === 'photo') {
+          const swap = orientationSwapsAxes(orientation);
+          const sourceSize = {
+            width: swap ? info.video.height : info.video.width,
+            height: swap ? info.video.width : info.video.height,
+          };
+          // Lo principal de la foto: la máscara del recorte si la hay; si no, saliencia.
+          let subject: Subject | null = null;
+          if (item.subjectMaskPath) {
+            const mask = await fetchInput(context, item.subjectMaskPath, `mask-${index}`);
+            subject = await subjectFromMask(mask, sourceSize.width / sourceSize.height);
+            if (!subject) subjectWarnings.push(`La máscara de la pieza ${index + 1} no es de esa foto: se encuadra sola`);
+          }
+          if (!subject) subject = await detectSubject(file, orientation);
           clips.push({
             type: 'photo',
             file: name,
@@ -123,6 +141,8 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
             motionAmount: item.motionAmount,
             transition: item.transition,
             filter: item.filter,
+            sourceSize,
+            subject,
           });
         } else {
           if (info.durationSeconds <= 0) throw new PermanentError(`La pieza ${index + 1} no es un vídeo`);
@@ -162,7 +182,20 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
       const hasSubtitles =
         plan.subtitles?.enabled === true &&
         plan.clips.some((c) => c.type === 'video' && (c.subtitles?.length ?? 0) > 0);
-      const needsText = plan.texts.length > 0 || hasSubtitles;
+      // Cierre con la marca: el logotipo se baja (y se gira) como una foto más.
+      let outro: ResolvedOutro | null = null;
+      if (plan.outro) {
+        let logo: ResolvedOutro['logo'] = null;
+        if (plan.outro.logoPath) {
+          const file = await fetchInput(context, plan.outro.logoPath, 'logo');
+          const orientation = await takeJpegOrientation(file);
+          const info = await probeMedia(deps.tools, file, context.signal);
+          if (!info.video) throw new PermanentError('El logotipo del cierre no es una imagen');
+          logo = { file: path.basename(file), orientation };
+        }
+        outro = { ...plan.outro, logo };
+      }
+      const needsText = plan.texts.length > 0 || hasSubtitles || Boolean(outro);
       const font = needsText ? await prepareFont(context, deps, template, plan.fontPath) : undefined;
       // Tipografías propias de cada texto (de la marca: fetchInput lo comprueba).
       const fontFiles: Record<string, string> = {};
@@ -181,15 +214,29 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
         else fontWarnings.push('Una tipografía elegida no es TrueType ni OpenType: se usa la de reserva');
       }
       const fontFile = font?.file;
+      // Sin tipografía de la marca, rótulos y subtítulos con la versión menos gruesa de la del trabajador.
+      let labelFontFile: string | undefined;
+      const bundledLabel = findLabelFont();
+      if (font && font.source === 'default' && bundledLabel && !deps.defaultFontFile?.includes('DejaVu')) {
+        await copyFile(bundledLabel, path.join(context.workDir, LABEL_FONT_NAME));
+        labelFontFile = LABEL_FONT_NAME;
+      }
+      // Medidas reales de cada tipografía, para partir las líneas y apilar los textos sin pisarse.
+      const fontMetrics: Record<string, FontMetrics | null> = {};
+      for (const name of new Set([fontFile, labelFontFile, ...Object.values(fontFiles)])) {
+        if (name) fontMetrics[name] = await readFontMetrics(path.join(context.workDir, name));
+      }
       const downloadMs = Date.now() - downloadStartedAt;
 
       // ── Montar ─────────────────────────────────────────────────────────
       const outputName = 'reel.mp4';
       const build = buildReel({
         template,
-        plan: { clips, texts: plan.texts, subtitles: plan.subtitles, music },
+        plan: { clips, texts: plan.texts, subtitles: plan.subtitles, music, outro, grade: plan.grade },
         fontFile,
+        labelFontFile,
         fontFiles,
+        fontMetrics,
         maxTotalSeconds: isV2 ? undefined : template.timing.maxTotalSeconds,
         outputWidth: payload.output.width,
         outputFile: outputName,
@@ -203,7 +250,8 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
       // ── Comprobar y subir ──────────────────────────────────────────────
       const outputFile = path.join(context.workDir, outputName);
       const info = await probeMedia(deps.tools, outputFile, context.signal);
-      if (!info.video || !info.audio) throw new Error('FFmpeg no ha producido un vídeo con imagen y sonido');
+      if (!info.video) throw new Error('FFmpeg no ha producido un vídeo con imagen');
+      if (build.audio !== 'none' && !info.audio) throw new Error('FFmpeg no ha producido el sonido del reel');
       const uploadStartedAt = Date.now();
       const bytes = await storeOutput(context, outputFile, payload.output.path, 'video/mp4');
 
@@ -215,12 +263,13 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
         let source: 'auto' | 'frame' | 'photo' = 'auto';
         let at: number | undefined;
         if (cover?.type === 'photo') {
-          // Una foto de la marca como portada: se gira según su EXIF y se recorta a 9:16 por el centro.
+          // Una foto de la marca como portada: se gira según su EXIF y se recorta a 9:16 sobre lo principal.
           const file = await fetchInput(context, cover.path, 'cover');
           const orientation = await takeJpegOrientation(file);
           const w = build.width;
           const h = build.height;
-          const crop = `crop=${w}:${h}:${focalCropExpr('w', w, CENTER.x)}:${focalCropExpr('h', h, CENTER.y)}`;
+          const focal = (await detectSubject(file, orientation))?.focal ?? CENTER;
+          const crop = `crop=${w}:${h}:${focalCropExpr('w', w, focal.x)}:${focalCropExpr('h', h, focal.y)}`;
           await runFfmpeg(
             deps.tools,
             [
@@ -272,14 +321,24 @@ export function createReelTemplateHandler(deps: MediaDeps): Handler {
           fps: Number(info.video.fps.toFixed(3)),
           durationSeconds: Number(info.durationSeconds.toFixed(3)),
           videoCodec: info.video.codec,
-          audioCodec: info.audio.codec,
+          audioCodec: info.audio?.codec ?? null,
+          // De dónde sale el sonido: música, solo los clips o ninguno (la pantalla dice «Sin música»).
+          audio: build.audio,
           bytes,
         },
         ...(poster ? { poster } : {}),
         timeline: build.timeline,
+        framing: build.framing,
+        ...(outro ? { outro: { seconds: outro.seconds, logo: Boolean(outro.logo) } } : {}),
         ...(build.subtitles.length > 0 ? { subtitles: build.subtitles.length } : {}),
         ...(font ? { font: { source: font.source } } : {}),
-        warnings: [...(font?.warning ? [font.warning] : []), ...fontWarnings, ...build.warnings, ...posterWarnings],
+        warnings: [
+          ...(font?.warning ? [font.warning] : []),
+          ...fontWarnings,
+          ...subjectWarnings,
+          ...build.warnings,
+          ...posterWarnings,
+        ],
         timings: { downloadMs, renderMs, uploadMs },
       };
     },

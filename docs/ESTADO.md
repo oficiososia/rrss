@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1670,3 +1670,24 @@ siluetas varios segundos. Zona: arranque y carga; sin cambiar lo que se ve salvo
   navegador integrado y no se despliega desde esta rama); la caché larga y la preconexión solo
   se verán en Vercel. Queda una ola: las consultas de la pantalla (perfil, publicaciones…) esperan
   a las marcas porque viven en carpetas de otros agentes; adelantarlas sería el siguiente paso.
+
+## Reels con acabado profesional (rama `f54/reels-calidad`, 23/11/2026)
+
+El dueño vio los reels de staging del 23/11 («la calidad de los reels es muy mala»). Detalle por punto,
+plan v2 ampliado, fuentes de música propuestas y lo que falta en las pantallas: `docs/reels-calidad.md`.
+Montajes de antes y después con fotos reales en `rrss-recursos-comparativa/reels-calidad/comparativa.html`.
+
+- **Implementado** (trabajador, con cualquier plan): textos por papel con tamaño mínimo, cortes equilibrados,
+  zonas seguras de Instagram (250/400/60 px) y sin solapes (se apilan o se encadenan); Montserrat
+  ExtraBold/SemiBold (OFL) dentro de la imagen; encuadre sobre el sujeto (máscara de «Quitar el fondo» o
+  saliencia) con movimiento suavizado; gradación ligera; cierre con la marca (`plan.outro`); sin música ni
+  sonido, vídeo sin pista de audio; H.264 High ~9 Mbps con `+faststart`. Aplicación: material sin repetir y
+  por calidad (`quality.ts`), estilos por papel con los colores de la marca, catálogo de restaurante revisado.
+  Migración `20270113010000_reels_calidad.sql` (campos opcionales `role`, `subjectMaskPath`, `outro`, `grade`).
+- **Probado**: trabajador con FFmpeg real (`worker/tests/reel-quality.test.ts`), base de datos
+  (`tests/db/editor-reels.test.ts`), aplicación (`quality.test.ts`, plantillas, «como este») y catálogo.
+- **Pendiente**: que el editor (`editor/project.ts`) guarde `role`, `outro`, `grade` y `subjectMaskPath`; el
+  aviso «Sin música» en pantalla (`reelAudioNotice`); los selectores con `rankReelAssets`; que la vista previa
+  imite los mínimos de texto; elegir fuente de música. Sin probar en Fly (FFmpeg 7.1) ni publicar en Meta un
+  reel sin pista de audio.
+- **Para staging**: migración, trabajador (imagen con `worker/fonts/`), aplicación y volver a cargar el catálogo.

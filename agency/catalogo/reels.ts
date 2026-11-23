@@ -8,8 +8,15 @@
 //   · gancho con texto en el primer plano, que dura 1,5–2,5 s;
 //   · el resultado va primero y el proceso después;
 //   · planos de 1–3 s salvo cuando alguien habla o el plano es el protagonista;
-//   · textos de 2 a 6 palabras, fuera de lo que tapa Instagram (14 % arriba,
-//     35 % abajo): por eso «abajo» es aquí un 37 % de margen;
+//   · textos de 2 a 6 palabras, fuera de lo que tapa Instagram (250 px arriba,
+//     400 px abajo y 60 px a los lados en 1080 × 1920): «abajo» es aquí un 26 %
+//     de margen, y el trabajador no deja pasar nada de esas zonas;
+//   · letra que se lee en un móvil: titular ≈ 100 px, rótulo ≈ 70 px en caja,
+//     llamada ≈ 84 px en caja del acento de la marca (docs/reels-calidad.md);
+//   · ritmo: planos de 0,6 a 1,8 s (el gancho, de los más cortos), corte seco con
+//     golpe de zoom y algún barrido; los planos de producto de 1,6 s o más cortan
+//     a mitad a un detalle (lo hace el trabajador); movimiento del 10–12 %;
+//   · cada plano con su rótulo (el nombre del plato sale del archivo si lo dice);
 //   · una sola llamada al final;
 //   · la portada sale de un plano que aguanta el recorte de la cuadrícula.
 import type { ReelSlot, ReelTemplateInput, ReelTemplateText } from '../../src/features/reels/reelTemplate.ts';
@@ -36,45 +43,49 @@ export const MUSIC = {
 
 /** Estilos de texto con los colores de la marca por papel. La tipografía la pone la marca al montar. */
 export function estilos(theme: Theme) {
+  /** Titular grueso, grande, con contorno fino y la sombra que pone el trabajador. */
   const gancho: Style = {
-    sizeRatio: 0.085,
+    sizeRatio: 0.095,
     color: theme.onDark,
     marginRatio: 0.2,
-    maxWidthRatio: 0.86,
-    lineHeight: 1.15,
+    maxWidthRatio: 0.82,
+    lineHeight: 1.1,
     box: null,
-    outline: { color: theme.dark, widthRatio: 0.08 },
-    fadeSeconds: 0.2,
+    outline: { color: theme.dark, widthRatio: 0.04 },
+    fadeSeconds: 0.25,
   };
+  /** Rótulo en caja oscura de la marca: se lee sobre cualquier foto. */
   const rotulo: Style = {
-    sizeRatio: 0.055,
+    sizeRatio: 0.064,
     color: theme.onDark,
     marginRatio: 0.16,
     maxWidthRatio: 0.8,
-    lineHeight: 1.3,
-    box: { color: theme.dark, opacity: 0.75, paddingRatio: 0.35 },
+    lineHeight: 1.45,
+    box: { color: theme.dark, opacity: 0.85, paddingRatio: 0.3 },
     outline: null,
     fadeSeconds: 0.25,
   };
+  /** Llamada o dato en caja del acento de la marca. */
   const acento: Style = {
-    sizeRatio: 0.06,
+    sizeRatio: 0.078,
     color: theme.onAccent,
-    marginRatio: 0.37,
-    maxWidthRatio: 0.8,
+    marginRatio: 0.26,
+    maxWidthRatio: 0.82,
     lineHeight: 1.3,
     box: { color: theme.accent, opacity: 1, paddingRatio: 0.4 },
     outline: null,
     fadeSeconds: 0.25,
   };
   /** Texto de abajo, por encima de lo que tapa Instagram. */
-  const pie: Style = { ...rotulo, marginRatio: 0.37 };
+  const pie: Style = { ...rotulo, marginRatio: 0.26 };
   return { gancho, rotulo, acento, pie };
 }
 
 const cut = { type: 'cut', seconds: 0 } as const;
-const fade = (seconds = 0.4) => ({ type: 'fade', seconds }) as const;
-const slide = (seconds = 0.35) => ({ type: 'slideleft', seconds }) as const;
-const up = (seconds = 0.35) => ({ type: 'slideup', seconds }) as const;
+// Transiciones cortas: corte seco casi siempre; un barrido o un fundido rápido de vez en cuando.
+const fade = (seconds = 0.3) => ({ type: 'fade', seconds }) as const;
+const slide = (seconds = 0.25) => ({ type: 'slideleft', seconds }) as const;
+const up = (seconds = 0.25) => ({ type: 'slideup', seconds }) as const;
 
 const ZOOM = { in: 'zoom', out: 'fade', seconds: 0.4 } as const;
 const RISE = { in: 'rise', out: 'fade', seconds: 0.4 } as const;
@@ -149,22 +160,22 @@ export function asiSeHace(
         id: 'resultado',
         label: w.result,
         hint: 'El mejor plano que tengas: es el gancho.',
-        seconds: 1.8,
+        seconds: 1.2,
         motion: 'zoom-in',
-        motionAmount: 0.15,
+        motionAmount: 0.12,
       },
-      { id: 'paso1', label: w.steps[0], seconds: 2, transition: cut },
-      { id: 'paso2', label: w.steps[1], seconds: 2, transition: cut },
-      { id: 'paso3', label: w.steps[2], seconds: 2, transition: cut, optional: true },
-      { id: 'paso4', label: w.steps[3], seconds: 2, transition: cut, optional: true },
+      { id: 'paso1', label: w.steps[0], seconds: 1.3, transition: cut },
+      { id: 'paso2', label: w.steps[1], seconds: 1.7, motion: 'zoom-in', transition: cut },
+      { id: 'paso3', label: w.steps[2], seconds: 1.3, transition: slide(), optional: true },
+      { id: 'paso4', label: w.steps[3], seconds: 1.7, motion: 'zoom-in', transition: cut, optional: true },
       {
         id: 'final',
         label: w.end,
-        hint: 'Plano quieto para leer el cierre.',
-        seconds: 3,
-        motion: 'zoom-out',
-        motionAmount: 0.08,
-        transition: fade(0.3),
+        hint: 'El plato en la mesa: se corta a un detalle a mitad del plano.',
+        seconds: 1.8,
+        motion: 'zoom-in',
+        motionAmount: 0.1,
+        transition: cut,
       },
     ],
     texts: [
@@ -177,6 +188,19 @@ export function asiSeHace(
         style: e.gancho,
         animation: ZOOM,
       },
+      // Cada paso con su rótulo, para que el reel cuente el proceso.
+      ...([1, 2, 3, 4] as const).map(
+        (n): TextInput => ({
+          id: `rotulo${n}`,
+          role: 'step',
+          text: w.steps[n - 1]!,
+          from: `paso${n}`,
+          offset: 0.1,
+          position: 'bottom',
+          style: e.pie,
+          animation: RISE,
+        }),
+      ),
       {
         id: 'cierre',
         role: 'cta',
@@ -344,7 +368,7 @@ export function enCuatroPasos(
     whenToUse: w.when,
     style: 'corte-ritmico',
     slots: [
-      { id: 'resultado', label: w.result, seconds: 1.8, motion: 'zoom-in', motionAmount: 0.15 },
+      { id: 'resultado', label: w.result, seconds: 1.8, motion: 'zoom-in', motionAmount: 0.12 },
       { id: 'paso1', label: `Paso 1: ${w.steps[0]}`, kind: 'video', seconds: 2.6, volume: 0.7, transition: cut },
       { id: 'paso2', label: `Paso 2: ${w.steps[1]}`, kind: 'video', seconds: 2.6, volume: 0.7, transition: cut },
       { id: 'paso3', label: `Paso 3: ${w.steps[2]}`, kind: 'video', seconds: 2.6, volume: 0.7, transition: cut },
@@ -478,19 +502,20 @@ export function ofertaDeLaSemana(
         id: 'gancho',
         label: 'Lo que se ofrece',
         hint: 'El plano más apetecible.',
-        seconds: 2,
+        seconds: 1.2,
         motion: 'zoom-in',
-        motionAmount: 0.15,
+        motionAmount: 0.12,
       },
-      { id: 'detalle', label: w.product, seconds: 2.5, transition: cut },
-      { id: 'detalle2', label: 'Otro ángulo', seconds: 2, transition: cut, optional: true },
+      { id: 'detalle', label: w.product, seconds: 1.8, motion: 'zoom-in', transition: cut },
+      { id: 'detalle2', label: 'Otro ángulo', seconds: 1.3, transition: slide(), optional: true },
       {
         id: 'precio',
         label: 'Plano tranquilo para el precio',
-        hint: 'Sin mucho movimiento: aquí se lee.',
-        seconds: 3.5,
-        motion: 'none',
-        transition: fade(0.3),
+        hint: 'Aquí se lee: movimiento lento.',
+        seconds: 3,
+        motion: 'zoom-in',
+        motionAmount: 0.08,
+        transition: cut,
       },
     ],
     texts: [
@@ -611,7 +636,7 @@ export function unDiaAqui(
     id: `plano${n}`,
     label: w.shots[n - 1]!,
     seconds: n === 1 ? 2 : 1.4,
-    ...(n === 1 ? { motion: 'zoom-in' as const, motionAmount: 0.15 } : { transition: cut }),
+    ...(n === 1 ? { motion: 'zoom-in' as const, motionAmount: 0.12 } : { transition: cut }),
     ...(optional ? { optional: true as const } : {}),
   });
   return build({
@@ -765,23 +790,24 @@ export function paseo(
       {
         id: 'parada1',
         label: w.stops[0],
-        hint: 'Andando despacio, móvil en vertical.',
-        seconds: 2.6,
+        hint: 'Andando despacio, móvil en vertical. Mejor un vídeo que una foto.',
+        kind: 'video',
+        seconds: 1.8,
         motion: 'pan-right',
-        motionAmount: 0.1,
+        motionAmount: 0.12,
       },
-      { id: 'parada2', label: w.stops[1], seconds: 2.6, motion: 'pan-right', motionAmount: 0.1, transition: slide() },
-      { id: 'parada3', label: w.stops[2], seconds: 2.6, motion: 'pan-left', motionAmount: 0.1, transition: slide() },
+      { id: 'parada2', label: w.stops[1], seconds: 1.5, motion: 'pan-left', motionAmount: 0.12, transition: slide() },
+      { id: 'parada3', label: w.stops[2], seconds: 1.8, motion: 'zoom-in', motionAmount: 0.12, transition: cut },
       {
         id: 'parada4',
         label: w.stops[3],
-        seconds: 2.6,
-        motion: 'zoom-in',
-        motionAmount: 0.08,
+        seconds: 1.5,
+        motion: 'pan-right',
+        motionAmount: 0.12,
         transition: slide(),
         optional: true,
       },
-      { id: 'final', label: 'Lo mejor, para el final', seconds: 3, transition: fade(0.4) },
+      { id: 'final', label: 'Lo mejor, para el final', seconds: 1.8, motion: 'zoom-in', transition: cut },
     ],
     texts: [
       {
@@ -789,12 +815,12 @@ export function paseo(
         role: 'hook',
         text: w.hook,
         from: 'parada1',
-        endOffset: -1.2,
+        endOffset: -0.8,
         position: 'center',
         style: e.gancho,
         animation: ZOOM,
       },
-      { ...stop(1), offset: 1.4 },
+      { ...stop(1), offset: 1 },
       stop(2),
       stop(3),
       stop(4),
@@ -833,7 +859,7 @@ export function conFecha(
     whenToUse: w.when,
     style: 'corte-ritmico',
     slots: [
-      { id: 'gancho', label: w.shots[0], seconds: 2, motion: 'zoom-in', motionAmount: 0.15 },
+      { id: 'gancho', label: w.shots[0], seconds: 2, motion: 'zoom-in', motionAmount: 0.12 },
       { id: 'ambiente1', label: w.shots[1], seconds: 1.6, transition: cut },
       { id: 'ambiente2', label: w.shots[2], seconds: 1.6, transition: cut, optional: true },
       {
@@ -994,7 +1020,7 @@ export function rutina(
     whenToUse: w.when,
     style: 'corte-ritmico',
     slots: [
-      { id: 'gancho', label: 'El momento más vistoso', seconds: 2, motion: 'zoom-in', motionAmount: 0.15 },
+      { id: 'gancho', label: 'El momento más vistoso', seconds: 2, motion: 'zoom-in', motionAmount: 0.12 },
       {
         id: 'ejercicio1',
         label: 'Primero',
@@ -1049,7 +1075,7 @@ export function loNuevo(
     whenToUse: w.when,
     style: 'corte-ritmico',
     slots: [
-      { id: 'angulo1', label: w.angles[0], seconds: 1.8, motion: 'zoom-in', motionAmount: 0.15 },
+      { id: 'angulo1', label: w.angles[0], seconds: 1.8, motion: 'zoom-in', motionAmount: 0.12 },
       { id: 'angulo2', label: w.angles[1], seconds: 2, transition: cut },
       { id: 'angulo3', label: w.angles[2], seconds: 2, transition: cut, optional: true },
       {
@@ -1108,9 +1134,9 @@ export function fotosConRitmo(
     id: `foto${n}`,
     label: `${w.subject} ${n}`,
     kind: 'photo',
-    seconds: n === 1 ? 1.8 : 1.3,
+    seconds: n === 1 ? 1 : n % 3 === 0 ? 1.7 : 1.2,
     motion: n % 2 === 1 ? 'zoom-in' : 'zoom-out',
-    motionAmount: 0.15,
+    motionAmount: 0.12,
     ...(n === 1 ? {} : { transition: cut }),
     ...(optional ? { optional: true as const } : {}),
   });
@@ -1130,10 +1156,10 @@ export function fotosConRitmo(
         id: 'final',
         label: 'La mejor foto, para el final',
         kind: 'photo',
-        seconds: 2.8,
-        motion: 'zoom-out',
-        motionAmount: 0.08,
-        transition: fade(0.3),
+        seconds: 1.8,
+        motion: 'zoom-in',
+        motionAmount: 0.1,
+        transition: cut,
       },
     ],
     texts: [

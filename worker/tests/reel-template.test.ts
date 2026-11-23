@@ -309,7 +309,7 @@ describe('media.reel.template', () => {
     expect(await meanVolume(file)).toBeGreaterThan(-45); // el tono del clip
   });
 
-  it('sin música ni sonido de clips, el reel lleva igualmente una pista de sonido (en silencio)', async () => {
+  it('sin música ni sonido de clips, el reel sale sin pista de sonido (no una pista muda)', async () => {
     await runHandler(handler, bucket, {
       template: { id: 'pase-lateral' },
       plan: {
@@ -322,9 +322,8 @@ describe('media.reel.template', () => {
     });
     const file = bucket.file(inBrand('reels/mudo.mp4'));
     const info = await probe(file);
-    expect(info.audio).toMatchObject({ codec: 'aac' });
+    expect(info.audio).toBeUndefined();
     expect(info.durationSeconds).toBeCloseTo(1.6, 1);
-    expect(await meanVolume(file)).toBeLessThan(-80);
   });
 
   it('acepta una plantilla completa en la carga y rechaza lo que no puede montar', async () => {
