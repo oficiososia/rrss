@@ -8,6 +8,7 @@
 // otras: docs/plantillas-competencia.md.
 import type { DocumentPageInput } from '../../src/features/content/document/schema.ts';
 import type { ReelTemplateInput } from '../../src/features/reels/reelTemplate.ts';
+import * as S from './historias.ts';
 import * as P from './publicaciones.ts';
 import * as R from './reels.ts';
 import type { Theme } from './tema.ts';
@@ -21,7 +22,7 @@ export interface ReelDraft {
 export interface PostDraft {
   key: string;
   name: string;
-  format: 'post' | 'carousel';
+  format: 'post' | 'carousel' | 'story';
   /** Para qué sirve, en una frase. */
   purpose: string;
   /** Cuándo usarla. */
@@ -47,6 +48,8 @@ export interface CatalogSet {
   look: P.Look;
   reels: (theme: Theme) => ReelDraft[];
   posts: (theme: Theme) => PostDraft[];
+  /** Historias de Instagram (9:16), si el juego las trae. */
+  stories?: (theme: Theme) => PostDraft[];
 }
 
 const CAPTION = {
@@ -58,6 +61,9 @@ const CAPTION = {
 };
 
 const one = (page: DocumentPageInput): DocumentPageInput[] => [page];
+
+/** Las historias se suben sin pie: lo que hay que decir va en la imagen. */
+const STORY_CAPTION = 'Las historias se publican sin pie: todo lo que haya que decir va en la imagen.';
 
 // ───────────────────────────── Restaurante o asador ─────────────────────────────
 
@@ -375,6 +381,110 @@ const restaurante: CatalogSet = {
         ),
         caption: CAPTION.aviso,
         photo: 'Sin foto.',
+      },
+    ];
+  },
+  stories: (theme) => {
+    const look = RESTAURANTE_LOOK;
+    const menu = {
+      kicker: 'Hoy, a mediodía',
+      title: 'Menú del día',
+      sections: [
+        { label: 'Primeros', dishes: 'Primer plato a elegir\nOtro primer plato' },
+        { label: 'Segundos', dishes: 'Segundo plato a elegir\nOtro segundo plato' },
+        { label: 'Postre', dishes: 'Postre de la casa' },
+      ],
+      price: '00 €',
+      included: 'Bebida y postre incluidos',
+      when: 'De martes a jueves, a mediodía',
+    };
+    return [
+      {
+        key: 'rest-historia-tapa-del-dia',
+        name: 'Tapa del día',
+        format: 'story',
+        purpose: 'Una tapa en grande: la foto, su nombre, su precio en un sello y la llamada final.',
+        whenToUse: 'Cada día que haya tapa nueva o para destacar la de la semana. Solo hay que poner la foto.',
+        material: '1 foto vertical de la tapa, de cerca; el plato, en la parte de arriba.',
+        background: 'dark',
+        pages: one(
+          S.tapaDelDia(theme, look, {
+            kicker: 'Tapa del día',
+            name: 'Nombre de la tapa',
+            price: '0,00 €',
+            cta: 'Te esperamos en la barra',
+          }),
+        ),
+        caption: STORY_CAPTION,
+        photo: 'La tapa de cerca y con luz cálida; la franja de abajo tapa el último tercio.',
+      },
+      {
+        key: 'rest-historia-tapas-semana',
+        name: 'Tapas de la semana',
+        format: 'story',
+        purpose: 'Cuatro tapas en una cuadrícula, cada una con su nombre y su precio.',
+        whenToUse: 'Para anunciar las tapas de la semana o de un día señalado.',
+        material: '4 fotos de tapas, mejor cuadradas o verticales y con el mismo fondo.',
+        background: 'dark',
+        pages: one(
+          S.tapasDeLaSemana(theme, look, {
+            kicker: 'Esta semana, en la barra',
+            title: 'Tapas de la semana',
+            items: [
+              { name: 'Nombre de la primera', price: '0,00 €' },
+              { name: 'Nombre de la segunda', price: '0,00 €' },
+              { name: 'Nombre de la tercera', price: '0,00 €' },
+              { name: 'Nombre de la cuarta', price: '0,00 €' },
+            ],
+          }),
+        ),
+        caption: STORY_CAPTION,
+        photo: 'Una tapa por foto, de cerca; se recortan en cuadrado.',
+      },
+      {
+        key: 'rest-historia-dos-tapas',
+        name: 'Dos tapas',
+        format: 'story',
+        purpose: 'Dos tapas, una encima de otra, con su nombre y su precio.',
+        whenToUse: 'Cuando hay dos novedades o dos tapas para elegir.',
+        material: '2 fotos horizontales de tapas.',
+        background: 'dark',
+        pages: one(
+          S.tapasDeLaSemana(theme, look, {
+            kicker: 'Esta semana, en la barra',
+            title: 'Para picar',
+            items: [
+              { name: 'Nombre de la primera', price: '0,00 €' },
+              { name: 'Nombre de la segunda', price: '0,00 €' },
+            ],
+          }),
+        ),
+        caption: STORY_CAPTION,
+        photo: 'Fotos horizontales o cuadradas; se recortan en apaisado.',
+      },
+      {
+        key: 'rest-historia-menu-dia',
+        name: 'Menú del día',
+        format: 'story',
+        purpose: 'El menú entero en letra grande: primeros, segundos, postre, precio y qué incluye.',
+        whenToUse: 'Cada día de menú. La foto de fondo es opcional: sin ella, sale sobre el color oscuro de la marca.',
+        material: 'Los platos del día (uno por línea). Si se quiere, una foto de fondo, que se oscurece.',
+        background: 'dark',
+        pages: one(S.menuDelDia(theme, look, menu)),
+        caption: STORY_CAPTION,
+        photo: 'Opcional: la sala o un plato del menú; se oscurece para que se lea el texto.',
+      },
+      {
+        key: 'rest-historia-menu-foto',
+        name: 'Menú del día con foto',
+        format: 'story',
+        purpose: 'Una foto grande de un plato del menú y, debajo, el menú en una franja clara.',
+        whenToUse: 'Cuando hay una buena foto de un plato del menú de ese día.',
+        material: '1 foto de un plato del menú, horizontal o cuadrada; los platos del día.',
+        background: 'light',
+        pages: one(S.menuConFoto(theme, look, { ...menu, title: 'Menú del día', kicker: 'Hoy, a mediodía' })),
+        caption: STORY_CAPTION,
+        photo: 'El plato de cerca; la franja empieza a media altura.',
       },
     ];
   },

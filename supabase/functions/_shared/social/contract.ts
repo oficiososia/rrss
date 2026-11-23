@@ -106,10 +106,14 @@ export interface InstagramApi {
     token: string,
     p: { videoUrl: string; caption?: string; shareToFeed?: boolean; coverUrl?: string; thumbOffsetMs?: number },
   ): Promise<string>;
+  /** Historia de una imagen (media_type=STORIES). Las historias no llevan pie ni texto alternativo. */
+  createStoryContainer(igUserId: string, token: string, p: { imageUrl: string }): Promise<string>;
   containerStatus(containerId: string, token: string): Promise<ContainerInfo>;
   /** SIN reintentos: un segundo intento tras un tiempo agotado puede publicar dos veces. */
   mediaPublish(igUserId: string, token: string, creationId: string): Promise<string>;
   recentMedia(igUserId: string, token: string): Promise<PublishedMedia[]>;
+  /** Historias vivas de la cuenta (las de las últimas 24 h): GET /{ig-user-id}/stories. */
+  recentStories(igUserId: string, token: string): Promise<PublishedMedia[]>;
   permalink(mediaId: string, token: string): Promise<string | null>;
 }
 

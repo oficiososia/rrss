@@ -29,6 +29,8 @@ export type SimulatedOperation =
   | 'media_publish'
   | 'limit'
   | 'media_list'
+  // GET /{ig-user-id}/stories
+  | 'stories'
   // Descarga de una imagen de la CDN simulada.
   | 'cdn'
   // Métricas (analítica, Fase 5): insights de cuenta y de publicación, y seguidores.
@@ -49,7 +51,7 @@ export interface SimulatedFailure {
 interface Container {
   id: string;
   igUserId: string;
-  kind: 'IMAGE' | 'CAROUSEL_ITEM' | 'CAROUSEL' | 'REELS';
+  kind: 'IMAGE' | 'CAROUSEL_ITEM' | 'CAROUSEL' | 'REELS' | 'STORIES';
   status: 'IN_PROGRESS' | 'FINISHED' | 'PUBLISHED' | 'ERROR' | 'EXPIRED';
   pollsLeft: number;
   caption: string;
@@ -276,6 +278,13 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
           return graphError(400, 100, 'Invalid children');
         }
         kind = 'CAROUSEL';
+      } else if (mediaType === 'STORIES') {
+        // Historia: imagen (o vídeo) y nada de pie, que Instagram no admite en historias.
+        if (!body.get('image_url') && !body.get('video_url')) return graphError(400, 100, 'image_url is required');
+        if (body.get('caption') !== null || body.get('alt_text') !== null) {
+          return graphError(400, 100, 'Stories do not support caption or alt_text (simulado)');
+        }
+        kind = 'STORIES';
       } else if (mediaType === 'REELS') {
         if (!body.get('video_url')) return graphError(400, 100, 'video_url is required');
         const offset = body.get('thumb_offset');
@@ -334,7 +343,10 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
         coverUrl: container.coverUrl,
         thumbOffset: container.thumbOffset,
         timestamp: new Date(now()).toISOString(),
-        permalink: `${SIMULATED_PERMALINK_HOST}/p/${id}/`,
+        permalink:
+          container.kind === 'STORIES'
+            ? `${SIMULATED_PERMALINK_HOST}/stories/simulada/${id}/`
+            : `${SIMULATED_PERMALINK_HOST}/p/${id}/`,
       };
       published.push(media);
       if (failure) return failureResponse(failure);
@@ -350,7 +362,8 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
       const fields = new Set((query.get('fields') ?? '').split(/[,{}]/).map((f) => f.trim()));
       const history = [
         ...published
-          .filter((m) => m.igUserId === igUserId)
+          // Las historias no salen en /media (se listan en /stories).
+          .filter((m) => m.igUserId === igUserId && m.kind !== 'STORIES')
           .reverse()
           .map((m) => ({ ...m, product: m.kind === 'REELS' ? 'REELS' : 'FEED', previous: false as const })),
         ...existing
@@ -416,6 +429,17 @@ export function createSimulatedGraph(options: SimulatedGraphOptions = {}): Simul
       });
       if (mediaUsageHeader) response.headers.set('x-business-use-case-usage', mediaUsageHeader);
       return response;
+    }
+
+    // GET /{ig-user-id}/stories: las historias publicadas en las últimas 24 h, de la más reciente a la más antigua.
+    if (method === 'GET' && parts.length === 3 && parts[2] === 'stories') {
+      const failure = takeFailure('stories');
+      if (failure) return failureResponse(failure);
+      const data = published
+        .filter((m) => m.igUserId === parts[1] && m.kind === 'STORIES' && Date.parse(m.timestamp) > now() - 86_400_000)
+        .reverse()
+        .map((m) => ({ id: m.id, timestamp: m.timestamp, permalink: m.permalink, media_type: 'IMAGE' }));
+      return json(200, { data });
     }
 
     // Métricas (analítica, Fase 5): ../analytics/simulated-insights.ts.

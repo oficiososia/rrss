@@ -14,6 +14,7 @@ import { loadSocialConfig } from '../_shared/social/config.ts';
 import { createImportGraph } from '../_shared/social/import-graph.ts';
 import { META_CDN_HOST, runImportStep } from '../_shared/social/importer.ts';
 import { loadSocialLocalTest } from '../_shared/social/local-test.ts';
+import { fetchRecentMedia } from '../_shared/social/recent.ts';
 import { DEFAULT_GRAPH_API_VERSION } from '../_shared/social/meta-graph.ts';
 import { SIMULATED_CDN_HOST } from '../_shared/social/simulated-graph.ts';
 import { mediaStoresFor, uploadStoreFor } from '../_shared/storage/resolve.ts';
@@ -69,6 +70,8 @@ const handlerFor = memoByEnv((effective) => {
             log,
           })
         : null,
+    recent: (accountId, userId) =>
+      config.keyRing ? fetchRecentMedia(accountId, { rpc, api, keyRing: config.keyRing, userId }) : null,
     allowedOrigin: env.SOCIAL_ALLOWED_ORIGIN?.trim() || undefined,
     log,
   });

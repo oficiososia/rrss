@@ -1,5 +1,5 @@
 // El publicador: atiende un trabajo `social.publish` de la cola y publica la
-// publicación programada en Instagram (imagen, carrusel o reel).
+// publicación programada en Instagram (imagen, carrusel, reel o historia de una imagen).
 //
 // Cómo se garantiza que NO se publica dos veces:
 //   1. Cola: un trabajo por publicación, generación y hora (clave de
@@ -147,7 +147,9 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
   const pub = ready.publication;
   const account = ready.account;
   const copy = readCopy(ready.copy);
-  const caption = composeCaption(copy);
+  // Las historias no llevan pie: Instagram no lo admite en media_type=STORIES.
+  const isStory = pub.format === 'story';
+  const caption = isStory ? '' : composeCaption(copy);
   const ig = account.external_id;
 
   async function defer(seconds: number, keepLock: boolean, code: string, message: string): Promise<PublishResult> {
@@ -199,6 +201,23 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
   async function recover(token: string, containerCreatedAt: string | null): Promise<PublishResult> {
     log('recover', { publicationId: pub.id });
     const since = (Date.parse(containerCreatedAt ?? '') || now() - 25 * 3_600_000) - 10 * 60_000;
+    if (isStory) {
+      // Una historia no tiene pie con el que reconocerla ni sale en /media: se busca en /stories
+      // y solo se da por buena si hay UNA en la ventana; con más, podría ser otra.
+      const stories = (await deps.api.recentStories(ig, token).catch(() => [])).filter(
+        (m) => (Date.parse(m.timestamp ?? '') || 0) >= since,
+      );
+      if (stories.length === 1) {
+        const story = stories[0]!;
+        const permalink = story.permalink ?? (await deps.api.permalink(story.id, token).catch(() => null));
+        return succeed(story.id, permalink, true);
+      }
+      return fail(
+        'published_unconfirmed',
+        'Instagram indica que esta historia ya salió, pero no se pudo reconocer en la cuenta: compruébala allí. No se ha vuelto a publicar.',
+        true,
+      );
+    }
     const media = await deps.api.recentMedia(ig, token).catch(() => []);
     const match = media
       .filter((m) => (Date.parse(m.timestamp ?? '') || 0) >= since && (m.caption ?? '').trim() === caption.trim())
@@ -310,6 +329,10 @@ export async function processPublishJob(job: ClaimedSocialJob, deps: PublisherDe
           }
         }
         containerId = await deps.api.createCarouselContainer(ig, token, { children, caption });
+      } else if (isStory) {
+        // Historia de una imagen: la exportación JPEG 9:16 de la versión aprobada (la base de
+        // datos ya exige una sola). Sin pie ni texto alternativo, que las historias no admiten.
+        containerId = await deps.api.createStoryContainer(ig, token, { imageUrl: urls[0]! });
       } else if (pub.format === 'reel') {
         // Portada del montaje (si la pieza la tiene): es un JPEG ya guardado en la biblioteca.
         // Si no se puede leer, el reel sale igualmente con el fotograma que elija Instagram.

@@ -2215,7 +2215,7 @@ function Editor({
           initialContentId={contentId}
           // La imagen que se publica se prepara sola al guardar en el calendario, como en «Publicar ahora».
           exportVersion={
-            (item.format === 'post' || item.format === 'carousel') && !dirty
+            (item.format === 'post' || item.format === 'carousel' || item.format === 'story') && !dirty
               ? { contentId, run: exportApprovedVersion }
               : undefined
           }
@@ -2228,7 +2228,7 @@ function Editor({
           onOpenChange={setPublishNowOpen}
           contentId={contentId}
           exportVersion={
-            (item.format === 'post' || item.format === 'carousel') && !dirty ? exportApprovedVersion : undefined
+            (item.format === 'post' || item.format === 'carousel' || item.format === 'story') && !dirty ? exportApprovedVersion : undefined
           }
         />
       )}

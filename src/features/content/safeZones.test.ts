@@ -44,12 +44,14 @@ describe('zonas seguras del catálogo', () => {
     }
   });
 
-  it('una historia 9:16 deja libres el 14 % de arriba, el 35 % de abajo y el 6 % por lado', () => {
+  it('una historia 9:16 deja libres 250 px arriba, 340 px abajo y el 6 % por lado (sin el pie de los reels)', () => {
     const zone = safeZoneFor(getFormatSpec('instagram', 'story'), STORY)!;
     expect(zone.safe.left).toBeCloseTo(64.8);
     expect(zone.safe.right).toBeCloseTo(1015.2);
-    expect(zone.safe.top).toBeCloseTo(268.8);
-    expect(zone.safe.bottom).toBeCloseTo(1248);
+    expect(zone.safe.top).toBeCloseTo(250);
+    expect(zone.safe.bottom).toBeCloseTo(1580);
+    // El reel sigue con la caja conservadora: el pie y los botones tapan el 35 % de abajo.
+    expect(safeZoneFor(getFormatSpec('instagram', 'reel'), STORY)!.safe.bottom).toBeCloseTo(1248);
     expect(zone.unsafe).toHaveLength(4);
     expect(zone.provenance).toBe('unverified');
   });

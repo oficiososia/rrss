@@ -166,6 +166,18 @@ textos de 8 palabras como mucho, arriba con un 14 % de margen o más y abajo con
 
 Todas en 4:5 con 72 px de margen: caben en el recorte 3:4 de la cuadrícula ([9], [11]).
 
+### Historias (solo el juego de restaurante, 23/11/2026)
+
+| Plantilla | Qué es | Sale de |
+| --- | --- | --- |
+| **Tapa del día** | Foto grande, nombre, precio en una píldora y «Te esperamos en la barra» | Las historias de tapas que ya sube un restaurante (lista sobre foto de sala y póster), con la tapa a la vista y su precio |
+| **Tapas de la semana** / **Dos tapas** | 4 (o 2) fotos, cada una con su precio y su nombre | La lista semanal de tapas de ese mismo restaurante, con foto por tapa |
+| **Menú del día** | Primeros, segundos, postre, precio, qué incluye y cuándo; foto de fondo opcional | El menú del día de la web del restaurante (tres secciones y precio) |
+| **Menú del día con foto** | Foto de un plato y el menú en una franja clara | Ídem, con un plato del día como gancho |
+
+En 9:16 (1080 × 1920), sin nada que leer en los 250 px de arriba ni en los 340 px de abajo, que tapan la cuenta y
+el campo de mensaje. Las historias se publican sin pie: todo lo que haya que decir va en la imagen.
+
 ## 6. Fuentes
 
 Leídas el 22/11/2026. **A** = abierta y leída; **B** = solo el extracto del buscador.

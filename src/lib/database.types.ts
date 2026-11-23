@@ -1786,6 +1786,41 @@ export type PlatformAlertRow = {
   resolved_by: string | null;
 };
 
+/** Reel entregado para terminarlo en Instagram a mano (con música): pendiente, publicado o cancelado. */
+export type ManualPublicationRow = {
+  id: string;
+  brand_id: string;
+  organization_id: string;
+  content_id: string;
+  content_version: number;
+  media_asset_id: string;
+  caption: string;
+  status: 'pending' | 'published' | 'cancelled';
+  handed_off_at: string;
+  published_at: string | null;
+  match_source: 'manual' | 'import' | null;
+  imported_media_id: string | null;
+  external_id: string | null;
+  external_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ManualPublicationTables = {
+  manual_publications: Table<ManualPublicationRow>;
+};
+
+type ManualPublicationFunctions = {
+  start_manual_publication: {
+    Args: { p_content_id: string; p_media_asset_id: string; p_caption?: string };
+    Returns: ManualPublicationRow;
+  };
+  confirm_manual_publication: { Args: { p_id: string; p_url?: string | null }; Returns: ManualPublicationRow };
+  match_manual_publication: { Args: { p_id: string; p_imported_media_id: string }; Returns: ManualPublicationRow };
+  cancel_manual_publication: { Args: { p_id: string }; Returns: ManualPublicationRow };
+};
+
 type OperationTables = {
   platform_alerts: Table<PlatformAlertRow>;
 };
@@ -1887,7 +1922,8 @@ export type Database = {
       AnalyticsTables &
       DriveTables &
       OperationTables &
-      ReelLikeTables;
+      ReelLikeTables &
+      ManualPublicationTables;
     Views: Record<never, never>;
     Functions: {
       create_organization: { Args: { p_name: string; p_kind?: OrgKind }; Returns: OrganizationRow };
@@ -1928,7 +1964,8 @@ export type Database = {
       DriveFunctions &
       ImportFunctions &
       OperationFunctions &
-      ReelLikeFunctions;
+      ReelLikeFunctions &
+      ManualPublicationFunctions;
     Enums: {
       org_kind: OrgKind;
       org_role: OrgRole;

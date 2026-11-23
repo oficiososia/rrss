@@ -230,6 +230,8 @@ const TENANT_TABLES = [
   'reel_references',
   // Borrador automático del editor de reels.
   'reel_drafts',
+  // «Terminar en Instagram»: reels entregados para publicarlos a mano.
+  'manual_publications',
 ];
 
 // Catálogos de la plataforma: no son de ningún cliente. Los lee cualquier
@@ -3437,5 +3439,69 @@ describe('modo de trabajo de la organización (autogestión o agencia)', () => {
     const deliver = `select template_key from public.deliver_reel_templates($1, $2::jsonb, 'catalog')`;
     await denied(db, berta, deliver, [marcaPropia, entrega], /edita/);
     await denied(db, ana, deliver, [marcaAjena, entrega], /edita/);
+  });
+});
+
+describe('«Terminar en Instagram» (20270121010000)', () => {
+  let reelA: string, reelB: string, videoA: string, videoB: string, entregaB: string;
+
+  const approvedReel = async (owner: TestUser, org: string, brand: string) => {
+    const [item] = await as<{ id: string }>(
+      db,
+      owner,
+      `insert into public.content_items (brand_id, organization_id, title, network, format)
+       values ($1, $2, 'Reel', 'instagram', 'reel') returning id`,
+      [brand, org],
+    );
+    await as(db, owner, `select public.save_content_version($1, '{"schemaVersion":1}'::jsonb, 1)`, [item!.id]);
+    await as(db, owner, `select public.set_content_status($1, 'approved', 1)`, [item!.id]);
+    return item!.id;
+  };
+  const video = async (owner: TestUser, org: string, brand: string) => {
+    const [row] = await as<{ id: string }>(
+      db,
+      owner,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'video', $3, 'reel.mp4', 'video/mp4', 100) returning id`,
+      [brand, org, assetPath(org, brand, `${randomUUID()}.mp4`)],
+    );
+    return row!.id;
+  };
+
+  beforeAll(async () => {
+    reelA = await approvedReel(ana, orgA, marcaA1);
+    reelB = await approvedReel(berta, orgB, marcaB1);
+    videoA = await video(ana, orgA, marcaA1);
+    videoB = await video(berta, orgB, marcaB1);
+    await as(db, editorA, `select public.start_manual_publication($1, $2, 'Pie A')`, [reelA, videoA]);
+    const [row] = await as<{ id: string }>(
+      db,
+      berta,
+      `select id from public.start_manual_publication($1, $2, 'Pie B')`,
+      [reelB, videoB],
+    );
+    entregaB = row!.id;
+  });
+
+  it('una organización no ve las entregas de otra; dentro, quien no ve la marca tampoco', async () => {
+    const deB = await as(db, berta, `select distinct organization_id::text as org from public.manual_publications`);
+    expect(deB.map((r) => r.org)).toEqual([orgB]);
+    const deA = await as(db, ana, `select distinct organization_id::text as org from public.manual_publications`);
+    expect(deA.map((r) => r.org)).toEqual([orgA]);
+    expect(await as(db, superadmin, `select 1 from public.manual_publications`)).toEqual([]);
+    expect(await as(db, ajeno, `select 1 from public.manual_publications`)).toEqual([]);
+    expect(await as(db, sinMarcaA, `select 1 from public.manual_publications`)).toEqual([]);
+    expect((await as(db, clienteA, `select 1 from public.manual_publications`)).length).toBeGreaterThan(0);
+  });
+
+  it('nadie escribe la tabla desde la API ni toca las entregas de otra organización', async () => {
+    await denied(db, ana, `delete from public.manual_publications`, [], /permission denied/);
+    await denied(db, ana, `update public.manual_publications set caption = 'x'`, [], /permission denied/);
+    await denied(db, ana, `select public.start_manual_publication($1, $2, '')`, [reelB, videoB], /permiso/);
+    await denied(db, ana, `select public.confirm_manual_publication($1, null)`, [entregaB], /permiso/);
+    await denied(db, ana, `select public.cancel_manual_publication($1)`, [entregaB], /permiso/);
+    await denied(db, clienteA, `select public.start_manual_publication($1, $2, '')`, [reelA, videoA], /permiso/);
+    // Lo que usa el servidor (leer la cuenta) solo con la clave de servicio.
+    await denied(db, ana, `select public.social_recent_claim($1, $2)`, [randomUUID(), ana.id], /permission denied/);
   });
 });

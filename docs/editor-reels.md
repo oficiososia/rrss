@@ -689,3 +689,114 @@ cabecera y la barra de la aplicación). Sin nada elegido: 11 y 10. La propuesta 
 - Publicar y programar contra Supabase y Meta reales: solo con la base simulada. La e2e `29-editor-reels.spec.ts`
   está adaptada al flujo nuevo, **sin ejecutar** (necesita el stack local).
 - «Redactar con IA» con un proveedor real, y el pie del análisis cuando lo traiga f56.
+
+## 12. «Terminar en Instagram (para poner música)» (rama `f62/terminar-en-instagram`, 23/11/2026)
+
+Los reels se publican **sin música** (decisión del dueño): la API de Instagram no crea borradores ni pone canciones de
+su biblioteca. Propuesta del dueño: «dejarlos preparados y que le metan la música en Instagram». Desde «Exportar» se
+manda el vídeo montado y su pie al móvil, allí se abre Instagram, se pone la música y se publica; después la
+aplicación sabe que salió. **El vídeo sale sin música, como antes**: aquí no se añade ninguna.
+
+### El flujo
+
+1. **«Exportar → Terminar en Instagram (para poner música)»**, debajo de «Publicar o programar». Se enciende con el
+   vídeo listo y abre su paso con el **pie y los hashtags** (los mismos campos que «Publicar o programar»:
+   `CopyFields`, sacado de `PublishPanel.tsx`) y, en modo agencia, el estado de la pieza.
+2. **En el móvil** (`navigator.share` con archivos **y** pantalla táctil): «Compartir con Instagram». En el mismo toque
+   se copia el pie con los hashtags al portapapeles (aviso «Pie copiado: pégalo en Instagram») y se abre el diálogo de
+   compartir del sistema con el MP4, donde se elige Instagram. El MP4 se baja al abrir el paso («Preparando el
+   vídeo…») porque el diálogo tiene que abrirse en el toque, sin esperar a una descarga. Cerrar el diálogo sin elegir
+   nada no marca nada.
+3. **En un ordenador** (sin `navigator.share` con archivos, o sin pantalla táctil: Chrome en Windows o macOS también
+   comparte archivos, pero ese diálogo no lleva a Instagram): «Descargar, copiar el pie y abrir en el móvil» descarga el
+   MP4, copia el pie y enseña un **código QR** con un enlace firmado al vídeo (15 min con el almacén de Supabase; con
+   R2 lo fija `media-storage`: una hora) y los pasos en tres líneas: abre Instagram y crea un reel; elige el vídeo;
+   añade música y pega el pie. La dirección es la firma del archivo (identificadores de la organización y la marca y el
+   nombre del montaje): sin datos personales. El pie queda en el portapapeles del ordenador; se dice que, para tenerlo
+   en el móvil, se abra el reel en la aplicación desde el móvil.
+4. **Ayuda** («¿No te sale la canción que quieres?»): las cuentas de creador suelen tener la biblioteca de música de
+   Instagram; las de empresa a veces solo tienen la música libre de Meta («Sound Collection») y no todas las canciones
+   salen. Qué canciones hay lo decide Instagram (cambia con el país y la cuenta): no se promete nada más.
+5. **Al mandarlo**, la pieza se deja lista como al publicar (`prepareForPublish`, que ahora comparte con «Publicar o
+   programar»: guarda la versión si hay cambios y, en autogestión, la aprueba por debajo) y queda **«Pendiente de
+   publicar en Instagram»** (`start_manual_publication`). En la cabecera, «Pendiente en Instagram» (oculto por debajo
+   de 640 px); en «Exportar», la línea con «Ya lo publiqué», «Buscar en Instagram» (si hay cuenta) y «No lo voy a
+   publicar». Mientras está pendiente, «Publicar o programar» no se deja (saldría dos veces); se puede volver a mandar
+   al móvil. En modo agencia, como «Publicar ahora»: solo aprobada y sin cambios.
+6. **«Ya lo publiqué»**, con el enlace del reel si se tiene (opcional, solo `instagram.com`): queda «Publicada (marcada
+   a mano)». Sin enlace, «Añadir el enlace» después.
+7. **Sola**: con una cuenta de Instagram conectada, al abrir el editor con algo pendiente (o marcado sin enlace) y al
+   volver a la pestaña (de Instagram, en el móvil; como mucho una vez por minuto) se leen las últimas publicaciones de
+   la cuenta y se empareja el reel. Si lo reconoce, queda «Publicada» con su enlace, sin pegarlo a mano.
+
+### Emparejar (`manualFlow.ts`, `matchReel`)
+
+La importación de publicaciones guarda de cada una el tipo, el pie, la fecha y el enlace, pero **la Graph API no da la
+duración de un vídeo** (referencia de IG Media consultada el 23/11/2026: no hay `duration` ni nada parecido), así que
+no se empareja por duración. Se empareja por:
+
+- **tipo:** un vídeo (`VIDEO`) o un reel (`REELS`);
+- **fecha:** publicado después de mandarlo al móvil (10 min de margen por los relojes) y como mucho un mes después;
+- **pie:** el que se copió es lo que se pega en Instagram; vale si comparte al menos el 60 % de sus palabras (sin
+  mayúsculas, tildes, signos ni emojis).
+
+Varias publicaciones igual de buenas: no se elige ninguna y se dice («márcalo tú con “Ya lo publiqué”»). Sin pie, solo
+vale un único vídeo publicado en los dos días siguientes. Una publicación de Instagram es de una sola pieza (la base de
+datos lo exige) y nunca una que ya salió por la API.
+
+### Leer las últimas publicaciones (`social-import/recent`)
+
+Ruta nueva de la función `social-import` (`supabase/functions/_shared/social/recent.ts`): lee **una página** de
+`/{ig-user-id}/media` (las 25 más recientes, la misma llamada que la importación) y la guarda en
+`social_imported_media` con `social_recent_save`, **sin tocar ninguna importación en marcha ni su cursor**. Basta con
+editar la marca (`social_recent_claim`); importar exige gestionarla. Token caducado: la cuenta pasa a «hay que volver a
+conectarla», como en la importación. Cambios en la importación, mínimos: la ruta `recent` en
+`social-import/handler.ts` (+25 líneas) y su conexión en `social-import/index.ts` (+3).
+
+### Base de datos (migración `20270121010000_manual_publications.sql`, con vuelta atrás)
+
+- **`manual_publications`**: una fila por reel entregado (pieza, versión aprobada, vídeo, pie copiado, cuándo se
+  mandó). Estados `pending` → `published`, o `cancelled`. **Pendiente no es publicado**: «published» exige la fecha y
+  cómo se supo (`manual` o `import`), y lo encontrado en la cuenta, el identificador de la red. No es
+  `scheduled_publications`: allí «published» exige el identificador que da la red al publicar por la API, y la regla
+  dura de aquella tabla no cambia.
+- **Solo lo aprobado** (la versión vigente, sin archivar), **solo reels de Instagram** y con un MP4 o MOV de la
+  biblioteca de la marca. Una pieza **o se publica por la API o se entrega a mano**: `start_manual_publication` se
+  niega si está en el calendario, y un disparador nuevo en `scheduled_publications`
+  (`scheduled_publications_manual_guard`, solo al insertar) se niega si está entregada a mano y sin cancelar.
+- RPC con la capacidad `edit`: `start_manual_publication`, `confirm_manual_publication`, `match_manual_publication`
+  (vídeo de una cuenta de la marca, posterior a la entrega, de ninguna otra pieza) y `cancel_manual_publication`. Del
+  servidor (clave de servicio): `social_recent_claim` y `social_recent_save`. RLS de lectura para quien ve la marca; sin
+  escritura directa. Auditoría de altas, cambios de estado y borrados.
+
+### Probado
+
+- **Unitarias** (`manualFlow.test.ts`): el texto que se pega, cuándo se comparte y cuándo se descarga, el enlace que se
+  pega, el emparejado (tipo, fecha, pie, empates, sin pie, ya usado) y el QR.
+- **Componentes** (`terminarEnInstagram.test.tsx`): compartir en el móvil con `navigator.share` (pie copiado y aviso,
+  el MP4 como archivo, aprobado por debajo y pendiente); cerrar el diálogo no marca nada; en un ordenador sin
+  `navigator.share`, descarga, pie copiado, QR con enlace de 15 min y los tres pasos; «Ya lo publiqué» con enlace
+  (rechaza otro dominio; queda «Publicada»; «Publicar otra vez» en lugar de terminarla otra vez); emparejado automático
+  con publicaciones simuladas; «todavía no aparece» y volver a buscar.
+- **Base de datos** (`tests/db/terminar-en-instagram.test.ts`, PGlite con las migraciones reales y la Graph API
+  simulada): pendiente no es publicado, solo lo aprobado y solo reels, una u otra con la API, «Ya lo publiqué» y el
+  enlace, cancelar, emparejar y sus negativas, leer las últimas sin tocar las importaciones, permisos; más los casos de
+  `aislamiento.test.ts`.
+- **Navegador real** (`test:layout`, Chromium): el paso cabe a 375 y 1366 px, descarga `reel.mp4`, copia el pie y
+  enseña el QR (≥ 140 px) y los pasos sin salirse.
+
+### Sin probar
+
+- **Compartir a Instagram desde un móvil de verdad** (Android e iOS): que Instagram aparezca en el diálogo de compartir
+  con un MP4, que abra el editor de reels con él y que deje poner música. No se ha podido probar aquí.
+- Escanear el QR con un móvil y guardar el vídeo (en iOS, desde Safari); el enlace con R2.
+- La música en una cuenta de empresa y en una de creador: lo de «Sound Collection» es lo que dice Meta en general, sin
+  comprobar con cuentas reales.
+- Leer las últimas publicaciones contra la Graph API real (sin aplicación de Meta): solo contra la simulada.
+- El calendario y la analítica no ven todavía lo publicado a mano (leen `scheduled_publications`): no salen su día ni
+  sus métricas.
+
+### Para llevarlo a staging
+
+Migración `20270121010000_manual_publications.sql` y redesplegar la función `social-import` (ruta `recent`). La
+dependencia nueva `qrcode-generator@2.0.4` (MIT, sin dependencias) va dentro de la aplicación.

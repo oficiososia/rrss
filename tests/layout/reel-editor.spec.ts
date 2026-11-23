@@ -220,6 +220,42 @@ for (const size of SIZES) {
       await page.screenshot({ path: `test-results/reel-editor-${size.width}-publicar.png` });
     });
 
+    test('«Terminar en Instagram»: pie, botón, código QR, pasos y ayuda, sin salirse', async ({ page }) => {
+      // A 375 y 1366 px (lo que pide el caso); a 1440 cabe con más motivo.
+      test.skip(size.width === 1440, 'basta con 375 y 1366 px');
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      await open(page, 'clips=6&montado=1&modo=propio');
+      await page.getByTestId('reel-export').click();
+      await expect(page.getByTestId('reel-export-sheet')).toHaveAttribute('data-state', 'ready');
+      const row = page.getByTestId('reel-export-instagram');
+      await expect(row).toContainText('Terminar en Instagram (para poner música)');
+      const rowBox = await box(page, 'reel-export-instagram');
+      expect(rowBox.x + rowBox.width).toBeLessThanOrEqual(size.width + 1);
+      await row.click();
+      const panel = page.getByTestId('reel-instagram-panel');
+      await expect(panel).toBeVisible();
+      // En Chromium de escritorio (sin pantalla táctil) se descarga y se enseña el QR.
+      await expect(panel).toHaveAttribute('data-mode', 'download');
+      await page.getByTestId('reel-caption').fill('Menú de otoño: ven este finde.');
+      const send = page.getByTestId('reel-instagram-send');
+      await expect(send).toBeEnabled();
+      const download = page.waitForEvent('download');
+      await send.click();
+      expect((await download).suggestedFilename()).toBe('reel.mp4');
+      await expect(page.getByTestId('reel-instagram-qr')).toBeVisible();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Menú de otoño: ven este finde.');
+      await page.getByTestId('reel-instagram-help').locator('summary').click();
+      for (const id of ['reel-caption', 'reel-instagram-send', 'reel-instagram-qr', 'reel-instagram-steps']) {
+        const part = await box(page, id);
+        expect(part.x, id).toBeGreaterThanOrEqual(0);
+        expect(part.x + part.width, id).toBeLessThanOrEqual(size.width + 1);
+      }
+      // El QR se lee: al menos 140 px de lado.
+      expect((await box(page, 'reel-instagram-qr')).width).toBeGreaterThanOrEqual(140);
+      expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `test-results/reel-editor-${size.width}-instagram.png` });
+    });
+
     test('un aviso no tapa la cabecera ni la barra de herramientas', async ({ page }) => {
       await open(page, 'clips=6');
       // Con el cabezal al principio no se puede dividir: sale un aviso.

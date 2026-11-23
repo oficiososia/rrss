@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,9 +15,9 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Como Canva (`f53`): riel de 5 cajones (Plantillas, Elementos, Fotos, Subidas, Marca; barra inferior con hojas en el móvil), barra flotante como único sitio de las acciones del elemento (sin tapar textos), ajustes a petición que se van al soltar, divisor de ancho que se recuerda, tipo de pieza a la vista, lo que sobresale del lienzo se ve y se agarra, un solo «Compartir» (vista previa, texto, Descargar, Publicar ahora, Programar…, Copiar el texto), sin aprobación a la vista en autogestión, pantalla completa en el móvil; capas, documento v6, páginas, plantillas, atajos, copiloto, guardado automático, copiar y pegar, soltar fotos | Unitarias, componentes, base de datos y `test:layout` en Chromium real (acciones visibles, cajones, «Compartir», divisor, foto que sobresale, fallos de móvil a 375 px); e2e adaptadas **sin ejecutar** | Revisión a mano en navegador y móvil reales; e2e del editor contra Supabase local | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags, o lo manda al móvil para terminarlo en Instagram con música; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
-| Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
+| Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, historia de una imagen, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
 | Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
 | Modo de trabajo de la organización | «Lo llevamos nosotros» (autogestión) o «Nos lo lleva una agencia» por organización; en autogestión toda la IA a mano, sin Encargos ni textos de agencia; «Cargar plantillas del catálogo» desde la app; gasto propio para el propietario (`docs/modo-de-trabajo.md`) | Base de datos (PGlite) y componentes; el modo agencia sigue pasando sus pruebas | Aplicar `20261227010000` en staging; verlo en un navegador real; «Tareas» internas en vez de Encargos | — |
@@ -820,6 +820,64 @@ Cambios 2 y 3 de la propuesta de simplificación aceptada (`rrss-recursos-compar
 - **Contenidos:** «Nueva idea» solo en la pantalla vacía (se crea con «＋ Crear»).
 - **Probado (23/11/2026, en la rama, en local):** typecheck y lint (0 errores); `npm test` 2132 de 2133 (la que falla es de `editorReels.test.tsx`, de `f52`, por tiempo con la máquina cargada: el archivo pasa entero, 42 de 42, solo); `npm run test:db` 1265 (4 omitidas); `npm run build`; `test:layout` 161 de 161 con 2 trabajadores. E2E 09, 10, 12, 13, 19, 20, 21, 23, 27 y 28 adaptadas **sin ejecutar** (piden Supabase local); la de reels no se ha tocado. `src/features/photo-edit/editarFoto.test.tsx` se adaptó solo en lo que abre «Editar foto» desde el editor.
 - **Sin probar:** en un navegador y un móvil reales; publicar o programar de verdad; el paso a Reel con el editor de reels real (solo componentes); arrastrar el divisor con el dedo en una tableta.
+
+### Historias de tapas y menú del día, y publicar historias (rama `f61/historias-tapas-menu`, 23/11/2026)
+
+El dueño de Casa Tomás sube historias de **tapas** y del **menú**: que solo tenga que poner la foto. Se copiaron y
+mejoraron las suyas (capturas en `instagram-studio/propuesta/referencias-actuales/`: lista «Jueves de tapas» sobre una
+foto de sala, póster «Jueves de tapas y cóctel» y rótulo de plato). Comparativa y vistas previas en
+`rrss-recursos-comparativa/historias/comparativa.html`.
+
+- **Plantillas de historia (9:16, 1080 × 1920) en el juego `restaurante` del catálogo** (`agency/catalogo/historias.ts`):
+  «Tapa del día» (un marco grande, nombre, precio en un sello y «Te esperamos en la barra»), «Tapas de la semana»
+  (4 marcos en cuadrícula, cada uno con nombre y precio), «Dos tapas», «Menú del día» (primeros, segundos, postre,
+  precio, «Bebida y postre incluidos» y cuándo; foto de fondo opcional bajo un velo: vacía, no sale) y «Menú del día
+  con foto» (foto grande arriba y el menú en una franja clara). Colores y tipografías por papeles desde el perfil de la
+  marca, como el resto del catálogo, y ahora también el **logotipo**: el tema toma el primero de
+  `visual.logoAssetIds` (capa `logo`, que la base de datos exige que sea de la marca); sin logotipo salen sin él.
+  Nada que leer en los 250 px de arriba ni en los 340 px de abajo (lo comprueban las pruebas de `agency/`).
+- **Carga:** «Cargar plantillas del catálogo» (y `cargar-catalogo`) entregan las historias en una **segunda** llamada a
+  `deliver_design_templates`, porque cada entrega admite 12 como mucho (10 publicaciones + 5 historias). Toca
+  `src/features/brand/CatalogDialog.tsx` (entrega aparte y texto del recuento).
+- **Zona segura de las historias** (`src/features/content/networks.ts`): 250 px arriba y 340 px abajo (fuente secundaria,
+  orientativa), en vez de la caja de los reels (35 % abajo), que en una historia no tiene pie que tapar.
+- **Publicar historias:** antes el formato «Historia» se preparaba pero «no se publica solo». Ahora el publicador
+  (`supabase/functions/_shared/social/publisher.ts`) crea el contenedor con `media_type=STORIES` e `image_url`, sin pie
+  ni texto alternativo, y lo publica con `media_publish`; si la respuesta se pierde, lo busca en
+  `GET /{ig-user-id}/stories` y solo lo da por publicado si hay **una** historia en la ventana (si no,
+  «published_unconfirmed», sin repetir). Programar y «Publicar ahora» funcionan igual que con una publicación de una
+  imagen (una exportación JPEG de un documento de una página). Solo imagen: la historia de vídeo sigue sin publicarse
+  sola. Migración `20270119010000_instagram_stories` (con su vuelta atrás) y `PUBLISHABLE_TARGETS` en
+  `src/features/social/calendar.ts`; en `ScheduleDialog.tsx` y `PublishNowDialog.tsx` la historia se trata como una
+  publicación de una imagen.
+- **Probado:** `agency/` (catálogo, zonas seguras, logotipo, entrega en dos llamadas), base de datos (programar, publicar
+  con la Graph API simulada, recuperar sin duplicar, ambigüedad, vuelta atrás, entrega de las plantillas con el
+  logotipo de la marca y rechazo con uno ajeno), componentes (carga del catálogo) y `test:layout`
+  (`tests/layout/historias.spec.ts`: cada historia sale a 1080 × 1920 con el exportador real).
+- **Sin probar / pendiente:** publicar una historia contra Instagram real (no hay aplicación de Meta); verlas en el
+  editor de staging. **En el editor** (`ContentEditorPage.tsx`, rama f53) la imagen que se publica solo se prepara sola
+  para `post` y `carousel` (líneas de `exportVersion` de `ScheduleDialog` y `PublishNowDialog`): hay que añadir `story`
+  allí al integrar; mientras tanto una historia se programa tras «Exportar imagen» en JPEG. Qué logotipo sale depende
+  del orden en el perfil (el primero); para historias oscuras conviene que sea el blanco.
+
+### «Terminar en Instagram (para poner música)» (rama `f62/terminar-en-instagram`, 23/11/2026)
+
+Los reels salen sin música y la API de Instagram no crea borradores ni pone su música. Desde «Exportar», el reel y su
+pie van al móvil para ponerle la música en Instagram y publicarlo allí. Detalle en `docs/editor-reels.md` §12.
+
+- **Móvil:** «Compartir con Instagram» copia el pie (aviso «Pie copiado: pégalo en Instagram») y abre el diálogo de
+  compartir del sistema con el MP4. **Ordenador:** descarga el MP4, copia el pie y enseña un QR (enlace firmado de
+  corta duración) con los pasos en tres líneas. Ayuda para cuentas de empresa y de creador sin inventar detalles.
+- **Al volver:** «Pendiente de publicar en Instagram» → «Ya lo publiqué» (enlace opcional) o, con una cuenta
+  conectada, la aplicación lee las últimas publicaciones (`social-import/recent`) y la empareja por tipo, fecha y pie
+  (la Graph API no da la duración) y la deja «Publicada» con su enlace. El vídeo sigue saliendo sin música.
+- **Base de datos:** migración `20270121010000_manual_publications.sql` (con vuelta atrás): tabla `manual_publications`
+  (pendiente ≠ publicado; solo lo aprobado; una pieza o por la API o a mano), RPC con `edit` y dos del servidor.
+- **Probado:** unitarias, componentes (compartir con y sin `navigator.share`, pie copiado, «Ya lo publiqué», emparejado
+  automático), base de datos (PGlite y Graph API simulada) y `test:layout` a 375 y 1366 px.
+- **Sin probar:** compartir a Instagram desde un móvil de verdad (Android e iOS) y escanear el QR; la Graph API real;
+  la música de cuentas de empresa y de creador. El calendario y la analítica todavía no ven lo publicado a mano.
+- **Para staging:** la migración y redesplegar `social-import`.
 
 ## Sin probar contra el servicio real
 
