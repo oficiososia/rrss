@@ -719,6 +719,14 @@ Apartados 8 (L1–L4) y 9 (B1–B4) de `rrss-recursos-comparativa/simplificacion
   acciones visibles a 1366 y 375 px (calendario ≤ 9; biblioteca ≤ 12 y ≤ 9), las cuatro fichas en
   una fila a 375–1366 px y la semana-agenda del móvil. **Sin probar** en un móvil real ni contra la
   demo.
+- **Pendiente de otra rama:** `src/features/reels/reels.test.tsx` («sin trabajador de medios
+  desplegado no aparece nada») comprueba que no exista `library-more`; con B2 el «⋯» de la cabecera
+  existe siempre (orden, etiqueta…). Hay que quitar esa línea (la zona de reels no se ha tocado
+  aquí); lo que quería probar —que no se ofrezca «Montar un reel»— ya lo comprueba
+  `library/biblioteca.test.tsx`.
+- **Comprobaciones (23/11, tras fusionar la base):** typecheck y lint (0 errores) en verde;
+  `npm test` 2143 de 2144 (la de arriba); `test:db` 1277 (4 omitidas); `build` en verde;
+  `test:layout` 152 de 152.
 
 ### Editor de reels como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
 
