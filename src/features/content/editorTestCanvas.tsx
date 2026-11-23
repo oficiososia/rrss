@@ -43,6 +43,11 @@ export function CanvasStub(props: CanvasViewProps) {
       ))}
       {/* La barra flotante del elemento elegido, tal cual (el lienzo de verdad solo la coloca). */}
       <div data-testid="stub-toolbar">{props.toolbar}</div>
+      {/* La fila del zoom: lo que el editor pone a sus lados (capas, zonas seguras, copiloto). */}
+      <div data-testid="stub-footer">
+        {props.footerStart}
+        {props.footerEnd}
+      </div>
       {editing?.type === 'text' && (
         <TextEditOverlay layer={editing} scale={1} onCommit={(text) => props.onTextCommit(editing.id, text)} />
       )}

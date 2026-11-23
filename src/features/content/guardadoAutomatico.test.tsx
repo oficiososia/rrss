@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
 import { renderApp } from '@/test/fixtures';
 import { DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './document';
-import { draftLayers, EDITOR, frame, seedPiece, text } from './editorTestKit';
+import { draftLayers, EDITOR, frame, seedPiece, text, addFromDrawer } from './editorTestKit';
 
 // Guardado automático del editor de piezas: lo que se cambia se guarda solo
 // como borrador (no es una versión: ni cambia el estado ni entra en el
@@ -43,7 +43,7 @@ describe('Editor: guardado automático del borrador', () => {
     expect(screen.getByTestId('editor-saved')).toHaveTextContent('Guardado');
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     expect(screen.getByTestId('editor-dirty')).toHaveTextContent('Guardando…');
     await waitFor(() => expect(state()).toBe('saved'), SAVED);
     expect(screen.getByTestId('editor-dirty')).toHaveTextContent('Borrador guardado');
@@ -63,9 +63,9 @@ describe('Editor: guardado automático del borrador', () => {
 
   it('varios cambios seguidos se guardan juntos, con lo último', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('add-rectangle'));
-    await user.click(screen.getByTestId('add-ellipse'));
+    await addFromDrawer(user, 'elements', 'add-text');
+    await addFromDrawer(user, 'elements', 'add-rectangle');
+    await addFromDrawer(user, 'elements', 'add-ellipse');
     await waitFor(() => expect(state()).toBe('saved'), SAVED);
     expect(draftLayers()).toHaveLength(5);
     // No se ha llamado al servidor una vez por cada clic.
@@ -97,9 +97,9 @@ describe('Editor: guardado automático del borrador', () => {
 
   it('«Guardar versión» deja el borrador dentro de la versión: desaparece y queda «Guardado»', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     await waitFor(() => expect(state()).toBe('saved'), SAVED);
-    await user.click(screen.getByTestId('editor-save'));
+    await user.keyboard('{Control>}s{/Control}');
     expect(await screen.findByText('Versión 2 guardada')).toBeInTheDocument();
     expect(screen.getByTestId('editor-saved')).toHaveTextContent('Guardado');
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
@@ -108,7 +108,7 @@ describe('Editor: guardado automático del borrador', () => {
 
   it('deshacer hasta lo guardado deja de ser un borrador: se borra', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     await waitFor(() => expect(state()).toBe('saved'), SAVED);
     expect(fake.rows('content_drafts')).toHaveLength(1);
     await user.click(screen.getByTestId('undo'));
@@ -118,10 +118,10 @@ describe('Editor: guardado automático del borrador', () => {
 
   it('con el borrador ya guardado, o aún por mandar, se sale sin preguntar y no se pierde nada', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     // Sin esperar al guardado: salir lo guarda antes.
     await user.click(screen.getByTestId('editor-back'));
-    await screen.findByTestId('content-new', {}, { timeout: 8000 });
+    await screen.findByRole('heading', { name: 'Contenidos' }, { timeout: 8000 });
     expect(screen.queryByText('¿Salir sin guardar?')).not.toBeInTheDocument();
     expect(draftLayers()).toHaveLength(3);
   });
@@ -135,7 +135,7 @@ describe('Editor: guardado automático del borrador', () => {
     fake.rpc('save_content_draft', () => {
       throw { message: 'Failed to fetch' };
     });
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     await waitFor(() => expect(state()).toBe('error'), SAVED);
     expect(screen.getByTestId('editor-dirty')).toHaveTextContent('Sin guardar');
 

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, dato, sinErrores, sql } from './apoyo';
+import { abrir, dato, sinErrores, sql, abrirCompartir, nuevaIdea } from './apoyo';
 
 // Crear una pieza a partir de una plantilla de la marca, de extremo a extremo
 // contra el Supabase LOCAL. Las plantillas las entrega la agencia (no hay
@@ -79,7 +79,7 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   const dialogo = page.getByRole('dialog');
   await dialogo.getByTestId('create-content-title').fill(TITULO);
   await dialogo.getByTestId('create-content-from-template').check();
@@ -127,7 +127,7 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
 
   // En el editor: falta una foto (se dice arriba) y el pie de ejemplo se ve en gris, sin ser el pie.
   await expect(page.getByTestId('editor-empty-frames')).toHaveText('Falta 1 foto');
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await expect(page.getByTestId('copy-caption')).toHaveValue('');
   await expect(page.getByTestId('copy-caption')).toHaveAttribute('placeholder', 'Hoy sale del horno: …');
 

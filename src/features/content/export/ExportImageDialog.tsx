@@ -54,13 +54,19 @@ interface ExportImageDialogProps {
 type Step = 'idle' | 'saving' | 'rendering' | 'uploading' | 'done';
 
 /** Preferencia de «Guardarla en la biblioteca» al exportar (se recuerda en este dispositivo). */
-const SAVE_TO_LIBRARY_KEY = 'rrss.exportar.guardarEnBiblioteca';
 
 const STEP_LABEL: Record<Exclude<Step, 'idle' | 'done'>, string> = {
   saving: 'Guardando la versión…',
   rendering: 'Preparando las tipografías y dibujando…',
   uploading: 'Guardando en la biblioteca…',
 };
+
+/**
+ * ¿Guardar también en la biblioteca (carpeta «Exportaciones»)? Por omisión, no: descargar es descargar,
+ * y las exportaciones no deben llenar los selectores de fotos. Lo que la persona elige se recuerda
+ * siempre igual en este navegador.
+ */
+export const EXPORT_TO_LIBRARY_KEY = 'rrss.exportar.biblioteca';
 
 export function ExportImageDialog(props: ExportImageDialogProps) {
   const { document, title, contentId, orgId, brandId, version, dirty } = props;
@@ -75,13 +81,12 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
   const [pixelRatio, setPixelRatio] = useState(1);
   const [customName, setCustomName] = useState<string | null>(null);
   const [download, setDownload] = useState(true);
-  // Guardar o no en la biblioteca: lo que se eligió la última vez, siempre igual en este dispositivo
-  // (va a «Exportaciones», aparte: no sale al elegir fotos).
-  const [libraryChoice, setLibraryChoice] = useState(() => readLocal<boolean>(SAVE_TO_LIBRARY_KEY, true) !== false);
-  const toLibrary = props.canSaveToLibrary && libraryChoice;
+  const [toLibrary, setToLibraryState] = useState(
+    () => props.canSaveToLibrary && readLocal<boolean>(EXPORT_TO_LIBRARY_KEY, false) === true,
+  );
   const setToLibrary = (next: boolean) => {
-    setLibraryChoice(next);
-    writeLocal(SAVE_TO_LIBRARY_KEY, next);
+    setToLibraryState(next);
+    writeLocal(EXPORT_TO_LIBRARY_KEY, next);
   };
   const [saveFirst, setSaveFirst] = useState(true);
   const [step, setStep] = useState<Step>('idle');
@@ -377,7 +382,7 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
               onChange={(e) => setToLibrary(e.target.checked)}
               data-testid="export-library"
             />
-            Guardarla también en la biblioteca (aparte, en «Exportaciones»)
+            Guardarla también en la biblioteca (carpeta «Exportaciones»)
           </label>
           {!props.canSaveToLibrary && (
             <p className="text-xs text-muted">Con tu rol no puedes añadir recursos a la biblioteca.</p>

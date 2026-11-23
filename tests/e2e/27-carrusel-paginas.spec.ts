@@ -1,5 +1,16 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql, accionDelMenu } from './apoyo';
+import {
+  abrir,
+  aviso,
+  dato,
+  sinErrores,
+  sql,
+  accionDelMenu,
+  abrirCompartir,
+  guardarVersion,
+  cajon,
+  nuevaIdea,
+} from './apoyo';
 
 // Carrusel de varias páginas de extremo a extremo, contra el Supabase LOCAL y la
 // Graph API de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts),
@@ -25,7 +36,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   const { page } = s;
 
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(TITULO);
   await page.getByTestId('create-content-format-carousel').click();
   await page.getByTestId('create-content-submit').click();
@@ -36,17 +47,17 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   // Un carrusel empieza con las 2 páginas mínimas; se añade una tercera.
   const thumbs = page.getByTestId('page-thumb');
   await expect(thumbs).toHaveCount(2);
-  await page.getByTestId('add-rectangle').click();
+  await cajon(page, 'elements', 'add-rectangle');
   await thumbs.nth(1).click();
   await page.getByTestId('add-ellipse').click();
   await page.getByTestId('page-add').click();
   await expect(thumbs).toHaveCount(3);
   await expect(thumbs.nth(2)).toHaveAttribute('aria-current', 'true');
-  await page.getByTestId('add-text').click();
+  await cajon(page, 'elements', 'add-text');
 
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await page.getByTestId('copy-caption').fill('Tres panes para el otoño: desliza y elige.');
-  await page.getByTestId('editor-save').click();
+  await guardarVersion(page);
   await aviso(page, 'Versión 1 guardada');
 
   // UNA versión con las 3 páginas, cada una con su capa.
@@ -79,9 +90,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
     [3, 3, 'image/jpeg'],
   ]);
 
-  await page.getByTestId('status-approved').click();
-  await aviso(page, 'Aprobada');
-
+  // Autogestión: sin «Aprobar» a la vista; «Publicar ahora» de «Compartir» la aprueba por debajo.
   await accionDelMenu(page, 'editor-share', 'editor-publish-now');
   await expect(page.getByTestId('publish-now-pages')).toContainText('3 imágenes, en el orden de las páginas');
   await page.getByTestId('publish-now-confirm').click();

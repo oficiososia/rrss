@@ -11,8 +11,11 @@ export const LAYER_TYPE_LABEL: Record<LayerType, string> = {
   shape: 'Forma',
 };
 
-/** Tipografías que siempre están, por si la marca no ha definido las suyas. */
-export const FALLBACK_FONTS = ['sans-serif', 'serif', 'monospace'];
+/**
+ * Tipografías que siempre están, por si la marca no ha definido las suyas. La primera, Inter, va
+ * incluida en la aplicación (canvas/appFont.ts): un texto nuevo sin letra de marca nace con ella.
+ */
+export const FALLBACK_FONTS = ['Inter', 'sans-serif', 'serif', 'monospace'];
 
 let counter = 0;
 /** Identificador de capa nuevo: único en el documento y con el formato que exige el esquema. */

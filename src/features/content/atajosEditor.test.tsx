@@ -26,6 +26,8 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
         </button>
       ))}
       <button type="button" data-testid="stub-marquee" onClick={() => props.onSelectMany(['a', 'b'], false)} />
+      {props.toolbar}
+      {props.footerStart}
     </div>
   ),
 }));
@@ -162,8 +164,9 @@ describe('Atajos del editor de piezas', () => {
   it('tras cambiar una foto (el diálogo se cierra y el foco queda en la página) Ctrl+Z y Ctrl+Mayús+Z siguen funcionando', async () => {
     const { user } = await openEditor();
     expect(layerButtons()).toHaveLength(3);
-    await user.click(screen.getByTestId('add-image'));
-    await user.click((await screen.findAllByTestId('picker-asset'))[0]!);
+    // Una foto del cajón «Fotos»: la hoja se cierra y el foco queda en la página.
+    await user.click(screen.getByTestId('drawer-photos'));
+    await user.click((await screen.findAllByTestId('photo-panel-item'))[0]!);
     await waitFor(() => expect(layerButtons()).toHaveLength(4));
 
     loseFocus();
@@ -211,10 +214,12 @@ describe('Atajos del editor de piezas', () => {
   it('Supr y las flechas no actúan sobre el lienzo mientras se escribe en un campo', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
-    await user.click(screen.getByRole('tab', { name: /Publicación/ }));
-    const caption = await screen.findByTestId('copy-caption');
-    await user.click(caption);
-    await user.keyboard('hola{ArrowLeft}{Delete}');
+    // Un campo del editor: la opacidad, en «⋯ → Ajustes…».
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-more-options'));
+    const field = await screen.findByLabelText('Opacidad (%)');
+    await user.click(field);
+    await user.keyboard('{ArrowLeft}{Delete}');
     expect(x('a')).toBe('100');
     expect(screen.getByTestId('stub-a')).toBeInTheDocument();
   });
@@ -224,7 +229,7 @@ describe('Atajos del editor de piezas', () => {
     await user.click(screen.getByTestId('stub-marquee'));
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-selected', 'a,b');
     await user.keyboard('{Control>}g{/Control}');
-    await user.click(screen.getByRole('tab', { name: /Capas/ }));
+    await user.click(screen.getByTestId('editor-layers'));
     expect(screen.getAllByTestId('layer-group')).toHaveLength(2);
 
     await user.click(screen.getByTestId('stub-c'));
@@ -249,9 +254,9 @@ describe('Atajos del editor de piezas', () => {
   it('los atajos no actúan mientras hay un diálogo abierto', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
-    await user.click(screen.getByTestId('add-image'));
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getAllByTestId('picker-asset').length).toBeGreaterThan(0);
+    await user.click(screen.getByTestId('editor-share'));
+    const dialog = await screen.findByRole('dialog', { name: 'Compartir' });
+    expect(within(dialog).getByTestId('share-download')).toBeInTheDocument();
     await user.keyboard('{Delete}');
     expect(screen.getByTestId('stub-a')).toBeInTheDocument();
   });

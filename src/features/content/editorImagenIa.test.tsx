@@ -4,10 +4,13 @@ import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, brandRow, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
+import type { UserEvent } from '@testing-library/user-event';
 
-// El editor con la generación de imágenes con IA (función `ai-media`): el
-// botón solo sale con VITE_AI_IMAGE_ENABLED; se ve el coste antes de generar;
-// la imagen entra como capa (se deshace) y queda en la biblioteca.
+// El editor con la generación de imágenes con IA (función `ai-media`): ya no es
+// un botón suelto de la barra; está en el cajón «Subidas» («Crear con IA», el
+// del selector de la biblioteca), solo con VITE_AI_IMAGE_ENABLED. Se ve el
+// coste antes de generar; la imagen entra como capa (se deshace) y queda en la
+// biblioteca.
 
 vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
   default: (props: CanvasViewProps) => (
@@ -133,8 +136,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** Cajón «Subidas» → «Crear con IA». */
+async function openAiImage(user: UserEvent) {
+  await user.click(screen.getByTestId('drawer-uploads'));
+  await user.click(await screen.findByTestId('picker-ai'));
+  return screen.findByRole('dialog');
+}
+
 describe('Editor: imagen con IA en modo agencia', () => {
-  it('si el servidor la cierra a la marca (modo agencia), no sale «Con IA» y se explica en una frase', async () => {
+  it('si el servidor la cierra a la marca (modo agencia), no sale «Crear con IA»', async () => {
     vi.stubEnv('VITE_AI_IMAGE_ENABLED', 'true');
     fake.fn('ai-media', (body) => {
       const { action } = body as { action: string };
@@ -142,29 +152,32 @@ describe('Editor: imagen con IA en modo agencia', () => {
     });
     seed(createEmptyDocument({ aspectRatio: '4:5' }));
     fake.tables.brands = [brandRow({ ai_mode: 'agency' })];
-    renderApp(EDITOR);
+    const { user } = renderApp(EDITOR);
     await screen.findByTestId('canvas-stub');
-    expect(await screen.findByTestId('image-ai-agency-note')).toHaveTextContent(/solo el personal de la agencia/);
-    expect(screen.queryByTestId('add-image-ai')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('drawer-uploads'));
+    expect(await screen.findByTestId('picker-upload')).toBeInTheDocument();
+    expect(screen.queryByTestId('picker-ai')).not.toBeInTheDocument();
   });
 
-  it('si el servidor la deja usar (personal de la agencia), el botón sale y no hay nota', async () => {
+  it('si el servidor la deja usar (personal de la agencia), «Crear con IA» sale', async () => {
     vi.stubEnv('VITE_AI_IMAGE_ENABLED', 'true');
     fakeAiMedia(() => ({ status: 200, body: {} }));
     seed(createEmptyDocument({ aspectRatio: '4:5' }));
     fake.tables.brands = [brandRow({ ai_mode: 'agency' })];
-    renderApp(EDITOR);
+    const { user } = renderApp(EDITOR);
     await screen.findByTestId('canvas-stub');
-    expect(await screen.findByTestId('add-image-ai')).toBeInTheDocument();
-    expect(screen.queryByTestId('image-ai-agency-note')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('drawer-uploads'));
+    expect(await screen.findByTestId('picker-ai')).toBeInTheDocument();
   });
 });
 
 describe('Editor: imagen con IA', () => {
-  it('sin VITE_AI_IMAGE_ENABLED no aparece nada', async () => {
-    await openEditor();
-    expect(screen.getByTestId('add-image')).toBeInTheDocument();
+  it('sin VITE_AI_IMAGE_ENABLED no aparece nada (y la barra no tiene un «Con IA» suelto)', async () => {
+    const { user } = await openEditor();
     expect(screen.queryByTestId('add-image-ai')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('drawer-uploads'));
+    expect(await screen.findByTestId('picker-upload')).toBeInTheDocument();
+    expect(screen.queryByTestId('picker-ai')).not.toBeInTheDocument();
   });
 
   it('enseña el coste antes de generar, genera con la proporción del lienzo y añade la capa (que se deshace)', async () => {
@@ -188,8 +201,7 @@ describe('Editor: imagen con IA', () => {
     const { user } = await openEditor();
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '0');
 
-    await user.click(screen.getByTestId('add-image-ai'));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await openAiImage(user);
     expect(await within(dialog).findByTestId('ai-image-estimate')).toHaveTextContent('Coste máximo: 0,02');
     expect(within(dialog).getByTestId('ai-image-ratio')).toHaveValue('4:5');
     expect(within(dialog).getByTestId('ai-image-untested')).toBeInTheDocument();
@@ -201,8 +213,11 @@ describe('Editor: imagen con IA', () => {
     await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '1'));
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-assets', 'asset-ia-1');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    // La pieza pasa a llevar la marca de contenido generado con IA.
+    // La pieza pasa a llevar la marca de contenido generado con IA (se ve en «Compartir»).
+    await user.click(screen.getByTestId('editor-share'));
     expect(await screen.findByTestId('editor-ai-label')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     const calls = fake.callsTo('ai-media', 'function');
     expect(calls[calls.length - 1]!.payload).toMatchObject({
       action: 'image.generate',
@@ -246,8 +261,7 @@ describe('Editor: imagen con IA', () => {
       };
     });
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-image-ai'));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await openAiImage(user);
     await within(dialog).findByTestId('ai-image-estimate');
     await user.selectOptions(
       within(dialog).getByTestId('ai-image-model'),
@@ -266,8 +280,7 @@ describe('Editor: imagen con IA', () => {
       body: { error: { code: 'quota_exhausted', message: 'agotado', retryable: false } },
     }));
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-image-ai'));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await openAiImage(user);
     await within(dialog).findByTestId('ai-image-estimate');
     await user.type(within(dialog).getByTestId('ai-image-prompt'), 'Tapas');
     await user.click(within(dialog).getByTestId('ai-image-generate'));
@@ -284,8 +297,7 @@ describe('Editor: imagen con IA', () => {
       body: { error: { code: 'not_configured', message: 'x', retryable: false } },
     }));
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-image-ai'));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await openAiImage(user);
     expect(await within(dialog).findByTestId('ai-error')).toHaveTextContent('falta configurarla en la plataforma');
   });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, accionDelMenu, aviso, dato, sinErrores, sql } from './apoyo';
+import { abrir, accionDelMenu, aviso, dato, sinErrores, sql, abrirCompartir, guardarVersion, nuevaIdea } from './apoyo';
 
 // «Publicar ahora» de extremo a extremo, contra el Supabase LOCAL y la Graph API
 // de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts, activada
@@ -23,19 +23,18 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   const { page } = s;
 
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(TITULO);
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await page.getByTestId('copy-caption').fill('El pan de centeno acaba de salir del horno.');
-  await page.getByTestId('editor-save').click();
+  await guardarVersion(page);
   await aviso(page, 'Versión 1 guardada');
-  await page.getByTestId('status-approved').click();
-  await aviso(page, 'Aprobada');
+  // Autogestión: sin «Aprobar» a la vista; «Publicar ahora» de «Compartir» la aprueba por debajo.
 
   // Sin exportación todavía: el propio paso la ofrece.
   const [antes] = await sql<{ n: number }>(

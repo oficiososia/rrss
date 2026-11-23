@@ -9,10 +9,14 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // un marco de foto vacío a sangre, un velo y un titular encima (el caso difícil:
 // el hueco queda debajo de todo), y otro marco pequeño. La biblioteca tiene dos
 // fotos de verdad (dibujadas aquí), para poder poner una y verla dentro del marco.
-// Lo usa editor-marcos.spec.ts. Parámetros: ?caso=titular|dos
+// Lo usan editor-marcos.spec.ts y editor-acciones.spec.ts. Parámetros:
+//   ?caso=titular|dos|oferta|grande  (oferta: «Oferta de la semana» con la foto puesta; grande: una foto
+//                                     que sobresale del lienzo)
+//   ?modo=self|agency         (cómo trabaja la organización; por defecto, agencia)
 
 const params = new URLSearchParams(window.location.search);
 const caso = params.get('caso') ?? 'titular';
+const modo = params.get('modo') === 'self' ? 'self' : 'agency';
 
 /** Una «foto» sintética con detalle en las esquinas, para ver el encuadre. */
 function makePhoto(width: number, height: number, tint: string): string {
@@ -50,6 +54,7 @@ const PHOTOS = [
     tint: '#16a34a',
   },
 ];
+const PHOTO_IDS = PHOTOS.map((p) => p.id);
 const urls = new Map(PHOTOS.map((p) => [`${ORG_ID}/${BRAND_ID}/${p.id}.jpg`, makePhoto(p.width, p.height, p.tint)]));
 
 // El almacenamiento simulado devuelve las fotos dibujadas aquí.
@@ -102,35 +107,124 @@ const text = (id: string, value: string, y: number, size: number): Layer => ({
   lineHeight: 1.1,
 });
 
-const layers: Layer[] =
-  caso === 'dos'
-    ? [
-        frame('foto-antes', 'Foto de antes', 0, 0, W, 663),
-        frame('foto-despues', 'Foto de después', 0, 687, W, 663),
-        text('titulo', 'Antes y después', 600, 64),
-      ]
-    : [
-        frame('foto', 'Foto', 0, 0, W, H),
-        {
-          ...base,
-          id: 'velo',
-          type: 'shape',
-          name: 'Velo',
-          x: 0,
-          y: 0,
-          width: W,
-          height: H,
-          opacity: 0.5,
-          anchor: { x: 'stretch', y: 'stretch' },
-          shape: 'rectangle',
-          fill: '#111827',
-          stroke: null,
-          cornerRadius: 0,
-        },
-        text('titular', 'Chuletón de vaca madurada', 520, 96),
-      ];
+const shape = (
+  id: string,
+  name: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fill: string,
+  ellipse = false,
+): Layer => ({
+  ...base,
+  id,
+  type: 'shape',
+  name,
+  x,
+  y,
+  width,
+  height,
+  anchor: { x: 'center', y: 'center' },
+  shape: ellipse ? 'ellipse' : 'rectangle',
+  fill,
+  stroke: null,
+  cornerRadius: 0,
+});
 
-seedWorkspace({ orgRole: 'owner' });
+const label = (
+  id: string,
+  value: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  size: number,
+  color: string,
+): Layer => ({
+  ...(text(id, value, y, size) as Extract<Layer, { type: 'text' }>),
+  x,
+  width,
+  height,
+  color,
+  align: 'left',
+});
+
+/** Como `oferta()` del catálogo (agency/catalogo/publicaciones.ts): foto arriba, panel abajo y un sello con el precio. */
+const oferta: Layer[] = [
+  {
+    ...(frame('foto', 'Foto', 0, 0, W, 830) as Extract<Layer, { type: 'image' }>),
+    source: { kind: 'asset', assetId: PHOTOS[0]!.id },
+  },
+  shape('panel', 'Panel', 0, 830, W, 520, '#1F2937'),
+  shape('sello', 'Sello', 760, 690, 260, 260, '#F59E0B', true),
+  { ...label('sello-texto', '00 €', 770, 772, 240, 100, 72, '#111827'), align: 'center' } as Layer,
+  label('antetitulo', 'ESTA SEMANA', 72, 890, 660, 40, 28, '#F59E0B'),
+  label('titular', 'Nombre del menú o del plato', 72, 990, W - 144, 170, 72, '#FFFFFF'),
+  label(
+    'condiciones',
+    'De lunes a viernes, a mediodía. Bebida y postre incluidos.',
+    72,
+    1200,
+    W - 144,
+    90,
+    30,
+    '#FFFFFF',
+  ),
+];
+
+/** Una foto agrandada más allá del lienzo (sobresale por la izquierda y por la derecha) y un titular. */
+const grande: Layer[] = [
+  {
+    ...base,
+    id: 'foto',
+    type: 'image',
+    name: 'Foto',
+    x: -400,
+    y: 300,
+    width: W + 800,
+    height: 700,
+    anchor: { x: 'center', y: 'center' },
+    source: { kind: 'asset', assetId: PHOTO_IDS[0]! },
+    fit: 'cover',
+    focus: { x: 0.5, y: 0.5 },
+  },
+  label('titular', 'Chuletón de vaca madurada', 72, 1100, W - 144, 170, 72, '#111827'),
+];
+
+const layers: Layer[] =
+  caso === 'grande'
+    ? grande
+    : caso === 'oferta'
+      ? oferta
+      : caso === 'dos'
+        ? [
+            frame('foto-antes', 'Foto de antes', 0, 0, W, 663),
+            frame('foto-despues', 'Foto de después', 0, 687, W, 663),
+            text('titulo', 'Antes y después', 600, 64),
+          ]
+        : [
+            frame('foto', 'Foto', 0, 0, W, H),
+            {
+              ...base,
+              id: 'velo',
+              type: 'shape',
+              name: 'Velo',
+              x: 0,
+              y: 0,
+              width: W,
+              height: H,
+              opacity: 0.5,
+              anchor: { x: 'stretch', y: 'stretch' },
+              shape: 'rectangle',
+              fill: '#111827',
+              stroke: null,
+              cornerRadius: 0,
+            },
+            text('titular', 'Chuletón de vaca madurada', 520, 96),
+          ];
+
+seedWorkspace({ orgRole: 'owner', workMode: modo });
 const doc = createEmptyDocument({ aspectRatio: '4:5' });
 const document_ = {
   ...doc,
@@ -166,7 +260,7 @@ fake.tables.content_items = [
     id: 'content-1',
     brand_id: BRAND_ID,
     organization_id: ORG_ID,
-    title: 'Chuletón de la casa',
+    title: caso === 'oferta' ? 'Oferta de la semana' : 'Chuletón de la casa',
     network: 'instagram',
     format: 'post',
     status: 'draft',

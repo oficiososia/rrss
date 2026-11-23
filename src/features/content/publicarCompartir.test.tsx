@@ -4,10 +4,10 @@ import * as libraryApi from '@/features/library/api';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_ID, ORG_ID, renderApp } from '@/test/fixtures';
-import { chooseEditorAction } from '@/test/moreMenu';
-import { assetRow, EDITOR, frame, seedPiece, text } from './editorTestKit';
+import { chooseEditorAction, openShareSheet } from '@/test/moreMenu';
+import { assetRow, EDITOR, frame, seedPiece, text, addFromDrawer } from './editorTestKit';
 
-// Publicar sin tropiezos desde el editor: un solo botón «Publicar o compartir»;
+// Publicar sin tropiezos desde el editor: un solo botón «Compartir» que abre una hoja;
 // «Programar» ya no rechaza la pieza porque su exportación sea PNG (la que viene
 // marcada): prepara sola la imagen que hace falta, como «Publicar ahora»; y el
 // pie de la plantilla es un ejemplo en gris, no el texto que se publicaría.
@@ -37,6 +37,9 @@ const pngExport = assetRow('55555555-5555-4555-8555-555555555555', {
 } as Partial<MediaAssetRow>);
 
 const upload = vi.fn<typeof libraryApi.uploadAsset>();
+/** Lo que se ha exportado para publicar (a tamaño real; la vista previa de la hoja dibuja a media resolución). */
+const exports = () =>
+  exporter.renderDocument.mock.calls.filter((call) => (call[2] as { pixelRatio?: number } | undefined)?.pixelRatio === 1);
 
 beforeEach(() => {
   vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
@@ -91,8 +94,8 @@ describe('Programar desde el editor', () => {
     await user.click(dialog.getByTestId('schedule-submit'));
     await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1));
     // Se ha exportado la versión aprobada en el formato que publica la red y se ha guardado en la biblioteca…
-    expect(exporter.renderDocument).toHaveBeenCalledTimes(1);
-    expect(exporter.renderDocument.mock.calls[0]![2]).toMatchObject({ format: 'jpeg', pixelRatio: 1 });
+    expect(exports()).toHaveLength(1);
+    expect(exports()[0]![2]).toMatchObject({ format: 'jpeg', pixelRatio: 1 });
     expect(upload.mock.calls[0]![0]).toMatchObject({
       folder: 'Exportaciones',
       provenance: { type: 'export', content_id: 'content-1', version: 1, format: 'jpeg', unsaved_changes: false },
@@ -121,7 +124,7 @@ describe('Programar desde el editor', () => {
     expect(await dialog.findByTestId('schedule-asset')).toBeChecked();
     await user.click(dialog.getByTestId('schedule-submit'));
     await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1));
-    expect(exporter.renderDocument).not.toHaveBeenCalled();
+    expect(exports()).toHaveLength(0);
     expect(fake.callsTo('save_publication', 'rpc')[0]!.payload).toMatchObject({ p_media_asset_ids: [JPEG] });
   });
 
@@ -138,13 +141,13 @@ describe('Programar desde el editor', () => {
     expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(0);
   });
 
-  it('sin aprobar, «Aprobar y programar…» guarda lo que haya, aprueba esa versión y abre el calendario', async () => {
+  it('modo agencia, sin aprobar: «Aprobar y programar…» guarda lo que haya, aprueba esa versión y abre el calendario', async () => {
     seedPublishing({ status: 'draft' });
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('canvas-stub');
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-share'));
-    const item = await screen.findByTestId('editor-schedule');
+    await addFromDrawer(user, 'elements', 'add-text');
+    const sheet = await openShareSheet(user);
+    const item = sheet.getByTestId('share-schedule');
     expect(item).toHaveTextContent('Aprobar y programar…');
     await user.click(item);
 
@@ -165,34 +168,45 @@ describe('El pie de la plantilla es un ejemplo, no el texto que se publica', () 
     seedPiece({ layers: [frame('foto'), text('titulo', 'Oferta')], captionHint: HINT });
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('canvas-stub');
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
-    const caption = screen.getByTestId('copy-caption') as HTMLTextAreaElement;
+    const sheet = await openShareSheet(user);
+    const caption = sheet.getByTestId('copy-caption') as HTMLTextAreaElement;
     expect(caption).toHaveValue('');
     expect(caption).toHaveAttribute('placeholder', HINT);
-    expect(screen.getByTestId('copy-caption-hint')).toHaveTextContent('no se publica');
-    expect(screen.getByTestId('counter-caption')).toHaveTextContent('0 / 2200');
+    expect(sheet.getByTestId('copy-caption-hint')).toHaveTextContent('no se publica');
+    expect(sheet.getByTestId('counter-caption')).toHaveTextContent('0 / 2200');
 
-    // La vista previa de la red no enseña la indicación como si fuera el pie.
-    await chooseEditorAction(user, 'editor-preview');
-    const preview = await screen.findByRole('dialog');
-    expect(within(preview).queryByText(/Qué es, cuánto cuesta/)).not.toBeInTheDocument();
-    await user.keyboard('{Escape}');
+    // La vista previa de la red (en la misma hoja) no enseña la indicación como si fuera el pie.
+    expect(within(sheet.getByTestId('share-preview')).queryByText(/Qué es, cuánto cuesta/)).not.toBeInTheDocument();
 
     // Al escribir el pie de verdad, la nota desaparece (la indicación sigue guardada por si se vacía).
-    await user.type(screen.getByTestId('copy-caption'), 'Esta semana, chuletón a 28 €.');
-    expect(screen.queryByTestId('copy-caption-hint')).not.toBeInTheDocument();
-    expect(screen.getByTestId('copy-caption')).toHaveValue('Esta semana, chuletón a 28 €.');
+    await user.type(sheet.getByTestId('copy-caption'), 'Esta semana, chuletón a 28 €.');
+    expect(sheet.queryByTestId('copy-caption-hint')).not.toBeInTheDocument();
+    expect(sheet.getByTestId('copy-caption')).toHaveValue('Esta semana, chuletón a 28 €.');
   });
 
   it('sin plantilla, el campo vacío dice para qué es', async () => {
     seedPiece();
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('canvas-stub');
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
-    expect(screen.getByTestId('copy-caption')).toHaveAttribute(
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('copy-caption')).toHaveAttribute(
       'placeholder',
       'Escribe aquí el texto que acompaña a la publicación…',
     );
-    expect(screen.queryByTestId('copy-caption-hint')).not.toBeInTheDocument();
+    expect(sheet.queryByTestId('copy-caption-hint')).not.toBeInTheDocument();
+  });
+});
+
+describe('«Compartir» con un hueco de foto vacío', () => {
+  it('avisa de lo que falta, deja descargar igual (el hueco no sale) y «Ir al hueco» lo elige', async () => {
+    seedPiece({ layers: [frame('foto'), text('titulo', 'Oferta')] });
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('canvas-stub');
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('share-missing-photos')).toHaveTextContent('Falta 1 foto');
+    expect(sheet.getByTestId('share-download')).toBeEnabled();
+    await user.click(sheet.getByTestId('share-go-to-missing'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Compartir' })).not.toBeInTheDocument());
+    expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-selected', 'foto');
   });
 });

@@ -1,5 +1,16 @@
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } from './apoyo';
+import {
+  abrir,
+  archivoPng,
+  aviso,
+  dato,
+  png,
+  sinErrores,
+  sql,
+  accionDelMenu,
+  guardarVersion,
+  nuevaIdea,
+} from './apoyo';
 import { arrancarMinio, MINIO, objetoEnMinio, pararMinio } from './minio';
 
 // Almacenamiento en Cloudflare R2 de extremo a extremo, contra el Supabase
@@ -111,7 +122,7 @@ test('usar la foto de R2 en el editor y exportar la pieza: la exportación tambi
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill('Pieza con foto en R2');
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
@@ -119,11 +130,12 @@ test('usar la foto de R2 en el editor y exportar la pieza: la exportación tambi
   const contenido = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
 
   const servida = page.waitForResponse((r) => r.url().startsWith(MINIO.publico) && r.ok());
-  await page.getByTestId('add-image').click();
-  await page.getByTestId('image-picker').getByTestId('picker-asset').filter({ hasText: FOTO }).click();
+  // La foto, desde el cajón «Fotos» de la marca.
+  await page.getByTestId('drawer-photos').click();
+  await page.getByTestId('editor-photos').locator(`[data-testid="photo-panel-item"][title="${FOTO}"]`).click();
   await servida;
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
-  await page.getByTestId('editor-save').click();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
+  await guardarVersion(page);
   await aviso(page, 'Versión 1 guardada');
 
   // Exportar lee el lienzo: con una imagen de R2 sin CORS, el lienzo quedaría «manchado» y fallaría.

@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { abrir, aviso, dato, enlaceDelCorreo, leerEstado, LOCAL, sinErrores, sql } from './apoyo';
+import { abrir, aviso, dato, enlaceDelCorreo, leerEstado, LOCAL, sinErrores, sql, abrirCompartir } from './apoyo';
 
 // Modo agencia de extremo a extremo, contra el Supabase LOCAL: una clienta pide
 // un encargo en la aplicación; la herramienta de la agencia (agency/),
@@ -246,7 +246,7 @@ test('la clienta revisa el borrador y pide un cambio', async ({ browser }) => {
   // El borrador se abre en el editor, en solo lectura para la clienta, y dice de qué encargo viene.
   await page.getByTestId('request-open-content').click();
   await expect(page.getByTestId('editor-request-link')).toContainText(TITULO);
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await expect(page.getByTestId('copy-caption')).toHaveValue(/hogaza de otoño/);
   await page.getByTestId('editor-request-link').click();
 

@@ -1,3 +1,4 @@
+import { withAppFont } from './appFont';
 import {
   allLayers,
   blurRadius,
@@ -109,7 +110,8 @@ export function describeLayer(layer: Layer, images: ImageLookup, readOnly = fals
         ...common,
         kind: 'text',
         text: layer.text,
-        fontFamily: layer.fontFamily,
+        // Detrás, la letra de la aplicación: si la de la marca no está cargada, no sale Times.
+        fontFamily: withAppFont(layer.fontFamily),
         fontSize: layer.fontSize,
         fontStyle: fontStyleOf(layer.fontWeight, layer.italic),
         fill: layer.color,

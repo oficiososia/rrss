@@ -62,8 +62,6 @@ function renderPanel(layer: Layer, dispatch: (action: EditorAction) => void = vi
         dispatch={dispatch}
         brandStyle={brandStyle}
         allowedRatios={null}
-        textRef={{ current: null }}
-        onEditPhoto={() => undefined}
       />
     </QueryClientProvider>,
   );
@@ -81,14 +79,10 @@ beforeEach(() => window.localStorage.clear());
 describe('orden de las secciones del panel', () => {
   it('foto: lo más usado arriba y abierto; lo demás plegado y lo técnico al final', () => {
     renderPanel(image);
-    expect(screen.getByTestId('layer-edit-photo')).toBeVisible();
     expect(screen.getByTestId('photo-filter-warm')).toBeVisible();
     expect(screen.getByLabelText('Encaje en el recuadro')).toBeVisible();
     const list = sections();
     expect(list.map((s) => s.id)).toEqual([
-      'photo.light',
-      'photo.geometry',
-      'photo.focus',
       'photo.backdrop',
       'photo.blur',
       'common.opacity',
@@ -97,16 +91,15 @@ describe('orden de las secciones del panel', () => {
       'tech.name',
     ]);
     expect(list.every((s) => !s.open)).toBe(true);
-    const edit = screen.getByTestId('layer-edit-photo');
-    const firstSection = screen.getAllByTestId('section-summary')[0]!;
-    expect(edit.compareDocumentPosition(firstSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('texto: contenido, tipografía, tamaño y color arriba; efectos plegados', () => {
+  it('texto: grosor arriba (tipografía, tamaño, color y alineación están en la barra); efectos plegados', () => {
     renderPanel(text);
     const main = screen.getByTestId('text-main');
-    for (const label of ['Texto', 'Tipografía', 'Tamaño de letra', 'Color del texto']) {
-      expect(within(main).getAllByText(label).length).toBeGreaterThan(0);
+    expect(within(main).getAllByText('Grosor').length).toBeGreaterThan(0);
+    // La tipografía sale aquí solo en el móvil (en la barra no cabe); lo demás, nunca.
+    for (const label of ['Texto', 'Tamaño de letra', 'Color del texto', 'Alineación']) {
+      expect(within(main).queryByText(label)).not.toBeInTheDocument();
     }
     expect(sections().map((s) => s.id)).toEqual([
       'text.spacing',
@@ -139,37 +132,20 @@ describe('orden de las secciones del panel', () => {
       turn: 90,
     } as Layer);
     const values = screen.getAllByTestId('section-value').map((v) => v.textContent);
-    expect(values).toContain('Cálido · 1 ajuste');
-    expect(values).toContain('Girada 90°');
     expect(values).toContain('800 × 200 en 0, 0');
     expect(adjustSummary(image as never)).toBe('Sin cambios');
     expect(geometrySummary(image as never)).toBe('Sin cambios');
   });
 });
 
-describe('barra de acciones de la capa', () => {
-  it('cada icono tiene nombre y hace lo suyo', () => {
-    const dispatch = vi.fn();
-    renderPanel(text, dispatch);
-    const bar = screen.getByRole('toolbar');
-    for (const name of [
-      'Duplicar',
-      'Borrar',
-      'Traer al frente',
-      'Subir un nivel',
-      'Bajar un nivel',
-      'Llevar al fondo',
-    ]) {
-      expect(within(bar).getByRole('button', { name })).toBeVisible();
+describe('acciones de la capa', () => {
+  it('el panel no repite las acciones de la barra flotante (duplicar, borrar, orden, alinear)', () => {
+    renderPanel(text);
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    for (const name of ['Duplicar', 'Borrar', 'Traer al frente', 'Llevar al fondo', 'Centrar en horizontal del lienzo']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
-    fireEvent.click(within(bar).getByRole('button', { name: 'Duplicar' }));
-    fireEvent.click(within(bar).getByRole('button', { name: 'Llevar al fondo' }));
-    fireEvent.click(within(bar).getByRole('button', { name: 'Centrar en horizontal del lienzo' }));
-    fireEvent.click(within(bar).getByRole('button', { name: 'Borrar' }));
-    expect(dispatch).toHaveBeenCalledWith({ type: 'duplicate', id: 'titulo' });
-    expect(dispatch).toHaveBeenCalledWith({ type: 'reorder', id: 'titulo', to: 'back' });
-    expect(dispatch).toHaveBeenCalledWith({ type: 'align', to: 'centerX' });
-    expect(dispatch).toHaveBeenCalledWith({ type: 'remove', id: 'titulo' });
+    expect(screen.getByTestId('layer-heading')).toHaveTextContent('Hola');
   });
 
   it('duplicar crea una copia desplazada, elegida y fuera del grupo', () => {
@@ -200,14 +176,14 @@ describe('barra de acciones de la capa', () => {
 describe('recuerdo de las secciones abiertas', () => {
   it('abrir una sección se apunta y la siguiente vez sale abierta', () => {
     const first = renderPanel(image);
-    const light = details('photo.light');
-    light.open = true;
-    fireEvent(light, new Event('toggle'));
-    expect(JSON.parse(window.localStorage.getItem(SECTION_MEMORY_KEY)!)).toEqual({ 'photo.light': true });
+    const backdrop = details('photo.backdrop');
+    backdrop.open = true;
+    fireEvent(backdrop, new Event('toggle'));
+    expect(JSON.parse(window.localStorage.getItem(SECTION_MEMORY_KEY)!)).toEqual({ 'photo.backdrop': true });
     first.unmount();
     renderPanel(image);
-    expect(details('photo.light').open).toBe(true);
-    expect(details('photo.geometry').open).toBe(false);
+    expect(details('photo.backdrop').open).toBe(true);
+    expect(details('photo.blur').open).toBe(false);
   });
 
   it('lo apuntado manda sobre el valor de partida; lo que no es verdadero o falso se ignora', () => {
@@ -220,7 +196,7 @@ describe('recuerdo de las secciones abiertas', () => {
   it('sin almacenamiento (o con datos rotos) el panel sale igual y no falla', () => {
     window.localStorage.setItem(SECTION_MEMORY_KEY, '{no es json');
     const first = renderPanel(image);
-    expect(sections()).toHaveLength(9);
+    expect(sections()).toHaveLength(6);
     first.unmount();
     const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('bloqueado');
