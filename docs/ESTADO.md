@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1766,8 +1766,31 @@ Montajes de antes y después con fotos reales en `rrss-recursos-comparativa/reel
   Migración `20270113010000_reels_calidad.sql` (campos opcionales `role`, `subjectMaskPath`, `outro`, `grade`).
 - **Probado**: trabajador con FFmpeg real (`worker/tests/reel-quality.test.ts`), base de datos
   (`tests/db/editor-reels.test.ts`), aplicación (`quality.test.ts`, plantillas, «como este») y catálogo.
-- **Pendiente**: que el editor (`editor/project.ts`) guarde `role`, `outro`, `grade` y `subjectMaskPath`; el
-  aviso «Sin música» en pantalla (`reelAudioNotice`); los selectores con `rankReelAssets`; que la vista previa
-  imite los mínimos de texto; elegir fuente de música. Sin probar en Fly (FFmpeg 7.1) ni publicar en Meta un
-  reel sin pista de audio.
+- **Pendiente**: elegir fuente de música. Sin probar en Fly (FFmpeg 7.1) ni publicar en Meta un reel sin pista
+  de audio. Lo de las pantallas (guardar los campos nuevos, aviso «Sin música», selectores ordenados y vista
+  previa fiel) lo hizo la rama `f64/calidad-en-editor` (sección siguiente).
 - **Para staging**: migración, trabajador (imagen con `worker/fonts/`), aplicación y volver a cargar el catálogo.
+
+## La calidad de las muestras, en el editor de reels (rama `f64/calidad-en-editor`, 23/11/2026)
+
+Conecta lo de `f54/reels-calidad` al editor, para que los reels que se crean desde la app salgan como las muestras.
+Detalle, antes y después por punto, en `docs/editor-reels.md` §12. Sin migraciones ni cambios en el trabajador.
+
+- **Implementado**: el proyecto guarda y envía `role`, `outro`, `grade` y `subjectMaskPath`; «Desde una plantilla»,
+  «Plantillas de la marca» y los reels de las campañas pasan por `buildBrandReel` (la mejor foto abre, vídeos a los
+  planos de ambiente, rótulo por plano, cortes al pulso, puntos y máscaras guardados, papel en cada texto, colores
+  y cierre con logotipo, llamada, usuario y dirección del perfil; se quita o se pone desde «⋯»); selectores
+  ordenados con `rankReelAssets`; «Sin música» junto a «Exportar» (`AudioNotice`, con su forma para la hoja
+  «Exportar» de f62); vista previa con los mínimos de texto del trabajador (`editor/textFit.ts`) y el cierre.
+- **Probado**: unitarias (`editor/calidadEditor.test.ts`), componentes (`editorReels.test.tsx`), la cuenta de la
+  vista previa frente a la del trabajador y el esquema del trabajador con un reel del editor
+  (`tests/db/vista-previa-textos.test.ts`), `test:layout` y dos montajes reales con FFmpeg por el camino del editor
+  (`scripts/reels-desde-editor.ts`; hojas en `rrss-recursos-comparativa/reels-calidad/desde-editor-*.jpg`): sin
+  solapes, texto en cada plano, sin bandas, cierre con logotipo y sin fotos repetidas.
+- **Pendiente**: enganchar `AudioNotice` en la hoja «Exportar» con «Terminar en Instagram» (f62); que «Hacer un reel
+  como este» escriba `role` y el cierre; un logotipo claro de la marca para el cierre (el de la web de Casa Tomás es
+  oscuro y no se vería); comprobar el usuario de Instagram del perfil (la web enlaza a `@casatomascrevillent`; las
+  muestras usan `@restaurantecasatomas`, como las de f54).
+- **Sin probar**: la vista previa en un navegador real con la letra de la marca (las medidas se acercan, no son las
+  del archivo de la tipografía); móvil y Safari reales.
+- **Para staging**: lo de f54 (migración `20270113010000` y trabajador nuevo) antes que esta aplicación.

@@ -72,26 +72,20 @@ En el trabajador son `.nullable().default(null)` (un nulo es ausente; `request_m
 Sin estos campos, el reel sale igualmente con todo lo de arriba (papel deducido, saliencia,
 gradación natural…); solo el cierre necesita `outro`.
 
-## Lo que falta en las pantallas (de otros agentes)
+## En las pantallas (rama `f64/calidad-en-editor`, 23/11/2026)
 
-El esquema del proyecto del editor (`src/features/reels/editor/project.ts`, zona de la rama f52)
-es estricto y todavía **no** guarda `role`, `outro`, `grade` ni `subjectMaskPath`: un proyecto con
-ellos no se podría abrir. Por eso las plantillas y «Hacer un reel como este» no los escriben aún.
-Para activarlos:
+Lo que aquí quedaba pendiente ya está conectado al editor; detalle en `docs/editor-reels.md` §12:
 
-1. `project.ts`: añadir los cuatro campos como opcionales (sin nulos), igual que en la tabla.
-2. Al crear un reel desde plantilla o desde «Hacer un reel como este»: `brandReelKit(perfil, rutaDelLogo)`
-   → `withBrandOutro(plan, kit, duración)`, y en `buildReelFromTemplate` pasar `colors: kit.colors`,
-   `focalPoints: savedFocalPoints(biblioteca)`, **`captions: true` y `beatSync: true`** (hoy son
-   opcionales para no cambiar las pruebas del editor); la máscara, con `subjectMasks(biblioteca)`.
-3. **Aviso «Sin música»**: `reelAudioNotice(plan).notice`, junto a «Montar el vídeo» y en el panel
-   «Vídeo final»; cuando el trabajo termina, `jobs.result.output.audio` lo confirma.
-4. Selectores de material (rama f49): ordenar con `rankReelAssets` y no dejar elegir dos veces el
-   mismo archivo (`uniqueAssets`).
-5. Vista previa (`compose.ts`): para parecerse al vídeo, aplicar los mínimos de `textlayout.ts`
-   (tamaño por papel, caja translúcida en rótulos pequeños sin caja, cortes equilibrados, zonas
-   seguras 250/400/60 px y apilado). Hoy la vista previa puede enseñar un texto más pequeño o
-   en otro sitio que el vídeo.
+1. `editor/project.ts` guarda y envía `role`, `outro`, `grade` y `subjectMaskPath` (opcionales, sin nulos).
+2. «Desde una plantilla», «Plantillas de la marca» y los reels de las campañas pasan por `buildBrandReel`
+   (`reelTemplate.ts`): `orderForTemplate` (`strongestFirst` + `orderForSlots`), colores, puntos y máscaras
+   guardados, `captions: true`, `beatSync: true` y `withBrandOutro` con logotipo, llamada, usuario y dirección
+   del perfil.
+3. Los selectores («Añadir», «Sustituir» y los planos de una plantilla) ordenan con `rankReelAssets`.
+4. Aviso «Sin música» junto a «Exportar» (`AudioNotice`); listo para la hoja «Exportar» con «Terminar en Instagram».
+5. La vista previa usa los mínimos de texto del trabajador (`editor/textFit.ts`) y enseña el cierre.
+
+«Hacer un reel como este» (`like/draft.ts`) todavía no escribe `role` ni el cierre (fuera de esta rama).
 
 ## Música: fuentes propuestas (para que elija el dueño; no implementado)
 
@@ -141,7 +135,7 @@ El «después» lleva el cierre con el campo `outro`, como saldrá cuando el edi
   se sabe, pero no se ha probado contra Meta real).
 - La saliencia con fotos muy cargadas (sala llena, fondo con mucho detalle): acierta con platos
   sobre mantel o encimera, puede dudar en planos generales.
-- Las pantallas (editor, selectores) no usan aún lo nuevo; ver «Lo que falta en las pantallas».
+- Las pantallas ya lo usan (ver «En las pantallas»); lo que queda sin probar de ellas está en `docs/editor-reels.md` §12.
 
 ## Para llevarlo a staging
 

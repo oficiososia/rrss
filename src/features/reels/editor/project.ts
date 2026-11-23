@@ -55,6 +55,18 @@ export const CLIP_FILTERS = ['bw', 'sepia', 'vivid', 'warm', 'cool', 'fade', 'dr
 export type ClipFilter = (typeof CLIP_FILTERS)[number];
 /** Cuánto se puede apartar un texto de su sitio (fracción del ancho y del alto). */
 export const TEXT_OFFSET_LIMIT = 0.5;
+/**
+ * Papel de un texto en el vídeo (titular, rótulo, precio o llamada final): el trabajador le
+ * da un tamaño mínimo, cuántas líneas caben y una animación por defecto (worker/src/reel/textlayout.ts).
+ * Sin papel, lo deduce. Lo leen también quality.ts y la vista previa (textFit.ts).
+ */
+export const TEXT_ROLES = ['headline', 'label', 'price', 'cta'] as const;
+export type TextRole = (typeof TEXT_ROLES)[number];
+/** Gradación de color de todo el reel; sin el campo, `natural` (la pone el trabajador). */
+export const REEL_GRADES = ['natural', 'warm', 'none'] as const;
+export type ReelGrade = (typeof REEL_GRADES)[number];
+/** Cierre con la marca: de 1,5 a 3 s (2 si no se dice). */
+export const OUTRO_SECONDS = { min: 1.5, max: 3, default: 2 } as const;
 
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color en formato #RRGGBB');
 const storagePath = z.string().min(5).max(600);
@@ -130,6 +142,11 @@ const photoClipSchema = z
     motion: z.enum(PHOTO_MOTIONS).optional(),
     motionAmount: z.number().min(0).max(0.3).optional(),
     filter: clipFilter,
+    /**
+     * Máscara del sujeto: el PNG de «Quitar el fondo» de ESTA foto (de la marca). El trabajador
+     * encuadra y mueve la cámara sobre lo opaco; sin ella, por saliencia.
+     */
+    subjectMaskPath: storagePath.optional(),
   })
   .strict();
 const videoClipSchema = z
@@ -165,6 +182,8 @@ export const textSchema = z
     animation: textAnimationSchema.optional(),
     /** Desplazamiento desde su sitio (arriba, centro o abajo), como fracción del ancho y del alto. */
     offset: textOffset.optional(),
+    /** Papel del texto (titular, rótulo, precio, llamada); sin él, el trabajador lo deduce. */
+    role: z.enum(TEXT_ROLES).optional(),
   })
   .strict()
   .refine((t) => t.end > t.start, 'El texto debe terminar después de empezar');
@@ -188,6 +207,25 @@ export const musicSchema = z
   .strict();
 export type Music = z.infer<typeof musicSchema>;
 
+/**
+ * Cierre con la marca (plan v2, migración 20270113010000): logotipo, llamada grande y,
+ * si los hay, usuario y dirección, después del último plano. Sin nulos: lo que no hay,
+ * no se escribe (como lo pide `request_media_job`).
+ */
+export const outroSchema = z
+  .object({
+    seconds: z.number().min(OUTRO_SECONDS.min).max(OUTRO_SECONDS.max).optional(),
+    cta: z.string().min(1).max(60),
+    handle: z.string().min(1).max(60).optional(),
+    address: z.string().min(1).max(120).optional(),
+    logoPath: storagePath.optional(),
+    background: hexColor.optional(),
+    accent: hexColor.optional(),
+    accentText: hexColor.optional(),
+  })
+  .strict();
+export type ReelOutro = z.infer<typeof outroSchema>;
+
 export const subtitlesSchema = z
   .object({ enabled: z.boolean(), position: z.enum(TEXT_POSITIONS), style: textStyleSchema })
   .strict();
@@ -202,6 +240,8 @@ export const planSchema = z
     music: musicSchema.optional(),
     cover: coverSchema.optional(),
     fontPath: fontPath.optional(),
+    outro: outroSchema.optional(),
+    grade: z.enum(REEL_GRADES).optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -537,6 +577,36 @@ export function migratePlanV1(plan: PlanV1, template: ReelTemplateSummary): Reel
 
 // ───────────────────────────── Línea de tiempo ─────────────────────────────
 
+/** Transición hacia el cierre con la marca (la misma que el motor, `OUTRO_FADE`). */
+export const OUTRO_FADE_SECONDS = 0.4;
+
+export interface OutroSpan {
+  /** Segundo en que empieza a entrar el cierre (se funde con el último plano). */
+  start: number;
+  seconds: number;
+  fade: number;
+  /** Duración del vídeo con el cierre. */
+  total: number;
+}
+
+/**
+ * Dónde cae el cierre con la marca, con la misma cuenta que el motor (`buildReel`):
+ * entra fundiéndose con el último plano (0,4 s, o la mitad del último si es más corto)
+ * y alarga el vídeo lo que dura. Null si el plan no lleva cierre o no tiene planos.
+ */
+export function outroSpan(
+  plan: { outro?: ReelOutro; clips: unknown[] },
+  timeline: Pick<PlanTimeline, 'durations' | 'total'>,
+  template: ReelTemplateSummary,
+): OutroSpan | null {
+  if (!plan.outro || plan.clips.length === 0 || timeline.durations.length === 0) return null;
+  const fps = template.canvas.fps;
+  const seconds = Math.max(1, Math.round((plan.outro.seconds ?? OUTRO_SECONDS.default) * fps)) / fps;
+  const fade = Math.min(OUTRO_FADE_SECONDS, timeline.durations[timeline.durations.length - 1]! / 2);
+  const start = Number((timeline.total - fade).toFixed(4));
+  return { start, seconds, fade, total: Number((start + seconds).toFixed(4)) };
+}
+
 export interface PlanTimeline {
   durations: number[];
   /** Transición con la que entra cada elemento (0 en el primero y en los cortes). */
@@ -701,7 +771,9 @@ export function projectProblems(
       problems.push(`El clip ${index + 1} pasa de ${MAX_CLIP_SEGMENT_SECONDS} s.`);
   });
   if (template && plan.clips.length > 0) {
-    const { total } = planTimeline(plan.clips, template, (c) => context.fileSeconds?.(c.path) ?? null);
+    const timeline = planTimeline(plan.clips, template, (c) => context.fileSeconds?.(c.path) ?? null);
+    // Con el cierre de la marca, el vídeo dura un poco más.
+    const total = outroSpan(plan, timeline, template)?.total ?? timeline.total;
     if (total > REEL_MAX_SECONDS + 1e-6) {
       problems.push(`El reel duraría ${fmt(total)} s y el máximo es ${REEL_MAX_SECONDS} s.`);
     }

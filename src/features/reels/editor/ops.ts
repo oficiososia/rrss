@@ -116,6 +116,32 @@ export function startReel(
   return next;
 }
 
+/**
+ * Encuadre guardado de las fotos que entran en el reel (docs/reels-calidad.md, punto 4): su
+ * punto de interés (de sus recortes) y su máscara de «Quitar el fondo», solo en las fotos que
+ * aún no los tienen. Devuelve el mismo proyecto si no cambia nada.
+ */
+export function applySavedFraming(
+  project: ReelProject,
+  focalPoints: ReadonlyMap<string, { x: number; y: number }>,
+  masks: ReadonlyMap<string, string>,
+): ReelProject {
+  let changed = false;
+  const clips = project.plan.clips.map((clip): Clip => {
+    if (clip.type !== 'photo') return clip;
+    const focal = clip.focalPoint ? undefined : focalPoints.get(clip.path);
+    const mask = clip.subjectMaskPath ? undefined : masks.get(clip.path);
+    if (!focal && !mask) return clip;
+    changed = true;
+    return {
+      ...clip,
+      ...(focal ? { focalPoint: { x: focal.x, y: focal.y } } : {}),
+      ...(mask ? { subjectMaskPath: mask } : {}),
+    };
+  });
+  return changed ? withPlan(project, { clips }) : project;
+}
+
 export function removeClip(project: ReelProject, id: string) {
   return withPlan(project, { clips: project.plan.clips.filter((c) => c.id !== id) });
 }

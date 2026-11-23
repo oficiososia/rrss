@@ -7,6 +7,10 @@
 // portadas) no es material: se oculta salvo con «Ver también diseños y
 // montajes». Las fotos con IA y las ediciones sí salen. «Subir», soltar archivos
 // y «Crear con IA» (`PickerUpload`) dejan lo nuevo elegido en el acto.
+//
+// Orden: primero lo que mejor queda en un reel vertical (`rankReelAssets`:
+// resolución, nitidez, proporción, vídeos reales; sin repetidos) y, a igualdad,
+// lo más reciente. Lo recién subido o creado aquí, siempre lo primero.
 import { Clapperboard, Film, Image as ImageIcon, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, ErrorState, Input, Skeleton } from '@/components/ui';
@@ -16,6 +20,7 @@ import { PickerUpload } from '@/features/library/PickerUpload';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { cn } from '@/lib/utils';
 import type { ReelSourceAsset } from '../api';
+import { rankReelAssets } from '../quality';
 
 const PAGE = 48;
 type Filter = 'all' | 'image' | 'video';
@@ -108,10 +113,11 @@ export function MediaPicker({
 
   // Se monta al abrirse (ReelEditor), así que siempre parte de cero.
 
+  const ranked = useMemo(() => rankReelAssets(sources), [sources]);
   const all = useMemo(() => {
     const fresh = new Set(added.map((a) => a.id));
-    return [...added, ...sources.filter((s) => !fresh.has(s.id))];
-  }, [added, sources]);
+    return [...added, ...ranked.filter((s) => !fresh.has(s.id))];
+  }, [added, ranked]);
   const hiddenDesigns = useMemo(() => all.filter((s) => isAppDesign(s)).length, [all]);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();

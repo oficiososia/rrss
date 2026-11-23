@@ -26,6 +26,7 @@ import {
   Save,
   ScanLine,
   SendHorizontal,
+  Stamp,
   Undo2,
   Upload,
   X,
@@ -97,7 +98,8 @@ import { cn, formatDateTime } from '@/lib/utils';
 import { reelKeys, useRequestReel, useReelSources, type ReelSourceAsset } from '../api';
 import { describeJob, isActive } from '../plan';
 import { REEL_TEMPLATES, type ReelTemplateSummary } from '../templates';
-import { buildReelFromTemplate, describeNeeds, reelTemplateNeeds } from '../reelTemplate';
+import { buildBrandReel, describeNeeds, reelTemplateNeeds } from '../reelTemplate';
+import { brandOutro, brandReelKit, reelLogoPath, savedFocalPoints, subjectMasks, withBrandOutro } from '../quality';
 import {
   jobContentVersion,
   pieceJobKeys,
@@ -111,9 +113,11 @@ import {
 } from './api';
 import { createClock, useClockValue, type PlayClock } from './clock';
 import {
+  dropMissingHelpers,
   fileNameOf,
   missingItems,
   missingSummary,
+  planHelperPaths,
   planPaths,
   replaceClipAndCover,
   useMissingPaths,
@@ -122,6 +126,7 @@ import {
 import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, panelTitle, type BarAction } from './ContextBar';
+import { AudioNotice, audioNoticeText } from './AudioNotice';
 import { ExportSheet, type PreviousRender } from './ExportSheet';
 import { exportState, renderOfPlan, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
 import { FinishInInstagram, ManualPublicationLine } from './FinishInInstagram';
@@ -138,6 +143,7 @@ import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
 import {
   addClip,
+  applySavedFraming,
   addText,
   brandTextStyle,
   canSplitAt,
@@ -412,7 +418,17 @@ function Editor({
   // Direcciones firmadas de todo lo que suena o se ve en el reel.
   const usedPaths = useMemo(() => planPaths(project.plan), [project.plan]);
   // Lo que se borró de la biblioteca después de ponerlo en el reel (sin saberlo todavía, nada).
-  const missingPaths = useMissingPaths(brand.id, usedPaths);
+  // También las máscaras de las fotos, que no se ven pero el montaje usa.
+  const helperPaths = useMemo(() => planHelperPaths(project.plan), [project.plan]);
+  const checkedPaths = useMemo(() => [...new Set([...usedPaths, ...helperPaths])].sort(), [usedPaths, helperPaths]);
+  const missingPaths = useMissingPaths(brand.id, checkedPaths);
+  // Máscaras y logotipo del cierre borrados de la biblioteca: se quitan del reel (no hacen falta para montar).
+  useEffect(() => {
+    if (readOnly || !missingPaths || missingPaths.size === 0) return;
+    const gone = (path: string) => missingPaths.has(path);
+    if (dropMissingHelpers(project.plan, gone) === project.plan) return;
+    dispatch({ type: 'change', change: (p) => ({ ...p, plan: dropMissingHelpers(p.plan, gone) }) });
+  }, [missingPaths, project.plan, readOnly, dispatch]);
   const isMissing = useCallback((path: string) => missingPaths?.has(path) ?? false, [missingPaths]);
   const missing = useMemo(() => missingItems(project.plan, isMissing), [project.plan, isMissing]);
   const missingText = missingSummary(missing);
@@ -451,6 +467,18 @@ function Editor({
   const palette = useMemo(
     () => (profile?.visual.colors ?? []).map((c) => ({ hex: c.hex.toUpperCase(), name: c.name })),
     [profile],
+  );
+  // Logotipo, usuario, dirección y llamada del perfil: el cierre de los reels que se crean desde una plantilla.
+  const logoIds = useMemo(() => profile?.visual.logoAssetIds ?? [], [profile]);
+  const logos = useAssetsByIds(brand.id, logoIds);
+  const kit = useMemo(
+    () => (profile ? brandReelKit(profile, reelLogoPath(logoIds, logos.data ?? [])) : null),
+    [profile, logoIds, logos.data],
+  );
+  // Encuadre guardado de cada foto (punto de interés de sus recortes y máscara de «Quitar el fondo»).
+  const framing = useMemo(
+    () => ({ focal: savedFocalPoints(sources.data ?? []), masks: subjectMasks(sources.data ?? []) }),
+    [sources.data],
   );
   const fontFaces = useBrandFontFaces(brand.id);
   const reelFont = useReelFont(brand.id);
@@ -903,21 +931,25 @@ function Editor({
   /** Las piezas elegidas entran en el orden de la elección; en un reel vacío, con el estilo y el texto de partida. */
   const addMedia = (assets: ReelSourceAsset[]) => {
     if (assets.length === 0) return;
+    const framed = (p: ReelProject) => applySavedFraming(p, framing.focal, framing.masks);
     if (media?.mode === 'replace') {
       const id = media.id;
       // Con su duración, movimiento, filtro y transición; si era la foto de la portada, la portada la sigue.
-      apply((p) => replaceClipAndCover(p, id, assets[0]!, template));
+      apply((p) => framed(replaceClipAndCover(p, id, assets[0]!, template)));
       return;
     }
     if (project.plan.clips.length === 0 && startTemplate) {
-      // Con una plantilla: cada pieza ocupa un plano, con su duración, su movimiento y sus textos de muestra.
+      // Con una plantilla, por el camino de calidad (docs/reels-calidad.md): el mejor plano abre, los vídeos
+      // van a los planos de ambiente, un rótulo por plano, cortes al pulso y el cierre con la marca.
       const chosen = startTemplate;
       const style = REEL_TEMPLATES.find((t) => t.id === chosen.template.style.id) ?? template;
       const font = brandFont();
       dispatch({
         type: 'change',
         change: () =>
-          buildReelFromTemplate(chosen.template, assets, style, {
+          buildBrandReel(chosen.template, assets, style, {
+            kit,
+            library: sources.data ?? [],
             ...(font ? { font: { path: font.path, family: font.family } } : {}),
           }),
         select: { kind: 'clip', id: 'c1' },
@@ -934,7 +966,9 @@ function Editor({
       dispatch({
         type: 'change',
         change: (p) =>
-          startReel(p, assets, template, openingText.trim() ? { text: openingText, style: newTextStyle() } : null),
+          framed(
+            startReel(p, assets, template, openingText.trim() ? { text: openingText, style: newTextStyle() } : null),
+          ),
         select: { kind: 'clip', id: 'c1' },
       });
       setOpeningText('');
@@ -942,7 +976,7 @@ function Editor({
     }
     dispatch({
       type: 'change',
-      change: (p) => assets.reduce((acc, asset) => addClip(acc, asset, template), p),
+      change: (p) => framed(assets.reduce((acc, asset) => addClip(acc, asset, template), p)),
       select: { kind: 'clip', id: newId('c', takenIds()) },
     });
   };
@@ -966,7 +1000,9 @@ function Editor({
     dispatch({
       type: 'change',
       change: (p) => {
-        const built = buildReelFromTemplate(chosen.template, assets, style, {
+        const built = buildBrandReel(chosen.template, assets, style, {
+          kit,
+          library: sources.data ?? [],
           ...(font ? { font: { path: font.path, family: font.family } } : {}),
         });
         return {
@@ -1268,6 +1304,26 @@ function Editor({
       onSelect: () => setSafeZones((v) => !v),
       testId: 'reel-safe-toggle',
     },
+    // El cierre con la marca (logotipo, llamada, usuario y dirección): quitarlo o, si la marca tiene llamada, ponerlo.
+    ...(!readOnly && project.plan.clips.length > 0 && (project.plan.outro || (kit && brandOutro(kit)))
+      ? [
+          {
+            id: 'outro',
+            label: project.plan.outro ? 'Quitar el cierre con la marca' : 'Poner el cierre con la marca',
+            icon: Stamp,
+            onSelect: () =>
+              apply((p) => {
+                if (p.plan.outro) {
+                  const plan = { ...p.plan };
+                  delete plan.outro;
+                  return { ...p, plan };
+                }
+                return kit ? { ...p, plan: withBrandOutro(p.plan, kit, timeline.total) } : p;
+              }),
+            testId: 'reel-outro-toggle',
+          },
+        ]
+      : []),
     ...(canEdit && !item.archived_at
       ? [
           {
@@ -1465,6 +1521,8 @@ function Editor({
             </>
           )}
           <MoreMenu items={moreActions} label="Más acciones del reel" testId="reel-more" size="sm" />
+          {/* Junto a «Exportar»: los reels salen sin música (se pone en Instagram antes de publicar). */}
+          {!empty && <AudioNotice plan={project.plan} className="px-1" />}
           {item.archived_at && canEdit ? (
             <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="reel-restore">
               <ArchiveRestore className="h-4 w-4" aria-hidden />
@@ -1825,7 +1883,7 @@ function Editor({
               ? {
                   title: `«${startTemplate.name}»: elige el material`,
                   description:
-                    'Toca las fotos y los clips en el orden de los planos. Si eliges menos, se quitan los planos que sobran.',
+                    'Toca las fotos y los clips para los planos (las que mejor quedan, primero). La mejor abre el reel y los vídeos van a los planos de ambiente. Si eliges menos, se quitan los planos que sobran.',
                   guide: {
                     steps: startTemplate.template.slots.map((slot) => slot.label),
                     wanted: reelTemplateNeeds(startTemplate.template).min,
@@ -1989,7 +2047,7 @@ function Editor({
             : undefined
         }
         libraryPathOf={(assetId) => `/o/${org.id}/m/${brand.id}/biblioteca?recurso=${assetId}`}
-        warnings={warnings}
+        warnings={withAudioNotice(warnings, audioNoticeText(project.plan, true))}
         publish={
           anyPublished
             ? {
@@ -2470,4 +2528,9 @@ function useNarrow(): boolean {
     return () => list.removeEventListener('change', onChange);
   }, []);
   return narrow;
+}
+
+/** El aviso «Sin música» va también en la hoja «Exportar», remitiendo a «Terminar en Instagram». */
+function withAudioNotice(warnings: string[], notice: string | null): string[] {
+  return notice && !warnings.includes(notice) ? [...warnings, notice] : warnings;
 }

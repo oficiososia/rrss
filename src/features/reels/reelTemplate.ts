@@ -20,11 +20,18 @@ import type { ReelTemplateSummary } from './templates';
 import type { SourceAsset } from './editor/ops';
 import {
   assetCaption,
+  orderForSlots,
   roleTextStyle,
+  savedFocalPoints,
   separateTexts,
+  strongestFirst,
+  subjectMasks,
   TEMPLATE_ROLE_TO_TEXT_ROLE,
   uniqueAssets,
+  withBrandOutro,
   type BrandColors,
+  type BrandReelKit,
+  type RankableAsset,
 } from './quality';
 import {
   MAX_CLIP_SEGMENT_SECONDS,
@@ -38,6 +45,7 @@ import {
   REEL_PLAN_VERSION,
   REEL_TEXT_MAX_LENGTH,
   TEXT_POSITIONS,
+  outroSpan,
   planTimeline,
   templateTransition,
   textAnimationSchema,
@@ -414,16 +422,20 @@ export interface BuildReelOptions {
   colors?: BrandColors;
   /** Punto de interés guardado de cada foto (ruta → punto), de sus recortes (`savedFocalPoints`). */
   focalPoints?: ReadonlyMap<string, { x: number; y: number }>;
+  /** Máscara del sujeto de cada foto (ruta → PNG de «Quitar el fondo»), de `subjectMasks`. */
+  subjectMasks?: ReadonlyMap<string, string>;
   /**
    * Rótulo en cada plano que no tenga texto propio, con el nombre del archivo si dice
-   * algo («Alcachofa a la parrilla»): así cada plano cuenta algo. Hay que pedirlo (el editor aún no lo pide).
+   * algo («Alcachofa a la parrilla»): así cada plano cuenta algo. Hay que pedirlo
+   * (lo piden el editor y las campañas con `buildBrandReel`).
    */
   captions?: boolean;
   /**
    * Cortes al pulso: si la plantilla pide cortes al golpe (`music.cutsOnBeat`) y dice
    * su tempo (`music.bpm`), cada plano dura un número entero de pulsos (del tempo
    * medio). Con una canción de ese tempo, los cortes caen en el golpe; con la canción
-   * real, «Ajustar los cortes a la música» del editor los afina. Hay que pedirlo (el editor aún no lo pide).
+   * real, «Ajustar los cortes a la música» del editor los afina. Hay que pedirlo
+   * (lo piden el editor y las campañas con `buildBrandReel`).
    */
   beatSync?: boolean;
 }
@@ -480,11 +492,13 @@ export function buildReelFromTemplate(
       };
     }
     const focal = options.focalPoints?.get(asset.storage_path);
+    const mask = options.subjectMasks?.get(asset.storage_path);
     return {
       id,
       type: 'photo',
       path: asset.storage_path,
       ...(focal ? { focalPoint: { x: focal.x, y: focal.y } } : {}),
+      ...(mask ? { subjectMaskPath: mask } : {}),
       seconds: Math.min(secondsOf(slot), PHOTO_SECONDS.max),
       ...(slot.motion ? { motion: slot.motion } : {}),
       ...(slot.motionAmount !== undefined ? { motionAmount: slot.motionAmount } : {}),
@@ -523,6 +537,8 @@ export function buildReelFromTemplate(
       position: text.position,
       style: textStyle,
       ...(text.animation ? { animation: { ...text.animation } } : {}),
+      // El papel va al trabajador: tamaño mínimo, líneas y animación por defecto.
+      role,
     });
   }
 
@@ -546,6 +562,7 @@ export function buildReelFromTemplate(
         position: 'bottom',
         style: options.font ? { ...style, fontPath: options.font.path, fontFamily: options.font.family } : style,
         animation: { in: 'rise', out: 'fade', seconds: 0.3 },
+        role: 'label',
       });
     });
   }
@@ -570,4 +587,76 @@ export function buildReelFromTemplate(
       ...(cover !== null && clips.length > 0 ? { cover: { type: 'frame' as const, at: cover } } : {}),
     },
   };
+}
+
+// ───────────────────────────── Reel de la marca, con calidad ─────────────────────────────
+
+/** Lo que hace falta de la marca para montar un reel con su cara (quality.ts). */
+export interface BrandReelInput {
+  /** Colores, logotipo, usuario, dirección y llamada del perfil (`brandReelKit`). Sin él, sin cierre. */
+  kit?: BrandReelKit | null;
+  /** La biblioteca de la marca (o la parte que se tenga): de ella salen los puntos y las máscaras guardados. */
+  library?: readonly RankableAsset[];
+  font?: { path: string; family: string };
+}
+
+/**
+ * Orden del material para los planos de una plantilla: el plano más fuerte abre
+ * el reel (`strongestFirst`, solo si es claramente mejor que el primero elegido)
+ * y los vídeos van a los planos de ambiente (`orderForSlots`). Sin repetidos.
+ */
+export function orderForTemplate<T extends SourceAsset & RankableAsset>(
+  template: ReelTemplate,
+  chosen: readonly T[],
+): T[] {
+  const assets = uniqueAssets(chosen);
+  return orderForSlots(slotsFor(template, assets.length), strongestFirst(assets));
+}
+
+/**
+ * El camino de calidad para crear un reel desde una plantilla (docs/reels-calidad.md),
+ * el mismo en el editor («Desde una plantilla» y «Plantillas de la marca») y en los
+ * reels de las campañas: material ordenado para los planos, colores de la marca,
+ * puntos y máscaras guardados, un rótulo por plano, cortes al pulso y el cierre con
+ * la marca (logotipo, llamada, usuario y dirección).
+ */
+export function buildBrandReel<T extends SourceAsset & RankableAsset>(
+  template: ReelTemplate,
+  chosen: readonly T[],
+  style: ReelTemplateSummary,
+  brand: BrandReelInput = {},
+): ReelProject {
+  const library = brand.library ?? [];
+  const ordered = orderForTemplate(template, chosen);
+  const options: BuildReelOptions = {
+    ...(brand.font ? { font: brand.font } : {}),
+    ...(brand.kit ? { colors: brand.kit.colors } : {}),
+    focalPoints: savedFocalPoints(library),
+    subjectMasks: subjectMasks(library),
+    captions: true,
+    beatSync: true,
+  };
+  const built = buildReelFromTemplate(template, ordered, style, options);
+  if (!brand.kit || built.plan.clips.length === 0) return built;
+  const files = new Map(
+    chosen.flatMap((a) =>
+      a.kind === 'video' && a.duration_ms ? [[a.storage_path, a.duration_ms / 1000] as const] : [],
+    ),
+  );
+  const timeline = planTimeline(built.plan.clips, style, (clip) => files.get(clip.path) ?? null);
+  const closed = withBrandOutro(built.plan, brand.kit, timeline.total);
+  if (!closed.outro) return built;
+  // La llamada de la plantilla pasa al cierre: su plano se queda con su rótulo, como los demás.
+  const moved = built.plan.texts.find((t) => !closed.texts.includes(t));
+  const rest = moved ? template.texts.filter((t) => t.text !== moved.text) : template.texts;
+  const plan =
+    rest.length < template.texts.length
+      ? { ...buildReelFromTemplate({ ...template, texts: rest }, ordered, style, options).plan, outro: closed.outro }
+      : closed;
+  // Los textos acaban cuando entra el cierre (si no, el trabajador los recorta y lo avisa).
+  const until = outroSpan(plan, timeline, style)?.start ?? timeline.total;
+  const texts = plan.texts
+    .map((t) => (t.end > until ? { ...t, end: round(until) } : t))
+    .filter((t) => t.end - t.start >= 0.5);
+  return { ...built, plan: { ...plan, texts } };
 }
