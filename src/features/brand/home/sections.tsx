@@ -1,4 +1,4 @@
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, ExternalLink } from 'lucide-react';
 import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui';
@@ -13,15 +13,29 @@ import { shortDateTime } from '@/features/content/lista/dateText';
 import { formatDate, cn } from '@/lib/utils';
 import { fixTarget } from './fixTarget';
 import type { PublishedWithFigures, WithPiece } from './useHomeData';
-import { groupByDay, weekDays, weekRange } from './week';
+import { groupByDay, weekDays, weekProgress, weekRange } from './week';
 
-function Section({ title, action, children, testId }: { title: string; action?: ReactNode; children: ReactNode; testId: string }) {
+function Section({
+  title,
+  badge,
+  action,
+  children,
+  testId,
+}: {
+  title: string;
+  badge?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  testId: string;
+}) {
   return (
     <section aria-labelledby={`${testId}-t`} data-testid={testId} className="min-w-0">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 id={`${testId}-t`} className="text-base">
+      <div className="mb-2 flex items-center gap-2">
+        <h2 id={`${testId}-t`} className="shrink-0 text-base">
           {title}
         </h2>
+        {badge}
+        <span className="flex-1" />
         {action}
       </div>
       {children}
@@ -31,7 +45,10 @@ function Section({ title, action, children, testId }: { title: string; action?: 
 
 const numberFormat = new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 });
 
-/** Lo que sale en los próximos siete días: una columna por día con las miniaturas de las piezas. */
+/**
+ * La semana de lunes a domingo: una columna por día con las miniaturas de las piezas y la ficha
+ * «N de M publicadas» (lo programado no cuenta como publicado hasta que sale).
+ */
 export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: string; now: Date }) {
   const zone = useBrandZone();
   const days = useMemo(() => weekDays(now, zone), [now, zone]);
@@ -42,6 +59,7 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
     [calendar.data],
   );
   const byDay = useMemo(() => groupByDay(entries, zone), [entries, zone]);
+  const progress = useMemo(() => weekProgress(entries), [entries]);
   const thumbs = useContentThumbs(
     brandId,
     entries.map((e) => ({ id: e.content!.id, current_version: e.content!.current_version })),
@@ -52,9 +70,27 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
     <Section
       title="Esta semana"
       testId="home-week"
+      badge={
+        !calendar.isPending &&
+        progress.total > 0 && (
+          <span
+            className={cn(
+              'whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium tabular-nums',
+              progress.published === progress.total ? 'bg-success-soft text-success' : 'bg-subtle text-fg',
+            )}
+            data-testid="home-week-count"
+          >
+            {progress.published} de {progress.total}
+            <span className="sr-only sm:not-sr-only"> publicadas</span>
+          </span>
+        )
+      }
       action={
-        <Link to={`${base}/calendario`} className="text-sm font-medium text-primary underline-offset-2 hover:underline">
-          Abrir el calendario
+        <Link
+          to={`${base}/calendario`}
+          className="whitespace-nowrap text-sm font-medium text-primary underline-offset-2 hover:underline"
+        >
+          Ver calendario
         </Link>
       }
     >
@@ -62,7 +98,7 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
         <Skeleton className="h-36" />
       ) : (
         <>
-          <ol className="grid grid-cols-7 gap-1 sm:gap-2" aria-label="Los próximos siete días">
+          <ol className="grid grid-cols-7 gap-1 sm:gap-2" aria-label="De lunes a domingo">
             {days.map((day) => {
               const list = byDay.get(day.key) ?? [];
               return (
@@ -71,6 +107,7 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
                   className={cn(
                     'flex min-w-0 flex-col gap-1 rounded-lg border p-1 sm:p-1.5',
                     day.today ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
+                    day.past && 'opacity-70',
                   )}
                   data-testid="home-day"
                   data-count={list.length}
@@ -105,7 +142,7 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
           </ol>
           {entries.length === 0 && (
             <p className="mt-2 text-sm text-muted" data-testid="home-week-empty">
-              No hay nada programado para estos días.
+              No hay nada programado esta semana.
             </p>
           )}
         </>
@@ -169,7 +206,7 @@ export function StalledList({ orgId, brandId, items, canFix }: { orgId: string; 
   );
 }
 
-/** Las últimas publicaciones salidas. Las cifras solo salen si existen. */
+/** Las últimas publicaciones salidas, con su enlace a la red si lo hay. Las cifras solo salen si existen. */
 export function LatestPublished({ orgId, brandId, items }: { orgId: string; brandId: string; items: PublishedWithFigures[] }) {
   const thumbs = useContentThumbs(
     brandId,
@@ -179,11 +216,14 @@ export function LatestPublished({ orgId, brandId, items }: { orgId: string; bran
     <Section title="Lo último publicado" testId="home-published">
       <ul className="space-y-2">
         {items.map(({ publication, piece, figures }) => (
-          <li key={publication.id}>
+          <li
+            key={publication.id}
+            className="flex items-center gap-1 rounded-xl border border-border bg-surface"
+            data-testid="home-published-item"
+          >
             <Link
               to={contentPaths(orgId, brandId).item(publication.content_id)}
-              className="flex items-center gap-3 rounded-xl border border-border bg-surface p-2 hover:bg-subtle"
-              data-testid="home-published-item"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 hover:bg-subtle"
             >
               <span className="block h-14 w-11 shrink-0 overflow-hidden rounded-md">
                 <PieceThumbView thumb={piece ? thumbs.get(piece.id) : undefined} format={publication.format} />
@@ -214,6 +254,18 @@ export function LatestPublished({ orgId, brandId, items }: { orgId: string; bran
                 </span>
               )}
             </Link>
+            {publication.external_url && (
+              <a
+                href={publication.external_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mr-1 inline-flex min-h-10 min-w-10 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-sm font-medium text-primary hover:bg-subtle"
+                data-testid="home-published-link"
+              >
+                <ExternalLink className="h-4 w-4" aria-hidden />
+                <span className="sr-only lg:not-sr-only">Ver en {networkLabel(publication.network)}</span>
+              </a>
+            )}
           </li>
         ))}
       </ul>
