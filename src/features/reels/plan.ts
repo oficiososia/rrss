@@ -2,6 +2,7 @@
 // de encargar, la petición a `request_media_job` y cómo se cuenta el estado de
 // un trabajo. Sin red ni React, para probarla aparte.
 import type { Json, JobRow, JobStatus } from '@/lib/database.types';
+import { cleanMessage } from '@/lib/errors';
 import type { ReelTemplateSummary } from './templates';
 
 export type TextPosition = 'top' | 'center' | 'bottom';
@@ -155,7 +156,12 @@ export function describeJob(job: MediaJobSummary): JobView {
   const assets = (job.result as { assets?: Array<{ id?: unknown }> } | null)?.assets;
   const assetId = Array.isArray(assets) && typeof assets[0]?.id === 'string' ? assets[0].id : null;
   if (job.status === 'queued' && job.attempts > 0) {
-    return { label: 'En cola (reintento)', tone: 'progress', detail: job.last_error, assetId: null };
+    return {
+      label: 'En cola (reintento)',
+      tone: 'progress',
+      detail: job.last_error ? cleanMessage(job.last_error) : null,
+      assetId: null,
+    };
   }
   const tone: JobTone =
     job.status === 'succeeded'
@@ -168,7 +174,8 @@ export function describeJob(job: MediaJobSummary): JobView {
   return {
     label: STATUS_LABEL[job.status],
     tone,
-    detail: job.status === 'failed' ? (job.last_error ?? 'Sin motivo registrado') : null,
+    // Sin rutas ni identificadores: el motivo se traduce si es uno conocido (un archivo borrado…).
+    detail: job.status === 'failed' ? (job.last_error ? cleanMessage(job.last_error) : 'Sin motivo registrado') : null,
     assetId: job.status === 'succeeded' ? assetId : null,
   };
 }

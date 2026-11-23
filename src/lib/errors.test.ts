@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { translateError, unwrap } from './errors';
+import { cleanMessage, translateError, unwrap } from './errors';
 
 describe('translateError', () => {
   it('respeta los mensajes de nuestras funciones de base de datos', () => {
@@ -64,6 +64,39 @@ describe('translateError', () => {
     expect(translateError({ message: 'relation "x" does not exist', code: '42P01' })).toBe(generic);
     expect(translateError('')).toBe(generic);
     expect(translateError('Texto directo')).toBe('Texto directo');
+  });
+});
+
+describe('archivos de la biblioteca: sin rutas ni identificadores', () => {
+  const RUTA = '5bcf11b8-1111-4222-8333-444455556666/0c4d7e2a-aaaa-4bbb-8ccc-dddd00001111/media/1b0334e5-f180-4d14-a642-a8ce24fed92e-fondo-nuevo-chuleton.jpg';
+
+  it('traduce la foto o el vídeo borrados a una frase con qué hacer', () => {
+    const p = (message: string) => translateError({ message, code: '22023' });
+    expect(p('La foto 1 ya no está en la biblioteca')).toBe(
+      'La foto 1 del reel ya no está en la biblioteca. Sustitúyela en el editor y vuelve a montarlo.',
+    );
+    expect(p('El vídeo 3 ya no está en la biblioteca')).toMatch(/^El vídeo 3 del reel .* Sustitúyelo/);
+    expect(p('La música ya no está en la biblioteca')).toMatch(/Cámbiala o quítala/);
+    expect(p('La foto de la portada ya no está en la biblioteca')).toMatch(/Elige otra portada/);
+  });
+
+  it('el mensaje antiguo, con la ruta entera, se traduce sin enseñarla', () => {
+    const text = translateError({ message: `Pieza 1: «${RUTA}» no es un recurso de esta marca`, code: '22023' });
+    expect(text).toBe(
+      'El elemento 1 del reel ya no está en la biblioteca de la marca. Sustitúyelo en el editor y vuelve a montarlo.',
+    );
+    expect(translateError({ message: 'Pieza 2: el archivo no es un recurso de esta marca', code: '22023' })).toMatch(
+      /^El elemento 2 del reel no es de la biblioteca de esta marca/,
+    );
+  });
+
+  it('de cualquier otro mensaje propio quita rutas e identificadores, y respeta fechas y formatos', () => {
+    const text = translateError({ message: `No se ha podido leer «${RUTA}» (trabajo 1b0334e5-f180-4d14-a642-a8ce24fed92e).` });
+    expect(text).not.toMatch(/media|5bcf11b8|1b0334e5/);
+    expect(text).toMatch(/^No se ha podido leer el archivo/);
+    expect(cleanMessage(`Falta ${RUTA}`)).toBe('Falta el archivo');
+    expect(cleanMessage('Programada para el 22/11/2026 en JPEG/PNG.')).toBe('Programada para el 22/11/2026 en JPEG/PNG.');
+    expect(translateError(new Error(`Archivo ${RUTA} roto`))).toBe('Archivo el archivo roto');
   });
 });
 
