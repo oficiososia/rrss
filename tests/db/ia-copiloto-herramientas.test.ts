@@ -805,13 +805,18 @@ describe('tarea editor.copilot por herramientas', () => {
       out({ op: 'add_text', text: 'Menú de otoño', style: 'title' }),
       out({ op: 'add_text', text: 'menú de otoño\nraciones para compartir' }),
     ]);
-    const notDictated = 'El texto no está en lo dictado: el copiloto no redacta, solo coloca lo que se dice.';
-    expect(response.body.discarded).toEqual([
-      { index: 0, op: 'add_text', reason: notDictated },
-      { index: 3, op: 'add_text', reason: notDictated },
-      { index: 4, op: 'update_text', reason: notDictated },
-      { index: 5, op: 'add_text', reason: notDictated },
+    // Cada descarte dice QUÉ texto no se ha puesto y qué hacer en su lugar (el copiloto no redacta).
+    const discarded = response.body.discarded as { index: number; op: string; reason: string }[];
+    expect(discarded.map(({ index, op }) => ({ index, op }))).toEqual([
+      { index: 0, op: 'add_text' },
+      { index: 3, op: 'add_text' },
+      { index: 4, op: 'update_text' },
+      { index: 5, op: 'add_text' },
     ]);
+    for (const item of discarded) {
+      expect(item.reason).toMatch(/^No he puesto «.+»: no lo has dicho tú y el copiloto no redacta\. Dicta el texto tal cual/);
+      expect(item.reason.length).toBeLessThanOrEqual(300);
+    }
   });
 
   it('colores y tipografías: solo los de la marca (y blanco y negro); el fondo, o es de la paleta o no se cambia', async () => {

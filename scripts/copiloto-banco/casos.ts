@@ -98,6 +98,16 @@ export const BENCH_LIBRARIES = {
     library(23, 'escaparate.jpg'),
     library(24, 'novedades-ia.png', { tags: ['novedades'], provenance: { type: 'ai_generation' } }),
   ],
+  // Como la de un restaurante en la prueba real del 23/11/2026: platos por carpetas, el local, y además
+  // una EXPORTACIÓN de una pieza (un diseño ya montado) que también casa con «plato»: nunca debe salir.
+  restaurante: [
+    library(31, 'Arroz meloso de langosta.jpg', { folder: 'Carta / Arroces' }),
+    library(32, 'Chuletón de vaca madurada.jpg', { folder: 'Carta / Carnes' }),
+    library(33, 'Coulant de chocolate.jpg', { folder: 'Carta / Postres' }),
+    library(34, 'Comedor.jpg', { tags: ['local'] }),
+    library(35, 'Arroz de rape · plato de la semana.png', { folder: 'Exportaciones', tags: ['plato'], provenance: { type: 'export' } }),
+    library(36, 'plato-ia.png', { tags: ['plato'], provenance: { type: 'ai_generation' } }),
+  ],
   vacia: [],
 } satisfies Record<string, LibraryPhoto[]>;
 export type BenchLibraryId = keyof typeof BENCH_LIBRARIES;
@@ -148,7 +158,7 @@ export const BENCH_BRAND_PROFILE = {
 
 // ── Documentos de partida ────────────────────────────────────────────────
 
-export const BENCH_DOCUMENT_IDS = ['vacio', 'menu', 'seleccion', 'carrusel', 'chuleton'] as const;
+export const BENCH_DOCUMENT_IDS = ['vacio', 'menu', 'seleccion', 'carrusel', 'chuleton', 'margenes'] as const;
 export type BenchDocumentId = (typeof BENCH_DOCUMENT_IDS)[number];
 
 export interface BenchDocument {
@@ -279,6 +289,29 @@ function buildDocuments(): Record<BenchDocumentId, BenchDocument> {
   let steakDocument = withPageLayers(steak, 0, [steakPhoto, band, steakSubtitle, steakTitle]);
   steakDocument = checked(withPageLayers(steakDocument, 1, [booking]));
 
+  // Como la pieza de la prueba real del 23/11/2026 (`ct-ia-post.jpg`): lienzo 1:1 blanco, la foto de un plato
+  // con márgenes blancos alrededor (encajada entera) y el título encima, abajo.
+  const square1 = createEmptyDocument({ aspectRatio: '1:1', backgroundColor: '#FFFFFF' });
+  const framedDish: ImageLayer = {
+    ...newImageLayer(square1.canvas, [], { id: PHOTO_DISH, name: 'plato.jpg' }),
+    id: 'foto',
+    x: 108,
+    y: 108,
+    width: 864,
+    height: 864,
+    anchor: { x: 'center', y: 'center' },
+    fit: 'contain',
+  };
+  const framedTitle: TextLayer = {
+    ...newTextLayer(square1.canvas, [], { fontFamily: 'Recoleta', color: '#000000' }),
+    id: 'titulo',
+    text: 'Este finde, ven a vernos',
+    y: 860,
+    fontSize: 80,
+    height: 110,
+  };
+  const framed = checked(withPageLayers(square1, 0, [framedDish, framedTitle]));
+
   return {
     vacio: {
       id: 'vacio',
@@ -312,6 +345,14 @@ function buildDocuments(): Record<BenchDocumentId, BenchDocument> {
       selectedIds: [],
       pageLimits: { min: 2, max: 10 },
     },
+    margenes: {
+      id: 'margenes',
+      description: 'Post 1:1 blanco con la foto de un plato con márgenes y el título encima (como en la prueba real)',
+      document: framed,
+      pageIndex: 0,
+      selectedIds: [],
+      pageLimits: { min: 1, max: 1 },
+    },
     chuleton: {
       id: 'chuleton',
       description: 'Carrusel 4:5 de dos páginas; en la primera: foto «Chuletón» de fondo, franja, subtítulo y título',
@@ -339,7 +380,7 @@ export const BENCH_DOCUMENTS: Record<BenchDocumentId, BenchDocument> = buildDocu
  * a una sola herramienta por respuesta. Aciertan solo si llegan TODAS las
  * operaciones esperadas y sobre la capa que se dijo al final.
  */
-export const BENCH_GROUPS = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio', 'titubeo', 'multi', 'plan'] as const;
+export const BENCH_GROUPS = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio', 'titubeo', 'multi', 'plan', 'calidad'] as const;
 export type BenchGroup = (typeof BENCH_GROUPS)[number];
 /** Los grupos «base» (todo menos el habla titubeante y los planes). */
 export const BASE_GROUPS: readonly BenchGroup[] = ['simple', 'compuesta', 'ambigua', 'imposible', 'hosteleria', 'gimnasio'];
@@ -364,7 +405,7 @@ export type ExpectedValue =
   | { anyOf: ExpectedScalar[] }
   | { between: [number, number] }
   | { background: string }
-  | { includes: string; example: string };
+  | { includes: string | string[]; example: string };
 
 /** Un número exacto o un intervalo (extremos incluidos). */
 export type ExpectedCount = number | [number, number];
@@ -389,6 +430,25 @@ export interface PlanExpectation {
    * respuesta: ahí no se indica y no se comprueba.
    */
   cutout?: boolean;
+  /**
+   * ¿Debe ir UNA foto real llenando el lienzo (`fill`)? (prueba real del 23/11/2026: «hazme algo
+   * bonito» sin pedir un fondo = una foto de la marca a sangre, no un fondo con IA). Para comprobarlo
+   * el plan se construye como en el editor: con la orden, la página y la llamada de la marca.
+   */
+  fill?: boolean;
+  /** Textos que deben quedar en el documento, exactos y en este orden (el titular y la llamada de la marca). */
+  texts?: string[];
+}
+
+/**
+ * Cómo debe quedar el documento tras aplicar una orden normal (no de plan): lo
+ * que se vio mal en la prueba real del 23/11/2026.
+ */
+export interface AfterExpectation {
+  /** Textos que deben estar, exactos (con su mayúscula inicial) y, si `brand`, en un color de la marca (o sobre una etiqueta de la marca). */
+  texts?: Array<{ text: string; brand?: boolean }>;
+  /** Capa de foto que debe llenar TODO el lienzo, de borde a borde. */
+  fullBleed?: string;
 }
 
 /** Operación esperada: `op` y los campos clave. Lo que no se nombra no se compara. */
@@ -421,6 +481,8 @@ export interface BenchCase {
    * final, llegue lo esperado en el orden que llegue.
    */
   pagesAfter?: { total: number; copiesOfStart: number; empty: number };
+  /** Cómo debe quedar el documento (grupo `calidad`). */
+  after?: AfterExpectation;
 }
 
 type CaseFields = Omit<BenchCase, 'group' | 'json' | 'local' | 'anyOrder' | 'note'> &
@@ -893,6 +955,8 @@ export const MULTI_CASES: BenchCase[] = group('multi', [
 
 // Órdenes que MONTAN una pieza: fondo creado con IA (solo el fondo), fotos reales de la
 // biblioteca colocadas encima y el titular. Las llamadas pueden venir en cualquier orden.
+// En una pieza en blanco el editor añade además la llamada a la acción de la marca («Reserva por mensaje») y, si no
+// se dicta titular y la orden nombra una ocasión («de otoño»), el titular de la ocasión: un paso más cada uno.
 // Con fondo creado con IA las fotos van recortadas diga lo que diga la respuesta en `cutout`
 // (por eso se admite cualquiera de los dos valores): cada foto cuenta un paso de recorte.
 const EITHER = { anyOf: [false, true] };
@@ -912,7 +976,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Menú de otoño', style: 'title' },
     ],
     // 1 fondo + 1 búsqueda + de 1 a 3 recortes + colocar + 1 texto.
-    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [5, 7], cutout: true },
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [6, 8], cutout: true },
   },
   {
     id: 'plan-postres-fila',
@@ -926,7 +990,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Postres de la casa', style: 'title', position: TOP },
     ],
     // 1 fondo + 1 búsqueda + 3 recortes + colocar + 1 texto.
-    plan: { library: 'hosteleria', background: true, photos: 3, steps: 7, cutout: true },
+    plan: { library: 'hosteleria', background: true, photos: 3, steps: 8, cutout: true },
   },
   {
     id: 'plan-gimnasio-abanico',
@@ -939,7 +1003,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'place_photos', layout: 'fan', cutout: EITHER, on: true },
       { op: 'add_text', text: 'Nueva colección', style: 'title' },
     ],
-    plan: { library: 'gimnasio', background: true, photos: [1, 3], steps: [5, 7], cutout: true },
+    plan: { library: 'gimnasio', background: true, photos: [1, 3], steps: [6, 8], cutout: true },
   },
   {
     id: 'plan-novedades-rejilla',
@@ -951,7 +1015,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'find_photos', query: { includes: 'novedad', example: 'novedades' }, count: SOME },
       { op: 'place_photos', layout: 'grid', cutout: EITHER, on: EITHER },
     ],
-    plan: { library: 'generica', background: true, photos: [1, 2], steps: [4, 5], cutout: true },
+    plan: { library: 'generica', background: true, photos: [1, 2], steps: [5, 6], cutout: true },
   },
   {
     id: 'plan-titubeo-otono-fila',
@@ -963,7 +1027,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'find_photos', query: { includes: 'plato', example: 'platos' }, count: SOME },
       { op: 'place_photos', layout: 'row', cutout: EITHER, on: EITHER },
     ],
-    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [4, 6], cutout: true },
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [6, 8], cutout: true },
   },
   {
     id: 'plan-sin-fotos',
@@ -977,7 +1041,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Menú del día', style: 'title' },
     ],
     // La biblioteca no tiene fotos: no se coloca ninguna (el editor pide elegirlas) y no hay recortes.
-    plan: { library: 'vacia', background: true, photos: 0, steps: 4, cutout: true },
+    plan: { library: 'vacia', background: true, photos: 0, steps: 5, cutout: true },
   },
   {
     id: 'plan-genera-plato',
@@ -996,6 +1060,82 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
   },
 ]);
 
+// Lo que salió mal en la prueba real en staging del 23/11/2026 (rrss-recursos-comparativa/e2e-calidad/INFORME.md,
+// fallos 6 y 7), con lo que debe salir ahora. Las órdenes son las de la prueba; la marca y las fotos, las del banco.
+export const QUALITY_CASES: BenchCase[] = group('calidad', [
+  {
+    // Fallo 6: dijo «Añadí el título…» con el estado «Sin cambios». El copiloto no redacta: no pone nada y lo dice.
+    id: 'calidad-titulo-sin-texto',
+    order: 'ponle un título que invite a venir el finde, con nuestros colores',
+    document: 'margenes',
+    json: true,
+    note: true,
+    expected: [],
+  },
+  {
+    // Fallo 6: dijo «La foto ahora llena el lienzo» y seguían los márgenes. Ahora llena el lienzo de verdad.
+    id: 'calidad-foto-llena-todo',
+    order: 'que la foto llene todo y el título abajo que se lea bien',
+    document: 'margenes',
+    anyOrder: true,
+    expected: [
+      { op: 'transform_image', target: { anyOf: ['foto', null] }, fit: 'canvas' },
+      { op: 'move_layer', target: 'titulo', position: BOTTOM },
+    ],
+    after: { fullBleed: 'foto' },
+  },
+  {
+    // Fallo 7: el título dictado quedaba en minúscula y en negro. Ahora, mayúscula inicial y un color de la marca.
+    id: 'calidad-titulo-dictado',
+    order: 'pon de título: este finde, ven a la terraza',
+    document: 'vacio',
+    json: true,
+    expected: [{ op: 'add_text', text: 'este finde, ven a la terraza', style: 'title' }],
+    after: { texts: [{ text: 'Este finde, ven a la terraza', brand: true }] },
+  },
+  {
+    // Fallo 7: «algo bonito» proponía SOLO un fondo con IA. Ahora: una foto real de un plato a sangre, el titular
+    // de la ocasión («Este finde») y la llamada de la marca; sin gastar en IA de imagen.
+    id: 'calidad-finde-bonito',
+    order: 'hazme algo para el finde que quede bonito',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'find_photos', query: { includes: ['plato', 'carta', 'comida'], example: 'platos' }, count: { between: [1, 6] } },
+      { op: 'place_photos', layout: 'fill', cutout: { anyOf: [false, true] }, on: { anyOf: [false, true] } },
+    ],
+    // 1 búsqueda + colocar + titular + llamada de la marca.
+    plan: { library: 'restaurante', background: false, photos: 1, steps: 4, fill: true, texts: ['Este finde', 'Reserva por mensaje'] },
+  },
+  {
+    // Fallo 7: buscó literalmente «plato nuestro» y eligió una exportación. Ahora busca platos y nunca un diseño.
+    id: 'calidad-plato-nuestro',
+    order: 'no, pon una foto de un plato nuestro y un texto para el finde',
+    document: 'vacio',
+    anyOrder: true,
+    note: true,
+    expected: [
+      { op: 'find_photos', query: { includes: ['plato', 'carta', 'comida'], example: 'plato nuestro' }, count: 1 },
+      { op: 'place_photos', layout: 'fill', cutout: { anyOf: [false, true] }, on: { anyOf: [false, true] } },
+    ],
+    plan: { library: 'restaurante', background: false, photos: 1, steps: 4, fill: true, texts: ['Este finde', 'Reserva por mensaje'] },
+  },
+  {
+    // Fallo 7 (EnerGym): montó un gimnasio inventado por la IA con el recorte diminuto. Ahora: la foto real del
+    // gimnasio a sangre y el título dictado con mayúscula inicial, más la llamada de la marca.
+    id: 'calidad-gym-sin-excusas',
+    order: 'hazme algo con una foto del gym que motive a venir esta semana, con título: sin excusas',
+    document: 'vacio',
+    anyOrder: true,
+    expected: [
+      { op: 'find_photos', query: { includes: ['gym', 'gimnasio', 'sala', 'pesas', 'instalaciones'], example: 'gym' }, count: { between: [1, 6] } },
+      { op: 'place_photos', layout: 'fill', cutout: { anyOf: [false, true] }, on: { anyOf: [false, true] } },
+      { op: 'add_text', text: 'sin excusas', style: 'title' },
+    ],
+    plan: { library: 'gimnasio', background: false, photos: 1, steps: 4, fill: true, texts: ['Sin excusas', 'Reserva por mensaje'] },
+  },
+]);
+
 export const BENCH_CASES: BenchCase[] = [
   ...SIMPLE,
   ...COMPOUND,
@@ -1006,4 +1146,5 @@ export const BENCH_CASES: BenchCase[] = [
   ...HESITANT,
   ...MULTI_CASES,
   ...PLAN_CASES,
+  ...QUALITY_CASES,
 ];

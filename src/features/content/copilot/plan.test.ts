@@ -223,6 +223,8 @@ describe('construir el plan', () => {
       'Colocar las fotos en fila',
       'Colocar las fotos en rejilla',
       'Colocar las fotos en abanico',
+      // `fill`: UNA foto real que llena el lienzo (es el fondo), nunca recortada.
+      'Colocar la foto de fondo, llenando el lienzo de borde a borde (se recorta lo que sobre)',
     ]);
   });
 

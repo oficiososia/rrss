@@ -45,7 +45,8 @@ import {
   planStepCount,
   type LibraryPhoto,
 } from '../../src/features/content/copilot/plan';
-import { pageView, validateDocument } from '../../src/features/content/document';
+import { pageView, validateDocument, type ContentDocument } from '../../src/features/content/document';
+import { isAppDesign } from '../../src/features/library/filters';
 import type { AiService, AiToolCall, Json, RpcClient } from '../../supabase/functions/_shared/ai/contract.ts';
 import { createAiService } from '../../supabase/functions/_shared/ai/service.ts';
 import { countPromptTokens, createSimulatedProvider } from '../../supabase/functions/_shared/ai/simulated-provider.ts';
@@ -68,6 +69,7 @@ import {
   BENCH_LIBRARIES,
   BENCH_LOGO,
   BENCH_PHOTOS,
+  BRAND_COLORS,
   type BenchCase,
   type BenchDocumentId,
   type BenchGroup,
@@ -98,8 +100,11 @@ const isBetween = (value: ExpectedValue): value is { between: [number, number] }
   isObject(value) && Array.isArray((value as { between?: unknown }).between);
 const isBackground = (value: ExpectedValue): value is { background: string } =>
   isObject(value) && typeof (value as { background?: unknown }).background === 'string';
-const isIncludes = (value: ExpectedValue): value is { includes: string; example: string } =>
-  isObject(value) && typeof (value as { includes?: unknown }).includes === 'string';
+const isIncludes = (value: ExpectedValue): value is { includes: string | string[]; example: string } =>
+  isObject(value) &&
+  (typeof (value as { includes?: unknown }).includes === 'string' || Array.isArray((value as { includes?: unknown }).includes));
+/** Las palabras de un `includes`: vale cualquiera de ellas. */
+const includedWords = (value: { includes: string | string[] }) => (Array.isArray(value.includes) ? value.includes : [value.includes]);
 
 /** Sin tildes ni mayúsculas, para comparar palabras sueltas. */
 const plainText = (text: string) =>
@@ -133,7 +138,9 @@ export function matchesValue(field: string, expected: ExpectedValue, actual: unk
   }
   // La descripción de un fondo la escribe el modelo: vale cualquiera que no nombre comida ni productos.
   if (isBackground(expected)) return typeof actual === 'string' && actual.trim() !== '' && !namesFoodOrProduct(actual);
-  if (isIncludes(expected)) return typeof actual === 'string' && plainText(actual).includes(plainText(expected.includes));
+  if (isIncludes(expected)) {
+    return typeof actual === 'string' && includedWords(expected).some((word) => plainText(actual).includes(plainText(word)));
+  }
   return sameScalar(field, expected, actual);
 }
 
@@ -141,7 +148,7 @@ function describeExpected(field: string, expected: ExpectedValue): string {
   if (isAnyOf(expected)) return `uno de ${show(expected.anyOf)}`;
   if (isBetween(expected)) return `entre ${expected.between[0]} y ${expected.between[1]}`;
   if (isBackground(expected)) return 'la descripción de un fondo, sin comida ni productos';
-  if (isIncludes(expected)) return `un texto con «${expected.includes}»`;
+  if (isIncludes(expected)) return `un texto con ${includedWords(expected).map((word) => `«${word}»`).join(' o ')}`;
   if (SIGN_FIELDS.has(field) && typeof expected === 'number') return expected > 0 ? 'un valor positivo' : 'un valor negativo';
   return field === 'text' ? `las palabras de ${show(expected)}` : show(expected);
 }
@@ -412,11 +419,16 @@ export function planProblemsFor(benchCase: BenchCase, operations: CopilotOperati
 
   // 2. El plan, como lo construye el editor (con IA de imagen disponible y recorte posible).
   const context = applyContext(benchCase.document, benchCase.assets ?? []);
+  // Como en el editor: con la orden (sin pedir un fondo, lo primero es una foto real), si la página tiene
+  // textos (una pieza en blanco se completa con titular y llamada) y la llamada a la acción de la marca.
   const plan = buildPlan(operations, {
     canvasRatio: start.document.canvas.aspectRatio,
     imageAi: { available: true },
     palette: context.brand.palette,
     canCutout: true,
+    transcript: benchCase.order,
+    pageHasTexts: pageView(start.document, start.pageIndex).layers.some((layer) => layer.type === 'text'),
+    callToAction: BENCH_BRAND_PROFILE.voice.callsToAction[0] ?? null,
   });
   for (const blocker of plan.blockers) problems.push(`El plan no se podría ejecutar: ${blocker}`);
   if (expected.background !== (plan.background?.mode === 'ai')) {
@@ -431,6 +443,14 @@ export function planProblemsFor(benchCase: BenchCase, operations: CopilotOperati
     }
   }
   if (plan.placement && plan.searches.length === 0) photos.push(...chosen);
+  // Una foto que llena el lienzo es UNA: la primera que casa (como en el editor).
+  if (plan.placement?.layout === 'fill') photos.splice(1);
+  if (expected.fill !== undefined && (plan.placement?.layout === 'fill') !== expected.fill) {
+    problems.push(expected.fill ? 'Se esperaba una foto real llenando el lienzo y el plan no la pone así.' : 'El plan pone una foto llenando el lienzo y no se esperaba.');
+  }
+  // Nunca una pieza ya diseñada o montada (exportación, reel, portada) como material, igual que los selectores.
+  const designs = photos.filter((photo) => isAppDesign({ provenance: photo.provenance as never, folder: photo.folder ?? '' }));
+  if (designs.length > 0) problems.push(`El plan usaría una pieza ya diseñada como foto: ${designs.map((photo) => photo.name).join(', ')}.`);
   if (photos.length > 0 && !plan.placement) problems.push('Hay fotos buscadas, pero el plan no dice cómo colocarlas.');
   if (!inCount(expected.photos, photos.length)) {
     problems.push(`Se esperaban ${showCount(expected.photos)} fotos de la biblioteca y el plan colocaría ${photos.length}.`);
@@ -466,6 +486,46 @@ export function planProblemsFor(benchCase: BenchCase, operations: CopilotOperati
   if (placed.length !== photos.length) problems.push(`Se esperaba una capa por foto (${photos.length}) y hay ${placed.length}.`);
   if (placed.some((id) => !allowed.has(id))) problems.push('Alguna foto colocada no es de la biblioteca.');
   if (background && sources.filter((id) => id === background.id).length !== 1) problems.push('El fondo generado no ha quedado como foto de fondo.');
+  const page = pageView(result.document, result.pageIndex);
+  if (expected.fill && photos[0]) {
+    const filler = page.layers.find((layer) => layer.type === 'image' && layer.source.kind === 'asset' && layer.source.assetId === photos[0]!.id);
+    if (!filler || !coversCanvas(filler, page.canvas)) problems.push('La foto no llena el lienzo de borde a borde.');
+  }
+  if (expected.texts) {
+    const texts = page.layers.flatMap((layer) => (layer.type === 'text' ? [layer.text] : []));
+    if (JSON.stringify(texts) !== JSON.stringify(expected.texts)) {
+      problems.push(`Se esperaban los textos ${show(expected.texts)} y quedan ${show(texts)}.`);
+    }
+  }
+  return problems;
+}
+
+/** ¿Cubre la capa todo el lienzo? (la foto de fondo, de borde a borde). */
+function coversCanvas(layer: { x: number; y: number; width: number; height: number }, canvas: { width: number; height: number }): boolean {
+  return layer.x <= 1 && layer.y <= 1 && layer.x + layer.width >= canvas.width - 1 && layer.y + layer.height >= canvas.height - 1;
+}
+
+/** Lo que pide `after`: los textos exactos (y en un color de la marca) y la foto que llena el lienzo. */
+function afterProblems(benchCase: BenchCase, document: ContentDocument, pageIndex: number): string[] {
+  const after = benchCase.after;
+  if (!after) return [];
+  const problems: string[] = [];
+  const page = pageView(document, pageIndex);
+  const palette = new Set(Object.values(BRAND_COLORS).map((hex) => hex.toUpperCase()));
+  for (const wanted of after.texts ?? []) {
+    const layer = page.layers.find((item) => item.type === 'text' && item.text === wanted.text);
+    if (!layer || layer.type !== 'text') {
+      problems.push(`Falta el texto «${wanted.text}» tal cual (con su mayúscula inicial).`);
+      continue;
+    }
+    const brand = palette.has(layer.color.toUpperCase()) || (layer.background ? palette.has(layer.background.color.toUpperCase()) : false);
+    if (wanted.brand && !brand) problems.push(`El texto «${wanted.text}» no lleva un color de la marca (va en ${layer.color}).`);
+  }
+  if (after.fullBleed) {
+    const layer = page.layers.find((item) => item.id === after.fullBleed);
+    if (!layer || !coversCanvas(layer, page.canvas)) problems.push(`La capa «${after.fullBleed}» no llena el lienzo de borde a borde.`);
+    else if (layer.type === 'image' && layer.fit !== 'cover') problems.push(`La capa «${after.fullBleed}» llena el lienzo pero con márgenes (no está en «llenar»).`);
+  }
   return problems;
 }
 
@@ -479,6 +539,7 @@ export function applyProblems(benchCase: BenchCase, operations: CopilotOperation
   if (!result.ok) return [`El documento resultante no sería válido: ${JSON.stringify(result.issues).slice(0, 200)}`];
   const problems = result.skipped.map((reason) => `El editor se ha saltado algo: ${reason}`);
   if (!validateDocument(result.document).ok) problems.push('El documento resultante no pasa su esquema.');
+  problems.push(...afterProblems(benchCase, result.document, result.pageIndex));
   const done = result.changes.length + result.flows.length + result.after.length + historyActions(picked).length;
   if (benchCase.expected.length > 0 && done === 0) problems.push('Las operaciones no han tenido ningún efecto en el editor.');
   if (benchCase.expected.length === 0 && result.document !== start.document) problems.push('No se esperaba ningún cambio y el documento ha cambiado.');

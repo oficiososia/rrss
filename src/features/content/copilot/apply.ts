@@ -28,7 +28,7 @@ import { FILTER_LABEL } from '../editor/imageEffects/filters';
 import { flipPhoto, largestCrop, orientedSize, turnQuarter } from '../editor/imageEffects/imageEdit';
 import { DEFAULT_SHADOW } from '../editor/imageEffects/shadowDefaults';
 import { FALLBACK_FONTS, layerLabel, newImageLayer, newLayerId, newLogoLayer, newShapeLayer } from '../editor/layers';
-import { backdropAt, contrastOf, legibleTextColor, type CopilotBrandColor, type ToneGrid } from './legibility';
+import { backdropAt, contrastOf, legibleTextColor, preferredTextColor, type CopilotBrandColor, type ToneGrid } from './legibility';
 import {
   COPILOT_MOVE_STEP,
   COPILOT_SIZE_STEP,
@@ -115,6 +115,11 @@ export interface CopilotPlacement {
   rotation?: number;
   /** Sombra suave (la estándar del editor). */
   shadow?: boolean;
+  /**
+   * Parte de la foto que se enseña (fracciones 0–1): en un recorte, la zona que
+   * ocupa lo recortado, sin el aire transparente de alrededor.
+   */
+  crop?: { x: number; y: number; width: number; height: number };
 }
 
 /**
@@ -266,6 +271,56 @@ const isHeading = (style: CopilotTextStyle) => style === 'title' || style === 's
 
 function fontFor(brand: CopilotBrandStyle, style: CopilotTextStyle) {
   return (isHeading(style) ? brand.fonts[0] : (brand.fonts[1] ?? brand.fonts[0])) ?? FALLBACK_FONTS[0]!;
+}
+
+/**
+ * El texto con la primera letra en mayúscula («este finde…» → «Este finde…»),
+ * saltando los signos de apertura. Lo demás, tal cual se dictó.
+ */
+export function capitalizeFirst(text: string): string {
+  return text.replace(/^([\s¿¡"'«“(]*)(\p{Ll})/u, (_, lead: string, letter: string) => `${lead}${letter.toLocaleUpperCase('es')}`);
+}
+
+/** Contraste que se pide a un texto sobre su fondo de etiqueta (liso): AA para texto grande. */
+const LABEL_CONTRAST = 4.5;
+
+/**
+ * Aspecto de un titular nuevo: siempre con los colores de la marca y legible.
+ *
+ *  1. Si viene un color (de la marca: el servidor quita los que no lo son) y se
+ *     lee sobre lo que tiene debajo, ese.
+ *  2. Sin color: el de la marca por su uso o el más legible de la marca, si se
+ *     lee (legibleTextColor).
+ *  3. Si ningún color de la marca se lee encima, el color de la marca va de
+ *     FONDO DE ETIQUETA (el pedido, o el de títulos o el principal) y el texto,
+ *     en el color (de la marca, blanco o negro) que más contrasta con él. Así
+ *     un titular nunca sale en negro o blanco «sin marca» si la marca tiene
+ *     colores.
+ */
+export function headingLook(
+  palette: readonly CopilotBrandColor[],
+  backdrop: ReturnType<typeof backdropAt>,
+  given: string | null,
+): { color: string; label?: string } {
+  if (given && contrastOf(given, backdrop.hex) >= backdrop.required) return { color: given.toUpperCase() };
+  if (!given) {
+    const legible = legibleTextColor(palette, true, backdrop);
+    if (palette.some((entry) => entry.hex.toUpperCase() === legible)) return { color: legible };
+  }
+  const label = (given ?? preferredTextColor(palette, true))?.toUpperCase();
+  if (!label) return { color: given?.toUpperCase() ?? legibleTextColor(palette, true, backdrop) };
+  const candidates = [...palette.map((entry) => entry.hex.toUpperCase()), '#FFFFFF', '#000000'].filter((hex) => hex !== label);
+  const best = candidates.reduce(
+    (winner, hex) => {
+      const ratio = contrastOf(hex, label);
+      // Un color de la marca vale si llega; blanco o negro, solo si ninguno de la marca llega.
+      const brand = hex !== '#FFFFFF' && hex !== '#000000';
+      const score = ratio >= LABEL_CONTRAST && brand ? ratio + 100 : ratio;
+      return score > winner.score ? { hex, score } : winner;
+    },
+    { hex: contrasting(label), score: 0 },
+  );
+  return { color: best.hex, label };
 }
 
 /** Un texto ya puesto «es de título» si va en negrita (los títulos y subtítulos del copiloto van a 600 o más). */
@@ -535,23 +590,24 @@ export function applyCopilotOperations(
       case 'add_text': {
         if (!op.text) break;
         const style = op.style ?? 'body';
+        // Un titular dictado empieza con mayúscula aunque el dictado llegue en minúscula.
+        const text = isHeading(style) ? capitalizeFirst(op.text) : op.text;
         const fontSize = Math.round(Math.min(canvas.width, canvas.height) * TEXT_SIZE[style].size);
-        const box = textBox(canvas, op.text, fontSize);
+        const box = textBox(canvas, text, fontSize);
         const y = placeY(document, box.height, op.position, lastText);
         const x = xFor(canvas, box.width, null);
-        const color =
-          op.color ??
-          legibleTextColor(
-            context.brand.palette,
-            isHeading(style),
-            backdropAt(
-              document.canvas,
-              document.layers,
-              { x, y, width: box.width, height: box.height },
-              context.imageTones,
-              context.imageZones,
-            ),
-          );
+        const backdrop = backdropAt(
+          document.canvas,
+          document.layers,
+          { x, y, width: box.width, height: box.height },
+          context.imageTones,
+          context.imageZones,
+        );
+        // Titulares: siempre con los colores de la marca y legibles (headingLook). El resto, como siempre.
+        const look = isHeading(style)
+          ? headingLook(context.brand.palette, backdrop, op.color)
+          : { color: op.color ?? legibleTextColor(context.brand.palette, false, backdrop) };
+        const color = look.color;
         const layer: TextLayer = {
           id: newLayerId(taken()),
           type: 'text',
@@ -565,7 +621,7 @@ export function applyCopilotOperations(
           visible: true,
           locked: false,
           anchor: { x: 'center', y: y < canvas.height / 3 ? 'top' : y > (canvas.height * 2) / 3 ? 'bottom' : 'center' },
-          text: op.text,
+          text,
           fontFamily: op.font ?? fontFor(context.brand, style),
           fontSize,
           fontWeight: TEXT_SIZE[style].weight,
@@ -573,11 +629,26 @@ export function applyCopilotOperations(
           color,
           align: op.align ?? 'center',
           lineHeight: LINE_HEIGHT,
+          ...(look.label
+            ? {
+                background: {
+                  color: look.label,
+                  opacity: 1,
+                  padding: Math.round(fontSize * 0.25),
+                  radius: Math.round(fontSize * 0.2),
+                },
+              }
+            : {}),
         };
         if (add(layer)) {
           lastText = layer;
-          if (op.color) dictatedColor.add(layer.id);
-          changes.push(`Texto ${layerName(layer)}`);
+          // Con fondo de etiqueta el texto ya se lee sobre cualquier cosa: no se le cambia el color después.
+          if (op.color || look.label) dictatedColor.add(layer.id);
+          changes.push(
+            look.label
+              ? `Texto ${layerName(layer)} sobre una etiqueta ${look.label} de la marca, para que se lea`
+              : `Texto ${layerName(layer)}`,
+          );
         }
         break;
       }
@@ -820,9 +891,13 @@ export function applyCopilotOperations(
         }
         const asset = context.assets.get(op.assetId);
         const name = asset?.name ?? 'Foto';
-        const aspect = asset?.width && asset?.height ? asset.width / asset.height : 1;
         // Con sitio dado por un plan: la foto, con sus proporciones, dentro de esa caja y centrada en ella.
+        // Un recorte (foto sin su fondo) viene con la zona que ocupa lo recortado (`crop`): se encaja ESO,
+        // no la foto entera con su aire transparente, para que no quede diminuto.
         const place = op.place;
+        const crop = place?.crop;
+        const aspect =
+          asset?.width && asset?.height ? (asset.width * (crop?.width ?? 1)) / (asset.height * (crop?.height ?? 1)) : 1;
         const cell = place
           ? { width: place.width, height: place.height }
           : { width: Math.min(canvas.width, canvas.height) * 0.6, height: Math.min(canvas.width, canvas.height) * 0.6 };
@@ -837,6 +912,7 @@ export function applyCopilotOperations(
                 y: Math.round(place.y + (place.height - box.height) / 2),
                 rotation: place.rotation ?? 0,
                 ...(place.shadow ? { shadow: { ...DEFAULT_SHADOW } } : {}),
+                ...(crop ? { crop: { ...crop } } : {}),
               }
             : placeBox(canvas, box, op.position, op.align)),
           anchor: { x: 'center', y: 'center' },
@@ -881,7 +957,15 @@ export function applyCopilotOperations(
           step(flipPhoto(current, op.flip === 'horizontal' ? 'x' : 'y'));
           done.push(op.flip === 'horizontal' ? 'volteada en horizontal' : 'volteada en vertical');
         }
-        if (op.fit) {
+        let filledCanvas = false;
+        if (op.fit === 'canvas') {
+          // «Que la foto llene todo»: la caja pasa a ser el lienzo entero, la foto lo llena de borde a
+          // borde (recortando lo que sobre) y va al fondo, detrás de todo lo demás.
+          step({ x: 0, y: 0, width: canvas.width, height: canvas.height, rotation: 0, fit: 'cover', crop: undefined });
+          current = { ...current, anchor: { x: 'stretch', y: 'stretch' } };
+          done.push('llenando todo el lienzo, de borde a borde (se recorta lo que sobra)');
+          filledCanvas = true;
+        } else if (op.fit) {
           step({ fit: op.fit });
           done.push(op.fit === 'cover' ? 'llenando su caja' : 'entera');
         }
@@ -902,7 +986,15 @@ export function applyCopilotOperations(
         }
         if (done.length === 0) break;
         replaceLayer(current);
+        if (filledCanvas) {
+          // Detrás de todo: si ya había una foto de fondo, esta pasa a ser la de fondo (encima de ella).
+          const others = document.layers.filter((layer) => layer.id !== current.id);
+          const previous = backgroundImageOf({ canvas, layers: others });
+          const at = previous ? others.indexOf(previous) + 1 : 0;
+          document = { ...document, layers: [...others.slice(0, at), current, ...others.slice(at)] };
+        }
         changes.push(`Foto ${done.join(', ')}`);
+        if (filledCanvas) keepTextsReadable();
         break;
       }
       case 'image_backdrop': {

@@ -6,6 +6,9 @@ import { Button } from '@/components/ui';
 import { legalPath } from '@/features/legal/legal';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { requestEditorCopilot, toAiError } from '@/features/ai/api';
+import { formatMicros } from '@/features/ai/money';
+import { useActiveProfile } from '@/features/brand/api';
+import { parseProfile } from '@/features/brand/profile';
 import { useAssetsByIds } from '@/features/library/api';
 import { pageView, type AspectRatio, type ContentDocument, type PageLimits } from '../document';
 import { ImagePickerDialog } from '../editor/AssetPickerDialog';
@@ -21,6 +24,7 @@ import {
   type CopilotBrandStyle,
   type PlacedCopilotOperation,
 } from './apply';
+import { alignWithOrder, trustedNotes } from './intent';
 import { interpretLocally, LOCAL_COMMAND_EXAMPLES } from './localCommands';
 import { MicLevel } from './MicLevel';
 import {
@@ -39,6 +43,7 @@ import {
   planAnswer,
   planNeedsConfirmation,
   planOperations,
+  setPlanAiBackground,
   setPlanCutout,
   type CopilotPlanHost,
   type PlanStepStatus,
@@ -46,6 +51,7 @@ import {
 import { PlanCard, type PendingPlan } from './PlanCard';
 import { planProblems } from './planCost';
 import { recordingAvailable, useRecordedDictation } from './recording';
+import type { SubjectBox } from './subject';
 import { speechRecognitionAvailable, useDictation } from './speech';
 import { useTranscriberConfigured } from './transcriber';
 import {
@@ -88,6 +94,12 @@ interface Order {
   status: OrderStatus;
   /** Resuelta en el navegador, sin llamar a la IA. */
   local?: boolean;
+  /**
+   * Lo que ha gastado esta orden en IA de pago (el fondo de un plan), en micros;
+   * `null` si se ha gastado pero no se sabe cuánto. Sin él, no ha gastado nada.
+   * «Sin IA» solo sale cuando no hay gasto (prueba real del 23/11/2026, fallo 16).
+   */
+  spentMicros?: number | null;
   changes?: string[];
   notes?: string[];
   error?: unknown;
@@ -213,6 +225,12 @@ export function VoiceCopilot({
   /** Para qué se ha abierto el selector de fotos: para el copiloto («esta foto») o para el plan. */
   const pickingFor = useRef<'copilot' | 'plan'>('copilot');
   const logos = useAssetsByIds(brandId, logoIds);
+  // La llamada a la acción del perfil de la marca: un plan la pone en una pieza en blanco.
+  const profile = useActiveProfile(brandId);
+  const callToAction = useMemo(
+    () => (profile.data ? (parseProfile(profile.data.data).voice.callsToAction[0] ?? null) : null),
+    [profile.data],
+  );
 
   // Lo último de cada cosa, para las órdenes que se procesan en cola (fuera del ciclo de React).
   const fresh = {
@@ -228,6 +246,7 @@ export function VoiceCopilot({
     logoIds,
     imageTones,
     logos: logos.data ?? [],
+    callToAction,
     onApply,
     host,
   };
@@ -352,10 +371,20 @@ export function VoiceCopilot({
         changes.push('Abiertas las plantillas');
       }
     }
+    // Lo que se dice sale de lo aplicado: `changes` es lo que de verdad ha cambiado y `skipped`, lo que
+    // no y por qué. Sin cambios, se dice con todas las letras (nunca un «hecho» de la IA sin cambios).
+    const said = [...notes, ...skipped];
+    if (changes.length === 0) {
+      said.unshift(
+        said.length > 0
+          ? 'No he cambiado nada.'
+          : 'No he cambiado nada: no he sabido qué cambiar con esa orden. Dilo de otra forma («pon el título arriba») o di el texto exacto.',
+      );
+    }
     update(order.id, {
       status: changes.length > 0 ? 'applied' : 'nothing',
       ...(changes.length > 0 ? { changes } : {}),
-      notes: [...notes, ...skipped],
+      notes: said,
     });
   }
 
@@ -399,13 +428,18 @@ export function VoiceCopilot({
       update(order.id, { status: 'nothing', notes: [...notes, 'Montar una pieza por pasos hay que hacerlo desde el editor.'] });
       return;
     }
+    const view = pageView(now.document, now.pageIndex);
     const plan = buildPlan(operations, {
       canvasRatio: now.document.canvas.aspectRatio,
       imageAi: host.imageAi,
       palette: now.brand.palette,
       canCutout: host.canCutout,
       // Con una foto de fondo ya puesta, las fotos del plan van recortadas por defecto (plan.ts).
-      backgroundImage: backgroundImageOf(pageView(now.document, now.pageIndex)) !== null,
+      backgroundImage: backgroundImageOf(view) !== null,
+      // Sin pedir un fondo, lo primero es una foto real; una pieza en blanco se completa con titular y llamada.
+      transcript: order.transcript,
+      pageHasTexts: view.layers.some((layer) => layer.type === 'text'),
+      callToAction: now.callToAction,
     });
     // Sin fondo que crear ni fotos que colocar no hay nada que confirmar: es una orden normal.
     if (!planNeedsConfirmation(plan)) {
@@ -413,6 +447,8 @@ export function VoiceCopilot({
       return;
     }
     const paid = plan.background?.mode === 'ai';
+    // El precio del fondo con IA también cuando solo es una opción (para enseñarlo junto al interruptor).
+    const priced = paid || plan.aiAlternative !== undefined;
     planRef.current = {
       orderId: order.id,
       transcript: order.transcript,
@@ -421,7 +457,7 @@ export function VoiceCopilot({
       chosen,
       photos: [],
       missing: [],
-      backgroundMicros: paid ? undefined : 0,
+      backgroundMicros: priced ? undefined : 0,
       phase: 'preparing',
       statuses: {},
       stepNotes: {},
@@ -431,7 +467,8 @@ export function VoiceCopilot({
     const mine = () => planRef.current?.orderId === order.id;
 
     // El precio del fondo y las fotos de la biblioteca, a la vez: leer no gasta.
-    const price = paid && plan.background?.mode === 'ai' ? host.estimateBackground(plan.background.ratio).catch(() => null) : Promise.resolve(0);
+    const ratio = plan.background?.mode === 'ai' ? plan.background.ratio : plan.aiAlternative?.ratio;
+    const price = priced && ratio ? host.estimateBackground(ratio).catch(() => null) : Promise.resolve(0);
     const photos: CopilotAssetInfo[] = [];
     const missing: string[] = [];
     for (const [index, search] of plan.searches.entries()) {
@@ -471,12 +508,14 @@ export function VoiceCopilot({
    * Si el fondo falla o se cancela, el documento no se toca; lo ya creado queda
    * en la biblioteca y se dice.
    */
-  async function runPlan() {
+  async function runPlan(confirmedBy?: number) {
     const pending = planRef.current;
     const host = latest.current.host?.plan;
     if (!pending || pending.phase !== 'ready' || !host) return;
     if (planProblems(pending.plan, pending.photos.length, pending.backgroundMicros).length > 0) return;
     const { plan, orderId } = pending;
+    /** La orden que se lleva el gasto: el «sí» dicho o escrito, o la del plan si se ha pulsado «Sí, hazlo». */
+    const payer = confirmedBy ?? orderId;
     const order: Order = { id: orderId, transcript: pending.transcript, status: 'running' };
     const controller = new AbortController();
     planAbort.current = controller;
@@ -495,7 +534,7 @@ export function VoiceCopilot({
     };
 
     // 1. El fondo con IA: lo único de pago. Si falla, el plan se para sin tocar el documento.
-    let background: CopilotAssetInfo | null = null;
+    let background: (CopilotAssetInfo & { costMicros?: number | null }) | null = null;
     if (plan.background?.mode === 'ai') {
       setStep('background', 'running');
       try {
@@ -518,17 +557,25 @@ export function VoiceCopilot({
       }
       created.push(`el fondo «${background.name}»`);
       setStep('background', 'done');
+      // Se ha gastado: lo que ha costado de verdad o, si no se sabe, el máximo que se enseñó antes del «sí».
+      const spent = typeof background.costMicros === 'number' ? background.costMicros : (pending.backgroundMicros ?? null);
+      update(payer, { spentMicros: spent });
     }
-    // El tono del fondo nuevo (medio y por zonas) se mide mientras se recortan las fotos: leer no gasta.
-    // Sin medida (el navegador no deja leer la imagen, tarda o falla) no se adivina: se dice y los textos llevan contorno.
-    const generated = background;
+    // Una foto que llena el lienzo (`fill`) es la de fondo: solo la primera.
+    const fill = plan.placement?.layout === 'fill';
+    // El tono del fondo nuevo (medio y por zonas) se mide mientras se recortan las fotos: leer no gasta. Vale
+    // igual para el fondo generado que para la foto real que llena el lienzo. Sin medida (el navegador no deja
+    // leer la imagen, tarda o falla) no se adivina: se dice y los textos llevan contorno.
+    const generated = background ?? (fill ? ((planRef.current?.photos ?? pending.photos)[0] ?? null) : null);
     const tone = Promise.resolve()
       .then(() => (generated && host.measureTone ? host.measureTone(generated, controller.signal) : null))
       .catch(() => null);
 
     // 2. Quitar el fondo a las fotos (gratis). Si una no se puede, se coloca tal cual y se dice.
-    let photos = [...(planRef.current?.photos ?? pending.photos)];
+    let photos = [...(planRef.current?.photos ?? pending.photos)].slice(0, fill ? 1 : COPILOT_MAX_PLAN_PHOTOS);
     const planNotes: string[] = [];
+    /** Dónde está lo recortado en cada recorte, para que no quede diminuto (subject.ts). */
+    const subjects = new Map<string, SubjectBox>();
     if (plan.placement?.cutout && photos.length > 0) {
       setStep('cutout', 'running', `0 de ${photos.length}`);
       const cut: CopilotAssetInfo[] = [];
@@ -547,6 +594,14 @@ export function VoiceCopilot({
         setStep('cutout', 'running', `${cut.length} de ${photos.length}`);
       }
       photos = cut;
+      // Lo que ocupa cada recorte dentro de su foto: se enseña eso, no la foto entera con su aire transparente.
+      if (host.measureSubject) {
+        for (const asset of cut) {
+          if (failed.some((photo) => photo.id === asset.id) || controller.signal.aborted) continue;
+          const box = await host.measureSubject(asset, controller.signal).catch(() => null);
+          if (box) subjects.set(asset.id, box);
+        }
+      }
       if (failed.length > 0) {
         planNotes.push(`No se ha podido quitar el fondo de ${namesOf(failed)}: ${failed.length === 1 ? 'se coloca' : 'se colocan'} tal cual.`);
       }
@@ -561,7 +616,7 @@ export function VoiceCopilot({
     let measured: MeasuredImages = {};
     if (generated) {
       let found: Awaited<typeof tone> = null;
-      setStep('background', 'done', 'Mirando si el fondo es claro u oscuro, para que los textos se lean encima…');
+      setStep(background ? 'background' : 'place', background ? 'done' : 'running', 'Mirando si el fondo es claro u oscuro, para que los textos se lean encima…');
       try {
         found = await untilAborted(tone, controller.signal);
       } catch {
@@ -571,7 +626,7 @@ export function VoiceCopilot({
         ? { imageTones: new Map([[generated.id, found.mean]]), imageZones: new Map([[generated.id, found.grid]]) }
         : { unmeasuredImages: new Set([generated.id]) };
     }
-    const composed = composePlan(plan, { background, photos }, latest.current.document, applyContext(assets, measured));
+    const composed = composePlan(plan, { background, photos, subjects }, latest.current.document, applyContext(assets, measured));
     clearPlan();
     await execute(
       order,
@@ -585,6 +640,7 @@ export function VoiceCopilot({
 
   /** «Sí, hazlo»: en la cola, como una orden más, para no pisarse con otra en curso. */
   function confirmPlan() {
+    if (planRef.current?.plan.background?.mode === 'ai') update(planRef.current.orderId, { spentMicros: null });
     queue.current = queue.current.then(() => runPlan());
   }
 
@@ -611,8 +667,14 @@ export function VoiceCopilot({
           update(order.id, { local: true, status: 'nothing', notes: problems });
           return;
         }
-        update(order.id, { local: true, status: 'applied', changes: ['Plan confirmado'] });
-        await runPlan();
+        // Si el plan lleva un paso de pago, este «sí» no es «Sin IA»: el gasto se anota aquí (`spentMicros`).
+        update(order.id, {
+          local: true,
+          status: 'applied',
+          changes: ['Plan confirmado'],
+          ...(waiting.plan.background?.mode === 'ai' ? { spentMicros: null } : {}),
+        });
+        await runPlan(order.id);
         return;
       }
       if (answer === 'no') {
@@ -669,17 +731,21 @@ export function VoiceCopilot({
         return;
       }
       const dictated = keepDictated(response.operations, order.transcript);
+      // «Que la foto llene todo» es el lienzo entero, no su caja (intent.ts).
+      const operations = alignWithOrder(dictated.operations, order.transcript);
+      // De la nota de la IA solo se enseña lo que explica lo que no se ha podido o pregunta algo: lo que dice
+      // haber hecho, nunca (fallo 6 de la prueba real). Lo hecho lo cuenta `execute` con lo que de verdad se aplica.
       const notes = [
-        ...(response.note ? [response.note] : []),
+        ...trustedNotes(response.note),
         ...response.discarded.map((item) => item.reason),
-        ...(dictated.removed > 0 ? ['Se ha quitado un texto que no estaba en lo dictado.'] : []),
+        ...(dictated.removed > 0 ? ['Se ha quitado un texto que no estaba en lo dictado: el copiloto no redacta.'] : []),
       ];
       // 3. ¿Monta una pieza por pasos? Nada se aplica todavía: se enseña el plan y se espera el «sí».
-      if (hasPlanSteps(dictated.operations)) {
-        await preparePlan(order, dictated.operations, notes, chosen);
+      if (hasPlanSteps(operations)) {
+        await preparePlan(order, operations, notes, chosen);
         return;
       }
-      await execute(order, dictated.operations, notes, chosen);
+      await execute(order, operations, notes, chosen);
     } catch (error) {
       update(order.id, { status: 'failed', error: await toAiError(error) });
     }
@@ -809,14 +875,26 @@ export function VoiceCopilot({
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
         ) : null}
         <span className="min-w-0 flex-1 basis-40 break-words">«{order.transcript}»</span>
-        {order.local && (
+        {order.spentMicros !== undefined ? (
+          // Ha gastado IA de pago (el fondo de un plan): se dice cuánto, nunca «Sin IA».
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
-            title="Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo"
+            title="Esta orden ha usado IA de pago y cuenta para el cupo de IA"
+            data-testid="copilot-order-cost"
           >
-            <Zap className="h-3 w-3" aria-hidden />
-            Sin IA
+            {order.spentMicros === null ? 'Con IA' : `Con IA: ${formatMicros(order.spentMicros)}`}
           </span>
+        ) : (
+          order.local && (
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
+              title="Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo"
+              data-testid="copilot-order-free"
+            >
+              <Zap className="h-3 w-3" aria-hidden />
+              Sin IA
+            </span>
+          )
         )}
         <span className="shrink-0 text-xs text-muted">{STATUS_LABEL[order.status]}</span>
       </p>
@@ -1038,6 +1116,9 @@ export function VoiceCopilot({
           }
           onCutoutChange={(cutout) =>
             changePlan((plan) => (plan.phase === 'ready' ? { ...plan, plan: setPlanCutout(plan.plan, cutout) } : plan))
+          }
+          onAiBackgroundChange={(on) =>
+            changePlan((plan) => (plan.phase === 'ready' ? { ...plan, plan: setPlanAiBackground(plan.plan, on) } : plan))
           }
         />
       )}

@@ -9,7 +9,7 @@ import { createCopilotPlanHost, readImageTone, TONE_TIMEOUT_MS } from './planHos
 
 const mocks = vi.hoisted(() => ({
   invokeAiMedia: vi.fn(),
-  generateImageAndWait: vi.fn(),
+  generateImageWithCost: vi.fn(),
   fetchRecentImages: vi.fn(),
   fetchAsset: vi.fn(),
   fetchPhotoEdits: vi.fn(),
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/features/ai/imageApi', () => ({
   invokeAiMedia: mocks.invokeAiMedia,
-  generateImageAndWait: mocks.generateImageAndWait,
+  generateImageWithCost: mocks.generateImageWithCost,
 }));
 vi.mock('@/features/library/api', () => ({ fetchRecentImages: mocks.fetchRecentImages }));
 vi.mock('@/features/photo-edit/api', () => ({
@@ -92,19 +92,23 @@ describe('lo que el editor ofrece a un plan del copiloto', () => {
     expect(await host.estimateBackground('1:1')).toBeNull();
     mocks.invokeAiMedia.mockResolvedValue({ action: 'image.estimate' });
     expect(await host.estimateBackground('1:1')).toBeNull();
-    expect(mocks.generateImageAndWait).not.toHaveBeenCalled();
+    expect(mocks.generateImageWithCost).not.toHaveBeenCalled();
   });
 
   it('el fondo se genera con `ai-media` (que lo guarda en la biblioteca) y se avisa de que la biblioteca ha cambiado', async () => {
     const { host, onLibraryChange } = makeHost();
     const signal = new AbortController().signal;
-    mocks.generateImageAndWait.mockResolvedValue(row(9, 'IA · fondo.png', { origin: 'generated', width: 1024, height: 1280 }));
+    mocks.generateImageWithCost.mockResolvedValue({
+      asset: row(9, 'IA · fondo.png', { origin: 'generated', width: 1024, height: 1280 }),
+      costMicros: 143_000,
+    });
     const background = await host.generateBackground('Madera clara. Fondo…', '9:16', signal);
-    expect(background).toEqual({ id: id(9), name: 'IA · fondo.png', width: 1024, height: 1280 });
-    expect(mocks.generateImageAndWait).toHaveBeenCalledWith(BRAND, { prompt: 'Madera clara. Fondo…', aspectRatio: '9:16' }, { signal });
+    // Con lo que ha costado de verdad: el copiloto lo enseña junto a la orden (nunca «Sin IA»).
+    expect(background).toEqual({ id: id(9), name: 'IA · fondo.png', width: 1024, height: 1280, costMicros: 143_000 });
+    expect(mocks.generateImageWithCost).toHaveBeenCalledWith(BRAND, { prompt: 'Madera clara. Fondo…', aspectRatio: '9:16' }, { signal });
     expect(onLibraryChange).toHaveBeenCalledTimes(1);
     // Un fallo (cupo, proveedor…) llega tal cual a quien ejecuta el plan.
-    mocks.generateImageAndWait.mockRejectedValue(new Error('sin cupo'));
+    mocks.generateImageWithCost.mockRejectedValue(new Error('sin cupo'));
     await expect(host.generateBackground('x', '1:1', signal)).rejects.toThrow('sin cupo');
   });
 
@@ -283,7 +287,7 @@ describe('el tono del fondo recién generado se mide en el navegador', () => {
     const { host } = makeHost();
     const signal = new AbortController().signal;
     const generated = row(9, 'IA · fondo.png', { origin: 'generated', width: 1024, height: 1280 });
-    mocks.generateImageAndWait.mockResolvedValue(generated);
+    mocks.generateImageWithCost.mockResolvedValue({ asset: generated, costMicros: null });
     const background = await host.generateBackground('Madera clara.', '4:5', signal);
     const tone = await host.measureTone!(background, signal);
     expect(tone!.grid.cells.every((cell) => cell > 0.7)).toBe(true);
