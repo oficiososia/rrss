@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f62/terminar-en-instagram`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,7 +15,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags, o lo manda al móvil para terminarlo en Instagram con música; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
@@ -662,6 +662,25 @@ sin migraciones, sin tocar el plan v2 ni el trabajador.
 - **Sin probar:** móvil y Safari reales; publicar y programar contra Supabase y Meta reales; la e2e 29 (adaptada, sin
   ejecutar); «Redactar con IA» con proveedor real. Una aserción de `src/features/content/contenidos.test.tsx` se cambió
   porque miraba la cabecera vieja del editor de reels (`reel-version`).
+
+### «Terminar en Instagram (para poner música)» (rama `f62/terminar-en-instagram`, 23/11/2026)
+
+Los reels salen sin música y la API de Instagram no crea borradores ni pone su música. Desde «Exportar», el reel y su
+pie van al móvil para ponerle la música en Instagram y publicarlo allí. Detalle en `docs/editor-reels.md` §12.
+
+- **Móvil:** «Compartir con Instagram» copia el pie (aviso «Pie copiado: pégalo en Instagram») y abre el diálogo de
+  compartir del sistema con el MP4. **Ordenador:** descarga el MP4, copia el pie y enseña un QR (enlace firmado de
+  corta duración) con los pasos en tres líneas. Ayuda para cuentas de empresa y de creador sin inventar detalles.
+- **Al volver:** «Pendiente de publicar en Instagram» → «Ya lo publiqué» (enlace opcional) o, con una cuenta
+  conectada, la aplicación lee las últimas publicaciones (`social-import/recent`) y la empareja por tipo, fecha y pie
+  (la Graph API no da la duración) y la deja «Publicada» con su enlace. El vídeo sigue saliendo sin música.
+- **Base de datos:** migración `20270121010000_manual_publications.sql` (con vuelta atrás): tabla `manual_publications`
+  (pendiente ≠ publicado; solo lo aprobado; una pieza o por la API o a mano), RPC con `edit` y dos del servidor.
+- **Probado:** unitarias, componentes (compartir con y sin `navigator.share`, pie copiado, «Ya lo publiqué», emparejado
+  automático), base de datos (PGlite y Graph API simulada) y `test:layout` a 375 y 1366 px.
+- **Sin probar:** compartir a Instagram desde un móvil de verdad (Android e iOS) y escanear el QR; la Graph API real;
+  la música de cuentas de empresa y de creador. El calendario y la analítica todavía no ven lo publicado a mano.
+- **Para staging:** la migración y redesplegar `social-import`.
 
 ## Sin probar contra el servicio real
 
