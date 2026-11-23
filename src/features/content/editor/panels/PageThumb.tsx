@@ -25,6 +25,7 @@ function drawFitted(
   source: ThumbSource,
   fit: 'cover' | 'contain',
   focus: { x: number; y: number },
+  zoom = 1,
 ): void {
   const context = target.getContext('2d');
   if (!context) return;
@@ -40,7 +41,7 @@ function drawFitted(
     context.drawImage(source, (tw - w) / 2, (th - h) / 2, w, h);
     return;
   }
-  const scale = Math.max(tw / sw, th / sh);
+  const scale = Math.max(tw / sw, th / sh) * Math.max(1, zoom);
   const cw = tw / scale;
   const ch = th / scale;
   const sx = Math.min(sw - cw, Math.max(0, focus.x * sw - cw / 2));
@@ -48,7 +49,7 @@ function drawFitted(
   context.drawImage(source, sx, sy, cw, ch, 0, 0, tw, th);
 }
 
-type ThumbImageLayer = Pick<ImageLayer, 'fit'> & { focus?: { x: number; y: number } };
+type ThumbImageLayer = Pick<ImageLayer, 'fit'> & { focus?: { x: number; y: number }; zoom?: number };
 
 /** La foto de una capa, en pequeño: gris mientras carga (o si falla), la imagen real cuando llega. */
 function ThumbImage({ url, layer }: { url: string; layer: ThumbImageLayer }) {
@@ -57,6 +58,7 @@ function ThumbImage({ url, layer }: { url: string; layer: ThumbImageLayer }) {
   const fit = layer.fit;
   const focusX = layer.focus?.x ?? 0.5;
   const focusY = layer.focus?.y ?? 0.5;
+  const zoom = layer.zoom ?? 1;
 
   useEffect(() => {
     let cancelled = false;
@@ -64,13 +66,13 @@ function ThumbImage({ url, layer }: { url: string; layer: ThumbImageLayer }) {
       if (cancelled) return;
       const canvas = ref.current;
       if (!source || !canvas) return setState('error');
-      drawFitted(canvas, source, fit, { x: focusX, y: focusY });
+      drawFitted(canvas, source, fit, { x: focusX, y: focusY }, zoom);
       setState('ready');
     });
     return () => {
       cancelled = true;
     };
-  }, [url, fit, focusX, focusY]);
+  }, [url, fit, focusX, focusY, zoom]);
 
   return (
     <canvas
@@ -116,6 +118,9 @@ export function PageThumb({ canvas, layers, images }: { canvas: Canvas; layers: 
                 transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
                 opacity: layer.type === 'text' ? Math.min(1, layer.opacity) * 0.8 : layer.opacity,
                 background: sketchColor(layer),
+                // Un hueco de foto vacío se distingue de una foto que aún carga.
+                outline: layer.type === 'image' && layer.source.kind === 'empty' ? '1px dashed #64748B' : undefined,
+                outlineOffset: layer.type === 'image' && layer.source.kind === 'empty' ? '-1px' : undefined,
                 borderRadius: layer.type === 'shape' && layer.shape === 'ellipse' ? '9999px' : undefined,
                 border: layer.type === 'shape' && layer.stroke ? `1px solid ${layer.stroke.color}` : undefined,
               }}

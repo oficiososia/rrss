@@ -4,7 +4,7 @@ Estado: implementado y probado (lógica y diálogo con dobles; dibujo comprobado
 
 ## Qué hace
 
-«Exportar imagen» (cabecera del editor, disponible también en solo lectura) genera la imagen final de lo que se ve en el lienzo, **con los cambios sin guardar** (el diálogo lo avisa).
+«Descargar la imagen» (en «Publicar o compartir», en la cabecera del editor; disponible también en solo lectura) genera la imagen final de lo que se ve en el lienzo, **con los cambios sin guardar** (el diálogo lo avisa). Un marco de foto todavía vacío no forma parte de la imagen: no se dibuja (en el editor se ve como un hueco con «Poner foto», y la cabecera avisa de cuántos faltan).
 
 - Tamaño real del lienzo lógico (1080×1080, 1080×1350, 1080×1920, 1920×1080) a escala 1; opcionalmente el doble si no pasa de 4096 px por lado. El `pixelRatio` se pasa siempre explícito: el resultado no depende del monitor.
 - PNG o JPEG (calidad 50–100 %, solo JPEG).

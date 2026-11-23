@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice, Select } from '@/components/ui';
@@ -8,6 +9,7 @@ import {
   exportPageOf,
   exportsOf,
   publishableExportsOf,
+  socialKeys,
   useSavePublication,
   usePublishableMedia,
   useSchedulableContents,
@@ -35,6 +37,14 @@ interface ScheduleDialogProps {
   initialDate?: Date | null;
   /** Pieza ya elegida (al programar desde el editor). */
   initialContentId?: string;
+  /**
+   * Solo desde el editor de la pieza `contentId`: exporta su versión aprobada a
+   * JPEG (una imagen por página), la guarda en la biblioteca y devuelve los
+   * recursos en orden. Con ello, programar no pide exportar antes: lo hace al
+   * guardar, igual que «Publicar ahora». La exportación la hace el navegador,
+   * por eso el calendario (que no tiene el diseño abierto) no puede.
+   */
+  exportVersion?: { contentId: string; run: () => Promise<string[]> };
 }
 
 /**
@@ -42,7 +52,15 @@ interface ScheduleDialogProps {
  * «Programada» (aprobada, con su exportación y una cuenta) o en espera, y dice
  * por qué: aquí solo se ayuda a elegir bien.
  */
-export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initialContentId }: ScheduleDialogProps) {
+export function ScheduleDialog({
+  brandId,
+  open,
+  onOpenChange,
+  initialDate,
+  initialContentId,
+  exportVersion,
+}: ScheduleDialogProps) {
+  const qc = useQueryClient();
   const contents = useSchedulableContents(brandId, open);
   const accounts = useSocialAccounts(brandId);
   const media = usePublishableMedia(brandId, open);
@@ -62,6 +80,7 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
   // «Cuándo»: en un día y hora, o ahora mismo (pide confirmación en otro diálogo).
   const [mode, setMode] = useState<'later' | 'now'>('later');
   const [nowOpen, setNowOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const content = contents.data?.find((c) => c.id === contentId) ?? null;
   const target = content ? `${content.network}:${content.format}` : '';
@@ -80,11 +99,14 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
     if (content.format === 'reel') return videosOf(media.data);
     return content.current_version > 0 ? exportsOf(media.data, content.id, content.current_version) : [];
   }, [content, media.data]);
-  /** Las páginas del carrusel en orden (la última tanda exportada de la versión), si están todas. */
+  /**
+   * Lo que se propone sin que haya que elegirlo: en un carrusel, sus páginas en orden (la última tanda
+   * exportada de la versión), si están todas; en una publicación, la imagen más reciente de la versión.
+   */
   const pageSet = useMemo(
     () =>
-      content?.format === 'carousel' && media.data && content.current_version > 0
-        ? publishableExportsOf(media.data, content.id, content.current_version, 'carousel')
+      (content?.format === 'carousel' || content?.format === 'post') && media.data && content.current_version > 0
+        ? publishableExportsOf(media.data, content.id, content.current_version, content.format)
         : null,
     [content, media.data],
   );
@@ -97,6 +119,20 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
     [content, media.data],
   );
   const assetIds = assetChoice ?? pageSet?.map((a) => a.id) ?? (reelRender ? [reelRender.id] : []);
+  /**
+   * La pieza aprobada del editor todavía no tiene la imagen que se publica (por ejemplo, se exportó en
+   * PNG, que la red no admite): se prepara sola al guardar.
+   */
+  const autoExport =
+    exportVersion !== undefined &&
+    content !== null &&
+    content.id === exportVersion.contentId &&
+    content.status === 'approved' &&
+    supported &&
+    (content.format === 'post' || content.format === 'carousel') &&
+    // Solo si no hay nada que proponer: quien desmarca a mano lo que había no pide otra exportación.
+    assetChoice === null &&
+    assetIds.length === 0;
 
   const toggle = (id: string) =>
     setAssetIds((choice) => {
@@ -117,20 +153,33 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
     setNowOpen(true);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (mode === 'now') return publishNow();
     setError(null);
     const scheduledAt = fromLocalInput(when, zone);
     if (!content) return setError('Elige qué contenido se publica.');
     if (!scheduledAt) return setError('Indica el día y la hora.');
     if (isPast(scheduledAt)) return setError('La fecha ya ha pasado.');
+    let mediaAssetIds = assetIds;
+    if (autoExport && exportVersion) {
+      setExporting(true);
+      try {
+        mediaAssetIds = await exportVersion.run();
+        await qc.invalidateQueries({ queryKey: socialKeys.media(brandId) });
+      } catch (e) {
+        setError(`No se ha podido preparar la imagen: ${translateError(e)}`);
+        return;
+      } finally {
+        setExporting(false);
+      }
+    }
     save.mutate(
       {
         publicationId: null,
         contentId: content.id,
         scheduledAt,
         accountId: accountId || null,
-        mediaAssetIds: assetIds,
+        mediaAssetIds,
         contentVersion: content.status === 'approved' ? content.current_version : null,
       },
       {
@@ -157,10 +206,10 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={save.isPending}>
+            <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={save.isPending || exporting}>
               Cancelar
             </Button>
-            <Button onClick={submit} loading={save.isPending} data-testid="schedule-submit">
+            <Button onClick={() => void submit()} loading={save.isPending || exporting} data-testid="schedule-submit">
               {mode === 'now' ? 'Publicar ahora…' : 'Guardar en el calendario'}
             </Button>
           </>
@@ -280,7 +329,9 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
                 <p className="text-xs text-muted" data-testid="schedule-pages-hint">
                   {pageSet
                     ? `Se eligen solas las ${pageSet.length} páginas de la versión ${content.current_version}, en orden. La base de datos solo arma la publicación con una exportación de cada página, en su orden.`
-                    : `Faltan exportaciones de alguna página de la versión ${content.current_version}: expórtalas desde el editor (Exportar el carrusel).`}
+                    : autoExport
+                      ? `Las imágenes de las páginas de la versión ${content.current_version} se preparan solas al guardar.`
+                      : `Faltan las imágenes de alguna página de la versión ${content.current_version}: abre la pieza en el editor y prográmala desde allí («Publicar o compartir»), que las prepara solas.`}
                   {pageSet && assetChoice !== null && (
                     <>
                       {' '}
@@ -296,12 +347,22 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
                   )}
                 </p>
               )}
-              {choices.length === 0 ? (
+              {exporting ? (
+                <p role="status" className="text-sm" data-testid="schedule-exporting">
+                  {content.format === 'carousel' ? 'Preparando las imágenes…' : 'Preparando la imagen…'}
+                </p>
+              ) : autoExport && choices.length === 0 ? (
+                <p className="text-sm text-muted" data-testid="schedule-auto-export">
+                  {content.format === 'carousel'
+                    ? 'No hace falta exportar nada: las imágenes se preparan solas al guardar y quedan en la biblioteca.'
+                    : 'No hace falta exportar nada: la imagen se prepara sola al guardar y queda en la biblioteca.'}
+                </p>
+              ) : choices.length === 0 ? (
                 <p className="text-sm text-muted" data-testid="schedule-no-media">
                   {content.format === 'reel'
                     ? 'No hay vídeos en la biblioteca de la marca.'
                     : content.current_version > 0
-                      ? `No hay ninguna exportación JPEG de la versión ${content.current_version}: expórtala desde el editor (Exportar → JPEG, guardar en la biblioteca).`
+                      ? `Falta la imagen de la versión ${content.current_version}. Abre la pieza en el editor y prográmala desde allí («Publicar o compartir»): se prepara sola.`
                       : 'La pieza todavía no tiene diseño guardado.'}
                 </p>
               ) : (
@@ -355,6 +416,7 @@ export function ScheduleDialog({ brandId, open, onOpenChange, initialDate, initi
           contentId={content.id}
           accountId={accountId || undefined}
           assetIds={assetIds.length > 0 ? assetIds : undefined}
+          exportVersion={autoExport ? exportVersion?.run : undefined}
         />
       )}
     </>

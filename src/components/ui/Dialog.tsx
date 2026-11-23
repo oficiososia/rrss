@@ -26,6 +26,16 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
             size === 'lg' ? 'sm:max-w-2xl' : 'sm:max-w-md',
           )}
           {...(description ? {} : { 'aria-describedby': undefined })}
+          // Al abrirse, el foco cae por defecto en el primer control, que es «Cerrar»: quien pulsa
+          // Intro cierra sin hacer nada. Un diálogo puede marcar con `data-autofocus` dónde debe caer
+          // (el campo que hay que rellenar o el botón principal).
+          onOpenAutoFocus={(event) => {
+            const target = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>('[data-autofocus]');
+            if (target) {
+              event.preventDefault();
+              target.focus();
+            }
+          }}
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">

@@ -26,11 +26,11 @@ export function SaveVersionDialog({ open, onOpenChange, saving, issues, onSave }
         if (!next) setNote('');
         onOpenChange(next);
       }}
-      title="Guardar versión"
+      title="Guardar versión con una nota"
       description="Se guarda como versión nueva; las anteriores siguen en el historial. Si estaba aprobada, vuelve a borrador."
     >
       <form onSubmit={submit} className="space-y-4">
-        <Field label="Nota" optional hint="Qué has cambiado, para quien revise después.">
+        <Field label="Nota" optional hint="Qué has cambiado, para quien revise después. Ctrl+Intro guarda.">
           {(props) => (
             <Textarea
               {...props}
@@ -38,6 +38,14 @@ export function SaveVersionDialog({ open, onOpenChange, saving, issues, onSave }
               maxLength={500}
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              // El foco, en lo que se viene a escribir (no en «Cerrar»). Ctrl+Intro guarda.
+              data-autofocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  onSave(note.trim());
+                }
+              }}
               data-testid="save-note"
             />
           )}

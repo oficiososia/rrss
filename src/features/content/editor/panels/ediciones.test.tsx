@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { contentDocumentSchema, type Canvas, type Layer } from '../../document';
+import { contentDocumentSchema, DOCUMENT_SCHEMA_VERSION, type Canvas, type Layer } from '../../document';
 import { applyLayerPatch, editorReducer, initEditor, type EditorAction } from '../history';
 import { PropertiesPanel } from './PropertiesPanel';
 
@@ -106,7 +106,7 @@ describe('ediciones sencillas en el panel', () => {
 
 describe('deshacer ediciones y páginas', () => {
   const document = contentDocumentSchema.parse({
-    schemaVersion: 5,
+    schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas,
     pages: [
       { id: 'p1', layers: [image] },
@@ -135,7 +135,7 @@ describe('deshacer ediciones y páginas', () => {
       shadow: undefined,
     });
     for (const key of ['adjust', 'crop', 'straighten', 'shadow']) expect(layer).not.toHaveProperty(key);
-    expect(contentDocumentSchema.safeParse({ schemaVersion: 5, canvas, pages: [{ id: 'p1', layers: [layer] }] }).success).toBe(true);
+    expect(contentDocumentSchema.safeParse({ schemaVersion: DOCUMENT_SCHEMA_VERSION, canvas, pages: [{ id: 'p1', layers: [layer] }] }).success).toBe(true);
   });
 });
 

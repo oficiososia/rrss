@@ -101,9 +101,9 @@ export function PublishNowDialog({
     else if (assetIds.length === 0 && !needsExport)
       blocker =
         item.format === 'post'
-          ? `Falta la exportación JPEG de la versión ${item.current_version}: expórtala desde el editor (Exportar imagen → JPEG, guardar en la biblioteca).`
+          ? `Falta la imagen de la versión ${item.current_version}. Abre la pieza en el editor y publícala desde allí («Publicar o compartir»): se prepara sola.`
           : item.format === 'carousel'
-            ? `Faltan las exportaciones JPEG de las páginas de la versión ${item.current_version}: expórtalas desde el editor (Exportar el carrusel, guardar en la biblioteca).`
+            ? `Faltan las imágenes de las páginas de la versión ${item.current_version}. Abre la pieza en el editor y publícala desde allí («Publicar o compartir»): se preparan solas.`
             : HOLD_REASON_TEXT.no_media;
   }
 
@@ -248,8 +248,8 @@ export function PublishNowDialog({
             {needsExport && (
               <p className="text-sm text-muted" data-testid="publish-now-export-note">
                 {item?.format === 'carousel'
-                  ? `La versión ${item.current_version} aún no tiene sus páginas exportadas: se exportarán a JPEG (una imagen por página, en orden) y se guardarán en la biblioteca en este mismo paso.`
-                  : `La versión ${item?.current_version} aún no tiene su imagen exportada: se exportará a JPEG y se guardará en la biblioteca en este mismo paso.`}
+                  ? 'Las imágenes de las páginas se preparan ahora (una por página, en orden) y quedan guardadas en la biblioteca.'
+                  : 'La imagen se prepara ahora y queda guardada en la biblioteca.'}
               </p>
             )}
             {!needsExport && item?.format === 'carousel' && assetIds.length > 0 && (

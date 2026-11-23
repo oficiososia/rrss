@@ -16,7 +16,10 @@ export async function chooseMoreAction(user: UserEvent, menuTestId: string, item
   await user.click(await screen.findByTestId(itemTestId));
 }
 
-/** Pulsa una acción del menú del editor de una pieza. */
+/** Lo que se hace al terminar una pieza vive en «Publicar o compartir»; el resto, en «⋯». */
+const SHARE_ACTIONS = new Set(['editor-preview', 'editor-export', 'editor-schedule', 'editor-publish-now']);
+
+/** Pulsa una acción de uno de los dos menús del editor de una pieza. */
 export function chooseEditorAction(user: UserEvent, itemTestId: string): Promise<void> {
-  return chooseMoreAction(user, 'editor-more', itemTestId);
+  return chooseMoreAction(user, SHARE_ACTIONS.has(itemTestId) ? 'editor-share' : 'editor-more', itemTestId);
 }

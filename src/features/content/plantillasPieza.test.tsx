@@ -190,7 +190,9 @@ describe('Nueva idea desde una plantilla', () => {
     expect(saved[0]!.note).toContain('Plato del día');
     // La foto queda como marcador y el texto y el pie vienen como guía.
     expect(saved[0]!.data.pages[0]!.layers.map((l) => l.id)).toEqual(['foto-plato', 'titular-plantilla']);
-    expect(saved[0]!.data.copy.caption).toBe('Hoy en la carta: …');
+    // El pie de la plantilla es una indicación: llega como pie de ejemplo (en gris) y el pie de verdad, vacío.
+    expect(saved[0]!.data.copy.caption).toBe('');
+    expect(saved[0]!.data.copy.captionHint).toBe('Hoy en la carta: …');
   });
 
   it('una plantilla manual se ve igual en el selector, con la etiqueta «De la agencia»', async () => {

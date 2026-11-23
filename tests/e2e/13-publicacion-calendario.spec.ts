@@ -58,14 +58,13 @@ async function piezaConTexto(page: Page, titulo: string, texto: string): Promise
   await page.getByRole('tab', { name: 'Publicación' }).click();
   await page.getByTestId('copy-caption').fill(texto);
   await page.getByTestId('editor-save').click();
-  await page.getByTestId('save-confirm').click();
   await aviso(page, 'Versión 1 guardada');
   return id;
 }
 
 /** Exporta la versión guardada como JPEG a la biblioteca (sin descargarla). */
 async function exportarJpeg(page: Page): Promise<void> {
-  await accionDelMenu(page, 'editor-more', 'editor-export');
+  await accionDelMenu(page, 'editor-share', 'editor-export');
   await page.getByTestId('export-format-jpeg').check();
   await page.getByTestId('export-download').uncheck();
   await page.getByTestId('export-library').check();

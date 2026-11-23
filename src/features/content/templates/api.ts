@@ -29,6 +29,21 @@ export const templateKeys = {
   list: (brandId: string) => ['brand', brandId, 'design-templates'] as const,
 };
 
+/**
+ * El pie que trae una plantilla es una indicación de qué escribir («Qué es, cuánto cuesta y hasta
+ * cuándo…»), o el pie de la pieza de la que salió: en ningún caso el texto de la pieza nueva. Pasa
+ * a ser el pie de ejemplo (`captionHint`, en gris en el editor) y el pie queda vacío, para que
+ * nunca se publique tal cual.
+ */
+export function captionAsHint(document: ContentDocument): ContentDocument {
+  const { caption, captionHint } = document.copy;
+  if (!caption.trim()) return document;
+  return {
+    ...document,
+    copy: { ...document.copy, caption: '', captionHint: captionHint?.trim() ? captionHint : caption },
+  };
+}
+
 export function parseTemplate(row: BrandDesignTemplateRow): BrandTemplate {
   const document = validateDocumentFromAnyVersion(row.document);
   const analysis = templateAnalysisSchema.safeParse(row.analysis);
@@ -38,7 +53,7 @@ export function parseTemplate(row: BrandDesignTemplateRow): BrandTemplate {
     name: row.name,
     network: row.network,
     format: row.format,
-    document: document.ok ? document.document : null,
+    document: document.ok ? captionAsHint(document.document) : null,
     analysis: analysis.success ? analysis.data : null,
     source: row.source,
   };

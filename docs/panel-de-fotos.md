@@ -2,8 +2,11 @@
 
 Componente suelto para elegir material de la biblioteca sin salir de donde se está (editor de
 piezas, editor de reels, marcos de foto…). Código: `src/features/library/PhotoPanel.tsx`.
-**Estado:** implementado y probado como componente (`photoPanel.test.tsx`); **todavía no está
-conectado a ningún editor**: lo harán quienes trabajan en ellos.
+**Estado:** implementado y probado como componente (`photoPanel.test.tsx`). Conectado al **editor
+de piezas** (23/11/2026, panel «Diseño» → «Fotos de la marca», sin nada elegido o con un hueco vacío
+elegido): tocar una foto la pone en el diseño (en ese hueco, o en el primero vacío de la página) y
+arrastrarla al lienzo la suelta en un marco o como capa nueva
+(`src/features/content/editor/assetDrag.ts` lee `PHOTO_DRAG_TYPE`). Al editor de reels, todavía no.
 
 ## Qué da
 

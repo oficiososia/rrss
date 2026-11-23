@@ -342,6 +342,25 @@ export class FakeSupabase {
     this.sequence = 0;
     this.session = null;
     this.rpcs = new Map();
+    // Borrador del editor de piezas (se guarda solo): por defecto, como la base de datos, deja una
+    // fila por pieza en `content_drafts`. Una prueba puede sustituirlo con `fake.rpc(…)` o hacerlo
+    // fallar con `fake.failNext('save_content_draft', 'rpc', …)`.
+    this.rpcs.set('save_content_draft', (args) => {
+      const drafts = this.rows('content_drafts');
+      const userId = this.session?.user.id ?? 'user-1';
+      const row = {
+        content_id: args.p_content_id,
+        user_id: userId,
+        base_version: args.p_base_version,
+        schema_version: args.p_schema_version,
+        data: structuredClone(args.p_data),
+        updated_at: NOW,
+      };
+      const index = drafts.findIndex((d) => d.content_id === args.p_content_id && d.user_id === userId);
+      if (index >= 0) drafts[index] = row;
+      else drafts.push(row);
+      return row;
+    });
     this.functionHandlers = new Map();
     // Plataforma → Integraciones: por defecto, el servidor dice que todo está
     // configurado; lo que se enseña lo deciden los interruptores VITE_* de cada
