@@ -18,6 +18,7 @@ import {
   Clapperboard,
   Copy,
   Film,
+  FolderOpen,
   Link2,
   Loader2,
   Save,
@@ -27,7 +28,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -65,11 +66,18 @@ import {
   type ReelStructure,
 } from '../../../../supabase/functions/_shared/reels/like';
 import {
+  closedNetwork,
+  fetchLibraryVideo,
   isWorking,
+  libraryVideoProblem,
   linkReferenceContent,
   looksLikeUrl,
+  NAME_PARAM,
   reelLikePaths,
   referenceFileProblem,
+  useLibraryVideos,
+  useLinkedPiece,
+  withName,
   useDiscardReference,
   useRecentReferences,
   useReelLikeOptions,
@@ -77,6 +85,7 @@ import {
   useSaveReferenceTemplate,
   useStartAnalysis,
   useStudyReference,
+  type LibraryVideo,
   type ReelLikeOptions,
 } from './api';
 import { TEMPLATE_NAME_MAX } from './template';
@@ -106,7 +115,7 @@ export function ReelLikePage() {
     <>
       <PageHeader
         title="Hacer un reel como este"
-        description={`Sube un reel o un vídeo que te guste. Lo estudiamos y lo rehacemos con las ideas y el material de ${brand.name}.`}
+        description={`Sube un reel o un vídeo que te guste, o elígelo de tu biblioteca. Lo estudiamos y lo rehacemos con las ideas y el material de ${brand.name}.`}
         back={
           <Link to={paths.reels} className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
             <ArrowLeft className="h-4 w-4" aria-hidden />
@@ -159,8 +168,13 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
   const navigate = useNavigate();
   const paths = reelLikePaths(org.id, brand.id);
   const start = useStartAnalysis(brand.id);
-  const [mode, setMode] = useState<'file' | 'link'>('file');
+  const [params] = useSearchParams();
+  const [mode, setMode] = useState<'file' | 'library' | 'link'>('file');
   const [file, setFile] = useState<File | null>(null);
+  /** El nombre que se escribió en «Nuevo reel» (o aquí): será el de la pieza que se cree. */
+  const [name, setName] = useState(() => params.get(NAME_PARAM) ?? '');
+  const videos = useLibraryVideos(brand.id, mode === 'library');
+  const [chosen, setChosen] = useState<LibraryVideo | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [url, setUrl] = useState('');
   const [idea, setIdea] = useState('');
@@ -176,12 +190,33 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
         ? `El vídeo dura ${Math.round(duration)} s y el máximo son ${limits.maxSeconds} s (3 minutos). Recórtalo y vuelve a subirlo.`
         : null))
     : null;
-  const linkProblem = mode === 'link' && url.trim() !== '' && !looksLikeUrl(url) ? 'Pega la dirección completa, empezando por https://' : null;
-  const ready = mode === 'file' ? Boolean(file) && !fileProblem : looksLikeUrl(url);
+  // Instagram, TikTok, YouTube y Facebook no dejan descargar: se dice al pegar, sin mandar nada a estudiar.
+  const closed = mode === 'link' && looksLikeUrl(url) ? closedNetwork(url) : null;
+  const linkProblem =
+    mode !== 'link' || url.trim() === ''
+      ? null
+      : !looksLikeUrl(url)
+        ? 'Pega la dirección completa, empezando por https://'
+        : closed
+          ? `${closed} no deja descargar sus vídeos desde un enlace. Descarga el vídeo en tu móvil y súbelo, o elígelo de tu biblioteca.`
+          : null;
+  const chosenProblem = mode === 'library' && chosen ? libraryVideoProblem(chosen, limits) : null;
+  const ready =
+    mode === 'file'
+      ? Boolean(file) && !fileProblem
+      : mode === 'library'
+        ? Boolean(chosen) && !chosenProblem
+        : looksLikeUrl(url) && !closed;
 
   // Coste máximo: mirar y escribir + la voz que se vaya a transcribir (si se sabe cuánto dura, solo eso).
-  const speechSeconds = Math.min(mode === 'file' && duration !== null ? Math.ceil(duration) : limits.maxSpeechSeconds, limits.maxSpeechSeconds);
-  const speechMicros = speech && estimate?.speechMicrosPerSecond ? Math.ceil(estimate.speechMicrosPerSecond * speechSeconds) : 0;
+  const knownSeconds =
+    mode === 'file' ? duration : mode === 'library' && chosen?.duration_ms ? chosen.duration_ms / 1000 : null;
+  const speechSeconds = Math.min(
+    knownSeconds !== null ? Math.ceil(knownSeconds) : limits.maxSpeechSeconds,
+    limits.maxSpeechSeconds,
+  );
+  const speechMicros =
+    speech && estimate?.speechMicrosPerSecond ? Math.ceil(estimate.speechMicrosPerSecond * speechSeconds) : 0;
   const maxMicros = (estimate?.textMicros ?? 0) + speechMicros;
 
   async function pick(next: File | null) {
@@ -194,14 +229,18 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
     if (!ready || busy) return;
     setBusy(true);
     try {
+      // Un vídeo de la biblioteca se estudia como uno subido: se copia a la carpeta privada de referencias
+      // (y se borra al terminar); el de la biblioteca no se toca.
+      const source =
+        mode === 'file' ? { file: file! } : mode === 'library' ? { file: await fetchLibraryVideo(chosen!) } : { url };
       const created = await start.mutateAsync({
         organizationId: org.id,
-        ...(mode === 'file' ? { file: file! } : { url }),
+        ...source,
         speech: speech && options.speechAvailable,
         keepSource: mode === 'file' && keep,
         idea,
       });
-      navigate(paths.reference(created.referenceId));
+      navigate(withName(paths.reference(created.referenceId), name));
     } catch (error) {
       toast.error(translateError(error));
     } finally {
@@ -222,10 +261,11 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
       <Card>
         <CardBody className="space-y-5">
-          <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Cómo nos das el vídeo">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="tablist" aria-label="Cómo nos das el vídeo">
             {(
               [
                 { id: 'file', label: 'Subir el vídeo', icon: Upload },
+                { id: 'library', label: 'De la biblioteca', icon: FolderOpen },
                 { id: 'link', label: 'Pegar un enlace', icon: Link2 },
               ] as const
             ).map((tab) => (
@@ -264,25 +304,55 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
                 />
               )}
             </Field>
+          ) : mode === 'library' ? (
+            <LibraryVideoPicker
+              videos={videos.data ?? []}
+              loading={videos.isPending}
+              chosen={chosen}
+              onChoose={setChosen}
+              problem={chosenProblem}
+            />
           ) : (
-            <Field
-              label="Enlace del vídeo"
-              hint="Instagram, TikTok y YouTube casi nunca dejan descargar el vídeo desde un enlace. Si no se puede, te lo diremos y podrás subir el archivo."
-              error={linkProblem}
-            >
-              {(props) => (
-                <Input
-                  {...props}
-                  type="url"
-                  inputMode="url"
-                  placeholder="https://…"
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                  data-testid="reel-like-url"
-                />
-              )}
-            </Field>
+            <>
+              {/* Antes de pegar nada: qué enlaces no se pueden descargar y qué hacer en su lugar. */}
+              <div data-testid="reel-like-link-notice">
+                <Notice tone="warning">
+                  Los enlaces de Instagram, TikTok, YouTube y Facebook no se pueden descargar: esas redes no lo
+                  permiten. Descarga el vídeo en tu móvil y súbelo, o elígelo de tu biblioteca. Aquí valen los enlaces
+                  directos a un archivo de vídeo.
+                </Notice>
+              </div>
+              <Field
+                label="Enlace del vídeo"
+                hint="Un enlace directo a un archivo de vídeo (MP4, MOV o WebM)."
+                error={linkProblem}
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://…"
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                    data-testid="reel-like-url"
+                  />
+                )}
+              </Field>
+            </>
           )}
+
+          <Field label="Nombre del reel" optional hint="Solo lo ve el equipo. Si lo dejas vacío, el del guion.">
+            {(props) => (
+              <Input
+                {...props}
+                value={name}
+                maxLength={200}
+                onChange={(event) => setName(event.target.value)}
+                data-testid="reel-like-name"
+              />
+            )}
+          </Field>
 
           <Field
             label="¿De qué quieres que vaya tu reel?"
@@ -340,11 +410,17 @@ function StartScreen({ options }: { options: ReelLikeOptions }) {
           </div>
 
           <Notice>
-            El vídeo solo se estudia para entender cómo está hecho. No se copian sus imágenes, su música ni sus textos, y
-            nunca entra en tu biblioteca.
+            El vídeo solo se estudia para entender cómo está hecho. No se copian sus imágenes, su música ni sus textos,
+            y nunca entra en tu biblioteca.
           </Notice>
 
-          <Button onClick={() => void submit()} disabled={!ready} loading={busy} className="w-full sm:w-auto" data-testid="reel-like-start">
+          <Button
+            onClick={() => void submit()}
+            disabled={!ready}
+            loading={busy}
+            className="w-full sm:w-auto"
+            data-testid="reel-like-start"
+          >
             <Sparkles className="h-4 w-4" aria-hidden />
             {busy && mode === 'file' ? 'Subiendo el vídeo…' : 'Estudiar este vídeo'}
           </Button>
@@ -385,6 +461,66 @@ function Check2({
   );
 }
 
+function LibraryVideoPicker({
+  videos,
+  loading,
+  chosen,
+  onChoose,
+  problem,
+}: {
+  videos: LibraryVideo[];
+  loading: boolean;
+  chosen: LibraryVideo | null;
+  onChoose: (video: LibraryVideo) => void;
+  problem: string | null;
+}) {
+  if (loading) return <Skeleton className="h-24 w-full" />;
+  if (videos.length === 0) {
+    return (
+      <div data-testid="reel-like-library-empty">
+        <Notice>No hay vídeos en tu biblioteca. Súbelo como archivo o añádelo antes a la biblioteca.</Notice>
+      </div>
+    );
+  }
+  return (
+    <fieldset className="space-y-2" data-testid="reel-like-library">
+      <legend className="mb-1 text-sm font-medium">Elige un vídeo de tu biblioteca</legend>
+      <ul className="max-h-64 space-y-1 overflow-y-auto">
+        {videos.map((video) => (
+          <li key={video.id}>
+            <label
+              className={cn(
+                'flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm',
+                chosen?.id === video.id ? 'border-primary bg-primary-soft' : 'border-border hover:bg-subtle',
+              )}
+            >
+              <input
+                type="radio"
+                name="reel-like-library-video"
+                className="h-4 w-4 shrink-0"
+                checked={chosen?.id === video.id}
+                onChange={() => onChoose(video)}
+                data-testid="reel-like-library-video"
+              />
+              <Film className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+              <span className="min-w-0 flex-1 break-all">{video.file_name}</span>
+              {video.duration_ms !== null && (
+                <span className="shrink-0 text-xs text-muted">{seconds(video.duration_ms / 1000)}</span>
+              )}
+            </label>
+          </li>
+        ))}
+      </ul>
+      {problem && (
+        <p role="alert" className="text-sm text-danger" data-testid="reel-like-library-problem">
+          {problem}
+        </p>
+      )}
+      <p className="text-xs text-muted">Se estudia una copia: el vídeo de tu biblioteca no cambia ni se borra.</p>
+    </fieldset>
+  );
+}
+
 function sourceLabel(row: ReelReferenceRow): string {
   return row.source_kind === 'link' ? `Enlace de ${row.source_host ?? 'una web'}` : 'Vídeo subido';
 }
@@ -407,7 +543,15 @@ function RecentAnalyses() {
               <Link to={paths.reference(row.id)} className="block min-h-11 hover:underline">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 break-words font-medium">{title ?? sourceLabel(row)}</span>
-                  <Badge tone={row.status === 'ready' ? 'success' : row.status === 'failed' || row.status === 'expired' ? 'danger' : 'primary'}>
+                  <Badge
+                    tone={
+                      row.status === 'ready'
+                        ? 'success'
+                        : row.status === 'failed' || row.status === 'expired'
+                          ? 'danger'
+                          : 'primary'
+                    }
+                  >
                     {STATUS_LABEL[row.status]}
                   </Badge>
                 </span>
@@ -450,7 +594,13 @@ function Step({ state, title, detail }: { state: StepState; title: string; detai
         <p className={cn('font-medium', state === 'pending' && 'text-muted')}>
           {title}
           <span className="sr-only">
-            {state === 'done' ? ' (hecho)' : state === 'active' ? ' (en marcha)' : state === 'failed' ? ' (no se pudo)' : ' (pendiente)'}
+            {state === 'done'
+              ? ' (hecho)'
+              : state === 'active'
+                ? ' (en marcha)'
+                : state === 'failed'
+                  ? ' (no se pudo)'
+                  : ' (pendiente)'}
           </span>
         </p>
         {detail && <div className="mt-0.5 break-words text-xs text-muted">{detail}</div>}
@@ -533,7 +683,11 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
         <Card>
           <CardBody className="space-y-4">
             <ol className="space-y-3" data-testid="reel-like-steps" aria-live="polite">
-              <Step state="done" title={row.source_kind === 'link' ? 'Enlace recibido' : 'Vídeo recibido'} detail={sourceLabel(row)} />
+              <Step
+                state="done"
+                title={row.source_kind === 'link' ? 'Enlace recibido' : 'Vídeo recibido'}
+                detail={sourceLabel(row)}
+              />
               <Step
                 state={measured ? 'done' : closed ? 'failed' : 'active'}
                 title="Medir los cortes, los planos y el ritmo"
@@ -550,7 +704,11 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
               <Step
                 state={result ? 'done' : aiError ? 'failed' : writing ? 'active' : 'pending'}
                 title="Mirar los planos y escribir tu versión"
-                detail={writing ? 'Con IA. Puede tardar un par de minutos; no cierres la página.' : 'Con IA: es el único paso que gasta cupo.'}
+                detail={
+                  writing
+                    ? 'Con IA. Puede tardar un par de minutos; no cierres la página.'
+                    : 'Con IA: es el único paso que gasta cupo.'
+                }
               />
               <Step state="pending" title="Plantilla, guion, borrador y textos" />
             </ol>
@@ -588,7 +746,12 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
       )}
 
       {result && (
-        <ResultView row={row} result={result} options={options} onDiscard={canEdit ? () => setConfirmDiscard(true) : undefined} />
+        <ResultView
+          row={row}
+          result={result}
+          options={options}
+          onDiscard={canEdit ? () => setConfirmDiscard(true) : undefined}
+        />
       )}
 
       <ConfirmDialog
@@ -630,7 +793,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 /** Los planos a escala: cuánto ocupa cada uno del reel. */
 function ShotBar({ template }: { template: ReelStructure }) {
   return (
-    <div className="flex h-9 w-full overflow-hidden rounded-lg border border-border" aria-hidden data-testid="reel-like-shot-bar">
+    <div
+      className="flex h-9 w-full overflow-hidden rounded-lg border border-border"
+      aria-hidden
+      data-testid="reel-like-shot-bar"
+    >
       {template.shots.map((shot, index) => (
         <div
           key={shot.id}
@@ -638,7 +805,8 @@ function ShotBar({ template }: { template: ReelStructure }) {
           className={cn(
             'flex min-w-0 items-center justify-center text-[11px] font-medium',
             index % 2 === 0 ? 'bg-primary-soft text-primary' : 'bg-subtle text-fg',
-            index > 0 && (shot.transition.type === 'fade' ? 'border-l-2 border-dashed border-primary' : 'border-l border-border'),
+            index > 0 &&
+              (shot.transition.type === 'fade' ? 'border-l-2 border-dashed border-primary' : 'border-l border-border'),
           )}
         >
           <span className="truncate px-0.5">{index + 1}</span>
@@ -662,7 +830,10 @@ function ResultView({
   const { org } = useOrg();
   const { brand, can } = useBrand();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const { create } = useContentMutations(org.id, brand.id);
+  // La pieza que ya se hizo con este análisis, si sigue viva (no archivada): se puede volver a ella.
+  const previous = useLinkedPiece(brand.id, row.content_id);
   const saveTemplate = useSaveReferenceTemplate(brand.id);
   const draft = useReelLikeDraft(brand.id, row.id);
   const [opening, setOpening] = useState(false);
@@ -675,20 +846,17 @@ function ResultView({
   const matches = new Map((draft.draft?.matches ?? []).map((match) => [match.shot, match]));
   const paths = contentPaths(org.id, brand.id);
 
+  /**
+   * Crea SIEMPRE una pieza nueva con el borrador del análisis (antes abría la que ya estaba
+   * apuntada, aunque estuviera archivada). El nombre, el escrito en «Nuevo reel» o el del guion.
+   */
   async function openEditor() {
     setOpening(true);
     try {
-      let contentId = row.content_id;
-      if (!contentId) {
-        const item = await create.mutateAsync({
-          title: (script.title || 'Reel nuevo').slice(0, 100),
-          network: 'instagram',
-          format: 'reel',
-        });
-        contentId = item.id;
-        await linkReferenceContent(row.id, contentId).catch(() => undefined);
-      }
-      navigate(`${paths.item(contentId)}?referencia=${row.id}`);
+      const title = (params.get(NAME_PARAM)?.trim() || script.title || 'Reel nuevo').slice(0, 200);
+      const item = await create.mutateAsync({ title, network: 'instagram', format: 'reel' });
+      await linkReferenceContent(row.id, item.id).catch(() => undefined);
+      navigate(`${paths.item(item.id)}?referencia=${row.id}`);
     } catch (error) {
       toast.error(translateError(error));
     } finally {
@@ -729,9 +897,14 @@ function ResultView({
             </div>
             {canEdit && (
               <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                <Button onClick={() => void openEditor()} loading={opening} className="flex-1 sm:flex-none" data-testid="reel-like-open-editor">
+                <Button
+                  onClick={() => void openEditor()}
+                  loading={opening}
+                  className="flex-1 sm:flex-none"
+                  data-testid="reel-like-open-editor"
+                >
                   <Clapperboard className="h-4 w-4" aria-hidden />
-                  {row.content_id ? 'Seguir en el editor' : 'Abrir en el editor'}
+                  {row.content_id ? 'Hacer otro reel con esto' : 'Abrir en el editor'}
                 </Button>
                 <Button
                   variant="secondary"
@@ -745,10 +918,19 @@ function ResultView({
               </div>
             )}
           </div>
+          {previous && (
+            <p className="text-sm" data-testid="reel-like-previous">
+              Ya hiciste un reel con este análisis:{' '}
+              <Link to={paths.item(previous.id)} className="font-medium text-primary underline">
+                {previous.title}
+              </Link>
+              .
+            </p>
+          )}
           {savedAs && (
             <p className="text-sm text-success" role="status" data-testid="reel-like-template-saved">
-              Guardada como «{savedAs}» en las plantillas de reel de la marca: la tienes en «Empieza con una plantilla» al
-              crear un reel con el editor.
+              Guardada como «{savedAs}» en las plantillas de reel de la marca: la tienes en «Empieza con una plantilla»
+              al crear un reel con el editor.
             </p>
           )}
           <p className="text-xs text-muted" data-testid="reel-like-cost-real">
@@ -789,7 +971,9 @@ function ResultView({
             <Badge tone="neutral">{seconds(template.totalSeconds)}</Badge>
             <Badge tone="neutral">Ritmo {PACE_LABEL[template.pace].toLowerCase()}</Badge>
             <Badge tone="neutral">{AUDIO_KIND_LABEL[template.audio.kind]}</Badge>
-            {template.audio.bpm !== undefined && <Badge tone="neutral">{Math.round(template.audio.bpm)} pulsaciones/min</Badge>}
+            {template.audio.bpm !== undefined && (
+              <Badge tone="neutral">{Math.round(template.audio.bpm)} pulsaciones/min</Badge>
+            )}
             {template.audio.bpm !== undefined && template.audio.cutsOnBeat !== undefined && (
               <Badge tone="neutral">{Math.round(template.audio.cutsOnBeat * 100)} % de cortes al compás</Badge>
             )}
@@ -817,8 +1001,8 @@ function ResultView({
                   <li key={text.id} className="break-words">
                     <span className="font-medium">{TEXT_ROLE_LABEL[text.role]}</span>{' '}
                     <span className="text-muted">
-                      · {POSITION_LABEL[text.position]} · letra {SIZE_LABEL[text.size]} · del segundo {seconds(text.start)} al{' '}
-                      {seconds(text.end)}
+                      · {POSITION_LABEL[text.position]} · letra {SIZE_LABEL[text.size]} · del segundo{' '}
+                      {seconds(text.start)} al {seconds(text.end)}
                     </span>
                   </li>
                 ))}
@@ -870,7 +1054,9 @@ function ResultView({
             <>
               <p className="text-sm" data-testid="reel-like-draft-summary">
                 {draft.draft.filled} de {draft.draft.filled + draft.draft.gaps} planos con material de tu biblioteca
-                {draft.draft.gaps > 0 ? `; ${draft.draft.gaps === 1 ? 'falta 1 por grabar' : `faltan ${draft.draft.gaps} por grabar`}.` : '.'}
+                {draft.draft.gaps > 0
+                  ? `; ${draft.draft.gaps === 1 ? 'falta 1 por grabar' : `faltan ${draft.draft.gaps} por grabar`}.`
+                  : '.'}
               </p>
               <ol className="space-y-2 text-sm">
                 {draft.draft.project.guide?.shots.map((shot, index) => {
@@ -878,7 +1064,10 @@ function ResultView({
                   return (
                     <li
                       key={shot.id}
-                      className={cn('rounded-lg border p-2.5', match?.asset ? 'border-border' : 'border-dashed border-warning bg-warning-soft/40')}
+                      className={cn(
+                        'rounded-lg border p-2.5',
+                        match?.asset ? 'border-border' : 'border-dashed border-warning bg-warning-soft/40',
+                      )}
                       data-testid={`reel-like-draft-shot-${shot.id}`}
                     >
                       <span className="font-medium">Plano {index + 1}: </span>
@@ -929,8 +1118,8 @@ function ResultView({
                     <li key={text.id} className="break-words">
                       «{values.get(text.id)}»{' '}
                       <span className="text-xs text-muted">
-                        ({TEXT_ROLE_LABEL[text.role].toLowerCase()}, {POSITION_LABEL[text.position]}, del {seconds(text.start)} al{' '}
-                        {seconds(text.end)})
+                        ({TEXT_ROLE_LABEL[text.role].toLowerCase()}, {POSITION_LABEL[text.position]}, del{' '}
+                        {seconds(text.start)} al {seconds(text.end)})
                       </span>
                     </li>
                   ) : null,
@@ -942,7 +1131,10 @@ function ResultView({
             <div>
               <div className="flex items-center justify-between gap-2">
                 <h3 className="font-semibold">Pie de foto</h3>
-                <CopyButton text={[texts.caption, texts.hashtags.join(' ')].filter(Boolean).join('\n\n')} label="Copiar el pie de foto" />
+                <CopyButton
+                  text={[texts.caption, texts.hashtags.join(' ')].filter(Boolean).join('\n\n')}
+                  label="Copiar el pie de foto"
+                />
               </div>
               <p className="whitespace-pre-line break-words">{texts.caption}</p>
               {texts.hashtags.length > 0 && <p className="mt-1 break-words text-primary">{texts.hashtags.join(' ')}</p>}
@@ -968,7 +1160,12 @@ function ResultView({
             <Button variant="secondary" onClick={() => setTemplateOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => void saveAsTemplate()} loading={saveTemplate.isPending} disabled={!templateName.trim()} data-testid="reel-like-template-confirm">
+            <Button
+              onClick={() => void saveAsTemplate()}
+              loading={saveTemplate.isPending}
+              disabled={!templateName.trim()}
+              data-testid="reel-like-template-confirm"
+            >
               Guardar
             </Button>
           </>

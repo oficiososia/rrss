@@ -6,17 +6,16 @@
 //  - «hazme algo bonito» sin pedir un fondo usa una foto real a sangre, con el fondo con IA como opción.
 // La IA, el generador, la biblioteca y el recorte están SIMULADOS.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AiRequestError } from '@/features/ai/api';
 import { createEmptyDocument, withPageLayers, type ContentDocument, type ImageLayer, type TextLayer } from '../document';
 import { newImageLayer, newTextLayer } from '../editor/layers';
 import type { CopilotAssetInfo, CopilotBrandStyle } from './apply';
 import type { MeasuredTone } from './legibility';
-import { BACKGROUND_PROMPT_SUFFIX, type CopilotPlanHost } from './plan';
+import { type CopilotPlanHost } from './plan';
 import { VoiceCopilot, type CopilotHost } from './VoiceCopilot';
 
 const mocks = vi.hoisted(() => ({
@@ -72,26 +71,6 @@ const STEW = photo(2, 'guiso-setas.jpg');
 const cutOf = (source: CopilotAssetInfo): CopilotAssetInfo => ({ ...source, id: source.id.replace(/^a{8}/, 'cccccccc'), name: `${source.name} (sin fondo).png` });
 /** El tono de un fondo CLARO (un crema), como lo mide el editor: el medio y por zonas. */
 const LIGHT: MeasuredTone = { mean: '#DDDDDD', grid: { columns: 1, rows: 1, cells: [0.72], aspect: 1 } };
-/** Una foto como fila de la biblioteca. */
-const libraryRow = (info: CopilotAssetInfo) => ({
-  id: info.id,
-  brand_id: 'marca',
-  organization_id: 'org',
-  kind: 'image',
-  origin: 'uploaded',
-  storage_path: `org/marca/media/${info.id}.jpg`,
-  file_name: info.name,
-  mime_type: 'image/jpeg',
-  bytes: 100,
-  width: info.width ?? null,
-  height: info.height ?? null,
-  duration_ms: null,
-  sha256: null,
-  folder: '',
-  tags: [],
-  rights: {},
-  provenance: {} as Record<string, unknown>,
-});
 
 const ORDER = 'haz el menú de otoño: crea un fondo que parezca otoñal y pon los platos en el centro';
 const PROMPT = 'Mesa de madera con hojas secas y luz cálida de otoño';
@@ -109,16 +88,6 @@ const answer = (operations: unknown[], extra: Record<string, unknown> = {}) => (
   note: '',
   ...extra,
 });
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 type PlanHostMock = {
   [K in keyof CopilotPlanHost]: NonNullable<CopilotPlanHost[K]> extends (...args: never[]) => unknown ? ReturnType<typeof vi.fn> : CopilotPlanHost[K];

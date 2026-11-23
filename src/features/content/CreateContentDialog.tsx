@@ -12,7 +12,7 @@ import { useWorkMode } from '@/features/orgs/workMode';
 import { describeNeeds } from '@/features/reels/reelTemplate';
 import { TemplateSample } from '@/features/reels/editor/TemplateCards';
 import { useBrandReelTemplates, type BrandReelTemplate } from '@/features/reels/editor/api';
-import { useReelLikeOptions } from '@/features/reels/like/api';
+import { reelLikePaths, useReelLikeOptions, withName } from '@/features/reels/like/api';
 import { REEL_TEMPLATES } from '@/features/reels/templates';
 import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { translateError } from '@/lib/errors';
@@ -108,7 +108,9 @@ function CreateForm({
   const network = initialTemplate?.network ?? NETWORKS[0]!.id;
   const [format, setFormat] = useState<string>(
     initialTemplate?.format ??
-      (cardsFor(NETWORKS[0]!.id).some((c) => c.format === initialFormat) ? initialFormat! : cardsFor(NETWORKS[0]!.id)[0]!.format),
+      (cardsFor(NETWORKS[0]!.id).some((c) => c.format === initialFormat)
+        ? initialFormat!
+        : cardsFor(NETWORKS[0]!.id)[0]!.format),
   );
   const [error, setError] = useState<string | null>(null);
   const isReel = format === 'reel';
@@ -186,7 +188,12 @@ function CreateForm({
     <form id="create-content" onSubmit={(e) => void submit(e)} className="space-y-4">
       <fieldset className="space-y-2" disabled={Boolean(template)}>
         <legend className="mb-2 text-sm font-medium">Formato</legend>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Formato" data-testid="create-content-format">
+        <div
+          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+          role="radiogroup"
+          aria-label="Formato"
+          data-testid="create-content-format"
+        >
           {cards.map((card) => {
             const Icon = card.icon;
             const on = card.format === format;
@@ -209,7 +216,10 @@ function CreateForm({
                   className="sr-only"
                 />
                 <span
-                  className={cn('flex h-14 items-center justify-center rounded-md border-2 border-dashed', on ? 'border-primary text-primary' : 'border-border text-muted')}
+                  className={cn(
+                    'flex h-14 items-center justify-center rounded-md border-2 border-dashed',
+                    on ? 'border-primary text-primary' : 'border-border text-muted',
+                  )}
                   style={{ aspectRatio: String(card.ratio) }}
                   aria-hidden
                 >
@@ -225,7 +235,10 @@ function CreateForm({
         </div>
         {current?.hint && (
           <p className="text-xs text-muted">
-            {current.hint}.{PUBLISHABLE_TARGETS.has(`${network}:${format}`) ? '' : ' Todavía no se publica sola: se prepara aquí y se sube a mano.'}
+            {current.hint}.
+            {PUBLISHABLE_TARGETS.has(`${network}:${format}`)
+              ? ''
+              : ' Todavía no se publica sola: se prepara aquí y se sube a mano.'}
           </p>
         )}
       </fieldset>
@@ -248,7 +261,12 @@ function CreateForm({
         <div className="grid gap-2 sm:grid-cols-2">
           {(
             [
-              [false, 'En blanco', isReel ? 'Montas el vídeo desde cero.' : 'Diseñas desde cero.', 'create-content-blank'],
+              [
+                false,
+                'En blanco',
+                isReel ? 'Montas el vídeo desde cero.' : 'Diseñas desde cero.',
+                'create-content-blank',
+              ],
               ...(!isReel || brandReelTemplates.length > 0
                 ? ([
                     [
@@ -286,7 +304,8 @@ function CreateForm({
       </fieldset>
       {isReel && like.data?.available && (
         <Link
-          to={`/o/${organizationId}/m/${brandId}/biblioteca/reels/como-este`}
+          // El nombre escrito aquí viaja hasta la pieza que se cree con el análisis.
+          to={withName(reelLikePaths(organizationId, brandId).start, title)}
           onClick={onClose}
           className="flex min-h-14 items-center gap-3 rounded-xl border-2 border-border p-3 text-sm hover:border-primary/50"
           data-testid="create-content-reel-like"
