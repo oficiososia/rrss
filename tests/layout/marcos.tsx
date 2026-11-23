@@ -1,7 +1,15 @@
 import { createRoot } from 'react-dom/client';
 import { App } from '@/App';
 import '@/index.css';
-import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type Layer } from '@/features/content/document';
+import { buildCatalogWith } from '../../agency/catalogo/construir.ts';
+import { NEUTRAL_THEME } from '../../agency/catalogo/index.ts';
+import {
+  createEmptyDocument,
+  DOCUMENT_SCHEMA_VERSION,
+  validateDocumentFromAnyVersion,
+  type ContentDocument,
+  type Layer,
+} from '@/features/content/document';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
@@ -10,8 +18,10 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // el hueco queda debajo de todo), y otro marco pequeño. La biblioteca tiene dos
 // fotos de verdad (dibujadas aquí), para poder poner una y verla dentro del marco.
 // Lo usan editor-marcos.spec.ts y editor-acciones.spec.ts. Parámetros:
-//   ?caso=titular|dos|oferta|grande  (oferta: «Oferta de la semana» con la foto puesta; grande: una foto
-//                                     que sobresale del lienzo)
+//   ?caso=titular|dos|oferta|grande|tapa  (oferta: «Oferta de la semana» con la foto puesta; grande: una
+//                                     foto que sobresale del lienzo; tapa: la historia «Tapa del día» del
+//                                     catálogo, con el logotipo OSCURO de la marca sobre su cabecera oscura)
+//   ?logos=dos|uno            (tapa: la marca tiene la variante oscura y la clara, o solo la oscura)
 //   ?modo=self|agency         (cómo trabaja la organización; por defecto, agencia)
 
 const params = new URLSearchParams(window.location.search);
@@ -56,6 +66,27 @@ const PHOTOS = [
 ];
 const PHOTO_IDS = PHOTOS.map((p) => p.id);
 const urls = new Map(PHOTOS.map((p) => [`${ORG_ID}/${BRAND_ID}/${p.id}.jpg`, makePhoto(p.width, p.height, p.tint)]));
+
+/** Un logotipo sintético: letras de un color sobre fondo transparente. */
+function makeLogo(color: string): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 600;
+  canvas.height = 200;
+  const c = canvas.getContext('2d')!;
+  c.fillStyle = color;
+  c.font = 'bold 120px sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText('CASA', 300, 100);
+  return canvas.toDataURL('image/png');
+}
+
+// Logotipos de la marca: el primero, el que ponen las plantillas, es el OSCURO.
+const LOGOS = [
+  { id: '33333333-3333-4333-8333-333333333333', name: 'Logotipo oscuro.png', color: '#141414' },
+  { id: '44444444-4444-4444-8444-444444444444', name: 'Logotipo claro.png', color: '#FAFAFA' },
+].slice(0, params.get('logos') === 'uno' ? 1 : 2);
+for (const logo of LOGOS) urls.set(`${ORG_ID}/${BRAND_ID}/${logo.id}.png`, makeLogo(logo.color));
 
 // El almacenamiento simulado devuelve las fotos dibujadas aquí.
 const storage = fake.storage.from();
@@ -192,6 +223,19 @@ const grande: Layer[] = [
   label('titular', 'Chuletón de vaca madurada', 72, 1100, W - 144, 170, 72, '#111827'),
 ];
 
+/** La historia «Tapa del día» del catálogo, armada con el logotipo oscuro de la marca. */
+function tapaDelDia(): ContentDocument {
+  const built = buildCatalogWith('restaurante', { ...NEUTRAL_THEME, logo: LOGOS[0]!.id }, [
+    'corte-ritmico',
+    'fundido-suave',
+    'pase-lateral',
+  ]);
+  const template = built.stories?.templates.find((t) => t.key === 'rest-historia-tapa-del-dia');
+  const parsed = validateDocumentFromAnyVersion(template?.document);
+  if (!parsed.ok) throw new Error('La historia «Tapa del día» no es válida');
+  return parsed.document;
+}
+
 const layers: Layer[] =
   caso === 'grande'
     ? grande
@@ -226,11 +270,34 @@ const layers: Layer[] =
 
 seedWorkspace({ orgRole: 'owner', workMode: modo });
 const doc = createEmptyDocument({ aspectRatio: '4:5' });
-const document_ = {
-  ...doc,
-  pages: [{ ...doc.pages[0]!, layers }],
-  copy: { ...doc.copy, captionHint: 'Qué es, cuánto cuesta y hasta cuándo. Una sola llamada al final.' },
-};
+const document_ =
+  caso === 'tapa'
+    ? tapaDelDia()
+    : {
+        ...doc,
+        pages: [{ ...doc.pages[0]!, layers }],
+        copy: { ...doc.copy, captionHint: 'Qué es, cuánto cuesta y hasta cuándo. Una sola llamada al final.' },
+      };
+
+// Solo «tapa» trae perfil de marca con logotipos: los demás casos se quedan como estaban.
+fake.tables.brand_profiles =
+  caso !== 'tapa'
+    ? []
+    : [
+        {
+          id: 'perfil-1',
+          brand_id: BRAND_ID,
+          organization_id: ORG_ID,
+          version: 1,
+          status: 'active',
+          schema_version: 1,
+          data: { visual: { colors: [], fonts: [], logoAssetIds: LOGOS.map((logo) => logo.id) } },
+          provenance: {},
+          change_note: '',
+          created_by: ME.id,
+          created_at: '2026-11-01T10:00:00Z',
+        },
+      ];
 
 fake.tables.media_assets = PHOTOS.map((p) => ({
   id: p.id,
@@ -255,14 +322,39 @@ fake.tables.media_assets = PHOTOS.map((p) => ({
   created_at: '2026-11-18T09:00:00Z',
   updated_at: '2026-11-18T09:00:00Z',
 }));
+fake.tables.media_assets.push(
+  ...(caso === 'tapa' ? LOGOS : []).map((logo) => ({
+    id: logo.id,
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    kind: 'logo',
+    origin: 'upload',
+    storage_path: `${ORG_ID}/${BRAND_ID}/${logo.id}.png`,
+    thumb_path: null,
+    file_name: logo.name,
+    mime_type: 'image/png',
+    bytes: 1000,
+    width: 600,
+    height: 200,
+    duration_ms: null,
+    sha256: null,
+    folder: 'Logotipos',
+    tags: [],
+    rights: {},
+    provenance: {},
+    created_by: ME.id,
+    created_at: '2026-11-18T09:00:00Z',
+    updated_at: '2026-11-18T09:00:00Z',
+  })),
+);
 fake.tables.content_items = [
   {
     id: 'content-1',
     brand_id: BRAND_ID,
     organization_id: ORG_ID,
-    title: caso === 'oferta' ? 'Oferta de la semana' : 'Chuletón de la casa',
+    title: caso === 'oferta' ? 'Oferta de la semana' : caso === 'tapa' ? 'Tapa del día' : 'Chuletón de la casa',
     network: 'instagram',
-    format: 'post',
+    format: caso === 'tapa' ? 'story' : 'post',
     status: 'draft',
     current_version: 1,
     archived_at: null,

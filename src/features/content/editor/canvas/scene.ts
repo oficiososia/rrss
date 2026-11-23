@@ -117,6 +117,8 @@ export class Scene {
   private pendingEmit = false;
   /** Velo de lo que queda fuera del lienzo: se ve, pero se nota que no sale en la imagen. */
   private veil: Konva.Shape;
+  /** Última capa abierta con doble clic o doble toque (para no abrirla dos veces por el mismo gesto). */
+  private lastOpen: { id: string; time: number } | null = null;
 
   constructor(
     container: HTMLDivElement,
@@ -212,6 +214,7 @@ export class Scene {
       this.overlay.batchDraw();
     });
     this.stage.on('mouseup touchend', () => this.finishMarquee());
+    container.addEventListener('dblclick', this.onNativeDoubleClick);
   }
 
   render(input: SceneInput): void {
@@ -301,6 +304,7 @@ export class Scene {
   }
 
   destroy(): void {
+    this.stage.container().removeEventListener('dblclick', this.onNativeDoubleClick);
     this.stage.destroy();
     this.pills.clear();
     this.nodes.clear();
@@ -499,19 +503,8 @@ export class Scene {
         this.callbacks.onSelect(spec.id);
       }
     });
-    node.on('dblclick dbltap', () => {
-      const current = this.specs.get(spec.id);
-      if (!current?.editable) return;
-      if (current.kind === 'text') this.callbacks.onEditText(spec.id);
-      else if (current.kind === 'image') {
-        if (current.frame !== 'empty') this.callbacks.onEditImage?.(spec.id);
-      } else {
-        // Doble clic en una forma (el velo de una plantilla) que tapa una foto: es la foto lo que se quiere encuadrar.
-        const point = this.pointer();
-        const below = point ? this.imageBelow(spec.id, point) : null;
-        if (below) this.callbacks.onEditImage?.(below);
-      }
-    });
+    // Doble toque (pantalla táctil). El doble clic del ratón lo escucha el contenedor (ver `onNativeDoubleClick`).
+    node.on('dbltap', () => this.openLayer(spec.id));
     // Un clic sin arrastrar en un marco vacío pide su foto (arrastrarlo lo mueve, como cualquier capa).
     node.on('click tap', (event) => {
       const current = this.specs.get(spec.id);
@@ -544,6 +537,50 @@ export class Scene {
     });
     return node;
   }
+
+  /**
+   * Doble clic o doble toque en una capa: escribir en un texto, encuadrar una foto o, en una forma que
+   * tapa una foto (el velo de una plantilla), encuadrar esa foto. Si llegan el doble toque y el doble
+   * clic del navegador por el mismo gesto, solo cuenta el primero.
+   */
+  private openLayer(id: string): void {
+    const now = Date.now();
+    if (this.lastOpen && this.lastOpen.id === id && now - this.lastOpen.time < 500) return;
+    const current = this.specs.get(id);
+    if (!current?.editable) return;
+    this.lastOpen = { id, time: now };
+    if (current.kind === 'text') this.callbacks.onEditText(id);
+    else if (current.kind === 'image') {
+      if (current.frame !== 'empty') this.callbacks.onEditImage?.(id);
+    } else {
+      const point = this.pointer();
+      const below = point ? this.imageBelow(id, point) : null;
+      if (below) this.callbacks.onEditImage?.(below);
+    }
+  }
+
+  /**
+   * Doble clic del navegador sobre el lienzo. No se usa el de Konva: Konva solo lo da si ninguna de las
+   * dos pulsaciones se ha movido 3 px (si se mueve, empieza a arrastrar), y con un ratón o un panel
+   * táctil de verdad la mano casi siempre se mueve algo; había que elegir el texto y pulsar «Escribir».
+   * El navegador cuenta el doble clic aunque la primera pulsación haya movido un poco la capa.
+   */
+  private readonly onNativeDoubleClick = (event: MouseEvent): void => {
+    if (event.button > 0) return;
+    this.stage.setPointersPositions(event);
+    const screen = this.stage.getPointerPosition();
+    if (!screen) return;
+    const hit = this.stage.getIntersection(screen);
+    let id = hit && this.nodes.has(hit.id()) ? hit.id() : null;
+    if (!id) {
+      // Un tirador del transformador o un hueco: si hay una sola capa elegida y el puntero cae en ella, esa.
+      const selected = this.input?.selectedIds ?? [];
+      const point = this.pointer();
+      const only = selected.length === 1 ? this.specs.get(selected[0]!) : undefined;
+      if (only && point && layerContains(specBox(only), point)) id = only.id;
+    }
+    if (id) this.openLayer(id);
+  };
 
   private apply(node: AnyNode, spec: NodeSpec): void {
     applySpecAttrs(node, spec);
