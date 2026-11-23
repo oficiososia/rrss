@@ -117,6 +117,7 @@ import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog'
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { imageFilesOf, type DraggedAsset } from './editor/assetDrag';
 import { assetIdsOf } from './editor/canvas/nodes';
+import { MissingAssetsNotice, useMissingAssetFrames } from './editor/missingAssets';
 import type { CanvasDrop, CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { canPaste, clipboardIds, copyLayers, pasteLayers } from './editor/clipboard';
 import { discardDraft, fetchDraft, useDraftAutosave, type LoadedDraft } from './editor/drafts';
@@ -444,6 +445,8 @@ function Editor({
   const assetIdsKey = assetIdsOf(state.document).join(',');
   const assetIds = useMemo(() => (assetIdsKey ? assetIdsKey.split(',') : []), [assetIdsKey]);
   const assets = useAssetsByIds(brand.id, assetIds);
+  // Fotos y logotipos borrados de la biblioteca: pasan a ser marcos vacíos «Poner foto» (editor/missingAssets.tsx).
+  const missingAssets = useMissingAssetFrames({ document: state.document, assetIds, found: assets.data, readOnly, dispatch });
   const storagePaths = useMemo(() => (assets.data ?? []).map((a) => a.storage_path).sort(), [assets.data]);
   const signed = useSignedUrls(storagePaths);
   const images = useMemo(() => {
@@ -1601,6 +1604,7 @@ function Editor({
           </p>
         </div>
       )}
+      <MissingAssetsNotice count={missingAssets} readOnly={readOnly} />
       {item.archived_at && (
         <Notice tone="warning">Está archivada: se puede ver, pero no cambiar hasta recuperarla.</Notice>
       )}
