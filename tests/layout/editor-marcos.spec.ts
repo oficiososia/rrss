@@ -12,7 +12,7 @@ const H = 1350;
 async function open(page: Page, caso: 'titular' | 'dos', size: { width: number; height: number }) {
   await page.setViewportSize(size);
   await page.goto(`/marcos.html?caso=${caso}`);
-  await expect(page.getByTestId('editor-stage')).toBeVisible();
+  await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
   // El lienzo ya tiene su tamaño definitivo (no el de 1 px con que nace).
   await expect.poll(async () => (await page.getByTestId('editor-stage').boundingBox())!.width).toBeGreaterThan(100);
 }
@@ -88,10 +88,11 @@ test('escritorio: el hueco bajo un velo y un titular ofrece «Poner foto», la f
   expect(layers[0]!.source).toMatchObject({ kind: 'asset' });
   await expect(page.getByTestId('editor-empty-frames')).toHaveCount(0);
 
-  // Con la foto elegida, la barra flotante ofrece lo suyo y no se sale del lienzo.
+  // Con la foto elegida, la barra flotante ofrece lo suyo (duplicar y borrar, en su «⋯») y no se sale del lienzo.
   await expect(page.getByTestId('bar-replace-photo')).toBeVisible();
-  await expect(page.getByTestId('bar-duplicate')).toBeVisible();
-  await expect(page.getByTestId('bar-delete')).toBeVisible();
+  await expect(page.getByTestId('bar-crop')).toBeVisible();
+  await expect(page.getByTestId('bar-more')).toBeVisible();
+  await expect(page.getByTestId('bar-duplicate')).toHaveCount(0);
   await barInsideCanvas(page);
   await shot(page, 'marco-con-foto-escritorio');
 
@@ -125,7 +126,8 @@ test('móvil 375 px: tocar el hueco pone la foto y la barra de acciones queda a 
   page,
 }) => {
   await open(page, 'dos', { width: 375, height: 812 });
-  await expect(page.getByTestId('editor-empty-frames')).toBeHidden(); // en móvil no cabe en la cabecera
+  // En móvil, el aviso del hueco vacío va abajo, junto a «Capas» (en la cabecera no cabe).
+  await expect(page.getByTestId('editor-empty-frames-mobile')).toBeVisible();
   await shot(page, 'marcos-vacios-movil');
 
   const first = await at(page, W / 2, 331);
@@ -143,8 +145,10 @@ test('móvil 375 px: tocar el hueco pone la foto y la barra de acciones queda a 
   const bar = await barInsideCanvas(page);
   expect(bar.x).toBeGreaterThanOrEqual(0);
   expect(bar.x + bar.width).toBeLessThanOrEqual(375);
+  // En el móvil va encima del elemento (o debajo si arriba no cabe), nunca sobre él.
+  const frameTop = (await at(page, 0, 0)).y;
   const frameBottom = (await at(page, 0, 663)).y;
-  expect(bar.y).toBeGreaterThanOrEqual(frameBottom);
+  expect(bar.y + bar.height <= frameTop + 1 || bar.y >= frameBottom - 1).toBe(true);
   // Botones para el dedo, y todos a la vista (también «⋯», el último): nada queda cortado por la derecha.
   const replace = (await page.getByTestId('bar-replace-photo').boundingBox())!;
   expect(replace.height).toBeGreaterThanOrEqual(40);
@@ -209,12 +213,14 @@ test('el botón derecho abre el menú de lo elegido (duplicar, orden, bloquear�
   await expect(menu.getByTestId('menu-duplicate')).toBeVisible();
   await expect(menu.getByTestId('menu-lock')).toBeVisible();
   await menu.getByTestId('menu-duplicate').click();
-  await expect(page.getByRole('tab', { name: 'Capas (4)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (4)');
 });
 
-test('móvil 375 px: «Diseño» tiene las fotos de la marca a mano y tocar una rellena el hueco', async ({ page }) => {
+test('móvil 375 px: el cajón «Fotos» tiene las fotos de la marca a mano y tocar una rellena el hueco', async ({
+  page,
+}) => {
   await open(page, 'titular', { width: 375, height: 812 });
-  await page.getByRole('tab', { name: 'Diseño' }).click();
+  await page.getByTestId('drawer-photos').click();
   const photos = page.getByTestId('editor-photos');
   await expect(photos.getByTestId('photo-panel')).toBeVisible();
   // La hoja se desplaza por dentro; la página, no.
@@ -226,37 +232,36 @@ test('móvil 375 px: «Diseño» tiene las fotos de la marca a mano y tocar una 
   expect(layers.find((l) => l.id === 'foto')!.source).toMatchObject({ kind: 'asset' });
   expect(layers).toHaveLength(3);
   // Al poner la foto la hoja se cierra: el lienzo se ve entero, con la barra de la foto.
-  await expect(page.getByTestId('editor-panel-scroll')).toBeHidden();
+  await expect(page.getByTestId('drawer-panel-photos')).toHaveCount(0);
   await expect(page.getByTestId('bar-replace-photo')).toBeVisible();
   const stage = (await page.getByTestId('editor-stage').boundingBox())!;
   expect(stage.width).toBeGreaterThan(375 * 0.5);
   await shot(page, 'fotos-movil-puesta');
 });
 
-test('escritorio: las cuatro pestañas del panel caben a la vista y las fotos de la marca salen sin elegir nada', async ({
+test('escritorio: sin panel fijo; las fotos de la marca están en el cajón «Fotos» y el lienzo no se encoge al abrirlo de más', async ({
   page,
 }) => {
   await open(page, 'titular', { width: 1366, height: 768 });
-  const panels = (await page.getByTestId('editor-panels').boundingBox())!;
-  for (const name of ['Diseño', /Capas/, 'Publicación', 'Marca']) {
-    const tab = (await page.getByRole('tab', { name }).boundingBox())!;
-    expect(tab.x + tab.width).toBeLessThanOrEqual(panels.x + panels.width);
-  }
+  await expect(page.getByRole('tab', { name: 'Diseño' })).toHaveCount(0);
+  await page.getByTestId('drawer-photos').click();
   await expect(page.getByTestId('editor-photos').getByTestId('photo-panel-item').first()).toBeVisible();
   await shot(page, 'fotos-escritorio');
 });
 
-test('«Publicar o compartir» reúne ver, descargar y publicar, y cabe en el móvil', async ({ page }) => {
+test('«Compartir» reúne ver, descargar y publicar en una hoja que cabe en el móvil', async ({ page }) => {
   for (const size of [
     { width: 1366, height: 768 },
     { width: 375, height: 812 },
   ]) {
     await open(page, 'titular', size);
     await page.getByTestId('editor-share').click();
-    const menu = page.getByRole('menu');
-    await expect(menu.getByTestId('editor-preview')).toBeVisible();
-    await expect(menu.getByTestId('editor-export')).toBeVisible();
-    const box = (await menu.boundingBox())!;
+    const sheet = page.getByRole('dialog', { name: 'Compartir' });
+    await expect(sheet.getByTestId('share-preview')).toBeVisible();
+    await expect(sheet.getByTestId('share-download')).toBeVisible();
+    // Con un hueco vacío avisa de lo que falta (el hueco no sale en la imagen).
+    await expect(sheet.getByTestId('share-missing-photos')).toBeVisible();
+    const box = (await sheet.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(size.width);
     await shot(page, `compartir-${size.width}`);

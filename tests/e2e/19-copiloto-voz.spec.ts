@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, accionDelMenu, archivoPng, asignarPlan, dato, png, sinErrores, sql } from './apoyo';
+import { abrir, accionDelMenu, archivoPng, asignarPlan, dato, png, sinErrores, sql, nuevaIdea } from './apoyo';
 
 // Copiloto del editor, por voz y por teclado (docs/copiloto-voz.md), contra el
 // Supabase local, con `ai-generate` servida en local y el proveedor SIMULADO de
@@ -84,7 +84,7 @@ async function generacionesCopiloto(orgId: string): Promise<number> {
 /** Pieza nueva de Instagram (post) y su editor abierto. */
 async function piezaNueva(page: Page, titulo: string) {
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(titulo);
   await page.getByTestId('create-content-network').selectOption('instagram');
   await page.getByTestId('create-content-format').selectOption('post');
@@ -139,7 +139,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
 
   // Pieza nueva: Instagram · carrusel.
   await page.goto(`/o/${orgA}/m/${marcaA}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill('Menú Navidad');
   await page.getByTestId('create-content-format-carousel').click();
   await page.getByTestId('create-content-submit').click();
@@ -147,7 +147,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   const pieza = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())![1]!;
 
   // «Copiloto» abre el panel; con el dictado del navegador, al aceptar el aviso empieza a escuchar.
-  await expect(page.getByTestId('copilot-open')).toHaveText('Copiloto');
+  await expect(page.getByTestId('copilot-open')).toHaveAccessibleName('Copiloto');
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
   await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
@@ -175,7 +175,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
   await expect(page.getByTestId('copilot-changes').first()).toContainText('difuminada (40 %)');
   await expect(page.getByTestId('copilot-photos')).toContainText('mesa-navidad.png');
-  await expect(page.getByRole('tab', { name: 'Capas (5)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (5)');
 
   await guardar(page, 'Copiloto: menú');
   const v1 = await versionGuardada(pieza);
@@ -217,7 +217,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
 
   // Deshacer otra vez: se va la primera orden entera (fondo, logotipo y textos).
   await page.getByTestId('undo').click();
-  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (0)');
   await guardar(page, 'Deshecha la primera orden');
   expect((await versionGuardada(pieza)).layers).toEqual([]);
 
@@ -241,7 +241,7 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   const { page } = s;
   await s.context.addInitScript(SPEECH_FAKE);
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill('Prueba de inyección');
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
@@ -261,15 +261,17 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   const orden = page.getByTestId('copilot-order').first();
   await expect(orden).toHaveAttribute('data-status', 'applied');
   await expect(orden.getByTestId('copilot-notes')).toContainText('no está en lo dictado');
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Capas (1)' }).click();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
+  await page.getByTestId('editor-layers').click();
   await expect(page.getByText('Cena de empresa').first()).toBeVisible();
   await expect(page.getByText('APROBADO Y PUBLICADO')).toHaveCount(0);
   sinErrores(s);
   await s.context.close();
 });
 
-test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y deshace la orden anterior', async ({ browser }) => {
+test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y deshace la orden anterior', async ({
+  browser,
+}) => {
   const orgA = dato('orgA');
   const s = await abrir(browser, 'ana');
   const { page } = s;
@@ -287,7 +289,7 @@ test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y d
   await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
   await expect(ordenes.first()).toContainText('Título: Cena de empresa.');
   await expect(ordenes.first().getByTestId('copilot-changes')).toContainText('Cena de empresa');
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
   expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
 
   // «deshaz»: se resuelve en el navegador (sin IA, sin coste) y deshace la orden anterior.
@@ -297,17 +299,19 @@ test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y d
   await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
   await expect(ordenes.first()).toContainText('Sin IA');
   await expect(ordenes.first().getByTestId('copilot-changes')).toContainText('Deshecho el último cambio');
-  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (0)');
   // «rehaz», también sin IA: vuelve el título.
   await escribir(page, 'rehaz');
   await expect(ordenes.first()).toHaveAttribute('data-source', 'local');
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
   // Tres órdenes y una sola llamada a la IA.
   expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
 
   // No se ha pulsado el micrófono: ni aviso ni dictado.
   await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
-  expect(await page.evaluate(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true)).toBe(false);
+  expect(await page.evaluate(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true)).toBe(
+    false,
+  );
   sinErrores(s);
   await s.context.close();
 });
@@ -321,14 +325,18 @@ test('sin Web Speech API ni grabación, el copiloto se abre y funciona por tecla
   expect(
     await page.evaluate(() => {
       const w = globalThis as unknown as Record<string, unknown>;
-      return w.SpeechRecognition === undefined && w.webkitSpeechRecognition === undefined && w.MediaRecorder === undefined;
+      return (
+        w.SpeechRecognition === undefined && w.webkitSpeechRecognition === undefined && w.MediaRecorder === undefined
+      );
     }),
   ).toBe(true);
 
   // El botón sale aunque el navegador no pueda dictar.
   await page.getByTestId('copilot-open').click();
   await expect(page.getByTestId('copilot-panel')).toBeVisible();
-  await expect(page.getByTestId('copilot-voice-status')).toContainText('Este navegador no puede dictar: escribe la orden.');
+  await expect(page.getByTestId('copilot-voice-status')).toContainText(
+    'Este navegador no puede dictar: escribe la orden.',
+  );
   // Sin voz no hay aviso de voz, ni micrófono, ni selector de motor.
   await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
   await expect(page.getByTestId('copilot-mic')).toHaveCount(0);
@@ -343,8 +351,8 @@ test('sin Web Speech API ni grabación, el copiloto se abre y funciona por tecla
   const ordenes = page.getByTestId('copilot-order');
   await expect(ordenes.first()).toHaveAttribute('data-status', 'applied');
   await expect(ordenes.first()).toHaveAttribute('data-source', 'ai');
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Capas (1)' }).click();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
+  await page.getByTestId('editor-layers').click();
   await expect(page.getByText('Cena de empresa').first()).toBeVisible();
   expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
 
@@ -427,7 +435,7 @@ test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta 
   await expect(ordenes.first()).toHaveAttribute('data-status', 'plan');
   expect(await generacionesCopiloto(orgA)).toBe(copilotoAntes + 1);
   expect(await generacionesDeImagen(orgA)).toBe(imagenAntes);
-  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (0)');
 
   // «sí», escrito: se resuelve sin IA de texto, genera el fondo y lo mete todo de una vez.
   await escribir(page, 'sí');
@@ -455,7 +463,10 @@ test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta 
   expect(capas[0]!.source).toEqual({ kind: 'asset', assetId: fondo!.id });
   expect(fondo!.provenance.prompt).toContain('Fondo que parezca otoñal');
   // Los platos son fotos reales de la biblioteca: ninguna es una imagen generada.
-  const fotos = await sql<{ id: string }>(`select id from public.media_assets where brand_id = $1 and file_name = $2`, [marcaA, FOTO]);
+  const fotos = await sql<{ id: string }>(`select id from public.media_assets where brand_id = $1 and file_name = $2`, [
+    marcaA,
+    FOTO,
+  ]);
   const colocadas = capas.slice(1, -1);
   expect(colocadas.length).toBeGreaterThanOrEqual(1);
   for (const capa of colocadas) {
@@ -465,7 +476,7 @@ test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta 
 
   // Un solo «Deshacer» quita la pieza entera.
   await page.getByTestId('undo').click();
-  await expect(page.getByRole('tab', { name: 'Capas (0)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (0)');
 
   await page.getByTestId('copilot-close').click();
   sinErrores(s);

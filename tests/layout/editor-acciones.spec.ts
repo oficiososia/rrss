@@ -17,7 +17,7 @@ const MOBILE = { width: 375, height: 812 };
 async function open(page: Page, size: { width: number; height: number }, modo: 'self' | 'agency' = 'self') {
   await page.setViewportSize(size);
   await page.goto(`/marcos.html?caso=oferta&modo=${modo}`);
-  await expect(page.getByTestId('editor-stage')).toBeVisible();
+  await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
   await expect.poll(async () => (await page.getByTestId('editor-stage').boundingBox())!.width).toBeGreaterThan(100);
 }
 
@@ -64,8 +64,10 @@ const overlaps = (
 ) => a.x + 1 < b.x + b.width && b.x + 1 < a.x + a.width && a.y + 1 < b.y + b.height && b.y + 1 < a.y + a.height;
 
 for (const [name, size, limits] of [
-  ['ordenador 1366×768', DESKTOP, { empty: 18, photo: 20 }],
-  ['móvil 375×812', MOBILE, { empty: 16, photo: 18 }],
+  // Cabecera (volver, tipo de pieza, deshacer, rehacer —en el móvil no—, «⋯», Compartir) + 5 cajones + barra de la foto
+  // (Sustituir, Editar foto, Recortar, «⋯») + fila del lienzo (capas, zonas seguras, zoom y copiloto).
+  ['ordenador 1366×768', DESKTOP, { empty: 17, photo: 21 }],
+  ['móvil 375×812', MOBILE, { empty: 13, photo: 17 }],
 ] as const) {
   test(`${name}: pocas acciones a la vista, sin scroll de página y cada una en un solo sitio`, async ({ page }) => {
     await open(page, size);
@@ -163,9 +165,14 @@ test('móvil: editor a pantalla completa, cajones en una barra inferior que abre
   await page.getByTestId('drawer-photos').click();
   const sheet = page.getByTestId('drawer-panel-photos');
   await expect(sheet).toBeVisible();
-  const stage = (await page.getByTestId('editor-stage').boundingBox())!;
+  // El lienzo se reajusta (mide su hueco) y queda entero encima de la hoja.
   const sheetBox = (await sheet.boundingBox())!;
-  expect(stage.y + stage.height).toBeLessThanOrEqual(sheetBox.y + 1);
+  await expect
+    .poll(async () => {
+      const stage = (await page.getByTestId('editor-stage').boundingBox())!;
+      return stage.y + stage.height;
+    })
+    .toBeLessThanOrEqual(sheetBox.y + 1);
   expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
   await shot(page, 'cajon-fotos-movil');
   // Tocar una foto la pone (en el hueco o como capa) y la hoja se cierra para ver cómo ha quedado.
@@ -183,11 +190,14 @@ for (const [name, size] of [
     const sheet = page.getByRole('dialog', { name: 'Compartir' });
     await expect(sheet).toBeVisible();
     await expect(sheet.getByTestId('share-preview')).toBeVisible();
-    for (const id of ['share-download', 'share-publish-now', 'share-schedule', 'share-copy-text']) {
-      await expect(sheet.getByTestId(id)).toBeVisible();
+    // Descargar y copiar el texto, siempre; publicar y programar, si la publicación está activa en el
+    // entorno (en este banco no lo está) y hay cuenta conectada.
+    for (const id of ['share-download', 'share-copy-text']) await expect(sheet.getByTestId(id)).toBeVisible();
+    if (await sheet.getByTestId('share-schedule').count()) {
+      await expect(sheet.getByTestId('share-publish-now')).toBeVisible();
+      // Programado no es publicado: la hoja lo dice.
+      await expect(sheet.getByTestId('share-schedule-note')).toContainText('no se publica hasta');
     }
-    // Programado no es publicado: la hoja lo dice.
-    await expect(sheet.getByTestId('share-schedule-note')).toContainText('no se publica hasta');
     // En autogestión no hay paso de aprobación a la vista.
     await expect(sheet.getByText(/Aprobar|Enviar a revisión|Aprobada/)).toHaveCount(0);
     const box = (await sheet.boundingBox())!;
@@ -197,3 +207,153 @@ for (const [name, size] of [
     expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
   });
 }
+
+test('ordenador: una foto agrandada más allá del lienzo se ve fuera, velada, y se agarra por lo que sobresale', async ({
+  page,
+}) => {
+  await page.setViewportSize(DESKTOP);
+  await page.goto('/marcos.html?caso=grande&modo=self');
+  await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
+  await expect.poll(async () => (await page.getByTestId('editor-stage').boundingBox())!.width).toBeGreaterThan(100);
+  const stage = (await page.getByTestId('editor-stage').boundingBox())!;
+  // Un punto de la foto FUERA del lienzo (a su izquierda), dentro del área.
+  const outside = await at(page, -200, 650);
+  expect(outside.x).toBeLessThan(stage.x);
+  // Lo que sobresale se pinta (velado): el píxel no es el fondo liso del área.
+  const color = await page.evaluate(({ x, y }) => {
+    const canvases = [...document.querySelectorAll('[data-testid="editor-konva"] canvas')] as HTMLCanvasElement[];
+    const content = canvases[0]!;
+    const box = content.getBoundingClientRect();
+    const ratio = content.width / box.width;
+    const pixel = content.getContext('2d')!.getImageData((x - box.left) * ratio, (y - box.top) * ratio, 1, 1).data;
+    return [...pixel];
+  }, outside);
+  expect(color[3]).toBeGreaterThan(0);
+  await shot(page, 'foto-sobresale');
+
+  // Se elige y se arrastra agarrándola por fuera del lienzo.
+  await page.mouse.click(outside.x, outside.y);
+  await expect(page.getByTestId('bar-replace-photo')).toBeVisible();
+  await page.mouse.move(outside.x, outside.y);
+  await page.mouse.down();
+  await page.mouse.move(outside.x + 60, outside.y, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved', { timeout: 15_000 });
+  const moved = await page.evaluate(() => {
+    const rows = (
+      window as unknown as { drafts: () => { data: { pages: { layers: { id: string; x: number }[] }[] } }[] }
+    ).drafts();
+    return rows[0]!.data.pages[0]!.layers.find((l) => l.id === 'foto')!.x;
+  });
+  expect(moved).toBeGreaterThan(-400);
+  await shot(page, 'foto-sobresale-movida');
+});
+
+test('ordenador: el divisor entre el cajón y el lienzo se arrastra, va con flechas, vuelve con doble clic y se recuerda', async ({
+  page,
+}) => {
+  await open(page, { width: 1872, height: 1000 });
+  await page.getByTestId('drawer-photos').click();
+  const panel = page.getByTestId('drawer-panel-photos');
+  const divider = page.getByTestId('drawer-panel-photos-divider');
+  await expect(divider).toBeVisible();
+  const before = (await panel.boundingBox())!.width;
+  const stageBefore = (await page.getByTestId('editor-stage').boundingBox())!.width;
+  // Arrastrar el tirador 120 px a la derecha agranda el cajón; el lienzo se reajusta.
+  const handle = (await divider.boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 + 120, handle.y + handle.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await panel.boundingBox())!.width)).toBe(Math.round(before + 120));
+  await expect(divider).toHaveAttribute('aria-valuenow', String(Math.round(before + 120)));
+  const stage = (await page.getByTestId('editor-stage').boundingBox())!;
+  const area = (await page.getByTestId('editor-canvas-area').boundingBox())!;
+  expect(stage.x).toBeGreaterThanOrEqual(area.x - 1);
+  expect(stage.x + stage.width).toBeLessThanOrEqual(area.x + area.width + 1);
+  expect(stageBefore).toBeGreaterThan(0);
+  await shot(page, 'divisor-arrastrado');
+  // Con el teclado: flechas de 16 en 16, y nunca por encima del máximo ni por debajo del mínimo.
+  await divider.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(divider).toHaveAttribute('aria-valuenow', String(Math.round(before + 104)));
+  await page.keyboard.press('End');
+  await expect(divider).toHaveAttribute('aria-valuenow', '560');
+  await page.keyboard.press('Home');
+  await expect(divider).toHaveAttribute('aria-valuenow', '240');
+  // Se recuerda al volver a abrir el editor.
+  await page.reload();
+  await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
+  await page.getByTestId('drawer-photos').click();
+  await expect(page.getByTestId('drawer-panel-photos-divider')).toHaveAttribute('aria-valuenow', '240');
+  // Doble clic: el de siempre.
+  await page.getByTestId('drawer-panel-photos-divider').dblclick();
+  await expect(page.getByTestId('drawer-panel-photos-divider')).toHaveAttribute(
+    'aria-valuenow',
+    String(Math.round(before)),
+  );
+  expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+});
+
+test('móvil: no hay divisor (los cajones son hojas)', async ({ page }) => {
+  await open(page, MOBILE);
+  await page.getByTestId('drawer-photos').click();
+  await expect(page.getByTestId('drawer-panel-photos-divider')).toBeHidden();
+});
+
+test.describe('móvil 375 px: los fallos de la prueba real (informe e2e, fallo 13 y 12)', () => {
+  test('«Poner foto» sale en el hueco de «Titular sobre foto», bajo el velo y el titular', async ({ page }) => {
+    await page.setViewportSize(MOBILE);
+    await page.goto('/marcos.html?caso=titular&modo=self');
+    await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
+    // El botón del hueco esquiva el titular del centro: arriba, al 20 %.
+    const pill = await at(page, W / 2, H * 0.2);
+    await page.mouse.click(pill.x, pill.y);
+    await expect(page.getByRole('dialog', { name: 'Poner foto' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    // Y el aviso «Falta 1 foto» se ve (abajo, junto a «Capas»).
+    await expect(page.getByTestId('editor-empty-frames-mobile')).toBeVisible();
+    await expect(page.getByTestId('editor-empty-frames-mobile')).toBeInViewport();
+  });
+
+  test('escribir un texto con «Capas» abierta no cambia de panel; el copiloto está a la vista y abre al primer toque', async ({
+    page,
+  }) => {
+    await page.setViewportSize(MOBILE);
+    await page.goto('/marcos.html?caso=titular&modo=self');
+    await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
+    await page.getByTestId('editor-layers').click();
+    await expect(page.getByTestId('side-panel-layers')).toBeVisible();
+    const title = await at(page, W / 2, 600);
+    await page.mouse.dblclick(title.x, title.y);
+    const field = page.getByTestId('canvas-text-editor');
+    await expect(field).toBeFocused();
+    await page.keyboard.type(' de otoño');
+    await page.keyboard.press('Escape');
+    await expect(field).toBeHidden();
+    await expect(page.getByTestId('side-panel-layers')).toBeVisible();
+    await page.getByTestId('side-close').click();
+
+    const copilot = page.getByTestId('copilot-open');
+    await expect(copilot).toBeInViewport({ ratio: 1 });
+    await copilot.click();
+    await expect(page.getByTestId('copilot-panel')).toBeVisible();
+    expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+  });
+
+  test('un aviso flotante no tapa los botones de la cabecera', async ({ page }) => {
+    await open(page, MOBILE);
+    // «Copiar el texto» sin pie: sale el aviso «Todavía no hay texto…» (y sigue al cerrar la hoja).
+    await page.getByTestId('editor-share').click();
+    await page.getByTestId('share-copy-text').click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Compartir' })).toBeHidden();
+    const notice = page.getByText('Todavía no hay texto de la publicación que copiar.');
+    await expect(notice).toBeVisible();
+    // «Compartir» se puede tocar con el aviso a la vista (nada lo tapa).
+    await page.getByTestId('editor-share').click({ trial: true, timeout: 3000 });
+    const toast = (await notice.boundingBox())!;
+    const header = (await page.getByTestId('editor-header').boundingBox())!;
+    expect(toast.y).toBeGreaterThanOrEqual(header.y + header.height - 2);
+  });
+});

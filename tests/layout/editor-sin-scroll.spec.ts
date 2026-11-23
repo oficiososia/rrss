@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 // Regla de la casa: en el editor de piezas el alto de la página es el alto de la
-// pantalla; el scroll solo existe dentro de los paneles. Se vigila en los tamaños
+// pantalla; el scroll solo existe dentro de los paneles (cajones, capas, ajustes). Se vigila en los tamaños
 // que se usan (escritorio, portátil, tablet y móvil) y con el lienzo entero a la vista.
 
 const SIZES = [
@@ -13,7 +13,7 @@ const SIZES = [
 
 async function openEditor(page: Page, ratio: string, extra = '') {
   await page.goto(`/layout.html?ratio=${ratio}${extra}`);
-  await expect(page.getByTestId('editor-stage')).toBeVisible();
+  await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
 }
 
 const noPageScroll = (page: Page) =>
@@ -22,9 +22,9 @@ const noPageScroll = (page: Page) =>
     horizontal: document.scrollingElement!.scrollWidth - window.innerWidth,
   }));
 
-/** Elementos visibles del panel que se salen por la derecha (los textos solo para lector de pantalla no cuentan). */
+/** Elementos visibles del panel de ajustes que se salen por la derecha (los textos solo para lector de pantalla no cuentan). */
 const spillingRight = (page: Page) =>
-  page.getByTestId('editor-panel-scroll').evaluate((panel) => {
+  page.getByTestId('side-panel-settings-scroll').evaluate((panel) => {
     const edge = panel.getBoundingClientRect().right + 1;
     return [...panel.querySelectorAll('*')]
       .filter((el) => !el.classList.contains('sr-only') && el.getBoundingClientRect().right > edge)
@@ -59,24 +59,39 @@ test('con muchas capas y varias páginas, solo hace scroll el panel', async ({ p
   await page.setViewportSize({ width: 1366, height: 768 });
   await openEditor(page, '4:5', '&pages=4&format=carousel');
   expect((await noPageScroll(page)).vertical).toBeLessThanOrEqual(0);
-  await page.getByRole('tab', { name: /Capas/ }).click();
+  await page.getByTestId('editor-layers').click();
+  await expect(page.getByTestId('side-panel-layers')).toBeVisible();
   expect((await noPageScroll(page)).vertical).toBeLessThanOrEqual(0);
 });
 
-test('en móvil los paneles son una hoja que se abre y se cierra, sin mover la página', async ({ page }) => {
+test('en móvil las capas son una hoja que se abre y se cierra, sin mover la página ni encoger el lienzo', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await openEditor(page, '9:16');
-  const panel = page.getByTestId('editor-panel-scroll');
-  await expect(panel).toBeHidden();
-  await page.getByRole('tab', { name: /Capas/ }).click();
+  const panel = page.getByTestId('side-panel-layers');
+  await expect(panel).toHaveCount(0);
+  const before = (await page.getByTestId('editor-stage').boundingBox())!;
+  await page.getByTestId('editor-layers').click();
   await expect(panel).toBeVisible();
   expect((await noPageScroll(page)).vertical).toBeLessThanOrEqual(0);
-  // El lienzo sigue entero con la hoja abierta.
+  // El lienzo sigue entero con la hoja abierta, y con un tamaño útil (no al 2 %).
   const stage = (await page.getByTestId('editor-stage').boundingBox())!;
-  const sheet = (await page.getByTestId('editor-panels').boundingBox())!;
+  const sheet = (await panel.boundingBox())!;
   expect(stage.y + stage.height).toBeLessThanOrEqual(sheet.y + 1);
-  await page.getByTestId('editor-panels-close').click();
-  await expect(panel).toBeHidden();
+  expect(stage.height).toBeGreaterThan(120);
+  await page.getByTestId('side-close').click();
+  await expect(panel).toHaveCount(0);
+  // Al cerrarla vuelve a su tamaño, solo.
+  await expect
+    .poll(async () => Math.round((await page.getByTestId('editor-stage').boundingBox())!.width))
+    .toBe(Math.round(before.width));
+  // Y otra vez: abrir y cerrar no lo va encogiendo.
+  await page.getByTestId('editor-layers').click();
+  await page.getByTestId('side-close').click();
+  await expect
+    .poll(async () => Math.round((await page.getByTestId('editor-stage').boundingBox())!.width))
+    .toBe(Math.round(before.width));
 });
 
 test('el zoom acerca el lienzo y «ajustar» lo devuelve entero', async ({ page }) => {
@@ -116,25 +131,28 @@ for (const size of [
   { name: 'móvil 375×812', width: 375, height: 812 },
   { name: 'portátil 1366×768', width: 1366, height: 768 },
 ]) {
-  test(`${size.name}: con una capa elegida, la barra de acciones cabe sin scroll lateral y las secciones se pliegan`, async ({
+  test(`${size.name}: con una capa elegida, la barra flotante cabe entera y sus ajustes no se salen`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: size.width, height: size.height });
     await openEditor(page, '4:5');
-    await page.getByRole('tab', { name: /Capas/ }).click();
+    await page.getByTestId('editor-layers').click();
     await page.getByTestId('layer-item').first().click();
-    await page.getByRole('tab', { name: 'Diseño' }).click();
-    const bar = page.getByTestId('layer-actions');
+    const bar = page.getByTestId('selection-toolbar');
     await expect(bar).toBeVisible();
-    const panel = page.getByTestId('editor-panel-scroll');
-    expect(await spillingRight(page)).toEqual([]);
-    const box = (await panel.boundingBox())!;
+    const box = (await bar.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(size.width);
     for (const button of await bar.getByRole('button').all()) {
       const b = (await button.boundingBox())!;
-      expect(b.x).toBeGreaterThanOrEqual(box.x - 1);
       expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
       expect(b.width).toBeGreaterThanOrEqual(36);
     }
+    // Los ajustes finos, en un panel que se abre desde «⋯».
+    await page.getByTestId('bar-more').click();
+    await page.getByTestId('menu-more-options').click();
+    await expect(page.getByTestId('side-panel-settings')).toBeVisible();
+    expect(await spillingRight(page)).toEqual([]);
     // Una sección plegada se abre con un toque y deja el panel sin scroll lateral.
     await page.getByTestId('section-summary').first().click();
     expect(await spillingRight(page)).toEqual([]);

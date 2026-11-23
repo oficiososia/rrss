@@ -1,5 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, aviso, dato, guardarEstado, ORG_B, sinErrores, sql, type Alias, accionDelMenu } from './apoyo';
+import {
+  abrir,
+  aviso,
+  dato,
+  guardarEstado,
+  ORG_B,
+  sinErrores,
+  sql,
+  type Alias,
+  accionDelMenu,
+  abrirCompartir,
+  cerrarCompartir,
+  cajon,
+  nuevaIdea,
+} from './apoyo';
 
 // Aceptación de la Fase 2 (docs/04-plan-por-fases.md) contra el Supabase local,
 // con la función `ai-generate` servida en local y el proveedor SIMULADO de
@@ -73,7 +87,7 @@ async function rellenarPerfil(page: Page, lado: 'A' | 'B') {
 /** Crea una pieza de Instagram y deja abierto su editor. Devuelve su id. */
 async function nuevaPieza(page: Page, lado: 'A' | 'B', titulo: string): Promise<string> {
   await page.goto(`${marca(lado)}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(titulo);
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
@@ -85,9 +99,9 @@ async function nuevaPieza(page: Page, lado: 'A' | 'B', titulo: string): Promise<
 
 /** Abre «Redactar con IA», escribe el encargo y pide variantes. */
 async function pedirTexto(page: Page, encargo: string, variantes = 2) {
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await page.getByTestId('ai-caption-open').click();
-  const ventana = page.getByRole('dialog');
+  const ventana = page.getByRole('dialog').filter({ has: page.getByTestId('ai-caption-brief') });
   await ventana.getByTestId('ai-caption-brief').fill(encargo);
   await ventana.getByTestId('ai-caption-variants').selectOption(String(variantes));
   await ventana.getByTestId('ai-caption-generate').click();
@@ -227,14 +241,17 @@ test('editar la pieza (texto y una capa), guardar otra versión y ver el histori
   await expect(page.getByTestId('editor-version')).toHaveText('Versión 1');
 
   // Una capa de texto en el lienzo.
-  await page.getByTestId('add-text').click();
-  await page.getByRole('tab', { name: 'Diseño' }).click();
-  await page.getByTestId('layer-text').fill('Hogazas de otoño');
-  // Y un retoque del pie que, sin querer, usa la palabra vetada.
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await cajon(page, 'elements', 'add-text');
+  // Se escribe sobre el lienzo («Escribir» en la barra de lo elegido).
+  await page.getByTestId('bar-edit-text').click();
+  await page.getByTestId('canvas-text-editor').fill('Hogazas de otoño');
+  await page.keyboard.press('Escape');
+  // Y un retoque del pie que, sin querer, usa la palabra vetada (en «Compartir»).
+  await abrirCompartir(page);
   const pie = page.getByTestId('copy-caption');
   await pie.fill(`${await pie.inputValue()} Ahora más barato.`);
   await expect(page.getByTestId('counter-caption')).toContainText('/ 2200');
+  await cerrarCompartir(page);
 
   await accionDelMenu(page, 'editor-more', 'editor-save-note');
   await page.getByTestId('save-note').fill('Titular en el lienzo y retoque del pie');
@@ -262,7 +279,8 @@ test('comprobación de marca sin IA y con IA: las dos señalan la palabra vetada
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca('A')}/contenidos/${dato('piezaA')}`);
-  await page.getByRole('tab', { name: 'Marca' }).click();
+  await abrirCompartir(page);
+  await page.getByText('Revisión de marca').click();
 
   // Sin IA: reglas del perfil y de la red, con el dato medido.
   await expect(page.getByTestId('brandcheck-verdict')).toHaveAttribute('data-verdict', 'fail');
@@ -270,7 +288,6 @@ test('comprobación de marca sin IA y con IA: las dos señalan la palabra vetada
   await expect(hallazgo).toContainText(`Aparece «${PERFIL.A.vetada}»`);
   // Pulsar el hallazgo lleva al pie con el fragmento elegido.
   await hallazgo.click();
-  await expect(page.getByRole('tab', { name: 'Publicación' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('copy-caption')).toBeFocused();
   const elegido = await page.getByTestId('copy-caption').evaluate((el) => {
     const area = el as unknown as { value: string; selectionStart: number; selectionEnd: number };
@@ -278,8 +295,7 @@ test('comprobación de marca sin IA y con IA: las dos señalan la palabra vetada
   });
   expect(elegido).toBe(PERFIL.A.vetada);
 
-  // Con IA: tono y temas vetados, con la cita literal.
-  await page.getByRole('tab', { name: 'Marca' }).click();
+  // Con IA: tono y temas vetados, con la cita literal (en la misma revisión de marca).
   await page.getByTestId('ai-brand-check-run').click();
   const vetos = page.getByTestId('ai-criterion-banned_topics');
   await expect(vetos).toContainText('No cumple');
@@ -341,7 +357,7 @@ test('con el cupo agotado la generación se detiene con un mensaje claro y no ll
   // El texto se sigue pudiendo escribir a mano…
   await page.getByTestId('copy-caption').fill('Café con leche de avena, recién hecho');
   // …pero la comprobación con IA también se detiene.
-  await page.getByRole('tab', { name: 'Marca' }).click();
+  if (!(await page.getByTestId('ai-brand-check-run').isVisible())) await page.getByText('Revisión de marca').click();
   await page.getByTestId('ai-brand-check-run').click();
   await expect(page.getByTestId('ai-quota-error')).toContainText('El cupo de IA de este mes está agotado');
   // Ninguna generación nueva: la reserva se rechazó antes de llamar al proveedor.

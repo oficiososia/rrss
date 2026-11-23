@@ -10,7 +10,8 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // el hueco queda debajo de todo), y otro marco pequeño. La biblioteca tiene dos
 // fotos de verdad (dibujadas aquí), para poder poner una y verla dentro del marco.
 // Lo usan editor-marcos.spec.ts y editor-acciones.spec.ts. Parámetros:
-//   ?caso=titular|dos|oferta  (oferta: la plantilla «Oferta de la semana» con la foto ya puesta)
+//   ?caso=titular|dos|oferta|grande  (oferta: «Oferta de la semana» con la foto puesta; grande: una foto
+//                                     que sobresale del lienzo)
 //   ?modo=self|agency         (cómo trabaja la organización; por defecto, agencia)
 
 const params = new URLSearchParams(window.location.search);
@@ -53,6 +54,7 @@ const PHOTOS = [
     tint: '#16a34a',
   },
 ];
+const PHOTO_IDS = PHOTOS.map((p) => p.id);
 const urls = new Map(PHOTOS.map((p) => [`${ORG_ID}/${BRAND_ID}/${p.id}.jpg`, makePhoto(p.width, p.height, p.tint)]));
 
 // El almacenamiento simulado devuelve las fotos dibujadas aquí.
@@ -171,35 +173,56 @@ const oferta: Layer[] = [
   ),
 ];
 
+/** Una foto agrandada más allá del lienzo (sobresale por la izquierda y por la derecha) y un titular. */
+const grande: Layer[] = [
+  {
+    ...base,
+    id: 'foto',
+    type: 'image',
+    name: 'Foto',
+    x: -400,
+    y: 300,
+    width: W + 800,
+    height: 700,
+    anchor: { x: 'center', y: 'center' },
+    source: { kind: 'asset', assetId: PHOTO_IDS[0]! },
+    fit: 'cover',
+    focus: { x: 0.5, y: 0.5 },
+  },
+  label('titular', 'Chuletón de vaca madurada', 72, 1100, W - 144, 170, 72, '#111827'),
+];
+
 const layers: Layer[] =
-  caso === 'oferta'
-    ? oferta
-    : caso === 'dos'
-      ? [
-          frame('foto-antes', 'Foto de antes', 0, 0, W, 663),
-          frame('foto-despues', 'Foto de después', 0, 687, W, 663),
-          text('titulo', 'Antes y después', 600, 64),
-        ]
-      : [
-          frame('foto', 'Foto', 0, 0, W, H),
-          {
-            ...base,
-            id: 'velo',
-            type: 'shape',
-            name: 'Velo',
-            x: 0,
-            y: 0,
-            width: W,
-            height: H,
-            opacity: 0.5,
-            anchor: { x: 'stretch', y: 'stretch' },
-            shape: 'rectangle',
-            fill: '#111827',
-            stroke: null,
-            cornerRadius: 0,
-          },
-          text('titular', 'Chuletón de vaca madurada', 520, 96),
-        ];
+  caso === 'grande'
+    ? grande
+    : caso === 'oferta'
+      ? oferta
+      : caso === 'dos'
+        ? [
+            frame('foto-antes', 'Foto de antes', 0, 0, W, 663),
+            frame('foto-despues', 'Foto de después', 0, 687, W, 663),
+            text('titulo', 'Antes y después', 600, 64),
+          ]
+        : [
+            frame('foto', 'Foto', 0, 0, W, H),
+            {
+              ...base,
+              id: 'velo',
+              type: 'shape',
+              name: 'Velo',
+              x: 0,
+              y: 0,
+              width: W,
+              height: H,
+              opacity: 0.5,
+              anchor: { x: 'stretch', y: 'stretch' },
+              shape: 'rectangle',
+              fill: '#111827',
+              stroke: null,
+              cornerRadius: 0,
+            },
+            text('titular', 'Chuletón de vaca madurada', 520, 96),
+          ];
 
 seedWorkspace({ orgRole: 'owner', workMode: modo });
 const doc = createEmptyDocument({ aspectRatio: '4:5' });

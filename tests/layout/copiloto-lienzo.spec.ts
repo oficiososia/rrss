@@ -38,7 +38,7 @@ for (const size of SIZES) {
   test(`${size.name}: con el copiloto abierto el lienzo sigue visible y la página no hace scroll`, async ({ page }) => {
     await page.setViewportSize({ width: size.width, height: size.height });
     await page.goto('/layout.html?ratio=4:5');
-    await expect(page.getByTestId('editor-stage')).toBeVisible();
+    await expect(page.getByTestId('editor-stage')).toHaveAttribute('data-ready', 'true');
 
     await page.getByTestId('copilot-open').click();
     await expect(page.getByTestId('copilot-panel')).toBeVisible();

@@ -410,6 +410,77 @@ export function idDeUrl(url: string, segmento: 'o' | 'm'): string {
  * «⋯» (`editor-more`, `library-more`, `calendar-more`…), no a la vista.
  */
 export async function accionDelMenu(page: Page, menu: string, accion: string): Promise<void> {
+  // Editor de piezas: lo de sacar la pieza vive en la hoja «Compartir», no en un menú.
+  if (menu === 'editor-share') {
+    const hoja = await abrirCompartir(page);
+    await hoja.getByTestId(SALIDAS[accion] ?? accion).click();
+    return;
+  }
   await page.getByTestId(menu).click();
   await page.getByRole('menu').getByTestId(accion).click();
+}
+
+/**
+ * Contenidos → nueva idea: el botón de la pantalla vacía o, con piezas, «＋ Crear» del menú (la
+ * cabecera de Contenidos ya no repite «Nueva idea»). Abre la ventana «Nueva idea».
+ */
+export async function nuevaIdea(page: Page): Promise<void> {
+  const vacia = page.getByTestId('content-empty-new');
+  if (await vacia.isVisible()) {
+    await vacia.click();
+    return;
+  }
+  await page.getByTestId('create-menu').click();
+  await page.getByTestId('create-menu-post').click();
+}
+
+/** Nombres de antes (menú «Publicar o compartir») → los de la hoja «Compartir». */
+const SALIDAS: Record<string, string> = {
+  'editor-export': 'share-download',
+  'editor-schedule': 'share-schedule',
+  'editor-publish-now': 'share-publish-now',
+};
+
+/** Editor de piezas: abre la hoja «Compartir» (vista previa, texto de la publicación y salidas). */
+export async function abrirCompartir(page: Page) {
+  const hoja = page.getByRole('dialog', { name: 'Compartir' });
+  if (!(await hoja.isVisible())) await page.getByTestId('editor-share').click();
+  await expect(hoja).toBeVisible();
+  return hoja;
+}
+
+/** Cierra la hoja «Compartir» si está abierta. */
+export async function cerrarCompartir(page: Page): Promise<void> {
+  const hoja = page.getByRole('dialog', { name: 'Compartir' });
+  if (await hoja.isVisible()) {
+    await page.keyboard.press('Escape');
+    await expect(hoja).toBeHidden();
+  }
+}
+
+/** Editor de piezas: guarda una versión al momento (Ctrl+S; lo normal es el guardado automático). */
+export async function guardarVersion(page: Page): Promise<void> {
+  await cerrarCompartir(page);
+  await page.getByTestId('editor-title').click();
+  await page.keyboard.press('Control+s');
+}
+
+/** Editor de piezas: abre un cajón del riel (si no lo está) y pulsa uno de sus botones. */
+export async function cajon(page: Page, cual: 'elements' | 'photos' | 'uploads' | 'brand', boton: string) {
+  await cerrarCompartir(page);
+  if (!(await page.getByTestId(`drawer-panel-${cual}`).isVisible())) await page.getByTestId(`drawer-${cual}`).click();
+  await page.getByTestId(boton).click();
+}
+
+/**
+ * Editor de piezas en autogestión: no hay botón «Aprobar» a la vista. «Programar…» de la hoja
+ * «Compartir» guarda la versión y la aprueba por debajo; aquí se abre y se cierra sin programar.
+ */
+export async function aprobarPieza(page: Page): Promise<void> {
+  const hoja = await abrirCompartir(page);
+  await hoja.getByTestId('share-schedule').click();
+  const programar = page.getByRole('dialog', { name: 'Programar una publicación' });
+  await expect(programar).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(programar).toBeHidden();
 }

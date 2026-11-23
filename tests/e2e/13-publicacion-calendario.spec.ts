@@ -1,6 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
 import { execSync } from 'node:child_process';
-import { abrir, aviso, dato, LOCAL, sinErrores, sql, accionDelMenu } from './apoyo';
+import {
+  abrir,
+  aviso,
+  dato,
+  LOCAL,
+  sinErrores,
+  sql,
+  accionDelMenu,
+  abrirCompartir,
+  guardarVersion,
+  aprobarPieza,
+  nuevaIdea,
+} from './apoyo';
 
 // Publicación de extremo a extremo (Fase 3), contra el Supabase LOCAL y la
 // Graph API de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts,
@@ -48,16 +60,16 @@ async function pasaElReloj(): Promise<{ results: { publicationId: string | null;
 /** Crea una pieza de Instagram con su texto, guarda la versión 1 y deja abierto el editor. */
 async function piezaConTexto(page: Page, titulo: string, texto: string): Promise<string> {
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(titulo);
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
-  await page.getByRole('tab', { name: 'Publicación' }).click();
+  await abrirCompartir(page);
   await page.getByTestId('copy-caption').fill(texto);
-  await page.getByTestId('editor-save').click();
+  await guardarVersion(page);
   await aviso(page, 'Versión 1 guardada');
   return id;
 }
@@ -116,8 +128,8 @@ test('una pieza aprobada y exportada se programa y el publicador la publica', as
   const { page } = s;
   aprobada = await piezaConTexto(page, APROBADA, 'La hogaza del domingo ya está en el horno.');
   await exportarJpeg(page);
-  await page.getByTestId('status-approved').click();
-  await aviso(page, 'Aprobada');
+  // Autogestión: sin «Aprobar» a la vista; «Programar…» de «Compartir» la aprueba por debajo.
+  await aprobarPieza(page);
 
   await programar(page, APROBADA);
   await aviso(page, 'Programada');
@@ -203,8 +215,8 @@ test('bajar a un plan sin publicación detiene lo programado, con su motivo y el
   const titulo = 'Pan de centeno';
   const id = await piezaConTexto(page, titulo, 'Centeno con semillas, hoy en el obrador.');
   await exportarJpeg(page);
-  await page.getByTestId('status-approved').click();
-  await aviso(page, 'Aprobada');
+  // Autogestión: sin «Aprobar» a la vista; «Programar…» de «Compartir» la aprueba por debajo.
+  await aprobarPieza(page);
   await programar(page, titulo);
   await aviso(page, 'Programada');
   const chip = page.getByTestId('calendar-entry').filter({ hasText: titulo });
@@ -238,9 +250,10 @@ test('bajar a un plan sin publicación detiene lo programado, con su motivo y el
     );
 
     // Aunque llegue su hora, el reloj no la publica.
-    await sql(`update public.scheduled_publications set scheduled_at = now() - interval '1 second' where content_id = $1`, [
-      id,
-    ]);
+    await sql(
+      `update public.scheduled_publications set scheduled_at = now() - interval '1 second' where content_id = $1`,
+      [id],
+    );
     await pasaElReloj();
     const [despues] = await sql<{ status: string }>(
       `select status::text from public.scheduled_publications where content_id = $1`,
@@ -248,7 +261,10 @@ test('bajar a un plan sin publicación detiene lo programado, con su motivo y el
     );
     expect(despues!.status).toBe('planned');
   } finally {
-    await sql(`update public.subscriptions set plan_id = $2 where organization_id = $1`, [dato('orgA'), antes!.plan_id]);
+    await sql(`update public.subscriptions set plan_id = $2 where organization_id = $1`, [
+      dato('orgA'),
+      antes!.plan_id,
+    ]);
   }
   const [rearmada] = await sql<{ status: string }>(
     `select status::text from public.scheduled_publications where content_id = $1`,

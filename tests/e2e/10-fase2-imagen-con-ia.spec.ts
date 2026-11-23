@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, dato, LOCAL, sinErrores, sql } from './apoyo';
+import { abrir, dato, LOCAL, sinErrores, sql, cajon } from './apoyo';
 
 // Imágenes generadas con IA, de punta a punta, contra el Supabase local con
 // `ai-media` y `ai-media-poll` servidas en local y la imagen SIMULADA de
@@ -35,7 +35,7 @@ async function abrirPieza(page: Page) {
 }
 
 async function capas(page: Page): Promise<number> {
-  const texto = await page.getByRole('tab', { name: /Capas \(\d+\)/ }).textContent();
+  const texto = await page.getByTestId('editor-layers').textContent();
   return Number(/\((\d+)\)/.exec(texto ?? '')?.[1] ?? -1);
 }
 
@@ -56,7 +56,8 @@ test('generar una imagen síncrona: coste antes, capa que se deshace y recurso e
   await abrirPieza(page);
   const antes = await capas(page);
 
-  await page.getByTestId('add-image-ai').click();
+  // «Crear con IA» está en el cajón «Subidas» (el selector de la biblioteca).
+  await cajon(page, 'uploads', 'picker-ai');
   const ventana = page.getByRole('dialog');
   // El coste máximo se ve antes de generar, y sin reservar nada.
   await expect(ventana.getByTestId('ai-image-estimate')).toContainText(`Coste máximo: ${COSTE}`);
@@ -66,7 +67,6 @@ test('generar una imagen síncrona: coste antes, capa que se deshace y recurso e
 
   await ventana.getByTestId('ai-image-prompt').fill('Hogaza de calabaza sobre una tabla de madera, luz de mañana');
   await ventana.getByTestId('ai-image-generate').click();
-  await expect(page.getByText('Imagen generada y añadida al diseño')).toBeVisible();
   await expect(ventana).toBeHidden();
   expect(await capas(page)).toBe(antes + 1);
   await expect(page.getByTestId('editor-dirty')).toBeVisible();
@@ -104,7 +104,8 @@ test('generar una imagen asíncrona: queda en curso y la cierra ai-media-poll', 
   await abrirPieza(page);
   const antes = await capas(page);
 
-  await page.getByTestId('add-image-ai').click();
+  // «Crear con IA» está en el cajón «Subidas» (el selector de la biblioteca).
+  await cajon(page, 'uploads', 'picker-ai');
   const ventana = page.getByRole('dialog');
   await ventana.getByTestId('ai-image-model').selectOption('simulated-image-async:simulado-e2e-asincrono');
   await ventana.getByTestId('ai-image-ratio').selectOption('9:16');
@@ -164,7 +165,8 @@ test('con el cupo agotado, la imagen no se genera y se explica', async ({ browse
   await abrirPieza(page);
   const generados = (await recursosGenerados()).length;
 
-  await page.getByTestId('add-image-ai').click();
+  // «Crear con IA» está en el cajón «Subidas» (el selector de la biblioteca).
+  await cajon(page, 'uploads', 'picker-ai');
   const ventana = page.getByRole('dialog');
   await ventana.getByTestId('ai-image-prompt').fill('Pan de centeno');
   await ventana.getByTestId('ai-image-generate').click();

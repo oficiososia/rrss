@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql, accionDelMenu } from './apoyo';
+import { abrir, aviso, dato, sinErrores, sql, accionDelMenu, guardarVersion, nuevaIdea } from './apoyo';
 
 // Biblioteca con Google Drive de extremo a extremo, contra el Supabase LOCAL y
 // Google Drive SIMULADO (supabase/functions/_shared/drive/local-test.ts,
@@ -75,7 +75,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await page.getByTestId('content-new').click();
+  await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill('Pieza con foto de Drive');
   await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
@@ -83,12 +83,13 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   const contenido = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
 
   const servida = page.waitForResponse((r) => r.url().includes('/functions/v1/drive-media/file/') && r.ok());
-  await page.getByTestId('add-image').click();
-  await page.getByTestId('image-picker').getByTestId('picker-asset').filter({ hasText: FOTO }).click();
+  // La foto, desde el cajón «Fotos» de la marca.
+  await page.getByTestId('drawer-photos').click();
+  await page.getByTestId('editor-photos').locator(`[data-testid="photo-panel-item"][title="${FOTO}"]`).click();
   await servida;
-  await expect(page.getByRole('tab', { name: 'Capas (1)' })).toBeVisible();
+  await expect(page.getByTestId('editor-layers')).toContainText('Capas (1)');
 
-  await page.getByTestId('editor-save').click();
+  await guardarVersion(page);
   await aviso(page, 'Versión 1 guardada');
   const [version] = await sql<{
     capas: { type: string; source?: { kind: string; assetId?: string } }[];
