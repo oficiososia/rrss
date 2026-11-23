@@ -1,3 +1,4 @@
+import { loadAppFont } from './appFont';
 import Konva from 'konva/lib/Core';
 import type { Shape } from 'konva/lib/Shape';
 import { Rect } from 'konva/lib/shapes/Rect';
@@ -38,6 +39,8 @@ export function cssFontFamily(family: string): string {
 export async function ensureFontsLoaded(specs: NodeSpec[]): Promise<void> {
   const fonts = window.document.fonts;
   if (!fonts) return;
+  // La letra de la aplicación (la de reserva de cada texto), registrada y lista.
+  await loadAppFont();
   const wanted = new Map<string, string>();
   for (const spec of specs) {
     if (spec.kind !== 'text' || !spec.visible) continue;

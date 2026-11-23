@@ -70,7 +70,6 @@ describe('Reels en la biblioteca', () => {
     renderApp(`${BRAND_BASE}/biblioteca`);
     await screen.findByTestId('library-grid');
     expect(screen.queryByTestId('library-reels')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('library-more')).not.toBeInTheDocument();
   });
 
   it('sin trabajador, entrar por la dirección devuelve a la biblioteca', async () => {

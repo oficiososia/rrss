@@ -177,10 +177,11 @@ describe('el borrador del reel', () => {
     expect(project.plan.texts[1]!.end).toBeCloseTo(timeline.total, 1);
     expect(timeline.total).toBeCloseTo(5.75, 1);
     expect(project.guide!.texts.map((t) => t.id)).toEqual(['gt1', 'gt2', 'gt3']);
-    // El tamaño sale del análisis; lo demás, del estilo de partida.
-    expect(project.plan.texts[0]!.style.sizeRatio).toBe(0.085);
-    expect(project.plan.texts[1]!.style.sizeRatio).toBe(0.06);
-    expect(project.plan.texts[0]!.style.fadeSeconds).toBe(template.text.fadeSeconds);
+    // El tamaño sale del papel: lo «grande» es un titular; lo demás, un rótulo en caja que se lee en un móvil.
+    expect(project.plan.texts[0]!.style).toMatchObject({ sizeRatio: 0.092, box: null });
+    expect(project.plan.texts[1]!.style.sizeRatio).toBe(0.062);
+    expect(project.plan.texts[1]!.style.box).not.toBeNull();
+    expect(project.plan.texts[0]!.style.fadeSeconds).toBeGreaterThanOrEqual(0.2);
     // La portada: el fotograma del plano que dice la plantilla.
     expect(project.plan.cover).toEqual({ type: 'frame', at: 1.2 });
   });
@@ -212,13 +213,12 @@ describe('el borrador del reel', () => {
   it('usa la tipografía de la marca y su color en la franja solo si se lee', () => {
     const soft = REEL_TEMPLATES.find((t) => t.id === 'fundido-suave')!;
     const font = { path: 'org/marca/fonts/marca.ttf', family: 'Marca' };
-    const dark = guideTextStyle('grande', soft, { colors: ['#1a3355'], font });
-    expect(dark).toMatchObject({ fontPath: font.path, fontFamily: 'Marca', sizeRatio: 0.085 });
-    if (soft.text.box) {
-      expect(dark.box).toMatchObject({ color: '#1A3355' });
-      // Un amarillo claro bajo letras blancas no se leería: se queda la franja del estilo.
-      expect(guideTextStyle('normal', soft, { colors: ['#FFEE88'] }).box).toEqual(soft.text.box);
-    }
+    const big = guideTextStyle('grande', soft, { colors: ['#1a3355'], font });
+    expect(big).toMatchObject({ fontPath: font.path, fontFamily: 'Marca', sizeRatio: 0.092 });
+    // Un rótulo va en caja del color de la marca si la letra se lee encima…
+    expect(guideTextStyle('normal', soft, { colors: ['#1a3355'], font }).box).toMatchObject({ color: '#1A3355' });
+    // …y un amarillo claro bajo letras blancas no se leería: se queda la caja oscura.
+    expect(guideTextStyle('normal', soft, { colors: ['#FFEE88'] }).box).toMatchObject({ color: '#111111' });
     expect(contrast('#FFFFFF', '#000000')).toBeCloseTo(21, 0);
     expect(contrast('#FFFFFF', '#FFEE88')).toBeLessThan(4.5);
     const draft = buildDraft(result, matchShots(result, library()), { ...options, look: { font } });

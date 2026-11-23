@@ -1,11 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BrandRole, ContentItemRow, ContentStatus, ContentVersionRow, OrgRole } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './document';
+import { addFromDrawer } from './editorTestKit';
 import type { CanvasViewProps } from './editor/canvas/types';
-import { chooseEditorAction, chooseMoreAction, openMoreMenu } from '@/test/moreMenu';
+import { chooseEditorAction, chooseMoreAction, openMoreMenu, openShareSheet } from '@/test/moreMenu';
 
 // El lienzo de Konva necesita un <canvas> de verdad, que jsdom no tiene: aquí se
 // sustituye por un doble que enseña cuántas capas recibe. La lógica del lienzo
@@ -16,7 +17,10 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
       data-testid="canvas-stub"
       data-layers={props.document.layers.length}
       data-ratio={props.document.canvas.aspectRatio}
-    />
+    >
+      {props.footerStart}
+      {props.footerEnd}
+    </div>
   ),
 }));
 
@@ -145,6 +149,13 @@ function seedContent(
 
 const EDITOR = `${CONTENT}/content-1`;
 
+/**
+ * Lo que llega tras guardar una versión o cambiar el estado (aviso, llamada a la base) se espera por
+ * lo que de verdad se espera, sin pausas fijas, y con margen: con la máquina cargada, el segundo de
+ * siempre no basta (fallaba de vez en cuando).
+ */
+const SLOW = { timeout: 5000 };
+
 async function openEditor(
   role: { orgRole: OrgRole; brandRole?: BrandRole },
   options?: Parameters<typeof seedContent>[1],
@@ -195,7 +206,7 @@ describe('Lista de contenidos', () => {
     await user.click(screen.getByTestId('content-view-list'));
     expect(within(screen.getByTestId('content-list')).getAllByTestId('content-row')).toHaveLength(1);
     // Solo lectura: no puede crear, ni elegir, ni archivar.
-    expect(screen.queryByTestId('content-new')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
     expect(screen.queryByTestId('content-select')).not.toBeInTheDocument();
     expect(screen.queryByTestId('content-archive')).not.toBeInTheDocument();
   });
@@ -309,7 +320,7 @@ describe('Crear una idea', () => {
   it('elige el formato con una tarjeta y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.type(dialog.getByTestId('create-content-title'), 'Reel del vermut');
     await user.click(dialog.getByTestId('create-content-format-reel'));
@@ -335,7 +346,7 @@ describe('Crear una idea', () => {
   it('sin nombre se llama como el formato y el día, no «Reel nuevo» a secas', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-format-carousel'));
     await user.click(dialog.getByTestId('create-content-submit'));
@@ -347,22 +358,18 @@ describe('Crear una idea', () => {
 });
 
 describe('Editor: capas, teclado y texto de la publicación', () => {
-  it('añade un texto, lo edita, lo borra con Supr y lo recupera con deshacer', async () => {
+  it('añade un texto desde el cajón «Elementos», lo borra con Supr en «Capas» y lo recupera con deshacer', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
     expect(await screen.findByTestId('canvas-stub')).toHaveAttribute('data-layers', '1');
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
 
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '2');
     expect(screen.getByTestId('editor-dirty')).toBeInTheDocument();
-    const text = screen.getByTestId('layer-text');
-    await user.clear(text);
-    await user.type(text, 'Abrimos el domingo');
 
-    await user.click(screen.getByRole('tab', { name: /Capas/ }));
+    await user.click(screen.getByTestId('editor-layers'));
     const layers = within(screen.getByTestId('layers-list'));
     const items = layers.getAllByTestId('layer-item');
-    expect(items[0]).toHaveTextContent('Abrimos el domingo');
     expect(items[0]).toHaveAttribute('aria-pressed', 'true');
 
     items[0]!.focus();
@@ -372,28 +379,30 @@ describe('Editor: capas, teclado y texto de la publicación', () => {
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '2');
   });
 
-  it('cambiar la proporción adapta el lienzo', async () => {
+  it('cambiar la proporción («⋯ → Tamaño y fondo») adapta el lienzo', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
+    await chooseEditorAction(user, 'editor-canvas-settings');
     await user.selectOptions(await screen.findByLabelText('Proporción'), '4:5');
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-ratio', '4:5');
   });
 
-  it('cuenta el texto de la publicación frente al límite de la red', async () => {
+  it('cuenta el texto de la publicación (en «Compartir») frente al límite de la red', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
-    await user.type(screen.getByTestId('copy-caption'), 'Hola');
-    expect(screen.getByTestId('counter-caption')).toHaveTextContent('4 / 2200');
-    await user.type(screen.getByTestId('copy-hashtags'), '#otoño menu');
+    const sheet = await openShareSheet(user);
+    await user.type(sheet.getByTestId('copy-caption'), 'Hola');
+    expect(sheet.getByTestId('counter-caption')).toHaveTextContent('4 / 2200');
+    await user.type(sheet.getByTestId('copy-hashtags'), '#otoño menu');
     await user.tab();
-    expect(screen.getByTestId('counter-hashtags')).toHaveTextContent('2 / 30');
+    expect(sheet.getByTestId('counter-hashtags')).toHaveTextContent('2 / 30');
   });
 });
 
 describe('Editor: versiones', () => {
-  it('guarda una versión con nota sobre la versión que se abrió', async () => {
+  it('se guarda solo; «Guardar versión con una nota» (en «⋯») deja una versión sobre la que se abrió', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
-    expect(screen.getByTestId('editor-save')).toBeDisabled();
-    await user.click(screen.getByTestId('add-text'));
+    // Sin botón «Guardar versión» en la cabecera: el guardado es automático.
+    expect(screen.queryByTestId('editor-save')).not.toBeInTheDocument();
+    await addFromDrawer(user, 'elements', 'add-text');
     await chooseEditorAction(user, 'editor-save-note');
     const dialog = within(await screen.findByRole('dialog'));
     // El foco cae en la nota y no en «Cerrar»: Intro ya no cierra el diálogo sin guardar.
@@ -401,7 +410,7 @@ describe('Editor: versiones', () => {
     await user.type(dialog.getByTestId('save-note'), 'Añado el horario');
     await user.click(dialog.getByTestId('save-confirm'));
 
-    expect(await screen.findByText('Versión 2 guardada')).toBeInTheDocument();
+    expect(await screen.findByText('Versión 2 guardada', {}, SLOW)).toBeInTheDocument();
     const call = fake.callsTo('save_content_version', 'rpc')[0]!.payload as Record<string, unknown>;
     expect(call).toMatchObject({
       p_content_id: 'content-1',
@@ -414,11 +423,11 @@ describe('Editor: versiones', () => {
     expect(screen.queryByTestId('editor-dirty')).not.toBeInTheDocument();
   });
 
-  it('«Guardar versión» guarda al momento, sin diálogo ni nota', async () => {
+  it('Ctrl+S guarda una versión al momento, sin diálogo ni nota', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-save'));
-    expect(await screen.findByText('Versión 2 guardada')).toBeInTheDocument();
+    await addFromDrawer(user, 'elements', 'add-text');
+    await user.keyboard('{Control>}s{/Control}');
+    expect(await screen.findByText('Versión 2 guardada', {}, SLOW)).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(fake.callsTo('save_content_version', 'rpc')[0]!.payload).toMatchObject({
       p_change_note: '',
@@ -433,8 +442,8 @@ describe('Editor: versiones', () => {
     fake.rows('content_versions').push(version('content-1', 2, documentWithText('De otra persona')));
     fake.rows('content_items')[0]!.current_version = 2;
 
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-save'));
+    await addFromDrawer(user, 'elements', 'add-text');
+    await user.keyboard('{Control>}s{/Control}');
 
     const alert = await screen.findByTestId('editor-conflict');
     expect(alert).toHaveTextContent('Otra persona ha guardado una versión más reciente');
@@ -442,7 +451,7 @@ describe('Editor: versiones', () => {
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '2');
 
     await user.click(within(alert).getByTestId('conflict-save-mine'));
-    expect(await screen.findByText('Versión 3 guardada')).toBeInTheDocument();
+    expect(await screen.findByText('Versión 3 guardada', {}, SLOW)).toBeInTheDocument();
     const calls = fake
       .callsTo('save_content_version', 'rpc')
       .map((c) => (c.payload as Record<string, unknown>).p_expected_version);
@@ -454,8 +463,8 @@ describe('Editor: versiones', () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     fake.rows('content_versions').push(version('content-1', 2, createEmptyDocument()));
     fake.rows('content_items')[0]!.current_version = 2;
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('editor-save'));
+    await addFromDrawer(user, 'elements', 'add-text');
+    await user.keyboard('{Control>}s{/Control}');
     await user.click(await screen.findByTestId('conflict-load-latest'));
     await waitFor(() => expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-layers', '0'));
     expect(screen.getByTestId('editor-version')).toHaveTextContent('Versión 2');
@@ -474,7 +483,7 @@ describe('Editor: versiones', () => {
 
     await user.click(within(rows[1]!).getByTestId('version-view'));
     await user.click(await dialog.findByTestId('version-restore'));
-    expect(await screen.findByText('Versión 1 restaurada como versión 3')).toBeInTheDocument();
+    expect(await screen.findByText('Versión 1 restaurada como versión 3', {}, SLOW)).toBeInTheDocument();
     expect(fake.callsTo('restore_content_version', 'rpc')[0]?.payload).toMatchObject({
       p_content_id: 'content-1',
       p_version: 1,
@@ -485,33 +494,40 @@ describe('Editor: versiones', () => {
 
   it('con cambios sin guardar, restaurar pide confirmación', async () => {
     const { user } = await openEditor({ orgRole: 'owner' }, { versions: 2 });
-    await user.click(screen.getByTestId('add-text'));
+    await addFromDrawer(user, 'elements', 'add-text');
     await chooseEditorAction(user, 'editor-history');
     const rows = within(await screen.findByTestId('versions-list')).getAllByRole('listitem');
     await user.click(within(rows[1]!).getByTestId('version-view'));
     await user.click(await screen.findByTestId('version-restore'));
-    expect(await screen.findByText('¿Restaurar y descartar tus cambios?')).toBeInTheDocument();
+    expect(await screen.findByText('¿Restaurar y descartar tus cambios?', {}, SLOW)).toBeInTheDocument();
     expect(fake.callsTo('restore_content_version', 'rpc')).toHaveLength(0);
   });
 });
 
-describe('Editor: Publicar ahora', () => {
-  const account = {
-    id: 'acc-1',
-    brand_id: BRAND_ID,
-    organization_id: ORG_ID,
-    network: 'instagram',
-    status: 'active',
-    external_id: '1784',
-    username: 'casa_demo',
-  };
+const account = {
+  id: 'acc-1',
+  brand_id: BRAND_ID,
+  organization_id: ORG_ID,
+  network: 'instagram',
+  status: 'active',
+  external_id: '1784',
+  username: 'casa_demo',
+};
+
+/** Pieza con la publicación activa y una cuenta de Instagram conectada. */
+function seedPublishing(role: Parameters<typeof seedContent>[0], options: Parameters<typeof seedContent>[1]) {
+  vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+  seedContent(role, options);
+  fake.tables.social_accounts = [account];
+  fake.tables.scheduled_publications = [];
+  fake.tables.media_assets = [];
+}
+
+describe('Editor: Publicar ahora (modo agencia: el flujo de aprobación de siempre)', () => {
+  afterEach(() => vi.unstubAllEnvs());
 
   it('en una pieza aprobada, con la publicación activa, ofrece exportar y publicar en el mismo paso', async () => {
-    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    seedContent({ orgRole: 'owner' }, { status: 'approved' });
-    fake.tables.social_accounts = [account];
-    fake.tables.scheduled_publications = [];
-    fake.tables.media_assets = [];
+    seedPublishing({ orgRole: 'owner' }, { status: 'approved' });
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('editor-title');
     await chooseEditorAction(user, 'editor-publish-now');
@@ -519,63 +535,168 @@ describe('Editor: Publicar ahora', () => {
       'Se publicará ahora en @casa_demo. No se puede deshacer desde aquí.',
     );
     expect(screen.getByTestId('publish-now-export-note')).toHaveTextContent(/La imagen se prepara ahora/);
-    vi.unstubAllEnvs();
   });
 
-  it('sin aprobar, quien puede aprobar la aprueba y la publica desde el mismo botón', async () => {
-    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    seedContent({ orgRole: 'owner' }, { status: 'draft' });
-    fake.tables.social_accounts = [account];
-    fake.tables.scheduled_publications = [];
-    fake.tables.media_assets = [];
+  it('sin aprobar, quien puede aprobar la aprueba y la publica desde el mismo botón, que lo dice', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'draft' });
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('editor-title');
-    await openMoreMenu(user, 'editor-share');
-    expect(screen.getByTestId('editor-publish-now')).toHaveTextContent('Aprobar y publicar ahora…');
-    await user.click(screen.getByTestId('editor-publish-now'));
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('share-publish-now')).toHaveTextContent('Aprobar y publicar ahora');
+    await user.click(sheet.getByTestId('share-publish-now'));
     // Se aprueba la versión que se ve y se abre la confirmación de publicar (nada se publica aún).
     expect(await screen.findByTestId('publish-now-warning')).toBeInTheDocument();
     expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
       p_status: 'approved',
       p_expected_version: 1,
     });
-    vi.unstubAllEnvs();
   });
 
   it('quien edita pero no aprueba no puede publicar sin aprobar: se le dice por qué', async () => {
-    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' }, { status: 'draft' });
-    await openMoreMenu(user, 'editor-share');
-    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
-    expect(screen.queryByTestId('editor-schedule')).toBeNull();
-    expect(screen.getByTestId('editor-share-note')).toHaveTextContent(/antes tiene que aprobarla/);
-    vi.unstubAllEnvs();
+    seedPublishing({ orgRole: 'member', brandRole: 'editor' }, { status: 'draft' });
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.queryByTestId('share-schedule')).toBeNull();
+    expect(sheet.getByTestId('editor-share-note')).toHaveTextContent(/antes tiene que aprobarla/);
   });
 
-  it('sin la publicación activa en el entorno no se ofrece', async () => {
+  it('sin la publicación activa en el entorno no se ofrece; ver cómo queda, descargar y copiar el texto, siempre', async () => {
     const { user } = await openEditor({ orgRole: 'owner' }, { status: 'approved' });
-    await openMoreMenu(user, 'editor-share');
-    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
-    // Ver cómo queda y descargar, siempre.
-    expect(screen.getByTestId('editor-preview')).toBeInTheDocument();
-    expect(screen.getByTestId('editor-export')).toHaveTextContent('Descargar la imagen');
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.getByTestId('share-preview')).toBeInTheDocument();
+    expect(sheet.getByTestId('share-download')).toHaveTextContent('Descargar');
+    expect(sheet.getByTestId('share-copy-text')).toHaveTextContent('Copiar el texto');
   });
 
   it('quien solo ve no puede publicar', async () => {
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'approved' });
-    await openMoreMenu(user, 'editor-share');
-    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
-    vi.unstubAllEnvs();
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
   });
 });
 
-describe('Editor: estados según el rol', () => {
+describe('Editor: antes de publicar, la cuenta y lo ya publicado', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('sin cuenta de Instagram conectada lo dice antes, con el enlace, y no aprueba nada a medias', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'draft' });
+    fake.tables.social_accounts = [];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    const note = await sheet.findByTestId('share-no-account');
+    expect(note).toHaveTextContent('No hay ninguna cuenta de Instagram conectada');
+    expect(within(note).getByRole('link')).toHaveAttribute(
+      'href',
+      `${BRAND_BASE}/marca?seccion=datos#cuentas-conectadas`,
+    );
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.queryByTestId('share-schedule')).toBeNull();
+    expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
+  });
+
+  it('ya publicada: lo dice con la fecha y el enlace, y no ofrece publicar ni programar otra vez', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'approved' });
+    fake.tables.scheduled_publications = [
+      {
+        id: 'pub-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        content_id: 'content-1',
+        content_version: 1,
+        social_account_id: 'acc-1',
+        network: 'instagram',
+        format: 'post',
+        scheduled_at: '2026-11-20T10:00:00Z',
+        media_asset_ids: [],
+        status: 'published',
+        published_at: '2026-11-20T10:00:05Z',
+        external_url: 'https://www.instagram.com/p/abc/',
+      },
+    ];
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    const published = await sheet.findByTestId('share-published');
+    expect(published).toHaveTextContent('Publicada el');
+    expect(within(published).getByRole('link', { name: 'Ver en Instagram' })).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/p/abc/',
+    );
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.queryByTestId('share-schedule')).toBeNull();
+  });
+});
+
+describe('Editor en autogestión: sin paso de aprobación a la vista', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** Como `seedPublishing`, con la organización en «Lo llevamos nosotros». */
+  function seedSelf(status: ContentStatus, role: Parameters<typeof seedContent>[0] = { orgRole: 'owner' }) {
+    seedPublishing(role, { status });
+    fake.rows('organizations')[0]!.work_mode = 'self';
+  }
+
+  it('«Publicar ahora» guarda la versión y la aprueba por debajo, sin decir «Aprobar»', async () => {
+    seedSelf('draft');
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    await addFromDrawer(user, 'elements', 'add-text');
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('share-review')).not.toBeInTheDocument();
+    expect(sheet.queryByText(/Aprobar|Enviar a revisión|Aprobada/)).toBeNull();
+    expect(sheet.getByTestId('share-publish-now')).toHaveTextContent('Publicar ahora');
+    await user.click(sheet.getByTestId('share-publish-now'));
+    expect(await screen.findByTestId('publish-now-warning')).toBeInTheDocument();
+    expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
+    expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
+      p_status: 'approved',
+      p_expected_version: 2,
+    });
+  });
+
+  it('una idea pasa antes a borrador (lo que pide la base de datos) y «Programar…» dice que programado no es publicado', async () => {
+    seedSelf('idea');
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('share-schedule-note')).toHaveTextContent('no se publica hasta el día y la hora');
+    await user.click(sheet.getByTestId('share-schedule'));
+    expect(await screen.findByTestId('schedule-content')).toHaveValue('content-1');
+    expect(fake.callsTo('set_content_status', 'rpc').map((c) => (c.payload as Record<string, unknown>).p_status)).toEqual(['draft', 'approved']);
+  });
+
+  it('sin la cabecera de estados: ni «Aprobar» ni «Enviar a revisión» en ningún sitio', async () => {
+    seedSelf('draft');
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    expect(screen.queryByTestId('status-approved')).toBeNull();
+    expect(screen.queryByTestId('status-in_review')).toBeNull();
+    await openMoreMenu(user, 'editor-more');
+    expect(screen.queryByText(/Aprobar|Enviar a revisión|Retirar la aprobación/)).toBeNull();
+  });
+
+  it('quien no puede aprobar en la marca no publica: se le dice sin hablar de aprobar', async () => {
+    seedSelf('draft', { orgRole: 'member', brandRole: 'editor' });
+    const { user } = renderApp(EDITOR);
+    await screen.findByTestId('editor-title');
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('share-publish-now')).toBeNull();
+    expect(sheet.getByTestId('editor-share-note')).toHaveTextContent('no se puede publicar ni programar');
+  });
+});
+
+describe('Editor: estados según el rol (modo agencia, en «Compartir»)', () => {
   it('quien edita envía a revisión la versión que tiene abierta', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
-    expect(screen.queryByTestId('status-approved')).not.toBeInTheDocument();
-    await user.click(screen.getByTestId('status-in_review'));
-    expect(await screen.findByText('Enviada a revisión')).toBeInTheDocument();
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('status-approved')).not.toBeInTheDocument();
+    await user.click(sheet.getByTestId('status-in_review'));
+    expect(await screen.findByText('Enviada a revisión', {}, SLOW)).toBeInTheDocument();
     expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toEqual({
       p_content_id: 'content-1',
       p_status: 'in_review',
@@ -585,9 +706,9 @@ describe('Editor: estados según el rol', () => {
 
   it('con cambios sin guardar, cambiar el estado guarda antes la versión', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'editor' });
-    await user.click(screen.getByTestId('add-text'));
-    await user.click(screen.getByTestId('status-in_review'));
-    expect(await screen.findByText('Enviada a revisión')).toBeInTheDocument();
+    await addFromDrawer(user, 'elements', 'add-text');
+    await chooseEditorAction(user, 'status-in_review');
+    expect(await screen.findByText('Enviada a revisión', {}, SLOW)).toBeInTheDocument();
     expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
     // Se envía a revisión la versión recién guardada, no la anterior.
     expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toEqual({
@@ -599,16 +720,16 @@ describe('Editor: estados según el rol', () => {
 
   it('quien revisa no edita, pero aprueba o devuelve a borrador', async () => {
     const { user } = await openEditor({ orgRole: 'member', brandRole: 'reviewer' }, { status: 'in_review' });
-    expect(screen.getByText('Puedes revisarla y cambiar su estado, pero no editarla.')).toBeInTheDocument();
-    expect(screen.queryByTestId('editor-save')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('add-text')).not.toBeInTheDocument();
-    // Aprobar es la acción principal; devolver a borrador está en «⋯», sin archivar (no edita).
+    expect(screen.getByText('Puedes revisarla y cambiar su estado (en «Compartir»), pero no editarla.')).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-rail')).not.toBeInTheDocument();
+    // Sin archivar en «⋯» (no edita).
     await openMoreMenu(user, 'editor-more');
     expect(screen.queryByTestId('editor-archive')).not.toBeInTheDocument();
-    expect(screen.getByTestId('status-draft')).toHaveTextContent('Devolver a borrador');
     await user.keyboard('{Escape}');
-    await user.click(screen.getByTestId('status-approved'));
-    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1));
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('status-draft')).toHaveTextContent('Devolver a borrador');
+    await user.click(sheet.getByTestId('status-approved'));
+    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1), SLOW);
     // El aviso y la etiqueta de estado dicen lo mismo.
     expect((await screen.findAllByText('Aprobada')).length).toBeGreaterThan(0);
     expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
@@ -618,116 +739,108 @@ describe('Editor: estados según el rol', () => {
   });
 
   it('quien solo ve no tiene ninguna acción', async () => {
-    await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'in_review' });
+    const { user } = await openEditor({ orgRole: 'member', brandRole: 'viewer' }, { status: 'in_review' });
     expect(screen.getByText(/Solo lectura/)).toBeInTheDocument();
-    expect(screen.queryByTestId('status-approved')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('status-draft')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('editor-save')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('editor-rail')).not.toBeInTheDocument();
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('status-approved')).not.toBeInTheDocument();
+    expect(sheet.queryByTestId('status-draft')).not.toBeInTheDocument();
   });
 
   it('archivar pide confirmación y deja la pieza en solo lectura', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     await chooseEditorAction(user, 'editor-archive');
     await user.click(within(await screen.findByRole('dialog')).getByTestId('confirm-action'));
-    expect(await screen.findByText('Contenido archivado')).toBeInTheDocument();
-    expect(await screen.findByText(/Está archivada/)).toBeInTheDocument();
-    expect(screen.queryByTestId('editor-save')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('status-in_review')).not.toBeInTheDocument();
+    expect(await screen.findByText('Contenido archivado', {}, SLOW)).toBeInTheDocument();
+    expect(await screen.findByText(/Está archivada/, {}, SLOW)).toBeInTheDocument();
+    expect(screen.queryByTestId('editor-rail')).not.toBeInTheDocument();
     expect(screen.getByTestId('editor-archive')).toHaveTextContent('Recuperar');
+    const sheet = await openShareSheet(user);
+    expect(sheet.queryByTestId('status-in_review')).not.toBeInTheDocument();
   });
 
   it('una pieza que no existe lo dice', async () => {
     seedWorkspace({ orgRole: 'owner' });
     renderApp(`${CONTENT}/no-existe`);
-    expect(await screen.findByText('No encontramos este contenido')).toBeInTheDocument();
+    expect(await screen.findByText('No encontramos este contenido', {}, SLOW)).toBeInTheDocument();
   });
 });
 
-describe('Editor: una sola acción principal según el estado', () => {
-  const igAccount = {
-    id: 'acc-1',
-    brand_id: BRAND_ID,
-    organization_id: ORG_ID,
-    network: 'instagram',
-    status: 'active',
-    external_id: '1784',
-    username: 'casa_demo',
-  };
+describe('Editor: un solo camino para sacar la pieza', () => {
   /** Los botones de la cabecera que están a la vista (sin abrir «⋯»). */
   const visibleActions = () =>
     within(screen.getByTestId('page-actions'))
       .getAllByRole('button')
-      .map((b) => b.textContent?.trim());
+      .map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim());
 
-  it('borrador con permiso de aprobar: «Aprobar» es la principal; lo demás, en «⋯» y separado', async () => {
+  it('la cabecera: deshacer, rehacer, «⋯» y «Compartir»; nada de guardar, aprobar ni ver cómo quedará', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    expect(screen.getByTestId('status-approved')).toHaveTextContent('Aprobar');
-    expect(visibleActions()).toEqual(['Guardar versión', 'Aprobar', 'Publicar o compartir', '']);
+    expect(visibleActions()).toEqual(['Deshacer', 'Rehacer', 'Más acciones de la pieza', 'Compartir']);
     await openMoreMenu(user, 'editor-more');
     const menu = within(screen.getByRole('menu'));
-    const items = menu.getAllByRole('menuitem').map((i) => i.textContent);
-    expect(items).toEqual([
+    expect(menu.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
       'Guardar versión con una nota…',
       'Historial',
-      'Enviar a revisión',
       'Nombre y red',
-      'Desde una plantilla',
+      'Tamaño y fondo',
       'Guardar como plantilla…',
-      'Devolver a idea',
       'Archivar',
     ]);
-    // Archivar va al final, separado de lo que hace avanzar la pieza.
-    expect(menu.getAllByRole('separator')).toHaveLength(3);
+    // Archivar va al final, separado.
+    expect(menu.getAllByRole('separator')).toHaveLength(2);
   });
 
-  it('quien edita sin aprobar: «Enviar a revisión» es la principal', async () => {
-    await openEditor({ orgRole: 'member', brandRole: 'editor' });
-    expect(screen.getByTestId('status-in_review')).toHaveTextContent('Enviar a revisión');
-    expect(screen.queryByTestId('status-approved')).toBeNull();
+  it('modo agencia, en «Compartir»: el estado arriba con su cambio principal y los de volver atrás', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    const sheet = await openShareSheet(user);
+    const review = within(sheet.getByTestId('share-review'));
+    expect(review.getByText('Borrador')).toBeInTheDocument();
+    expect(review.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Enviar a revisión',
+      'Aprobar',
+      'Devolver a idea',
+    ]);
   });
 
-  it('aprobada y publicable: «Publicar o compartir» reúne publicar, programar, ver y descargar; retirar la aprobación, en «⋯»', async () => {
-    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    seedContent({ orgRole: 'owner' }, { status: 'approved' });
-    fake.tables.social_accounts = [igAccount];
-    fake.tables.scheduled_publications = [];
-    fake.tables.media_assets = [];
+  it('aprobada y publicable: «Compartir» reúne ver, descargar, programar, publicar y copiar; retirar la aprobación, ahí también', async () => {
+    seedPublishing({ orgRole: 'owner' }, { status: 'approved' });
     const { user } = renderApp(EDITOR);
     await screen.findByTestId('editor-title');
-    // Ya aprobada no hay cambio de estado que proponer: lo principal es el único botón de «Publicar o compartir».
-    expect(visibleActions()).toEqual(['Guardar versión', 'Publicar o compartir', '']);
-    await openMoreMenu(user, 'editor-more');
-    expect(screen.getByTestId('status-draft')).toHaveTextContent('Retirar la aprobación');
-    await user.keyboard('{Escape}');
-    await openMoreMenu(user, 'editor-share');
-    const share = within(screen.getByRole('menu'));
-    expect(share.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
-      'Ver cómo quedará',
-      'Descargar la imagen',
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('status-draft')).toHaveTextContent('Retirar la aprobación');
+    expect(within(sheet.getByTestId('share-actions')).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Descargar',
+      'Copiar el texto',
       'Programar…',
-      'Publicar ahora…',
+      'Publicar ahora',
     ]);
     // «Programar» abre el diálogo con la pieza ya elegida.
-    await user.click(screen.getByTestId('editor-schedule'));
+    await user.click(sheet.getByTestId('share-schedule'));
     expect(await screen.findByTestId('schedule-content')).toHaveValue('content-1');
     vi.unstubAllEnvs();
   });
 
-  it('aprobada sin la publicación activa: no hay botón principal que no funcione', async () => {
-    const { user } = await openEditor({ orgRole: 'owner' }, { status: 'approved' });
-    expect(visibleActions()).toEqual(['Guardar versión', 'Publicar o compartir', '']);
-    await openMoreMenu(user, 'editor-share');
-    expect(screen.queryByTestId('editor-publish-now')).toBeNull();
-    expect(screen.queryByTestId('editor-schedule')).toBeNull();
+  it('«Copiar el texto» copia el pie con sus hashtags', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    const sheet = await openShareSheet(user);
+    await user.type(sheet.getByTestId('copy-caption'), 'Menú de otoño');
+    await user.type(sheet.getByTestId('copy-hashtags'), '#otoño');
+    await user.tab();
+    await user.click(sheet.getByTestId('share-copy-text'));
+    expect(await screen.findByText('Texto copiado: pégalo donde lo vayas a publicar.', {}, SLOW)).toBeInTheDocument();
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toContain('Menú de otoño');
+    expect(copied).toContain('#otoño');
   });
 
-  it('con cambios sin guardar, la principal sigue activa: guarda la versión y aprueba', async () => {
+  it('con cambios sin guardar, el cambio de estado sigue activo: guarda la versión y aprueba', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    await user.click(screen.getByTestId('add-text'));
-    expect(screen.getByTestId('status-approved')).toBeEnabled();
-    expect(screen.getByTestId('status-approved')).toHaveAttribute('title', 'Guarda los cambios como versión y sigue');
-    await user.click(screen.getByTestId('status-approved'));
-    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1));
+    await addFromDrawer(user, 'elements', 'add-text');
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('status-approved')).toBeEnabled();
+    expect(sheet.getByTestId('status-approved')).toHaveAttribute('title', 'Guarda los cambios como versión y sigue');
+    await user.click(sheet.getByTestId('status-approved'));
+    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1), SLOW);
     expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
     expect(fake.callsTo('set_content_status', 'rpc')[0]?.payload).toMatchObject({
       p_status: 'approved',
@@ -750,10 +863,10 @@ describe('Editor: una sola acción principal según el estado', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('archivada: la principal es «Recuperar»', async () => {
+  it('archivada: «Recuperar» a la vista', async () => {
     await openEditor({ orgRole: 'owner' }, { archived: true });
     expect(screen.getByTestId('editor-archive')).toHaveTextContent('Recuperar');
-    expect(visibleActions()).toEqual(['Recuperar', 'Publicar o compartir', '']);
+    expect(visibleActions()).toEqual(['Más acciones de la pieza', 'Recuperar', 'Compartir']);
   });
 
   it('desde un aviso del calendario («Exportar») abre el diálogo de exportar', async () => {

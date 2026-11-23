@@ -1,7 +1,8 @@
-import { ChevronRight, Folder, FolderOpen, Images, Inbox } from 'lucide-react';
+import { ChevronRight, Folder, FolderOpen, Images, Inbox, Sparkles } from 'lucide-react';
 import { useState, type DragEvent } from 'react';
 import { Select } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { MADE_HERE_LABEL } from './filters';
 import { flattenTree, type FolderNode } from './folders';
 
 /** Tipo con el que se arrastran archivos de la rejilla hacia una carpeta. */
@@ -20,6 +21,11 @@ export interface FolderTreeProps {
   canDrop: boolean;
   onDropAssets: (folder: string, ids: string[]) => void;
   onDropFiles: (folder: string, files: File[]) => void;
+  /**
+   * «Hechas aquí»: las carpetas que llena la aplicación (Ediciones, Exportaciones, IA, Reels,
+   * Informes). Van al final, plegadas en un grupo; las exportaciones no cuentan en «Toda la biblioteca».
+   */
+  madeHere?: FolderNode[];
 }
 
 const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
@@ -134,22 +140,34 @@ function Row({
   );
 }
 
-/** Barra lateral de carpetas (escritorio): árbol con contadores; admite soltar archivos encima. */
+/** ¿Está `path` dentro de `ancestor` (o es ella)? */
+const within = (path: string | null, ancestor: string) =>
+  path !== null && (path === ancestor || path.startsWith(`${ancestor} / `));
+
+/**
+ * Barra lateral de carpetas (escritorio): las de primer nivel, plegadas (sus subcarpetas se ven al
+ * entrar o al desplegarlas), y al final «Hechas aquí» con lo que guarda la aplicación (Ediciones,
+ * Exportaciones, IA…). Admite soltar archivos encima.
+ */
 export function FolderTree(props: FolderTreeProps) {
-  const { tree, total, unfiled, selected, onSelect, canDrop, onDropAssets, onDropFiles } = props;
-  // Plegadas a mano; por defecto todo está desplegado.
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (path: string) =>
-    setCollapsed((current) => {
+  const { tree, total, unfiled, selected, onSelect, canDrop, onDropAssets, onDropFiles, madeHere = [] } = props;
+  // Desplegadas a mano; por defecto todo plegado salvo el camino hasta la carpeta elegida.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const [madeHereOpen, setMadeHereOpen] = useState(false);
+  const toggle = (path: string, open: boolean) =>
+    setOpened((current) => {
       const next = new Set(current);
-      if (!next.delete(path)) next.add(path);
+      if (open) next.delete(path);
+      else next.add(path);
       return next;
     });
   const common = { canDrop, onDropAssets, onDropFiles };
+  const madeHereTotal = madeHere.reduce((sum, n) => sum + n.total, 0);
+  const inMadeHere = madeHere.some((n) => within(selected, n.path));
 
   const renderNode = (node: FolderNode): React.ReactNode => {
     const hasChildren = node.children.length > 0;
-    const isOpen = !collapsed.has(node.path);
+    const isOpen = opened.has(node.path) || (within(selected, node.path) && selected !== node.path) || selected === node.path;
     const active = selected === node.path;
     return (
       <li key={node.path} role="none">
@@ -162,7 +180,7 @@ export function FolderTree(props: FolderTreeProps) {
           icon={active ? <FolderOpen className="h-4 w-4" /> : <Folder className="h-4 w-4" />}
           expandable={hasChildren}
           expanded={isOpen}
-          onToggle={() => toggle(node.path)}
+          onToggle={() => toggle(node.path, isOpen)}
           onSelect={() => onSelect(node.path)}
           folder={node.path}
           testId={`library-folder-${node.path}`}
@@ -206,36 +224,68 @@ export function FolderTree(props: FolderTreeProps) {
           </li>
         )}
         {tree.map(renderNode)}
+        {madeHere.length > 0 && (
+          <li role="none" className="mt-2 border-t border-border pt-2" data-testid="library-made-here">
+            <button
+              type="button"
+              role="treeitem"
+              aria-expanded={madeHereOpen || inMadeHere}
+              aria-selected={false}
+              onClick={() => setMadeHereOpen((v) => !v)}
+              className="flex min-h-[2.25rem] w-full items-center gap-2 rounded-lg py-1.5 pr-2 text-left text-sm hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+              data-testid="library-made-here-toggle"
+            >
+              <ChevronRight
+                className={cn('ml-1.5 h-3.5 w-3.5 text-muted transition-transform', (madeHereOpen || inMadeHere) && 'rotate-90')}
+                aria-hidden
+              />
+              <Sparkles className="h-4 w-4 shrink-0 text-muted" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{MADE_HERE_LABEL}</span>
+              <span className="shrink-0 text-xs tabular-nums text-muted">{madeHereTotal}</span>
+            </button>
+            {(madeHereOpen || inMadeHere) && (
+              <ul role="group" aria-label={MADE_HERE_LABEL} className="space-y-0.5 pl-3.5">
+                {madeHere.map(renderNode)}
+              </ul>
+            )}
+          </li>
+        )}
       </ul>
     </nav>
   );
 }
 
-/** Selector de carpeta para pantallas estrechas (en lugar de la barra lateral). */
+/** Selector «Carpeta» para pantallas estrechas (en lugar de la barra lateral). */
 export function FolderSelect({
   tree,
   total,
   unfiled,
   selected,
   onSelect,
-}: Pick<FolderTreeProps, 'tree' | 'total' | 'unfiled' | 'selected' | 'onSelect'>) {
+  madeHere = [],
+}: Pick<FolderTreeProps, 'tree' | 'total' | 'unfiled' | 'selected' | 'onSelect' | 'madeHere'>) {
+  const option = (node: FolderNode) => (
+    <option key={node.path} value={node.path}>
+      {`${' '.repeat(node.depth)}${node.name} (${node.total})`}
+    </option>
+  );
   return (
-    <Select
-      aria-label="Filtrar por carpeta"
-      value={selected === null ? '__all' : selected === '' ? '__none' : selected}
-      onChange={(e) => {
-        const v = e.target.value;
-        onSelect(v === '__all' ? null : v === '__none' ? '' : v);
-      }}
-      data-testid="library-folder-select"
-    >
-      <option value="__all">{`Toda la biblioteca (${total})`}</option>
-      {unfiled > 0 && tree.length > 0 && <option value="__none">{`Sin carpeta (${unfiled})`}</option>}
-      {flattenTree(tree).map((node) => (
-        <option key={node.path} value={node.path}>
-          {`${' '.repeat(node.depth)}${node.name} (${node.total})`}
-        </option>
-      ))}
-    </Select>
+    <label className="flex items-center gap-2 text-sm">
+      <span className="shrink-0 text-muted">Carpeta</span>
+      <Select
+        aria-label="Carpeta"
+        value={selected === null ? '__all' : selected === '' ? '__none' : selected}
+        onChange={(e) => {
+          const v = e.target.value;
+          onSelect(v === '__all' ? null : v === '__none' ? '' : v);
+        }}
+        data-testid="library-folder-select"
+      >
+        <option value="__all">{`Toda la biblioteca (${total})`}</option>
+        {unfiled > 0 && tree.length > 0 && <option value="__none">{`Sin carpeta (${unfiled})`}</option>}
+        {flattenTree(tree).map(option)}
+        {madeHere.length > 0 && <optgroup label={MADE_HERE_LABEL}>{flattenTree(madeHere).map(option)}</optgroup>}
+      </Select>
+    </label>
   );
 }

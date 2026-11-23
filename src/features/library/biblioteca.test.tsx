@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as storageApi from '@/features/storage/api';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { chooseMoreAction } from '@/test/moreMenu';
 
 // La biblioteca con cientos de archivos: árbol de carpetas con contadores, filtros
 // en chips, selección múltiple con acciones por lotes, ficha lateral con ← y →,
@@ -81,10 +82,11 @@ function seed(options: { role?: 'owner' | 'viewer'; usage?: boolean } = {}) {
   ]);
 }
 
+// El nombre entero va en el título de la tarjeta (en la tarjeta, la parte que lo distingue).
 const names = () =>
   screen
     .getAllByTestId('library-asset')
-    .map((el) => within(el).getByText(/\.(jpg|png|mp4)$/).textContent)
+    .map((el) => el.getAttribute('title'))
     .filter(Boolean);
 
 const open = async () => {
@@ -100,13 +102,17 @@ describe('Biblioteca: carpetas', () => {
     const tree = screen.getByRole('tree', { name: 'Carpetas de la biblioteca' });
     expect(within(tree).getByTestId('library-folder-all')).toHaveTextContent('9');
     expect(within(tree).getByTestId('library-folder-Platos')).toHaveTextContent('3');
-    expect(within(tree).getByTestId('library-folder-Platos / Mariscos')).toHaveTextContent('2');
+    expect(within(tree).getByTestId('library-folder-Vinos')).toHaveTextContent('1');
+    // De entrada, solo las de primer nivel: las de dentro se ven al entrar (o al desplegarlas).
+    expect(within(tree).queryByTestId('library-folder-Platos / Mariscos')).toBeNull();
+    await user.click(within(tree).getByRole('button', { name: 'Desplegar Vinos' }));
     expect(within(tree).getByTestId('library-folder-Vinos / Tintos')).toHaveTextContent('1');
     // Lo que no está en ninguna carpeta se puede ver aparte.
     expect(within(tree).getByTestId('library-folder-none')).toHaveTextContent('5');
 
     await user.click(within(tree).getByTestId('library-folder-Platos'));
     expect(names()).toEqual(['langostinos.jpg', 'almejas.jpg', 'chuleta.jpg']);
+    expect(within(tree).getByTestId('library-folder-Platos / Mariscos')).toHaveTextContent('2');
     await user.click(within(tree).getByTestId('library-folder-Platos / Mariscos'));
     expect(names()).toEqual(['langostinos.jpg', 'almejas.jpg']);
     // Migas de pan: cada tramo lleva a su carpeta.
@@ -148,15 +154,13 @@ describe('Biblioteca: carpetas', () => {
     // Una carpeta vacía no existe en la base de datos hasta que se mueve algo dentro.
     expect(fake.tables.media_assets!.some((a) => a.folder === 'Postres')).toBe(false);
 
-    // Se elimina (está vacía y es la elegida).
-    await user.click(screen.getByTestId('folder-menu'));
-    await user.click(await screen.findByTestId('folder-delete'));
+    // Se elimina (está vacía y es la elegida): las acciones de la carpeta están en el «⋯» de la cabecera.
+    await chooseMoreAction(user, 'library-more', 'folder-delete');
     await waitFor(() => expect(within(tree).queryByTestId('library-folder-Postres')).not.toBeInTheDocument());
 
     // Renombrar «Platos»: los archivos de dentro pasan a «Cocina / …».
     await user.click(within(tree).getByTestId('library-folder-Platos'));
-    await user.click(screen.getByTestId('folder-menu'));
-    await user.click(await screen.findByTestId('folder-rename'));
+    await chooseMoreAction(user, 'library-more', 'folder-rename');
     const input = screen.getByTestId('folder-name-input');
     await user.clear(input);
     await user.type(input, 'Cocina');
@@ -175,49 +179,44 @@ describe('Biblioteca: carpetas', () => {
     seed();
     const { user } = await open();
     await user.click(screen.getByTestId('library-folder-Vinos'));
-    await user.click(screen.getByTestId('folder-menu'));
+    await user.click(screen.getByTestId('library-more'));
     expect(await screen.findByTestId('folder-delete')).toHaveAttribute('aria-disabled', 'true');
   });
 });
 
 describe('Biblioteca: filtros y orden', () => {
-  it('los chips filtran por tipo, fondo quitado, IA y uso, y se pueden combinar', async () => {
+  it('cuatro fichas (Todo, Fotos, Vídeos, Audios); «Solo las que no se usan» está en «⋯» y se combina con la carpeta', async () => {
     seed();
+    fake.tables.media_assets!.push(
+      asset('m1', 'Guitarra de sobremesa.mp3', { kind: 'audio', mime_type: 'audio/mpeg', created_at: '2026-11-13T09:00:00Z' }),
+    );
     const { user } = await open();
-    await user.click(screen.getByTestId('chip-videos'));
-    expect(names()).toEqual(['brasa.mp4']);
-    await user.click(screen.getByTestId('chip-videos'));
-    await user.click(screen.getByTestId('chip-logos'));
-    expect(names()).toEqual(['logo.png']);
-    await user.click(screen.getByTestId('chip-logos'));
+    expect(
+      within(screen.getByTestId('library-chips'))
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['Todo', 'Fotos', 'Vídeos', 'Audios']);
+    // Ya no hay fichas de Logotipos, fondo quitado, IA, sin usar ni recientes.
+    for (const old of ['chip-logos', 'chip-cutout', 'chip-ai', 'chip-unused', 'chip-recent'])
+      expect(screen.queryByTestId(old)).toBeNull();
 
-    await user.click(screen.getByTestId('chip-cutout'));
-    expect(names()).toEqual(['Sin fondo · chuleta.png']);
-    await user.click(screen.getByTestId('chip-cutout'));
-    await user.click(screen.getByTestId('chip-ai'));
-    expect(names()).toEqual(['cartel-ia.png']);
-    await user.click(screen.getByTestId('chip-ai'));
+    await user.click(screen.getByTestId('library-kind-videos'));
+    expect(names()).toEqual(['brasa.mp4']);
+    await user.click(screen.getByTestId('library-kind-audios'));
+    expect(names()).toEqual(['Guitarra de sobremesa.mp3']);
+    await user.click(screen.getByTestId('library-kind-all'));
+    expect(names()).toHaveLength(10);
 
     // Sin usar: lo que ninguna pieza usa (a1 y a3 sí).
-    await user.click(screen.getByTestId('chip-unused'));
+    await chooseMoreAction(user, 'library-more', 'library-unused');
     expect(names()).not.toContain('langostinos.jpg');
     expect(names()).not.toContain('chuleta.jpg');
     expect(names()).toContain('almejas.jpg');
+    expect(screen.getByTestId('library-extra-filters')).toHaveTextContent('Sin usar');
     // Y combinado con una carpeta.
+    await user.click(screen.getByTestId('library-folder-Platos'));
     await user.click(screen.getByTestId('library-folder-Platos / Mariscos'));
     expect(names()).toEqual(['almejas.jpg']);
-    expect(screen.getByTestId('chip-unused')).toHaveAttribute('aria-pressed', 'true');
-  });
-
-  it('«Recientes» deja solo lo de las últimas dos semanas', async () => {
-    seed();
-    const dias = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
-    fake.tables.media_assets![0]!.created_at = dias(2);
-    fake.tables.media_assets![1]!.created_at = dias(40);
-    const { user } = await open();
-    await user.click(screen.getByTestId('chip-recent'));
-    expect(names()).toContain('langostinos.jpg');
-    expect(names()).not.toContain('almejas.jpg');
   });
 
   it('busca por nombre, etiqueta y carpeta, y ordena por nombre o por uso', async () => {
@@ -231,26 +230,35 @@ describe('Biblioteca: filtros y orden', () => {
     await waitFor(() => expect(names()).toEqual(['tinto-crianza.jpg']));
     await user.clear(screen.getByTestId('library-search'));
 
-    await user.selectOptions(screen.getByTestId('library-sort'), 'Por nombre');
+    // El orden está en el «⋯» de la cabecera (ya no a la vista).
+    expect(screen.queryByTestId('library-sort')).toBeNull();
+    await chooseMoreAction(user, 'library-more', 'library-sort-name');
     expect(names().slice(0, 3)).toEqual(['almejas.jpg', 'brasa.mp4', 'cartel-ia.png']);
-    await user.selectOptions(screen.getByTestId('library-sort'), 'Más usadas');
+    await chooseMoreAction(user, 'library-more', 'library-sort-usage');
     // Usadas primero: a1 (2 piezas contando la archivada: cuenta 1 vigente) y a3.
     expect(names().slice(0, 2).sort()).toEqual(['chuleta.jpg', 'langostinos.jpg']);
   });
 
   it('si no se sabe en qué piezas se usa, no se ofrece «Sin usar» ni «Más usadas» ni se inventa nada', async () => {
     seed({ usage: false });
-    await open();
-    expect(screen.queryByTestId('chip-unused')).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Más usadas' })).not.toBeInTheDocument();
+    const { user } = await open();
+    await user.click(screen.getByTestId('library-more'));
+    expect(await screen.findByTestId('library-sort-name')).toBeInTheDocument();
+    expect(screen.queryByTestId('library-unused')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('library-sort-usage')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
     expect(await screen.findByTestId('library-usage-missing')).toBeInTheDocument();
   });
 });
 
 describe('Biblioteca: selección y acciones por lotes', () => {
-  it('casillas y Mayús eligen; la barra mueve, etiqueta y borra con confirmación', async () => {
+  it('sin casilla en cada miniatura; «⋯ → Elegir varias», casillas y Mayús eligen; la barra mueve, etiqueta y borra', async () => {
     seed();
     const { user } = await open();
+    // Las casillas no se ven hasta elegir varias.
+    expect(screen.getByRole('checkbox', { name: 'Elegir langostinos.jpg' }).closest('label')).toHaveClass('opacity-0');
+    await chooseMoreAction(user, 'library-more', 'library-select-mode');
+    expect(screen.getByRole('checkbox', { name: 'Elegir langostinos.jpg' }).closest('label')).toHaveClass('opacity-100');
     await user.click(screen.getByRole('checkbox', { name: 'Elegir langostinos.jpg' }));
     expect(screen.getByTestId('library-selection-bar')).toHaveTextContent('1 elegido');
     // Con Mayús se elige el tramo hasta la clicada.
@@ -268,6 +276,7 @@ describe('Biblioteca: selección y acciones por lotes', () => {
     await waitFor(() => expect(screen.queryByTestId('library-selection-bar')).not.toBeInTheDocument());
 
     // Etiquetar respeta las que ya había.
+    await chooseMoreAction(user, 'library-more', 'library-select-mode');
     await user.click(screen.getByRole('checkbox', { name: 'Elegir langostinos.jpg' }));
     await user.click(screen.getByTestId('bulk-tag'));
     await user.type(screen.getByTestId('bulk-tag-input'), 'portada{Enter}');
@@ -288,8 +297,17 @@ describe('Biblioteca: selección y acciones por lotes', () => {
   it('Esc quita la selección', async () => {
     seed();
     const { user } = await open();
-    await user.click(screen.getByRole('checkbox', { name: 'Elegir almejas.jpg' }));
-    expect(screen.getByTestId('library-selection-bar')).toBeInTheDocument();
+    // En una pantalla táctil, mantener pulsada una miniatura empieza a elegir varias.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const tile = screen.getAllByTestId('library-asset').find((el) => el.getAttribute('title') === 'almejas.jpg')!;
+      fireEvent.pointerDown(tile, { pointerType: 'touch' });
+      vi.advanceTimersByTime(600);
+      fireEvent.pointerUp(tile, { pointerType: 'touch' });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await screen.findByTestId('library-selection-bar')).toHaveTextContent('1 elegido');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByTestId('library-selection-bar')).not.toBeInTheDocument());
   });
@@ -297,8 +315,10 @@ describe('Biblioteca: selección y acciones por lotes', () => {
   it('arrastrar archivos elegidos a una carpeta del árbol los mueve todos', async () => {
     seed();
     const { user } = await open();
+    await chooseMoreAction(user, 'library-more', 'library-select-mode');
     await user.click(screen.getByRole('checkbox', { name: 'Elegir suelta.jpg' }));
     await user.click(screen.getByRole('checkbox', { name: 'Elegir brasa.mp4' }));
+    await user.click(screen.getByRole('button', { name: 'Desplegar Vinos' }));
     const store: Record<string, string> = {};
     const dataTransfer = {
       setData: (type: string, value: string) => (store[type] = value),
@@ -310,7 +330,7 @@ describe('Biblioteca: selección y acciones por lotes', () => {
       dropEffect: '',
       files: [],
     };
-    const origen = screen.getAllByTestId('library-asset').find((el) => el.textContent?.includes('suelta.jpg'))!;
+    const origen = screen.getAllByTestId('library-asset').find((el) => el.getAttribute('title') === 'suelta.jpg')!;
     fireEvent.dragStart(origen, { dataTransfer });
     const destino = screen.getByTestId('library-folder-Vinos / Tintos').parentElement!;
     fireEvent.dragOver(destino, { dataTransfer });
@@ -318,6 +338,15 @@ describe('Biblioteca: selección y acciones por lotes', () => {
     await waitFor(() =>
       expect(fake.tables.media_assets!.filter((a) => a.folder === 'Vinos / Tintos').map((a) => a.id).sort()).toEqual(['a4', 'a5', 'v1']),
     );
+  });
+
+  it('sin trabajador de medios, el «⋯» de la cabecera no ofrece «Montar un reel»', async () => {
+    seed();
+    const { user } = await open();
+    await user.click(screen.getByTestId('library-more'));
+    expect(await screen.findByTestId('library-sort-name')).toBeInTheDocument();
+    expect(screen.queryByTestId('library-reels')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
   });
 
   it('quien solo mira no ve casillas, ni subir, ni crear carpetas', async () => {
@@ -334,7 +363,9 @@ describe('Biblioteca: ficha lateral', () => {
     seed();
     const { user } = await open();
     await user.click(screen.getAllByTestId('library-asset')[0]!);
-    const panel = await screen.findByRole('dialog', { name: 'langostinos.jpg' });
+    // El título legible (B4); el nombre del archivo, debajo.
+    const panel = await screen.findByRole('dialog', { name: 'Langostinos' });
+    expect(within(panel).getByTestId('asset-file-name')).toHaveTextContent('langostinos.jpg');
     expect(panel).toHaveAttribute('aria-modal', 'false');
     // La lista sigue a la vista y usable.
     expect(screen.getAllByTestId('library-asset').length).toBeGreaterThan(1);
@@ -351,10 +382,10 @@ describe('Biblioteca: ficha lateral', () => {
     expect(within(panel).getByTestId('asset-use-post')).toHaveTextContent('Usar en una publicación');
 
     await user.keyboard('{ArrowRight}');
-    expect(await screen.findByRole('dialog', { name: 'almejas.jpg' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Almejas' })).toBeInTheDocument();
     expect(screen.getByTestId('asset-usage')).toHaveTextContent('Todavía no está en ninguna pieza');
     await user.keyboard('{ArrowLeft}');
-    expect(await screen.findByRole('dialog', { name: 'langostinos.jpg' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Langostinos' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
@@ -363,7 +394,7 @@ describe('Biblioteca: ficha lateral', () => {
     seed();
     const { user } = await open();
     await user.click(screen.getAllByTestId('library-asset')[0]!);
-    await screen.findByRole('dialog', { name: 'langostinos.jpg' });
+    await screen.findByRole('dialog', { name: 'Langostinos' });
     const name = screen.getByTestId('asset-name');
     expect(screen.getByTestId('asset-save')).toBeDisabled();
     await user.type(name, ' nuevo');
@@ -378,7 +409,7 @@ describe('Biblioteca: ficha lateral', () => {
   it('abre la ficha del archivo de ?recurso= y al cerrarla limpia la dirección', async () => {
     seed();
     const view = renderApp(`${BRAND_BASE}/biblioteca?recurso=a3`);
-    expect(await screen.findByRole('dialog', { name: 'chuleta.jpg' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Chuleta' })).toBeInTheDocument();
     await view.user.click(screen.getByTestId('asset-close'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
@@ -406,6 +437,7 @@ describe('Biblioteca: subir', () => {
   it('con una carpeta elegida, lo que se suelta en la página va a esa carpeta', async () => {
     seed();
     const { user } = await open();
+    await user.click(screen.getByRole('button', { name: 'Desplegar Vinos' }));
     await user.click(screen.getByTestId('library-folder-Vinos / Tintos'));
     const file = new File([new Uint8Array(32)], 'blanco.png', { type: 'image/png' });
     fireEvent.dragOver(screen.getByTestId('library-grid').closest('section')!, {

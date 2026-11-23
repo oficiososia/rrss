@@ -7,6 +7,7 @@ import {
   ClipboardPaste,
   Copy,
   CopyPlus,
+  Eraser,
   Group,
   ImageOff,
   Lock,
@@ -16,6 +17,7 @@ import {
   SlidersHorizontal,
   Trash2,
   Ungroup,
+  Undo2,
   Unlock,
 } from 'lucide-react';
 import type { MoreAction, MoreMenuItem } from '@/components/ui';
@@ -25,9 +27,12 @@ import { emptyFramePatch } from './frames';
 import type { EditorAction } from './history';
 import { ALIGN_ICONS } from './panels/alignIcons';
 
-// Lo que se puede hacer con lo elegido y no cabe en la barra flotante: es el
-// menú «⋯» de la barra y también el del botón derecho sobre el lienzo. Una sola
-// lista, para que las dos puertas ofrezcan lo mismo con las mismas palabras.
+// Lo que se puede hacer con lo elegido y no está a la vista en la barra
+// flotante: es el menú «⋯» de la barra y también el del botón derecho sobre el
+// lienzo. Una sola lista, para que las dos puertas ofrezcan lo mismo con las
+// mismas palabras. Duplicar y borrar viven SOLO aquí (y en sus atajos); los
+// ajustes finos (efectos, transparencia, posición exacta) se abren desde
+// «Ajustes…», en un panel que se va al soltar el elemento.
 
 export interface SelectionMenuContext {
   /** Capas elegidas, en el orden del documento. Vacío: el menú es el del lienzo. */
@@ -40,7 +45,11 @@ export interface SelectionMenuContext {
   onPaste: () => void;
   /** Encuadrar la foto dentro de su caja (solo con una foto elegida). */
   onFramePhoto?: (id: string) => void;
-  /** Abre el panel «Diseño» con todas las opciones de lo elegido. */
+  /** Quitar el fondo de la foto elegida (sin recortador compatible, o con otra cosa elegida, no se ofrece). */
+  onRemoveBackground?: () => void;
+  /** La foto elegida vuelve a la original (solo si la de ahora es una edición). */
+  onRestoreOriginal?: () => void;
+  /** Abre el panel de ajustes de lo elegido (solo con un elemento). */
   onMoreOptions: () => void;
 }
 
@@ -102,6 +111,21 @@ export function selectionMenuItems(ctx: SelectionMenuContext): MoreMenuItem[] {
       onSelect: () => photo && ctx.onFramePhoto?.(photo.id),
       hint: 'Moverla y ampliarla dentro de su marco (doble clic)',
       testId: 'menu-frame-photo',
+    }),
+    ...when<MoreAction>(Boolean(photo && !photo.locked && ctx.onRemoveBackground), {
+      id: 'remove-background',
+      label: 'Quitar el fondo',
+      icon: Eraser,
+      onSelect: () => ctx.onRemoveBackground?.(),
+      hint: 'Crea una foto nueva sin fondo; la original sigue en la biblioteca',
+      testId: 'menu-remove-background',
+    }),
+    ...when<MoreAction>(Boolean(photo && !photo.locked && ctx.onRestoreOriginal), {
+      id: 'restore-original',
+      label: 'Volver a la foto original',
+      icon: Undo2,
+      onSelect: () => ctx.onRestoreOriginal?.(),
+      testId: 'menu-restore-original',
     }),
     ...when<MoreAction>(Boolean(photo && !photo.locked), {
       id: 'empty-frame',
@@ -191,14 +215,14 @@ export function selectionMenuItems(ctx: SelectionMenuContext): MoreMenuItem[] {
           testId: 'menu-lock',
         },
     null,
-    {
+    ...when<MoreAction>(Boolean(single), {
       id: 'more-options',
-      label: 'Todas las opciones',
+      label: 'Ajustes…',
       icon: SlidersHorizontal,
       onSelect: ctx.onMoreOptions,
-      hint: 'Abre el panel «Diseño»',
+      hint: 'Efectos, transparencia y posición exacta',
       testId: 'menu-more-options',
-    },
+    }),
     {
       id: 'delete',
       label: 'Borrar',

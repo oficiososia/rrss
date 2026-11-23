@@ -262,11 +262,17 @@ describe('Editor con la marca en modo agencia', () => {
     });
     const { user } = renderApp(`${BRAND_BASE}/contenidos/content-1`);
     await screen.findByTestId('editor-title');
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
+    // El texto de la publicación está en la hoja «Compartir».
+    await user.click(screen.getByTestId('editor-share'));
+    await screen.findByRole('dialog', { name: 'Compartir' });
     expect(screen.queryByRole('button', { name: /Redactar con IA/ })).not.toBeInTheDocument();
 
     await user.click(await screen.findByTestId('ask-agency'));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = await waitFor(() => {
+      const found = screen.getAllByRole('dialog').find((d) => within(d).queryByTestId('request-brief'));
+      if (!found) throw new Error('Sin el diálogo del encargo');
+      return found;
+    });
     expect(within(dialog).getByTestId('request-target-fixed')).toHaveTextContent('Menú de otoño');
     await user.type(within(dialog).getByTestId('request-brief'), 'Texto para el menú');
     await user.click(within(dialog).getByTestId('request-submit'));
@@ -283,7 +289,8 @@ describe('Editor con la marca en modo agencia', () => {
     const link = await screen.findByTestId('editor-request-link');
     expect(link).toHaveTextContent('Post del menú de otoño');
     expect(link).toHaveAttribute('href', `${BRAND_BASE}/encargos/req-1`);
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
+    await user.click(screen.getByTestId('editor-share'));
+    await screen.findByRole('dialog', { name: 'Compartir' });
     expect(screen.queryByTestId('ask-agency')).not.toBeInTheDocument();
   });
 });

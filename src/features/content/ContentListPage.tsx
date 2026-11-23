@@ -30,6 +30,8 @@ import {
 } from '@/components/ui';
 import { useCampaigns } from '@/features/campaigns/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { publishedInfoOf } from '@/features/social/publishedState';
+import { RepublishDialog } from '@/features/social/RepublishDialog';
 import { ScheduleDialog } from '@/features/social/ScheduleDialog';
 import { translateError } from '@/lib/errors';
 import { readLocal, writeLocal } from '@/lib/localStore';
@@ -60,6 +62,7 @@ export function ContentListPage() {
   const [creating, setCreating] = useState(false);
   const [startTemplate, setStartTemplate] = useState<BrandTemplate | null>(null);
   const [scheduling, setScheduling] = useState<string | null>(null);
+  const [republishing, setRepublishing] = useState<BoardItem | null>(null);
   const [archived, setArchived] = useState(false);
   const [tabChoice, setTabChoice] = useState<ContentStage | null>(null);
   const [search, setSearch] = useState('');
@@ -158,6 +161,7 @@ export function ContentListPage() {
           }),
         (e) => toast.error(translateError(e)),
       ),
+    onRepublish: (item) => setRepublishing(item),
     onRestore: (item) =>
       void mutations.archive.mutateAsync({ contentId: item.id, archived: false }).then(
         () => toast.success('Recuperada'),
@@ -287,14 +291,7 @@ export function ContentListPage() {
     <>
       <PageHeader
         title="Contenidos"
-        action={
-          canEdit && (
-            <Button onClick={() => openNew()} data-testid="content-new">
-              <Plus className="h-4 w-4" aria-hidden />
-              Nueva idea
-            </Button>
-          )
-        }
+        // Crear va en «＋ Crear» del menú (una sola puerta); aquí, solo en la pantalla vacía, donde ayuda.
         more={[
           archived
             ? {
@@ -479,6 +476,17 @@ export function ContentListPage() {
           open
           onOpenChange={(open) => !open && setScheduling(null)}
           initialContentId={scheduling}
+        />
+      )}
+      {republishing && publishedInfoOf(republishing.publication) && (
+        <RepublishDialog
+          orgId={org.id}
+          brandId={brand.id}
+          contentId={republishing.id}
+          title={republishing.title}
+          published={publishedInfoOf(republishing.publication)!}
+          open
+          onOpenChange={(open) => !open && setRepublishing(null)}
         />
       )}
       <ConfirmDialog

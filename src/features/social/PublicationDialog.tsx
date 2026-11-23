@@ -1,4 +1,4 @@
-import { ExternalLink, MessageSquare, RefreshCw, RotateCcw, Send, XCircle } from 'lucide-react';
+import { MessageSquare, RefreshCw, RotateCcw, Send, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -38,6 +38,8 @@ import { connectedAccountsPath, exportPath, planPath } from './links';
 import { useBrandZone } from './useBrandZone';
 import { differsFromDevice, formatDateTimeIn, zoneLabel } from './zone';
 import { PublicationPreview } from './preview';
+import { publishedInfoOf } from './publishedState';
+import { PublishedNotice } from './PublishedNotice';
 
 const OUTCOME_LABEL: Record<PublicationAttemptOutcome, string> = {
   started: 'En curso',
@@ -113,6 +115,7 @@ export function PublicationDialog({
       ? approvedVersionPlan(content, media.data, entry.media_asset_ids)
       : null;
   const held = entry.status === 'planned' && entry.hold_reason ? entry.hold_reason : null;
+  const published = publishedInfoOf(entry);
   const account = activeAccountOf(accounts.data, entry.network);
   const advice = held ? selfManagedAdvice(holdAdvice(held, account), selfManaged) : null;
 
@@ -237,13 +240,13 @@ export function PublicationDialog({
           <Badge tone={DISPLAY_TONE[state]}>
             <span data-testid="publication-state">{DISPLAY_LABEL[state]}</span>
           </Badge>
-          {content && (
+          {content && !published && (
             <span className="text-xs text-muted">
               Pieza: {STATUS_LABEL[content.status]}
               {entry.content_version ? ` · versión programada ${entry.content_version}` : ''}
             </span>
           )}
-          {content && (
+          {content && !published && (
             <Link to={contentPaths(orgId, brandId).item(content.id)} className="text-xs text-primary underline">
               Abrir en el editor
             </Link>
@@ -252,25 +255,21 @@ export function PublicationDialog({
 
         {content && <PublicationPreview brandId={brandId} entry={entry} />}
 
-        {entry.status === 'published' && entry.external_id && (
-          <Notice>
-            Publicada el {fmt(entry.published_at!)} · identificador en la red{' '}
-            <code data-testid="publication-external-id">{entry.external_id}</code>
-            {entry.external_url && (
-              <>
-                {' · '}
-                <a
-                  href={entry.external_url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="inline-flex items-center gap-1 text-primary underline"
-                  data-testid="publication-link"
-                >
-                  Ver en la red <ExternalLink className="h-3 w-3" aria-hidden />
-                </a>
-              </>
-            )}
-          </Notice>
+        {published && content && (
+          <>
+            <PublishedNotice
+              orgId={orgId}
+              brandId={brandId}
+              contentId={content.id}
+              title={content.title}
+              info={published}
+              canRepublish={canEdit && !content.archived_at}
+              testId="publication-published"
+            />
+            <p className="text-xs text-muted">
+              Identificador en la red: <code data-testid="publication-external-id">{entry.external_id}</code>
+            </p>
+          </>
         )}
         {held && advice && (
           <ActionNotice

@@ -5,7 +5,9 @@ import { NavBadge, type NavItem } from './nav';
 
 const tabClass = (active: boolean) =>
   cn(
-    'relative flex min-h-[3.5rem] min-w-0 flex-1 flex-col items-center justify-center gap-1 px-0.5 text-[0.6875rem] font-medium leading-tight',
+    // Cada etiqueta cabe en su botón (a 360-402 px, «Calendario» y «Biblioteca» se tocaban): letra algo
+    // menor, un margen a cada lado y, si aun así no cabe, «…». El área táctil sigue siendo de 56 px de alto.
+    'relative flex min-h-[3.5rem] min-w-[2.75rem] flex-1 basis-0 flex-col items-center justify-center gap-1 overflow-hidden px-1.5 text-[0.625rem] font-medium leading-tight tracking-tight',
     active ? 'text-primary' : 'text-muted',
   );
 
@@ -25,7 +27,9 @@ function Tab({ to, label, icon: Icon, end, badge }: NavItem) {
             <Icon className="h-5 w-5" aria-hidden />
             <NavBadge count={badge} compact />
           </span>
-          <span className="whitespace-nowrap">{label}</span>
+          <span className="block max-w-full truncate" data-testid="mobile-nav-label">
+            {label}
+          </span>
         </>
       )}
     </NavLink>

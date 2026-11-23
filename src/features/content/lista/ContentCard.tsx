@@ -1,7 +1,8 @@
-import { Archive, ArchiveRestore, CalendarClock, Copy } from 'lucide-react';
+import { Archive, ArchiveRestore, CalendarClock, Copy, ExternalLink, Repeat } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui';
+import { networkLabel } from '../labels';
 import { cn } from '@/lib/utils';
 import { FormatIcon } from './FormatIcon';
 import { formatName } from './formats';
@@ -20,6 +21,8 @@ export interface PieceActions {
   onDuplicate: (item: BoardItem) => void;
   onArchive: (item: BoardItem) => void;
   onRestore: (item: BoardItem) => void;
+  /** «Publicar otra vez» (solo en las ya publicadas): avisa del duplicado y hace una copia. */
+  onRepublish?: (item: BoardItem) => void;
 }
 
 interface CommonProps {
@@ -39,8 +42,13 @@ function QuickActions({ item, actions }: { item: BoardItem; actions: PieceAction
     if (actions.canEdit)
       buttons.push({ id: 'restore', label: 'Recuperar', icon: ArchiveRestore, onClick: () => actions.onRestore(item) });
   } else {
-    if (actions.canSchedule)
+    // Lo publicado no se vuelve a programar: como mucho, «Publicar otra vez», que avisa y hace una copia.
+    if (actions.canSchedule && item.stage !== 'published')
       buttons.push({ id: 'schedule', label: 'Programar', icon: CalendarClock, onClick: () => actions.onSchedule(item) });
+    if (actions.canEdit && item.stage === 'published' && actions.onRepublish) {
+      const republish = actions.onRepublish;
+      buttons.push({ id: 'republish', label: 'Publicar otra vez', icon: Repeat, onClick: () => republish(item) });
+    }
     if (actions.canEdit) {
       buttons.push({ id: 'duplicate', label: 'Duplicar', icon: Copy, onClick: () => actions.onDuplicate(item) });
       buttons.push({ id: 'archive', label: 'Archivar', icon: Archive, onClick: () => actions.onArchive(item) });
@@ -78,6 +86,26 @@ function Check({ item, selected, onToggle }: Pick<CommonProps, 'item' | 'selecte
         data-testid="content-select"
       />
     </label>
+  );
+}
+
+/** «Ver en Instagram» de una pieza publicada: fuera de cualquier otro enlace (no se anidan). */
+export function PublishedLink({ item }: { item: BoardItem }): ReactNode {
+  const url = item.stage === 'published' ? item.publication?.external_url : null;
+  if (!url) return null;
+  const network = networkLabel(item.publication?.network ?? item.network);
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="inline-flex min-h-[2.25rem] items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+      aria-label={`Ver «${item.title}» en ${network}`}
+      data-testid="content-published-link"
+    >
+      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+      Ver en {network}
+    </a>
   );
 }
 
@@ -143,6 +171,7 @@ export function ContentCard({ item, href, thumb, actions, selected, onToggle, se
           {item.title}
         </Link>
         <StateLine item={item} />
+        <PublishedLink item={item} />
       </div>
     </li>
   );
@@ -174,6 +203,9 @@ export function ContentRow({ item, href, thumb, actions, selected, onToggle, sel
           </span>
         </span>
       </Link>
+      <span className="shrink-0">
+        <PublishedLink item={item} />
+      </span>
       <span className={cn('shrink-0 transition-opacity', HOVER_ONLY)}>
         <QuickActions item={item} actions={actions} />
       </span>

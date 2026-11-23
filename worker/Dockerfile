@@ -18,7 +18,9 @@ FROM node:${NODE_VERSION}-trixie-slim AS base
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-ENV WORKER_FONT_FILE=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+# Tipografía por defecto de los textos de los reels: Montserrat ExtraBold (SIL OFL 1.1), en `fonts/`
+# dentro de la imagen (la de rótulos, SemiBold, la busca el trabajador al lado). DejaVu queda de reserva.
+ENV WORKER_FONT_FILE=/app/fonts/Montserrat-ExtraBold.ttf \
     WORKER_TMP_DIR=/tmp/rrss-worker
 WORKDIR /app
 RUN chown node:node /app
@@ -52,6 +54,7 @@ COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node templates ./templates
+COPY --chown=node:node fonts ./fonts
 # Usuario sin privilegios (el `node` de la imagen oficial, uid 1000).
 USER node
 CMD ["node", "src/main.ts"]

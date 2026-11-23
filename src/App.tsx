@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useIsFetching } from '@tanstack/react-query';
 import { Settings2 } from 'lucide-react';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Card, EmptyState } from '@/components/ui';
@@ -104,20 +104,37 @@ export function preloadScreenFor(pathname: string): void {
   else if (/^\/(login|registro|recuperar|restablecer)/.test(pathname)) void LoginPage.preload();
 }
 
-/** Las secciones de la barra principal, cuando el navegador está libre: abrirlas ya no espera. */
-function usePreloadMainSections() {
+/** Tiempo sin consultas en marcha que se espera antes de precargar las demás secciones. */
+const PRELOAD_QUIET_MS = 1000;
+
+/**
+ * Las secciones de la barra principal, cuando la pantalla ya está pintada: abrirlas ya no espera.
+ *
+ * Antes se precargaban al poco de abrir la aplicación (también en «Entrar»), y en una conexión
+ * normal esa descarga (la Biblioteca arrastra el editor de fotos) competía con la sesión, las
+ * consultas del arranque y la propia pantalla. Ahora va dentro de una marca y solo cuando lleva un
+ * momento sin consultas en marcha (la pantalla ya tiene sus datos) y el navegador está libre.
+ */
+function PreloadMainSections() {
+  const fetching = useIsFetching();
+  const done = useRef(false);
   useEffect(() => {
-    if (import.meta.env.MODE === 'test') return;
-    const run = () => {
-      for (const screen of [BrandHomePage, ContentListPage, CalendarPage, LibraryPage]) void screen.preload();
+    if (import.meta.env.MODE === 'test' || done.current || fetching > 0) return;
+    let idle: number | undefined;
+    const timer = globalThis.setTimeout(() => {
+      const run = () => {
+        done.current = true;
+        for (const screen of [BrandHomePage, ContentListPage, CalendarPage, LibraryPage]) void screen.preload();
+      };
+      if ('requestIdleCallback' in window) idle = window.requestIdleCallback(run, { timeout: 4000 });
+      else run();
+    }, PRELOAD_QUIET_MS);
+    return () => {
+      globalThis.clearTimeout(timer);
+      if (idle !== undefined) window.cancelIdleCallback(idle);
     };
-    if ('requestIdleCallback' in window) {
-      const id = window.requestIdleCallback(run, { timeout: 4000 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const id = globalThis.setTimeout(run, 2000);
-    return () => globalThis.clearTimeout(id);
-  }, []);
+  }, [fetching]);
+  return null;
 }
 
 function MissingConfig() {
@@ -151,11 +168,12 @@ function CampaignsMoved() {
 
 function ThemedToaster() {
   const { choice } = useTheme();
-  return <Toaster position="top-center" richColors closeButton theme={choice} />;
+  // En el móvil, los avisos salen debajo de la cabecera: encima tapaban sus botones («Compartir»,
+  // «Aprobar», «Ver el vídeo») y el toque se perdía.
+  return <Toaster position="top-center" mobileOffset={{ top: 60 }} richColors closeButton theme={choice} />;
 }
 
 export function App() {
-  usePreloadMainSections();
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -212,7 +230,15 @@ export function App() {
                           <Route path="datos" element={<OrganizationDataPage />} />
                           <Route path="drive" element={<DriveSettingsPage />} />
                         </Route>
-                        <Route path="m/:brandId" element={<BrandLayout />}>
+                        <Route
+                          path="m/:brandId"
+                          element={
+                            <>
+                              <BrandLayout />
+                              <PreloadMainSections />
+                            </>
+                          }
+                        >
                           <Route index element={<Navigate to="inicio" replace />} />
                           <Route path="inicio" element={<BrandHomePage />} />
                           <Route path="contenidos" element={<ContentListPage />} />

@@ -10,7 +10,11 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/te
 // dibujar. FontFace y document.fonts son dobles (jsdom no los tiene).
 
 vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
-  default: (props: CanvasViewProps) => <div data-testid="canvas-stub" data-layers={props.document.layers.length} />,
+  default: (props: CanvasViewProps) => (
+    <div data-testid="canvas-stub" data-layers={props.document.layers.length}>
+      {props.toolbar}
+    </div>
+  ),
 }));
 
 const FONT_PATH = `${ORG_ID}/${BRAND_ID}/fonts/f-1-marca-bold.woff2`;
@@ -186,9 +190,10 @@ describe('el editor carga las tipografías de la marca', () => {
     expect(await screen.findByTestId('canvas-stub')).toBeInTheDocument();
     expect(fonts.added).toEqual(['Marca Propia']);
 
-    // Un texto nuevo nace con la tipografía de la marca, la primera del selector.
-    await user.click(screen.getByTestId('add-text'));
-    const select = await screen.findByLabelText('Tipografía');
+    // Un texto nuevo nace con la tipografía de la marca, la primera del selector (en su barra flotante).
+    await user.click(screen.getByTestId('drawer-elements'));
+    await user.click(await screen.findByTestId('add-text'));
+    const select = await screen.findByTestId('bar-font');
     const options = within(select as HTMLElement).getAllByRole('option');
     expect(options[0]).toHaveTextContent('Marca Propia (marca)');
     expect(select).toHaveValue('Marca Propia');

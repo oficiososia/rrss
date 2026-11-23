@@ -257,7 +257,7 @@ export function useLikeLibrary(brandId: string, enabled = true) {
       unwrap(
         await supabase
           .from('media_assets')
-          .select('id, kind, storage_path, file_name, mime_type, duration_ms, folder, tags, created_at')
+          .select('id, kind, storage_path, file_name, mime_type, duration_ms, folder, tags, created_at, width, height, bytes')
           .eq('brand_id', brandId)
           .in('kind', ['image', 'video'])
           .order('created_at', { ascending: false })

@@ -80,4 +80,7 @@ export interface CanvasViewProps {
   onContextMenu?: (target: { id: string | null; clientX: number; clientY: number }) => void;
   /** Se ha soltado una foto de la biblioteca o archivos sobre el lienzo. */
   onDrop?: (drop: CanvasDrop) => void;
+  /** Botones de la fila del zoom: a su izquierda (capas, zonas seguras) y a su derecha (copiloto). */
+  footerStart?: ReactNode;
+  footerEnd?: ReactNode;
 }

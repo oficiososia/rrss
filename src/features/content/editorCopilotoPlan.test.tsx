@@ -20,7 +20,9 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
       data-assets={props.document.layers
         .map((l) => (l.type === 'image' && l.source.kind === 'asset' ? l.source.assetId : l.type))
         .join(',')}
-    />
+    >
+      {props.footerEnd}
+    </div>
   ),
 }));
 
@@ -224,8 +226,6 @@ describe('Editor: orden del copiloto que monta una pieza', () => {
       brandId: BRAND_ID,
       input: { prompt: `${PROMPT}. ${BACKGROUND_PROMPT_SUFFIX}`, aspectRatio: '4:5' },
     });
-    // La pieza lleva la marca de contenido generado con IA, por el fondo.
-    expect(await screen.findByTestId('editor-ai-label')).toBeInTheDocument();
     const order = screen.getAllByTestId('copilot-order').find((item) => item.textContent?.includes('crea un fondo'))!;
     expect(order).toHaveAttribute('data-status', 'applied');
     expect(within(order).getByTestId('copilot-notes')).toHaveTextContent('En la biblioteca queda lo creado: el fondo «IA · Mesa de madera.png».');
@@ -234,6 +234,12 @@ describe('Editor: orden del copiloto que monta una pieza', () => {
     expect(within(order).getByTestId('copilot-changes')).toHaveTextContent(
       'Texto «Menú de otoño» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
     );
+
+    // La pieza lleva la marca de contenido generado con IA, por el fondo (se ve en «Compartir»).
+    await user.click(screen.getByTestId('editor-share'));
+    expect(await screen.findByTestId('editor-ai-label')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Compartir' })).not.toBeInTheDocument());
 
     // Un solo «Deshacer» lo quita todo; el fondo generado sigue en la biblioteca.
     await user.click(screen.getByRole('button', { name: 'Deshacer' }));

@@ -269,11 +269,16 @@ archivo final, la línea de tiempo, avisos (texto fuera del vídeo, texto que no
 cabe) y tiempos.
 
 Qué hace el motor (`src/reel/build.ts`): normaliza cada pieza al lienzo y a sus
-fotogramas por segundo (recorte por punto focal), mueve las fotos con un zoom o
-barrido suave, une las piezas por corte o fundido, superpone el texto (partido
-en líneas, con caja o contorno y aparición gradual), mezcla la música atenuada
-con el sonido de los clips si la plantilla lo pide, y exporta H.264 `yuv420p` +
-AAC con `+faststart`. Siempre deja una pista de sonido, aunque sea silencio.
+fotogramas por segundo, **encuadra cada foto sobre su sujeto** (máscara de «Quitar
+el fondo», punto guardado o saliencia, `src/reel/subject.ts`) y mueve la cámara
+hacia él con un zoom o barrido suavizado, une las piezas por corte o fundido,
+aplica una gradación ligera e igual en todo el reel, superpone los textos (por
+papel, con cortes equilibrados, dentro de las zonas seguras de Instagram y sin
+pisarse nunca, `src/reel/textlayout.ts`), añade el cierre con la marca si el plan
+lo trae, mezcla la música atenuada con el sonido de los clips y exporta H.264 High
+~9 Mbps + AAC 160 kbps con `+faststart`. **Sin música ni sonido de clips, el
+vídeo sale sin pista de audio** (`result.output.audio`: `music`, `clips` o `none`).
+Detalle y decisiones: `docs/reels-calidad.md`.
 
 
 **Tipografía de la marca** (`plan.fontPath`): la pone la base de datos al
@@ -421,7 +426,7 @@ permitirlos cuando se use.
 | `WORKER_IDLE_EXIT_MS`         | `0`                           | En `drain`, cuánto espera con la cola vacía antes de salir                                                   |
 | `WORKER_SHUTDOWN_GRACE_MS`    | `0`                           | Margen para terminar lo que esté en curso al apagar                                                          |
 | `WORKER_TMP_DIR`              | carpeta temporal del sistema  | Disco de trabajo (hace falta sitio para los vídeos)                                                          |
-| `WORKER_FONT_FILE`            | DejaVu Sans si está instalada | Tipografía por defecto                                                                                       |
+| `WORKER_FONT_FILE`            | `fonts/Montserrat-ExtraBold.ttf` (incluida) | Tipografía por defecto de los reels (rótulos y subtítulos: `fonts/Montserrat-SemiBold.ttf`)     |
 | `WORKER_FONTS_DIR`            | —                             | Carpeta con tipografías para las plantillas                                                                  |
 | `FFMPEG_PATH`, `FFPROBE_PATH` | `ffmpeg`, `ffprobe`           | Binarios                                                                                                     |
 | `WORKER_CUTOUT_MODEL`         | `/app/models/ben2-base-fp16.onnx` | Modelo BEN2 fp16 (en la imagen Docker). Si el archivo no existe, el trabajador NO reclama `media.cutout` (avisa en el arranque) |
@@ -497,7 +502,8 @@ comandos probados en local, pero **no se ha ejecutado en GitHub**.
 | typescript 5.9                    | Apache-2.0                                                         | Desarrollo                                                                                                                                                                 |
 | vitest 3.2                        | MIT                                                                | Desarrollo                                                                                                                                                                 |
 | @types/node 22                    | MIT                                                                | Desarrollo                                                                                                                                                                 |
-| DejaVu Sans (`font-dejavu`)       | Licencia libre de Bitstream Vera/DejaVu                            | Tipografía por defecto en el contenedor                                                                                                                                    |
+| Montserrat ExtraBold y SemiBold (`fonts/`) | SIL Open Font License 1.1 (`fonts/OFL.txt`)               | Tipografía por defecto de los textos de los reels, dentro de la imagen                                                                                                    |
+| DejaVu Sans (`font-dejavu`)       | Licencia libre de Bitstream Vera/DejaVu                            | Tipografía de reserva del sistema                                                                                                                                           |
 | Node.js (imagen `node:22-trixie-slim`) | MIT                                                           | Entorno (Debian, no Alpine: onnxruntime-node solo trae binarios para glibc)                                                                                                 |
 | onnxruntime-node 1.30.0           | MIT                                                                | Ejecuta BEN2 en CPU (`media.cutout`)                                                                                                                                       |
 | BEN2 base fp16 (`onnx-community/BEN2-ONNX`) | MIT (ficha del modelo)                                   | Quitar el fondo; 219 MB dentro de la imagen, con sha256 fijado en el `Dockerfile`                                                                                           |

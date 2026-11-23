@@ -3,7 +3,7 @@
 // admite el plan v2 y el enlace con la pieza, cada archivo y cada tipografía
 // se comprueban contra la marca, la música exige su licencia y el vídeo
 // resultante queda unido a la pieza y a la versión en su procedencia.
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   as,
   asService,
@@ -559,6 +559,77 @@ describe('borrador automático del reel (20261228010000)', () => {
     await denied(db, editor, c.sql, c.params, /archivado/);
     await db.query(`delete from public.content_items where id = $1`, [otra]);
     expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [otra])).toEqual([]);
+  });
+});
+
+describe('reels con calidad de profesional (20270113010000): papel, máscara, cierre y gradación', () => {
+  // Cada encargo queda en cola: se cancelan para no llegar al máximo de trabajos a la vez de la marca.
+  const settle = () =>
+    db.query(`update public.jobs set status = 'cancelled', locked_by = null, locked_until = null where status in ('queued', 'running')`);
+  beforeEach(settle);
+  const photo = (patch: Row = {}) => ({ id: 'c1', type: 'photo', path: fotoA, seconds: 2, ...patch });
+  const text = (patch: Row = {}) => ({ id: 't1', text: 'Chuletón', start: 0, end: 1.5, position: 'center', style: STYLE, ...patch });
+  const input = (p: Row) => ({ template: { id: 'fundido-suave' }, plan: { version: 2, clips: [photo()], ...p } });
+
+  it('admite el papel de un texto, la máscara del sujeto, el cierre con logotipo y la gradación', async () => {
+    const mascara = await asset(editor, orgA, marcaA, 'image', `sin-fondo-${++n}.png`, 'image/png');
+    const logo = await asset(editor, orgA, marcaA, 'logo', `logo-${++n}.png`, 'image/png');
+    const job = await request(
+      editor,
+      marcaA,
+      input({
+        clips: [photo({ subjectMaskPath: mascara })],
+        texts: [text({ role: 'headline' })],
+        outro: {
+          seconds: 2,
+          cta: 'Reserva tu mesa',
+          handle: '@marca',
+          address: 'Calle Mayor 1',
+          logoPath: logo,
+          accent: '#C9A14A',
+          accentText: '#111111',
+        },
+        grade: 'warm',
+      }),
+    );
+    const plan = job.payload.plan as Row;
+    expect((plan.clips as Row[])[0]).toMatchObject({ subjectMaskPath: mascara });
+    expect((plan.texts as Row[])[0]).toMatchObject({ role: 'headline' });
+    expect(plan.outro).toMatchObject({ cta: 'Reserva tu mesa', logoPath: logo });
+    expect(plan.grade).toBe('warm');
+  });
+
+  it('rechaza papeles, gradaciones y cierres que no existen, y logotipos o máscaras de otra marca', async () => {
+    const ajena = await asset(berta, orgB, marcaB, 'image', `ajena-${++n}.png`, 'image/png');
+    await rejected(editor, marcaA, input({ texts: [text({ role: 'titulo' })] }), /papel/);
+    await rejected(editor, marcaA, input({ grade: 'neon' }), /Gradación/);
+    await rejected(editor, marcaA, input({ outro: { seconds: 2 } }), /llamada/);
+    await rejected(editor, marcaA, input({ outro: { cta: 'x'.repeat(61) } }), /llamada/);
+    await rejected(editor, marcaA, input({ outro: { cta: 'Reserva', seconds: 9 } }), /1,5 a 3/);
+    await rejected(editor, marcaA, input({ outro: { cta: 'Reserva', accent: 'dorado' } }), /color/);
+    await rejected(editor, marcaA, input({ outro: { cta: 'Reserva', musica: 'x' } }), /campos no admitidos/);
+    await rejected(editor, marcaA, input({ outro: { cta: 'Reserva', logoPath: ajena } }), /.+/);
+    await rejected(editor, marcaA, input({ clips: [photo({ subjectMaskPath: ajena })] }), /.+/);
+    // Un clip de vídeo no lleva máscara.
+    await rejected(
+      editor,
+      marcaA,
+      input({ clips: [{ id: 'c1', type: 'video', path: clipA, in: 0, out: 2, volume: 1, subjectMaskPath: fotoA }] }),
+      /campos no admitidos/,
+    );
+  });
+
+  it('un nulo en los campos nuevos no llega al trabajador y un plan sin ellos sigue valiendo', async () => {
+    const job = await request(
+      editor,
+      marcaA,
+      input({ texts: [text({ role: null })], outro: null, grade: null, clips: [photo({ subjectMaskPath: null })] }),
+    );
+    const plan = job.payload.plan as Row;
+    expect(plan).not.toHaveProperty('outro');
+    expect(plan).not.toHaveProperty('grade');
+    expect((plan.texts as Row[])[0]).not.toHaveProperty('role');
+    expect((plan.clips as Row[])[0]).not.toHaveProperty('subjectMaskPath');
   });
 });
 

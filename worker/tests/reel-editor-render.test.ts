@@ -131,8 +131,10 @@ describe('media.reel.template con un plan v2', () => {
       clips: [{ ...video, volume }],
       ...(music ? { music } : {}),
     });
-    await run(plan(0), 'mudo');
-    expect(await meanVolume(bucket.file(inBrand('reels/mudo.mp4')))).toBeLessThan(-80);
+    // Clip silenciado y sin música: el vídeo sale sin pista de audio (docs/reels-calidad.md).
+    const mute = await run(plan(0), 'mudo');
+    expect((mute.output as Record<string, unknown>).audio).toBe('none');
+    expect((await probe(bucket.file(inBrand('reels/mudo.mp4')))).audio).toBeUndefined();
     await run(plan(1), 'sonido');
     const loud = await meanVolume(bucket.file(inBrand('reels/sonido.mp4')));
     expect(loud).toBeGreaterThan(-30);

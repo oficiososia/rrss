@@ -4,6 +4,7 @@ import type { ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, type ContentDocument } from './document';
+import { addFromDrawer } from './editorTestKit';
 import type { CanvasViewProps } from './editor/canvas/types';
 import * as libraryApi from '@/features/library/api';
 import { ExportError, exportErrors } from './export/options';
@@ -110,10 +111,16 @@ async function openEditor(role: Parameters<typeof seed>[0]) {
   return app;
 }
 
-async function openDialog(user: Awaited<ReturnType<typeof openEditor>>['user']) {
+async function openDialog(user: Awaited<ReturnType<typeof openEditor>>['user'], toLibrary = false) {
   await chooseEditorAction(user, 'editor-export');
-  return within(await screen.findByRole('dialog'));
+  const dialog = within(await screen.findByRole('dialog', { name: /Exportar/ }));
+  if (toLibrary) await user.click(dialog.getByTestId('export-library'));
+  return dialog;
 }
+
+/** Lo que se ha dibujado para exportar (la vista previa de «Compartir» dibuja a media resolución). */
+const exportCalls = () =>
+  mocks.renderDocument.mock.calls.filter((call) => (call[2] as { pixelRatio?: number }).pixelRatio !== 0.5);
 
 beforeEach(() => {
   // Los módulos de la biblioteca ya están cargados por la preparación común: se espía la función.
@@ -132,13 +139,28 @@ beforeEach(() => {
 });
 
 describe('Exportar imagen', () => {
+  it('«Guardarla también en la biblioteca» empieza sin marcar y se recuerda siempre igual (fallo 17)', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    let dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).not.toBeChecked();
+    expect(dialog.getByText(/carpeta «Exportaciones»/)).toBeInTheDocument();
+    await user.click(dialog.getByTestId('export-library'));
+    expect(window.localStorage.getItem('rrss.exportar.biblioteca')).toBe('true');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // Al volver a abrirlo (o en otra pieza), la misma decisión.
+    dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).toBeChecked();
+  });
+
   it('descarga la imagen a tamaño real con un nombre legible y sin tocar la biblioteca si no se pide', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     const dialog = await openDialog(user);
     expect(dialog.getByTestId('export-name')).toHaveValue('menu-de-otono-1080x1350-v3.png');
     expect(dialog.queryByTestId('export-dirty-notice')).not.toBeInTheDocument();
-
-    await user.click(dialog.getByTestId('export-library'));
+    // Descargar no guarda en la biblioteca si no se pide.
+    expect(dialog.getByTestId('export-library')).not.toBeChecked();
     await user.click(dialog.getByTestId('export-confirm'));
 
     expect(await dialog.findByTestId('export-done')).toHaveTextContent('menu-de-otono-1080x1350-v3.png');
@@ -151,9 +173,21 @@ describe('Exportar imagen', () => {
     expect(mocks.uploadAsset).not.toHaveBeenCalled();
   });
 
-  it('guarda en la biblioteca con la procedencia: pieza, versión, formato y tamaño', async () => {
+  it('guardar en la biblioteca se recuerda la próxima vez (y se puede quitar, y también se recuerda)', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    const dialog = await openDialog(user);
+    let dialog = await openDialog(user, true);
+    await user.keyboard('{Escape}');
+    dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).toBeChecked();
+    await user.click(dialog.getByTestId('export-library'));
+    await user.keyboard('{Escape}');
+    dialog = await openDialog(user);
+    expect(dialog.getByTestId('export-library')).not.toBeChecked();
+  });
+
+  it('guarda en la biblioteca («Exportaciones») con la procedencia: pieza, versión, formato y tamaño', async () => {
+    const { user } = await openEditor({ orgRole: 'owner' });
+    const dialog = await openDialog(user, true);
     await user.click(dialog.getByTestId('export-format-jpeg'));
     await user.click(dialog.getByTestId('export-download'));
     expect(dialog.getByTestId('export-name')).toHaveValue('menu-de-otono-1080x1350-v3.jpg');
@@ -189,8 +223,8 @@ describe('Exportar imagen', () => {
 
   it('con cambios sin guardar avisa y, por omisión, guarda antes una versión para que la procedencia sea exacta', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    await user.click(screen.getByTestId('add-text'));
-    const dialog = await openDialog(user);
+    await addFromDrawer(user, 'elements', 'add-text');
+    const dialog = await openDialog(user, true);
     expect(dialog.getByTestId('export-dirty-notice')).toHaveTextContent('cambios sin guardar');
     expect(dialog.getByTestId('export-save-first')).toBeChecked();
     expect(dialog.getByTestId('export-name')).toHaveValue('menu-de-otono-1080x1350-v4.png');
@@ -199,7 +233,7 @@ describe('Exportar imagen', () => {
     await dialog.findByTestId('export-done');
 
     expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1);
-    expect(mocks.renderDocument.mock.calls[0]![0].layers).toHaveLength(2);
+    expect(exportCalls()[0]![0].layers).toHaveLength(2);
     expect(mocks.uploadAsset.mock.calls[0]![0].provenance).toMatchObject({ version: 4, unsaved_changes: false });
     expect(mocks.uploadAsset.mock.calls[0]![0].file.name).toBe('menu-de-otono-1080x1350-v4.png');
     expect(screen.getByTestId('editor-version')).toHaveTextContent('Versión 4');
@@ -207,8 +241,8 @@ describe('Exportar imagen', () => {
 
   it('si no se guarda antes, la procedencia lo dice: versión base y cambios sin guardar', async () => {
     const { user } = await openEditor({ orgRole: 'owner' });
-    await user.click(screen.getByTestId('add-text'));
-    const dialog = await openDialog(user);
+    await addFromDrawer(user, 'elements', 'add-text');
+    const dialog = await openDialog(user, true);
     await user.click(dialog.getByTestId('export-save-first'));
     expect(dialog.getByTestId('export-name')).toHaveValue('menu-de-otono-1080x1350-v3-borrador.png');
     await user.click(dialog.getByTestId('export-confirm'));
@@ -224,11 +258,11 @@ describe('Exportar imagen', () => {
     fake.rpc('save_content_version', () => {
       throw { code: 'CT001', message: 'Otra persona ha guardado una versión más reciente de este contenido.' };
     });
-    await user.click(screen.getByTestId('add-text'));
-    const dialog = await openDialog(user);
+    await addFromDrawer(user, 'elements', 'add-text');
+    const dialog = await openDialog(user, true);
     await user.click(dialog.getByTestId('export-confirm'));
     expect(await dialog.findByTestId('export-error')).toHaveTextContent('no se ha exportado nada');
-    expect(mocks.renderDocument).not.toHaveBeenCalled();
+    expect(exportCalls()).toHaveLength(0);
     expect(mocks.uploadAsset).not.toHaveBeenCalled();
   });
 
@@ -249,7 +283,7 @@ describe('Exportar imagen', () => {
   it('si la biblioteca falla tras descargar, lo dice y deja reintentar', async () => {
     mocks.uploadAsset.mockRejectedValue({ code: '42501', message: 'permission denied' });
     const { user } = await openEditor({ orgRole: 'owner' });
-    const dialog = await openDialog(user);
+    const dialog = await openDialog(user, true);
     await user.click(dialog.getByTestId('export-confirm'));
     expect(await dialog.findByTestId('export-error')).toBeInTheDocument();
     expect(mocks.download).toHaveBeenCalledTimes(1);
@@ -266,7 +300,7 @@ describe('Exportar imagen', () => {
     expect(dialog.getByTestId('export-name')).toHaveValue('menu-de-otono-2160x2700-v3.jpg');
     await user.click(dialog.getByTestId('export-confirm'));
     await dialog.findByTestId('export-done');
-    expect(mocks.renderDocument.mock.calls[0]![2]).toEqual({ format: 'jpeg', quality: 0.92, pixelRatio: 2 });
+    expect(exportCalls()[0]![2]).toEqual({ format: 'jpeg', quality: 0.92, pixelRatio: 2 });
   });
 
   it('quien solo mira puede descargar pero no guardar en la biblioteca', async () => {
@@ -284,7 +318,6 @@ describe('Exportar imagen', () => {
     const { user } = await openEditor({ orgRole: 'owner' });
     const dialog = await openDialog(user);
     await user.click(dialog.getByTestId('export-download'));
-    await user.click(dialog.getByTestId('export-library'));
     await waitFor(() => expect(dialog.getByTestId('export-confirm')).toBeDisabled());
   });
 });

@@ -32,7 +32,13 @@ const overflow = (page: Page) =>
   });
 
 for (const size of SIZES) {
-  test.describe(size.name, () => {
+  /** «Nueva idea»: desde «＋ Crear» del menú (la cabecera de Contenidos ya no la repite). */
+async function newIdea(page: Page, width: number) {
+  await page.getByTestId(width < 1024 ? 'create-menu-mobile' : 'create-menu').click();
+  await page.getByTestId('create-menu-post').click();
+}
+
+test.describe(size.name, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width: size.width, height: size.height });
     });
@@ -64,7 +70,7 @@ for (const size of SIZES) {
       // Las piezas con diseño se dibujan con el motor del lienzo (no el esquema ni el icono).
       await expect(page.locator('[data-testid="piece-thumb"][data-thumb="image"]').first()).toBeVisible();
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
-      for (const id of ['content-new', 'content-search', 'content-format-filter']) {
+      for (const id of ['content-search', 'content-format-filter']) {
         expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(40);
       }
     });
@@ -83,7 +89,7 @@ for (const size of SIZES) {
 
     test('«Nueva idea»: las cuatro tarjetas de formato caben y se elige con un toque', async ({ page }) => {
       await open(page, 'vista=contenidos');
-      await page.getByTestId('content-new').click();
+      await newIdea(page, size.width);
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
       for (const format of ['post', 'carousel', 'reel', 'story']) {
@@ -101,7 +107,7 @@ for (const size of SIZES) {
       page,
     }) => {
       await open(page, 'vista=contenidos');
-      await page.getByTestId('content-new').click();
+      await newIdea(page, size.width);
       await page.getByTestId('create-content-format-reel').click();
       await page.getByTestId('create-content-from-template').check();
       await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);
@@ -121,7 +127,7 @@ for (const size of SIZES) {
       page,
     }) => {
       await open(page, 'vista=contenidos');
-      await page.getByTestId('content-new').click();
+      await newIdea(page, size.width);
       await page.getByTestId('create-content-format-reel').click();
       await page.getByTestId('create-content-from-template').check();
       await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);

@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -13,7 +13,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Área | Implementado | Probado | Pendiente | Bloqueado |
 | --- | --- | --- | --- | --- |
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
-| Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
+| Editor de piezas | Como Canva (`f53`): riel de 5 cajones (Plantillas, Elementos, Fotos, Subidas, Marca; barra inferior con hojas en el móvil), barra flotante como único sitio de las acciones del elemento (sin tapar textos), ajustes a petición que se van al soltar, divisor de ancho que se recuerda, tipo de pieza a la vista, lo que sobresale del lienzo se ve y se agarra, un solo «Compartir» (vista previa, texto, Descargar, Publicar ahora, Programar…, Copiar el texto), sin aprobación a la vista en autogestión, pantalla completa en el móvil; capas, documento v6, páginas, plantillas, atajos, copiloto, guardado automático, copiar y pegar, soltar fotos | Unitarias, componentes, base de datos y `test:layout` en Chromium real (acciones visibles, cajones, «Compartir», divisor, foto que sobresale, fallos de móvil a 375 px); e2e adaptadas **sin ejecutar** | Revisión a mano en navegador y móvil reales; e2e del editor contra Supabase local | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
 | Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
@@ -655,6 +655,101 @@ Detalle en `docs/copiloto-voz.md` §16 y `docs/reel-como-este.md` §13. Sin migr
 - **Desplegar:** la aplicación y después `ai-generate` (enumeraciones nuevas `fill` y `canvas`: un editor anterior
   rechaza entera la respuesta que las traiga).
 
+### Estados de publicación, calendario y selectores (rama `f57/estados-calendario`, 23/11/2026)
+
+Fallos 9, 10, 17, 19 y 22 de la prueba de calidad en staging
+(`rrss-recursos-comparativa/e2e-calidad/INFORME.md`), más la barra inferior móvil. Sin migraciones.
+
+- **Lo publicado se ve publicado (fallo 10).** Fuera del editor, una pieza publicada dice
+  «Publicada el … a las …» con «Ver en Instagram» y «Abrir la pieza»: tarjeta y lista de
+  Contenidos, «Calendario → Programar» y la ficha. Tocarla en el calendario abre su ficha (no la
+  vista rápida). No se ofrece para programar ni publicar: en «Programar» sale como «Publicada el…»
+  y no se puede elegir; abierta con ella, no deja guardar; «Publicar ahora» lo dice en vez de
+  pedir confirmación. «Publicar otra vez…» avisa de que saldrá repetida y hace una **copia** (la
+  base de datos solo admite una publicación viva por pieza, índice
+  `scheduled_publications_one_per_content_idx`).
+- **Cómo se lee «publicada»** (para el editor, que lo hace otro agente): la pieza NO cambia de
+  estado al publicarse; lo dice su publicación (`scheduled_publications.status = 'published'`,
+  siempre con `external_id` y `published_at`). `src/features/social/publishedState.ts`:
+  `usePublishedState(brandId, contentId)` → `{ published, publication }`, `publishedInfoOf(pub)`,
+  `usePublishedContents(brandId)` (mapa por pieza) y `publishedText()`; componente
+  `PublishedNotice` (aviso con enlace, «Abrir la pieza» y «Publicar otra vez»).
+- **Sin cuenta conectada (fallo 9).** `src/features/social/connectedAccount.ts`:
+  `useConnectedAccount(brandId, network?)` → `{ connected, state: 'connected' | 'needs_reauth' |
+  'none', account, isLoading }` y `connectionOf(accounts)`; componente
+  `NoConnectedAccountNotice` («No hay ninguna cuenta conectada» o «El acceso … ha caducado» con el
+  botón a Marca → Cuentas conectadas). Ya lo usan «Programar» (con «Ahora», no deja seguir),
+  «Publicar ahora» y «Aprobar varias» del calendario. **El editor** («Aprobar y publicar ahora»)
+  tiene que consultarlo antes de aprobar: es de la rama f53.
+- **Exportaciones aparte (fallo 17).** «Exportaciones» sale al final del árbol de la biblioteca
+  (y del selector del móvil), separada, y no cuenta ni aparece en «Toda la biblioteca»; un aviso
+  enlaza a ella. `useAssets` (selector «Poner foto» del editor y referencias de la IA) y
+  `fetchRecentImages` (búsqueda del copiloto) dejan fuera, en la consulta, lo que ya diseñó la
+  aplicación (exportaciones, portadas, carpetas Exportaciones/Reels/Informes). «Guardarla
+  también en la biblioteca» al exportar se recuerda en el dispositivo
+  (`rrss.exportar.guardarEnBiblioteca`). No se borra ni se mueve nada.
+- **Nombres que se distinguen (fallo 19).** `library/assetNames.ts` (`distinctNames`): si varios
+  nombres largos empiezan igual, la tarjeta enseña el final del nombre (o la carpeta, si son
+  iguales); el nombre entero, al pasar el ratón (`title`) o al mantener pulsado (`useNameReveal`,
+  no elige la foto). En el panel de fotos y la rejilla de la biblioteca. **El selector «Poner
+  foto» del editor** (`content/editor/AssetPickerDialog.tsx`, rama f53) sigue cortando con CSS:
+  debe usar `distinctNames` + `AssetName`.
+- **Selector de marca (fallo 22).** Una organización con una sola marca del mismo nombre
+  («EnerGym» en «EnerGym») sale una vez, como marca que se pulsa (antes, título que no hacía nada
+  + marca); el selector no repite el nombre debajo. El avatar se anunciaba «Cuenta de Oficiosos»
+  (el nombre de la persona), que se leía como otra organización: ahora «Tu usuario: … ·
+  organización …» y el menú empieza por «Organización: …» de la actual. La pantalla de campañas
+  (zona de otro agente) no tenía texto propio con la organización.
+- **Barra inferior móvil:** «Calendario» y «Biblioteca» ya no se tocan a 360-402 px (letra algo
+  menor, margen y «…» si no cabe; área táctil igual).
+- **Probado:** componentes nuevos (`social/estadoPublicada`, `library/exportacionesYNombres`,
+  casos en `calendario`, `calendarioVistas`, `exportarImagen`, `selectorUnico`) y
+  `tests/layout/menu.spec.ts` a 360 y 402 px. El Supabase simulado entiende ahora `.or()` y
+  `.not('in' | 'like')`. **Sin probar:** contra el Supabase real (el filtro `provenance->>type`
+  de PostgREST) y en un móvil real (la pulsación larga).
+
+### Calendario y Biblioteca más sencillos (rama `f57/estados-calendario`, 23/11/2026)
+
+Apartados 8 (L1–L4) y 9 (B1–B4) de `rrss-recursos-comparativa/simplificacion/CAMBIOS.md`.
+
+- **Calendario (L1, L2, L4).** A la vista quedan 9 acciones (antes 33): las pestañas Calendario ·
+  Campañas, «Programar», «⋯», ‹ Hoy › y Semana / Mes. «Programar» abre las piezas sin fecha
+  primero (grupo «Sin fecha (N)»); ya no hay «Por programar» ni «Programar este día» ni el «+» de
+  cada día: un día sin nada se programa tocando su hueco. En «⋯»: preparar un plan con IA (o pedirlo
+  a la agencia), «Objetivo semanal: N» (una ventana pequeña), Filtrar (la red solo si hay más de
+  una), Ver en lista y Aprobar varias. Una línea «Esta semana 1 de 3 · 4 sin fecha». La hora de la
+  marca solo se dice junto al título si no es la del dispositivo (y siempre en la hoja de
+  programar). El mes ya no pliega semanas. En el móvil, la semana como agenda (un día por fila) con
+  «Programar» arriba; la lista de cuatro semanas sigue en «⋯ → Ver en lista».
+- **Plan propuesto (L3).** Una campaña «propuesta» (sin aceptar) sale como aviso arriba del
+  calendario («Plan propuesto «…»: N piezas en gris hasta que lo aceptes» → «Revisar el plan», la
+  ficha de la campaña, que se mantiene) y sus piezas en gris y sin acciones en su día. Se lee de
+  Campañas desde fuera (`useCampaigns`, `useCampaignsOverview`); `src/features/campaigns/**` no se
+  ha tocado. Aceptar o descartar sigue en la ficha.
+- **Biblioteca (B1–B4).** Fichas Todo, Fotos, Vídeos y **Audios** (nueva, para la música de los
+  reels). Orden, «Filtrar por etiqueta…», «Solo las que no se usan», tamaño de las miniaturas,
+  «Elegir varias» y las acciones de la carpeta (nueva, renombrar, eliminar) en el «⋯» de la
+  cabecera; sin casilla visible en cada miniatura (salen al elegir varias, con Ctrl/⌘ o Mayús, o
+  manteniendo pulsada una en el móvil). Carpetas de primer nivel plegadas (las de dentro, al
+  entrar); «Ediciones», «Exportaciones», «IA», «Reels» e «Informes» dentro de «Hechas aquí»; en el
+  móvil, el desplegable «Carpeta». Las miniaturas y la ficha enseñan un nombre legible
+  («Portada reel», no «portada-reel-20261123-085833.jpg»); el del archivo, en la ficha y al pasar
+  el ratón (`library/readableName.ts`). Logotipos, fondo quitado e IA ya no son fichas: están en su
+  carpeta.
+- **Probado:** componentes (`calendarioVistas`, `biblioteca`, `exportacionesYNombres`) y
+  `test:layout` en Chromium real: `calendario.spec.ts` y `biblioteca-analitica.spec.ts` cuentan las
+  acciones visibles a 1366 y 375 px (calendario ≤ 9; biblioteca ≤ 12 y ≤ 9), las cuatro fichas en
+  una fila a 375–1366 px y la semana-agenda del móvil. **Sin probar** en un móvil real ni contra la
+  demo.
+- **Pendiente de otra rama:** `src/features/reels/reels.test.tsx` («sin trabajador de medios
+  desplegado no aparece nada») comprueba que no exista `library-more`; con B2 el «⋯» de la cabecera
+  existe siempre (orden, etiqueta…). Hay que quitar esa línea (la zona de reels no se ha tocado
+  aquí); lo que quería probar —que no se ofrezca «Montar un reel»— ya lo comprueba
+  `library/biblioteca.test.tsx`.
+- **Comprobaciones (23/11, tras fusionar la base):** typecheck y lint (0 errores) en verde;
+  `npm test` 2143 de 2144 (la de arriba); `test:db` 1277 (4 omitidas); `build` en verde;
+  `test:layout` 152 de 152.
+
 ### Editor de reels como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
 
 Cambio 1 de la propuesta de simplificación aceptada, más los fallos 4, 9, 10, 11, 12 y 24 de la prueba de punta a punta
@@ -705,6 +800,26 @@ Cambios H1 y A1 de la propuesta de simplificación aceptada (`rrss-recursos-comp
 - **Autogestión:** ninguna de las dos pantallas habla de cupos ni de planes (lo parado del Inicio ya se explicaba sin planes en modo `self` desde `f50`).
 - **Probado:** unitarias (`week.test.ts`, `resumen.test.ts`), componentes (`inicio.test.tsx`, `analitica.test.tsx`) y `test:layout` en Chromium real a 375, 768 y 1366 px (`inicio-contenidos`, `biblioteca-analitica`, con una vista nueva `?vista=pocas`: cuenta recién conectada con tres días de cifras y una publicación): sin scroll lateral ni de página.
 - **Sin probar:** a mano en un navegador y un móvil reales contra la demo; con cifras reales de Meta.
+
+### Editor de piezas como Canva y un solo «Compartir» (rama `f53/editor-piezas-simple`, 23/11/2026)
+
+Cambios 2 y 3 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa/simplificacion/`), más lo que pidió el coordinador a partir de la prueba real (`e2e-calidad/INFORME.md`, fallos 9, 10, 12, 13, 17 y 18) y del dueño.
+
+- **Acciones a la vista** (`tests/layout/editor-acciones.spec.ts`, plantilla «Oferta de la semana» con la foto elegida): ordenador 1366 px, de 58 a **21** (sin nada elegido, de 30 a 17); móvil 375 px, de 24 a **17** (sin nada, de 17 a 13). Cuenta igual que el recorrido de la propuesta (61 y 23 allí). Las 21: cabecera (volver, tipo de pieza, deshacer, rehacer, «⋯», Compartir), 5 cajones, barra de la foto (Sustituir, Editar foto, Recortar, «⋯») y la fila del lienzo (Capas, Zonas seguras, zoom −/%/+ y Copiloto). En el móvil no salen «Rehacer» ni −/+ (el zoom va con dos dedos; «ajustar» sale al acercar).
+- **Riel de cajones** (`editor/rail/EditorRail.tsx`): Plantillas (la galería de siempre), Elementos (titular, texto, rectángulo, elipse y figuras), Fotos (biblioteca de la marca, tocar o arrastrar), Subidas (`PickerUpload` de la biblioteca: Subir, soltar y Crear con IA; lo subido queda a mano) y Marca (logotipos, colores —al texto o forma elegidos, o al fondo— y tipografías). En el móvil, barra inferior con hojas que se turnan y se cierran al añadir.
+- **Barra flotante = acciones del elemento.** Foto: Sustituir, Editar foto, Recortar y «⋯»; texto: Escribir, tipografía, tamaño, color, alineación; forma: color. En «⋯» (y botón derecho): copiar, pegar, duplicar, encuadrar, quitar el fondo, volver a la original, quitar la foto, orden, alinear, repartir, agrupar, bloquear, **Ajustes…** y borrar. Duplicar y Borrar ya solo están ahí (y en Ctrl+D / Supr). Se coloca encima, debajo, a un lado o pegada a un borde, eligiendo donde menos pisa los textos de la página y el propio elemento (`toolbarPlacement.ts`); en ordenador queda una franja libre sobre el lienzo para ella.
+- **Fuera el panel de 4 pestañas.** «Ajustes…» abre un panel con lo que no está en la barra (filtro, encaje, fondo detrás y sombra, desenfoque, transparencia, posición exacta, anclaje, nombre) y se cierra al soltar el elemento. Ya no repite Luz y color, Girar y recortar ni Parte de la foto que se ve (están en «Editar foto»); en piezas antiguas con esos ajustes en la capa se ofrece quitarlos. Capas y Zonas seguras, junto al zoom; proporción y fondo del lienzo, en «⋯ → Tamaño y fondo». Fuera el botón «Con IA» de la barra: la imagen con IA está en «Subidas → Crear con IA».
+- **Un solo «Compartir»** (`editor/share/ShareSheet.tsx`): vista previa en la red, texto de la publicación (pie, hashtags, menciones, texto alternativo, Redactar con IA o Pedir a la agencia), revisión de marca en una línea que se abre, aviso de huecos sin foto con «Ir al hueco», etiqueta de IA y las salidas **Descargar, Publicar ahora, Programar… y Copiar el texto**; «Programar…» dice que no se publica hasta la hora elegida. La cabecera queda en volver, nombre, tipo de pieza, guardado, deshacer, rehacer, «⋯» y Compartir. «Guardar versión con una nota» e Historial, en «⋯»; Ctrl+S sigue guardando una versión.
+- **Aprobación.** En autogestión (`organizations.work_mode = 'self'`) no hay nada de aprobar a la vista: «Publicar ahora» y «Programar…» guardan la versión y la aprueban por debajo (una idea pasa antes a borrador, como exige `set_content_status`). En modo agencia, el flujo de siempre dentro de la hoja (estado, Enviar a revisión, Aprobar, Devolver…; «Aprobar y publicar ahora»). Sin cambios en tablas ni funciones.
+- **Antes de publicar:** sin cuenta conectada de la red no se ofrece publicar ni programar (ni se aprueba a medias) y se enlaza a Marca → Cuentas conectadas; una pieza ya publicada dice «Publicada el …» con el enlace a la red y no se vuelve a publicar desde ahí (para sacarla otra vez, duplicarla); una programada dice para cuándo.
+- **Descargar** ya no guarda en la biblioteca por omisión; si se marca, va a «Exportaciones» y la elección se recuerda en el navegador.
+- **Móvil:** editor a pantalla completa (encima de la cabecera y la barra de la app), barra inferior de cajones, barra flotante encima del elemento, aviso «Falta 1 foto» junto a Capas, Copiloto como botón redondo a la vista y avisos flotantes debajo de la cabecera. Comprobado a 375 px: el lienzo no se encoge al abrir y cerrar Capas, «Poner foto» sale en «Titular sobre foto», escribir un texto no cambia de panel, el copiloto abre al primer toque y los avisos no tapan «Compartir».
+- **Del dueño:** divisor arrastrable entre cajón o panel y lienzo (240–560 px, flechas, Inicio/Fin, doble clic al de siempre, se recuerda; no en el móvil); **tipo de pieza** junto al nombre (cambiarlo recoloca las capas a la proporción del formato nuevo en un paso de deshacer; a Reel, las fotos del diseño pasan a ser los clips —borrador del reel— y se abre el editor de reels); **lo que sobresale del lienzo** se ve velado con su caja y tiradores y se agarra desde fuera (la exportación no cambia).
+- **Letra por defecto:** Inter (SIL OFL 1.1, `@fontsource-variable/inter`) va incluida y es la reserva de cada texto en lienzo, campo de escribir y exportación; un texto nuevo sin letra de marca nace con ella. Antes salía Times.
+- **Copiloto:** en autogestión, sus textos no hablan de cupo (sí del coste). El panel sigue acoplado a la izquierda del lienzo.
+- **Contenidos:** «Nueva idea» solo en la pantalla vacía (se crea con «＋ Crear»).
+- **Probado (23/11/2026, en la rama, en local):** typecheck y lint (0 errores); `npm test` 2132 de 2133 (la que falla es de `editorReels.test.tsx`, de `f52`, por tiempo con la máquina cargada: el archivo pasa entero, 42 de 42, solo); `npm run test:db` 1265 (4 omitidas); `npm run build`; `test:layout` 161 de 161 con 2 trabajadores. E2E 09, 10, 12, 13, 19, 20, 21, 23, 27 y 28 adaptadas **sin ejecutar** (piden Supabase local); la de reels no se ha tocado. `src/features/photo-edit/editarFoto.test.tsx` se adaptó solo en lo que abre «Editar foto» desde el editor.
+- **Sin probar:** en un navegador y un móvil reales; publicar o programar de verdad; el paso a Reel con el editor de reels real (solo componentes); arrastrar el divisor con el dedo en una tableta.
 
 ## Sin probar contra el servicio real
 
@@ -1526,3 +1641,75 @@ fallos 1, 2, 3, 15, 16 y 23). Migración nueva `20270115010000_ia_inservible_y_p
   reparto inservible en `campaign.brief`); los reels preparados al aceptar no se han montado de verdad ni visto en un
   navegador; el aviso de «diseño por capas» que seguía tras montar a mano un reel vacío es del editor de reels (zona de
   otra rama) y no se ha tocado.
+
+## Arranque rápido (rama `f60/arranque-rapido`, 23/11/2026)
+
+El dueño veía 8–10 s al entrar por una dirección directa en staging: «Cargando…» y después
+siluetas varios segundos. Zona: arranque y carga; sin cambiar lo que se ve salvo que sale antes.
+
+- **Causas medidas.** (1) Cascada de tres viajes a Supabase antes del menú: lo legal y si se
+  administra la plataforma (LegalGate, con «Cargando…» a pantalla completa) → organizaciones,
+  marcas y permisos (OrgLayout) → la pantalla. (2) La precarga de las 4 secciones principales
+  (la Biblioteca arrastra el editor de fotos) salía durante el arranque, también en «Entrar»:
+  88 trozos de JS antes del menú. (3) El menú «Crear» metía en el primer paquete el módulo de
+  «Hacer un reel como este» con zod, plantillas de reels y la API de IA. (4) En staging los
+  recursos con huella se servían con `max-age=0, must-revalidate`: cada visita, ~90 respuestas 304.
+- **Implementado.**
+  - `src/features/orgs/startup.ts` (`prefetchStartup`): en cuanto RequireAuth sabe la sesión,
+    lanza a la vez lo legal, administración de la plataforma, organizaciones, marcas y permisos de
+    la organización de la dirección (en «/», la última visitada) y la disponibilidad de la IA de
+    texto. Las consultas pasan a `queryOptions` (`myOrganizationsQuery`, `platformAdminQuery`,
+    `brandsQuery`, `myBrandRolesQuery`, `legalAcceptancesQuery`): misma clave, nada se pide dos
+    veces. LegalGate pinta el armazón con siluetas mientras comprueba. RootRedirect decide igual
+    que antes al entrar en frío por «/» (`isColdRootEntry`), llegue antes o no la lista.
+  - Precarga de secciones (`PreloadMainSections` en `src/App.tsx`): solo dentro de una marca,
+    tras 1 s sin consultas en marcha y con el navegador libre.
+  - `src/layout/ReelLikeProbe.tsx`: la disponibilidad de «Hacer un reel como este» se pregunta
+    desde un trozo que el menú carga bajo demanda (sin tocar `src/features/reels/`). El trozo
+    fijo `ui` ya no lleva Dialog ni Tabs de Radix.
+  - `vercel.json`: `/assets/*` con `public, max-age=31536000, immutable`.
+  - `vite.config.ts`: `<link rel="preconnect">` al proyecto de Supabase (si hay `VITE_SUPABASE_URL`).
+  - Control de tamaño: `npm run check:initial-js` (tras `npm run build`; `scripts/check-initial-js.mjs`)
+    falla si el JS inicial pasa de **229 KB gzip** (208 conseguidos + 10 %). No va dentro de
+    `build`: hay que ejecutarlo aparte (o añadirlo al CI).
+- **Medidas** (build local con `vite preview` y un Supabase simulado que responde a los 250 ms
+  —600 ms las funciones—; Chromium con red limitada por CDP: 100 ms de latencia, 4 Mbit/s;
+  entrada directa a `/o/:org/m/:marca/inicio` con sesión; mediana de 8 vueltas alternadas):
+
+  | | Antes | Ahora |
+  | --- | --- | --- |
+  | JS inicial (gzip, 5 archivos) | 239,7 KB | 208,2 KB |
+  | Peticiones antes de ver el menú | 102 (88 de JS) | 51 (37 de JS) |
+  | Olas de peticiones a Supabase | 3 | 2 |
+  | Menú pintado | 3,28 s | 2,01 s |
+  | Pantalla con sus datos | 3,33 s | 2,46 s |
+  | Con la CPU 4× más lenta (6 vueltas): menú / pantalla | 2,79 / 2,86 s | 1,71 / 2,42 s |
+
+  La máquina estaba cargada (otros agentes): las cifras absolutas varían ±1 s entre tandas; las
+  vueltas alternadas mantienen la comparación. Staging (solo lectura, sin sesión en el navegador
+  integrado): «Entrar» pedía 90 trozos y precargaba secciones; los recursos, sin caché larga.
+- **Sin probar.** El arranque con sesión en staging tras desplegar (no había sesión en el
+  navegador integrado y no se despliega desde esta rama); la caché larga y la preconexión solo
+  se verán en Vercel. Queda una ola: las consultas de la pantalla (perfil, publicaciones…) esperan
+  a las marcas porque viven en carpetas de otros agentes; adelantarlas sería el siguiente paso.
+
+## Reels con acabado profesional (rama `f54/reels-calidad`, 23/11/2026)
+
+El dueño vio los reels de staging del 23/11 («la calidad de los reels es muy mala»). Detalle por punto,
+plan v2 ampliado, fuentes de música propuestas y lo que falta en las pantallas: `docs/reels-calidad.md`.
+Montajes de antes y después con fotos reales en `rrss-recursos-comparativa/reels-calidad/comparativa.html`.
+
+- **Implementado** (trabajador, con cualquier plan): textos por papel con tamaño mínimo, cortes equilibrados,
+  zonas seguras de Instagram (250/400/60 px) y sin solapes (se apilan o se encadenan); Montserrat
+  ExtraBold/SemiBold (OFL) dentro de la imagen; encuadre sobre el sujeto (máscara de «Quitar el fondo» o
+  saliencia) con movimiento suavizado; gradación ligera; cierre con la marca (`plan.outro`); sin música ni
+  sonido, vídeo sin pista de audio; H.264 High ~9 Mbps con `+faststart`. Aplicación: material sin repetir y
+  por calidad (`quality.ts`), estilos por papel con los colores de la marca, catálogo de restaurante revisado.
+  Migración `20270113010000_reels_calidad.sql` (campos opcionales `role`, `subjectMaskPath`, `outro`, `grade`).
+- **Probado**: trabajador con FFmpeg real (`worker/tests/reel-quality.test.ts`), base de datos
+  (`tests/db/editor-reels.test.ts`), aplicación (`quality.test.ts`, plantillas, «como este») y catálogo.
+- **Pendiente**: que el editor (`editor/project.ts`) guarde `role`, `outro`, `grade` y `subjectMaskPath`; el
+  aviso «Sin música» en pantalla (`reelAudioNotice`); los selectores con `rankReelAssets`; que la vista previa
+  imite los mínimos de texto; elegir fuente de música. Sin probar en Fly (FFmpeg 7.1) ni publicar en Meta un
+  reel sin pista de audio.
+- **Para staging**: migración, trabajador (imagen con `worker/fonts/`), aplicación y volver a cargar el catálogo.

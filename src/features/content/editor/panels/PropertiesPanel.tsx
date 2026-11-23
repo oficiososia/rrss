@@ -1,6 +1,4 @@
-import { ImagePlus } from 'lucide-react';
-import type { Dispatch, Ref } from 'react';
-import { Button } from '@/components/ui';
+import type { Dispatch } from 'react';
 import {
   ANCHORS_X,
   ANCHORS_Y,
@@ -12,9 +10,8 @@ import {
   type TextLayer,
 } from '../../document';
 import type { EditorAction, LayerPatch } from '../history';
-import { FALLBACK_FONTS, layerLabel } from '../layers';
+import { FALLBACK_FONTS, layerLabel, LAYER_TYPE_LABEL } from '../layers';
 import { CheckInput, ColorInput, Labeled, NumberInput, Section, SelectInput } from './controls';
-import { LayerActions } from './LayerActions';
 import {
   anchorSummary,
   nameSummary,
@@ -23,7 +20,7 @@ import {
   shapeExtrasSummary,
   textSpacingSummary,
 } from './panelSummary';
-import { PhotoPanel, type PhotoToolsContext } from './PhotoPanel';
+import { PhotoPanel } from './PhotoPanel';
 import { ShadowFields } from './ShadowFields';
 import { TextEffectsFields } from './TextEffectsFields';
 
@@ -40,15 +37,6 @@ interface PropertiesPanelProps {
   brandStyle: BrandStyle;
   /** Proporciones que admite la red; null si no se sabe. */
   allowedRatios: AspectRatio[] | null;
-  textRef: Ref<HTMLTextAreaElement>;
-  /** Abre «Editar foto» con la imagen de la capa (solo si es de la biblioteca y se puede editar). */
-  onEditPhoto?: () => void;
-  /** La capa vuelve a la foto original (si la de ahora es una edición); se deshace con Ctrl+Z. */
-  onRestoreOriginal?: () => void;
-  /** Lo que necesitan las ediciones de foto que crean una foto nueva (quitar el fondo…). */
-  photoTools?: PhotoToolsContext;
-  /** Poner la foto de un marco vacío o sustituir la de una foto (abre «elegir foto»). */
-  onPickPhoto?: (id: string) => void;
 }
 
 const ANCHOR_X_LABEL: Record<(typeof ANCHORS_X)[number], string> = {
@@ -66,6 +54,14 @@ const ANCHOR_Y_LABEL: Record<(typeof ANCHORS_Y)[number], string> = {
 
 const WEIGHTS = [300, 400, 500, 600, 700, 800, 900];
 
+/**
+ * Ajustes de lo elegido que no están en la barra flotante (efectos, transparencia,
+ * posición exacta…) o, sin nada elegido, los del lienzo (proporción y fondo). Se
+ * abre desde «⋯ → Ajustes…» de la barra (o «⋯ → Tamaño y fondo» del editor) y se
+ * cierra al soltar el elemento. Lo que ya está en la barra (sustituir, editar,
+ * recortar, tipografía, tamaño, color, duplicar, borrar, orden, alinear) no se
+ * repite aquí.
+ */
 export function PropertiesPanel({
   layer,
   canvas,
@@ -73,11 +69,6 @@ export function PropertiesPanel({
   dispatch,
   brandStyle,
   allowedRatios,
-  textRef,
-  onEditPhoto,
-  onRestoreOriginal,
-  photoTools,
-  onPickPhoto,
 }: PropertiesPanelProps) {
   const checkpoint = () => dispatch({ type: 'checkpoint' });
 
@@ -106,7 +97,6 @@ export function PropertiesPanel({
           onChange={(color) => dispatch({ type: 'setBackground', color, key: 'background' })}
           onCommit={checkpoint}
         />
-        <p className="text-xs text-muted">Elige una capa en el lienzo o en «Capas» para cambiarla.</p>
       </div>
     );
   }
@@ -118,17 +108,13 @@ export function PropertiesPanel({
 
   return (
     <div className="space-y-3" data-testid="properties-panel">
-      <LayerActions layer={layer} readOnly={readOnly} dispatch={dispatch} />
+      <div className="min-w-0" data-testid="layer-heading">
+        <h3 className="truncate text-sm font-semibold">{layerLabel(layer)}</h3>
+        <p className="text-xs text-muted">{LAYER_TYPE_LABEL[layer.type]}</p>
+      </div>
 
       {layer.type === 'text' && (
-        <TextFields
-          layer={layer}
-          readOnly={readOnly}
-          update={update}
-          brandStyle={brandStyle}
-          textRef={textRef}
-          checkpoint={checkpoint}
-        />
+        <TextFields layer={layer} readOnly={readOnly} update={update} brandStyle={brandStyle} checkpoint={checkpoint} />
       )}
       {layer.type === 'shape' && (
         <ShapeFields
@@ -140,19 +126,9 @@ export function PropertiesPanel({
         />
       )}
       {layer.type === 'image' && layer.source.kind === 'empty' && (
-        <section className="space-y-2" data-testid="empty-frame-panel">
-          <p className="text-sm text-muted">
-            Es un hueco para una foto. Pulsa «Poner foto», o suelta una foto encima: la foto lo rellena y se puede
-            recolocar dentro con doble clic.
-          </p>
-          {!readOnly && onPickPhoto && (
-            <Button size="sm" className="w-full" onClick={() => onPickPhoto(layer.id)} data-testid="frame-place-photo">
-              <ImagePlus className="h-4 w-4" aria-hidden />
-              Poner foto
-            </Button>
-          )}
-          <p className="text-xs text-muted">Mientras esté vacío, no sale en la imagen.</p>
-        </section>
+        <p className="text-sm text-muted" data-testid="empty-frame-panel">
+          Es un hueco para una foto: mientras esté vacío, no sale en la imagen.
+        </p>
       )}
       {layer.type === 'image' && layer.source.kind !== 'empty' && (
         <PhotoPanel
@@ -161,14 +137,10 @@ export function PropertiesPanel({
           palette={brandStyle.palette}
           update={update}
           checkpoint={checkpoint}
-          tools={photoTools ?? { row: null, url: undefined, onUseResult: () => undefined }}
-          onEditPhoto={onEditPhoto}
-          onRestoreOriginal={onRestoreOriginal}
-          onReplace={onPickPhoto ? () => onPickPhoto(layer.id) : undefined}
         />
       )}
 
-      <Section id="common.opacity" title="Transparencia y visibilidad" summary={opacitySummary(layer)}>
+      <Section id="common.opacity" title="Transparencia" summary={opacitySummary(layer)}>
         <NumberInput
           label="Opacidad (%)"
           value={layer.opacity * 100}
@@ -178,20 +150,6 @@ export function PropertiesPanel({
           onChange={(v) => update({ opacity: v / 100 }, 'opacity')}
           onCommit={checkpoint}
         />
-        <div className="flex flex-wrap gap-4">
-          <CheckInput
-            label="Visible"
-            checked={layer.visible}
-            disabled={readOnly}
-            onChange={(visible) => update({ visible })}
-          />
-          <CheckInput
-            label="Bloqueada"
-            checked={layer.locked}
-            disabled={readOnly}
-            onChange={(locked) => update({ locked })}
-          />
-        </div>
       </Section>
 
       {/* Lo técnico, al final y plegado. */}
@@ -284,37 +242,20 @@ function TextFields({
   readOnly,
   update,
   brandStyle,
-  textRef,
   checkpoint,
 }: {
   layer: TextLayer;
   readOnly: boolean;
   update: (patch: LayerPatch, field?: string) => void;
   brandStyle: BrandStyle;
-  textRef: Ref<HTMLTextAreaElement>;
   checkpoint: () => void;
 }) {
   const fonts = [...new Set([...brandStyle.fonts, ...FALLBACK_FONTS, layer.fontFamily])];
   return (
     <>
       <section className="space-y-3" data-testid="text-main">
-        <Labeled label="Texto">
-          {(id) => (
-            <textarea
-              id={id}
-              ref={textRef}
-              rows={3}
-              maxLength={2000}
-              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-              value={layer.text}
-              disabled={readOnly}
-              onChange={(e) => update({ text: e.target.value }, 'text')}
-              onBlur={checkpoint}
-              data-testid="layer-text"
-            />
-          )}
-        </Labeled>
-        <div className="grid grid-cols-2 gap-3">
+        {/* La tipografía está en la barra flotante; en el móvil no cabe allí y se elige aquí. */}
+        <div className="sm:hidden">
           <SelectInput
             label="Tipografía"
             value={layer.fontFamily}
@@ -325,41 +266,13 @@ function TextFields({
               label: brandStyle.fonts.includes(font) ? `${font} (marca)` : font,
             }))}
           />
-          <NumberInput
-            label="Tamaño de letra"
-            value={layer.fontSize}
-            min={1}
-            max={2000}
-            disabled={readOnly}
-            onChange={(fontSize) => update({ fontSize }, 'fontSize')}
-            onCommit={checkpoint}
-          />
-          <SelectInput
-            label="Grosor"
-            value={String(layer.fontWeight)}
-            disabled={readOnly}
-            onChange={(w) => update({ fontWeight: Number(w) })}
-            options={WEIGHTS.map((w) => ({ value: String(w), label: String(w) }))}
-          />
-          <SelectInput<'left' | 'center' | 'right'>
-            label="Alineación"
-            value={layer.align}
-            disabled={readOnly}
-            onChange={(align) => update({ align })}
-            options={[
-              { value: 'left', label: 'Izquierda' },
-              { value: 'center', label: 'Centro' },
-              { value: 'right', label: 'Derecha' },
-            ]}
-          />
         </div>
-        <ColorInput
-          label="Color del texto"
-          value={layer.color}
-          palette={brandStyle.palette}
+        <SelectInput
+          label="Grosor"
+          value={String(layer.fontWeight)}
           disabled={readOnly}
-          onChange={(color) => update({ color }, 'color')}
-          onCommit={checkpoint}
+          onChange={(w) => update({ fontWeight: Number(w) })}
+          options={WEIGHTS.map((w) => ({ value: String(w), label: String(w) }))}
         />
       </section>
 
@@ -419,16 +332,6 @@ function ShapeFields({
           disabled={readOnly}
           onChange={(on) => update({ fill: on ? (brandStyle.palette[0]?.hex ?? '#E5E7EB') : null })}
         />
-        {layer.fill !== null && (
-          <ColorInput
-            label="Color de relleno"
-            value={layer.fill}
-            palette={brandStyle.palette}
-            disabled={readOnly}
-            onChange={(fill) => update({ fill }, 'fill')}
-            onCommit={checkpoint}
-          />
-        )}
         <CheckInput
           label="Borde"
           checked={layer.stroke !== null}

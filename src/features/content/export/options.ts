@@ -1,5 +1,6 @@
 import type { Layer } from '../document';
 import { LAYER_TYPE_LABEL } from '../editor/layers';
+import { EXPORTS_FOLDER } from '@/features/library/filters';
 
 // Lógica pura de la exportación de imagen (sin Konva ni navegador): formatos,
 // tamaños, nombre del archivo, procedencia y los errores que se explican a la
@@ -16,8 +17,8 @@ export const DEFAULT_QUALITY = 0.92;
 export const MIN_QUALITY = 0.5;
 /** Lado máximo de la imagen exportada: por encima, algunos navegadores se quedan sin memoria o recortan. */
 export const MAX_EXPORT_SIDE = 4096;
-/** Carpeta y etiqueta con las que se guardan las exportaciones en la biblioteca. */
-export const EXPORT_FOLDER = 'Exportaciones';
+/** Carpeta (la de «Exportaciones», que la biblioteca enseña aparte) y etiqueta de las exportaciones. */
+export const EXPORT_FOLDER = EXPORTS_FOLDER;
 export const EXPORT_TAG = 'exportación';
 
 export interface ExportOptions {

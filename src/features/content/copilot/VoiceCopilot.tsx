@@ -10,6 +10,7 @@ import { formatMicros } from '@/features/ai/money';
 import { useActiveProfile } from '@/features/brand/api';
 import { parseProfile } from '@/features/brand/profile';
 import { useAssetsByIds } from '@/features/library/api';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { pageView, type AspectRatio, type ContentDocument, type PageLimits } from '../document';
 import { ImagePickerDialog } from '../editor/AssetPickerDialog';
 import { layerLabel } from '../editor/layers';
@@ -68,6 +69,17 @@ import {
   writeVoiceEngine,
   type VoiceEngine,
 } from './voiceEngine';
+
+/**
+ * En autogestión no hay cupos de IA (son de los planes de una agencia con clientes): de cada texto que
+ * habla del cupo queda solo lo que cuesta. En modo agencia, los textos de siempre.
+ */
+function withoutQuota(text: string): string {
+  return text
+    .replace('Cuenta para el cupo de IA.', 'Cada dictado tiene un pequeño coste.')
+    .replace('No cuenta para el cupo de IA.', 'No cuesta nada.')
+    .replace('cada dictado cuenta para el cupo', 'cada dictado tiene un pequeño coste');
+}
 
 /** Clave del «No volver a mostrar» del aviso previo al dictado del navegador. */
 export const VOICE_NOTICE_KEY = VOICE_NOTICE_KEYS.browser;
@@ -213,6 +225,8 @@ export function VoiceCopilot({
   host,
   onClose,
 }: VoiceCopilotProps) {
+  const { selfManaged } = useWorkMode();
+  const quotaText = (text: string) => (selfManaged ? withoutQuota(text) : text);
   const [orders, setOrders] = useState<Order[]>([]);
   const [photos, setPhotos] = useState<CopilotAssetInfo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -544,7 +558,11 @@ export function VoiceCopilot({
         );
       } catch (error) {
         if (controller.signal.aborted) {
-          cancelled(['El fondo que se estaba generando puede terminar igualmente: si termina, quedará en la biblioteca y contará para el cupo de IA.']);
+          cancelled([
+            selfManaged
+              ? 'El fondo que se estaba generando puede terminar igualmente: si termina, quedará en la biblioteca y su coste cuenta igual.'
+              : 'El fondo que se estaba generando puede terminar igualmente: si termina, quedará en la biblioteca y contará para el cupo de IA.',
+          ]);
           return;
         }
         clearPlan();
@@ -879,7 +897,11 @@ export function VoiceCopilot({
           // Ha gastado IA de pago (el fondo de un plan): se dice cuánto, nunca «Sin IA».
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
-            title="Esta orden ha usado IA de pago y cuenta para el cupo de IA"
+            title={
+              selfManaged
+                ? 'Esta orden ha usado IA de pago: cuesta lo que dice'
+                : 'Esta orden ha usado IA de pago y cuenta para el cupo de IA'
+            }
             data-testid="copilot-order-cost"
           >
             {order.spentMicros === null ? 'Con IA' : `Con IA: ${formatMicros(order.spentMicros)}`}
@@ -888,7 +910,11 @@ export function VoiceCopilot({
           order.local && (
             <span
               className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
-              title="Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo"
+              title={
+                selfManaged
+                  ? 'Orden resuelta en tu navegador: no ha llamado a la IA y no cuesta nada'
+                  : 'Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo'
+              }
               data-testid="copilot-order-free"
             >
               <Zap className="h-3 w-3" aria-hidden />
@@ -937,7 +963,7 @@ export function VoiceCopilot({
             <select
               className="h-8 min-w-0 rounded-md border border-border bg-surface px-1 text-xs"
               value={engine ?? ''}
-              title={engine ? voiceEngineHint(engine) : undefined}
+              title={engine ? quotaText(voiceEngineHint(engine)) : undefined}
               onChange={(event) => chooseEngine(event.target.value as VoiceEngine)}
               data-testid="copilot-voice-engine"
             >
@@ -1002,7 +1028,7 @@ export function VoiceCopilot({
       {asking && engine && (
         <div className="space-y-1.5 rounded-md bg-subtle px-2.5 py-2 text-xs" role="group" aria-label="Antes de dictar">
           <p data-testid="copilot-voice-notice">
-            {voiceNoticeText(engine)}{' '}
+            {quotaText(voiceNoticeText(engine))}{' '}
             <Link to={legalPath('privacy')} target="_blank" className="text-primary underline">
               Política de privacidad
             </Link>
