@@ -89,6 +89,16 @@ for (const size of SIZES) {
           [size.width / 2, size.height - 4],
         );
         expect(onTop).toBe(true);
+        // La barra inferior de la aplicación (con «＋ Crear») queda debajo: ni se ve ni se puede tocar.
+        const nav = page.getByTestId('mobile-nav');
+        if ((await nav.count()) > 0) {
+          const bar = (await nav.boundingBox())!;
+          const covered = await page.evaluate(
+            ([x, y]) => Boolean(document.elementFromPoint(x!, y!)?.closest('[data-testid="reel-editor"]')),
+            [bar.x + bar.width / 2, bar.y + bar.height / 2],
+          );
+          expect(covered).toBe(true);
+        }
       }
 
       // La línea de tiempo y la barra de herramientas, enteras dentro de la ventana.
@@ -188,6 +198,52 @@ for (const size of SIZES) {
       }
       expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
       await page.screenshot({ path: `test-results/reel-editor-${size.width}-exportar.png` });
+    });
+
+    test('«Publicar o programar»: pie, hashtags y cuándo, con el vídeo ya montado y sin salirse', async ({ page }) => {
+      await open(page, 'clips=6&montado=1&modo=propio');
+      await page.getByTestId('reel-export').click();
+      const sheet = page.getByTestId('reel-export-sheet');
+      await expect(sheet).toHaveAttribute('data-state', 'ready');
+      await page.getByTestId('reel-export-publish').click();
+      await expect(page.getByTestId('reel-publish-panel')).toBeVisible();
+      await page.getByTestId('reel-caption').fill('Menú de otoño: ven este finde.');
+      await page.getByTestId('reel-publish-mode-schedule').click();
+      await expect(page.getByTestId('reel-publish-when')).toBeVisible();
+      for (const id of ['reel-caption', 'reel-hashtags', 'reel-publish-when', 'reel-publish-submit']) {
+        const part = await box(page, id);
+        expect(part.x).toBeGreaterThanOrEqual(0);
+        expect(part.x + part.width).toBeLessThanOrEqual(size.width + 1);
+      }
+      await expect(page.getByTestId('reel-publish-submit')).toBeEnabled();
+      expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: `test-results/reel-editor-${size.width}-publicar.png` });
+    });
+
+    test('un aviso no tapa la cabecera ni la barra de herramientas', async ({ page }) => {
+      await open(page, 'clips=6');
+      // Con el cabezal al principio no se puede dividir: sale un aviso.
+      await page.getByTestId('reel-clip').first().getByRole('button').first().click();
+      await page.keyboard.press('Home');
+      await page.keyboard.press('s');
+      const toast = page.locator('[data-sonner-toast]').first();
+      await expect(toast).toBeVisible();
+      // Espera a que termine de entrar (deja de moverse).
+      await expect
+        .poll(async () => {
+          const a = (await toast.boundingBox())!.y;
+          await page.waitForTimeout(150);
+          return Math.abs((await toast.boundingBox())!.y - a);
+        })
+        .toBeLessThan(1);
+      const note = (await toast.boundingBox())!;
+      const header = await box(page, 'reel-export');
+      const bar = await box(page, 'reel-toolbar');
+      if (size.mobile) expect(note.y).toBeGreaterThanOrEqual(header.y + header.height);
+      expect(note.y + note.height).toBeLessThanOrEqual(bar.y);
+      // Y «Exportar» sigue respondiendo con el aviso a la vista.
+      await page.getByTestId('reel-export').click();
+      await expect(page.getByTestId('reel-export-sheet')).toBeVisible();
     });
 
     test('un reel nuevo: «Empieza tu reel» cabe y solo se desplaza por dentro', async ({ page }) => {

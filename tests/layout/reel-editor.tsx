@@ -3,6 +3,7 @@ import { App } from '@/App';
 import '@/index.css';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures';
+import { buildRenderRequest, parseProject } from '@/features/reels/editor/project';
 
 // Banco de maquetación del EDITOR DE REELS: la aplicación real con el Supabase
 // simulado y una pieza de formato reel ya montada. Los archivos son de verdad
@@ -11,11 +12,13 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // que en el navegador se ven las miniaturas, se reproduce la vista previa y se
 // dibuja la onda de la música.
 // Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo) · ?modo=propio (autogestión)
+// · ?montado=1 (el vídeo de lo que se ve ya está montado, con una cuenta de Instagram conectada)
 //   · ?borrada=1 (la foto del primer elemento se ha borrado de la biblioteca)
 const params = new URLSearchParams(window.location.search);
 const count = Math.max(1, Math.min(30, Number(params.get('clips') ?? '12')));
 const withMusic = params.get('musica') === '1';
 const empty = params.get('vacio') === '1';
+const rendered = params.get('montado') === '1' && !empty;
 const deleted = params.get('borrada') === '1';
 
 const path = (name: string) => `${ORG_ID}/${BRAND_ID}/media/${name}`;
@@ -144,7 +147,12 @@ const project = {
 };
 
 // ?modo=propio: organización en autogestión (sin aprobación a la vista); si no, modo agencia.
-seedWorkspace({ orgRole: 'member', brandRole: 'editor', workMode: params.get('modo') === 'propio' ? 'self' : 'agency' });
+// Con el vídeo montado, quien gestiona la marca (edita y aprueba: puede publicar); si no, quien edita.
+seedWorkspace({
+  orgRole: 'member',
+  brandRole: rendered ? 'manager' : 'editor',
+  workMode: params.get('modo') === 'propio' ? 'self' : 'agency',
+});
 fake.rpc('brand_reel_font_info', () => []);
 fake.rpc('save_reel_draft', () => '2026-11-22T12:00:00Z');
 fake.rpc('discard_reel_draft', () => null);
@@ -173,8 +181,40 @@ fake.tables.media_assets = [
       : asset(`foto-${i + 1}`, 'image', `foto-${i + 1}.jpg`, 'image/jpeg'),
   ),
   asset('audio-1', 'audio', 'musica.wav', 'audio/wav'),
+  ...(rendered ? [asset('video-montado', 'video', 'reel-montado.mp4', 'video/mp4', 12000)] : []),
 ].filter((row) => !(deleted && row.id === 'foto-1'));
-fake.tables.jobs = [];
+fake.tables.jobs = rendered
+  ? [
+      {
+        id: 'job-montado',
+        organization_id: ORG_ID,
+        brand_id: BRAND_ID,
+        kind: 'media.reel.template',
+        payload: buildRenderRequest(parseProject(project), { id: 'reel-1', version: 1 }),
+        status: 'succeeded',
+        attempts: 1,
+        max_attempts: 3,
+        last_error: null,
+        result: { assets: [{ id: 'video-montado' }] },
+        created_at: '2026-11-22T12:00:00Z',
+      },
+    ]
+  : [];
+fake.tables.social_accounts = rendered
+  ? [
+      {
+        id: 'cuenta-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        network: 'instagram',
+        external_id: '1784',
+        username: 'casa.demo',
+        status: 'active',
+        created_at: '2026-11-01T09:00:00Z',
+      },
+    ]
+  : [];
+fake.tables.scheduled_publications = [];
 fake.tables.reel_drafts = [];
 fake.tables.brand_fonts = [];
 fake.tables.brand_reel_templates = [];

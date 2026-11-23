@@ -5,6 +5,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { buildReelLikeResult, parseMeasurement } from '../../../../supabase/functions/_shared/reels/like';
+import { buildRenderRequest, parseProject } from './project';
 
 // Editor de reels en una pieza de formato reel: línea de tiempo (ordenar
 // arrastrando, recortar por los extremos, deshacer y rehacer), guardado como
@@ -64,6 +66,10 @@ const STYLE = {
   outline: null,
   fadeSeconds: 0.25,
 };
+
+/** La carga de un montaje como la guarda la base de datos: el estilo, el plan y la pieza. */
+const renderPayload = (data: unknown, version = 1) =>
+  buildRenderRequest(parseProject(data), { id: 'reel-1', version }) as Record<string, unknown>;
 
 const project = {
   kind: 'reel',
@@ -401,7 +407,7 @@ describe('editor de reels', () => {
       organization_id: ORG_ID,
       brand_id: BRAND_ID,
       kind: 'media.reel.template',
-      payload: { content: { id: 'reel-1', version: 1 } },
+      payload: renderPayload(project),
       status,
       attempts: 1,
       max_attempts: 3,
@@ -1117,9 +1123,12 @@ describe('editor de reels: plantilla elegida antes de entrar («Nueva idea → R
     seed({ version: 0 });
     fake.tables.brand_reel_templates = [template('otra', 'Otra plantilla'), template('asi-se-hace', 'Así se hace')];
     renderApp(`${EDITOR}?plantilla=asi-se-hace`);
-    await screen.findByTestId('reel-editor');
-    const dialog = await screen.findByRole('dialog');
+    await screen.findByTestId('reel-editor', {}, SLOW);
+    // La plantilla ya se eligió al crear el reel: no se vuelve a enseñar la galería, se piden las fotos.
+    expect(screen.queryByText('Empieza tu reel en tres pasos')).not.toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
     expect(dialog).toHaveTextContent('«Así se hace»: elige el material');
+    expect(screen.queryByText('Empieza tu reel en tres pasos')).not.toBeInTheDocument();
     expect(within(dialog).getByTestId('reel-media-guide')).toHaveTextContent('1. Resultado2. Cierre');
     fireEvent.click(within(dialog).getByRole('button', { name: /«plato.jpg»/ }));
     fireEvent.click(within(dialog).getByRole('button', { name: /«local.jpg»/ }));
@@ -1194,19 +1203,19 @@ describe('editor de reels: plantilla de la marca sobre un reel que ya tiene mate
   });
 });
 
-describe('editor de reels: «Publicar o programar» según cómo trabaja la organización', () => {
-  /** Un reel con su vídeo ya montado (versión 1) y lo necesario para el calendario. */
-  function seedReady(workMode: 'self' | 'agency') {
+describe('editor de reels: «Publicar o programar» desde «Exportar»', () => {
+  /** Un reel con su vídeo ya montado (versión 1), una cuenta de Instagram y lo necesario para publicar. */
+  function seedReady(options: { workMode: 'self' | 'agency'; accounts?: boolean; published?: boolean; data?: unknown }) {
     vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
-    seed({ workMode });
+    seed({ workMode: options.workMode, data: options.data });
     fake.tables.jobs = [
       {
         id: 'job-ok',
         organization_id: ORG_ID,
         brand_id: BRAND_ID,
         kind: 'media.reel.template',
-        payload: { content: { id: 'reel-1', version: 1 } },
+        payload: renderPayload(options.data ?? project),
         status: 'succeeded',
         attempts: 1,
         max_attempts: 3,
@@ -1218,19 +1227,72 @@ describe('editor de reels: «Publicar o programar» según cómo trabaja la orga
     fake.tables.media_assets!.push({
       ...asset('asset-9', 'video', 'reel-final.mp4', 'video/mp4', 6500),
       storage_path: path('reels/reel-final.mp4'),
-      provenance: { type: 'reel', content_id: 'reel-1', content_version: 1 },
     });
-    fake.tables.social_accounts = [];
-    fake.tables.scheduled_publications = [];
+    fake.tables.social_accounts =
+      options.accounts === false
+        ? []
+        : [
+            {
+              id: 'cuenta-1',
+              brand_id: BRAND_ID,
+              organization_id: ORG_ID,
+              network: 'instagram',
+              external_id: '1784',
+              username: 'casa.demo',
+              status: 'active',
+              created_at: '2026-11-01T09:00:00Z',
+            },
+          ];
+    fake.tables.scheduled_publications = options.published
+      ? [
+          {
+            id: 'pub-1',
+            brand_id: BRAND_ID,
+            organization_id: ORG_ID,
+            content_id: 'reel-1',
+            content_version: 1,
+            social_account_id: 'cuenta-1',
+            media_asset_ids: ['asset-9'],
+            scheduled_at: '2026-11-22T10:00:00Z',
+            status: 'published',
+            hold_reason: null,
+            external_id: '1799',
+            external_url: 'https://www.instagram.com/reel/AbC123/',
+            published_at: '2026-11-22T10:01:00Z',
+          },
+        ]
+      : [];
     fake.rpc('set_content_status', (args) => {
       const row = { ...fake.tables.content_items![0]!, status: args.p_status };
       fake.tables.content_items![0] = row;
       return row;
     });
+    fake.rpc('save_publication', (args) => ({
+      id: 'pub-2',
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      content_id: args.p_content_id,
+      content_version: args.p_content_version,
+      social_account_id: args.p_social_account_id,
+      media_asset_ids: args.p_media_asset_ids,
+      scheduled_at: args.p_scheduled_at,
+      status: args.p_content_version ? 'scheduled' : 'planned',
+      hold_reason: args.p_content_version ? null : 'not_approved',
+    }));
   }
 
-  it('en autogestión no hay aprobación a la vista: «Publicar o programar» aprueba por debajo y abre el calendario', async () => {
-    seedReady('self');
+  async function openPublish() {
+    fireEvent.click(screen.getByTestId('reel-export'));
+    const sheet = await screen.findByTestId('reel-export-sheet');
+    await waitFor(() => expect(sheet).toHaveAttribute('data-state', 'ready'), SLOW);
+    const publish = within(sheet).getByTestId('reel-export-publish');
+    await waitFor(() => expect(publish).toBeEnabled(), SLOW);
+    fireEvent.click(publish);
+    return screen.findByTestId('reel-publish-panel');
+  }
+
+  it('en autogestión: pie y hashtags, programar con el vídeo montado y aprobar por debajo, sin elegir nada', async () => {
+    seedReady({ workMode: 'self' });
     await open();
     // Ni el estado en la cabecera ni «Enviar a revisión», «Aprobar» o «Pasar a borrador» en «⋯».
     expect(screen.queryByTestId('reel-status')).not.toBeInTheDocument();
@@ -1239,46 +1301,136 @@ describe('editor de reels: «Publicar o programar» según cómo trabaja la orga
     expect(screen.queryByTestId(/^reel-status-/)).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
 
-    fireEvent.click(screen.getByTestId('reel-export'));
-    const sheet = await screen.findByTestId('reel-export-sheet');
-    await waitFor(() => expect(sheet).toHaveAttribute('data-state', 'ready'));
-    expect(within(sheet).queryByTestId('reel-approval')).not.toBeInTheDocument();
-    const publish = within(sheet).getByTestId('reel-export-publish');
-    await waitFor(() => expect(publish).toBeEnabled());
-    fireEvent.click(publish);
-    // Borrador → aprobada, de la versión que tiene el vídeo.
-    await waitFor(() => expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(1));
-    expect(fake.callsTo('set_content_status', 'rpc')[0]!.payload).toMatchObject({
+    const panel = await openPublish();
+    expect(within(panel).queryByTestId('reel-approval')).not.toBeInTheDocument();
+    fireEvent.change(within(panel).getByTestId('reel-caption'), { target: { value: 'Pan recién hecho, ven a por él.' } });
+    fireEvent.change(within(panel).getByTestId('reel-hashtags'), { target: { value: '#pan obrador, #pan' } });
+    fireEvent.blur(within(panel).getByTestId('reel-hashtags'));
+    fireEvent.click(within(panel).getByTestId('reel-publish-mode-schedule'));
+    fireEvent.change(within(panel).getByTestId('reel-publish-when'), { target: { value: '2030-05-04T13:00' } });
+    fireEvent.click(within(panel).getByTestId('reel-publish-submit'));
+
+    await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1), SLOW);
+    // El pie va en una versión nueva (sin montar otra vez: es el mismo montaje)…
+    const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as { p_data: { copy: unknown } };
+    expect(saved.p_data.copy).toEqual({ caption: 'Pan recién hecho, ven a por él.', hashtags: ['pan', 'obrador'] });
+    expect(fake.callsTo('request_media_job', 'rpc')).toHaveLength(0);
+    // …que se aprueba por debajo (la versión nueva vuelve a borrador) y se programa con el vídeo ya montado.
+    expect(fake.callsTo('set_content_status', 'rpc').map((c) => c.payload)).toEqual([
+      expect.objectContaining({ p_status: 'approved', p_expected_version: 2 }),
+    ]);
+    expect(fake.callsTo('save_publication', 'rpc')[0]!.payload).toMatchObject({
       p_content_id: 'reel-1',
-      p_status: 'approved',
-      p_expected_version: 1,
+      p_social_account_id: 'cuenta-1',
+      p_media_asset_ids: ['asset-9'],
+      p_content_version: 2,
     });
-    expect(await screen.findByRole('dialog', { name: 'Programar una publicación' })).toBeInTheDocument();
-    expect(screen.queryByTestId('reel-export-sheet')).not.toBeInTheDocument();
+    expect(await screen.findByText(/^Programada para el/)).toBeInTheDocument();
   });
 
-  it('en modo agencia se conserva el flujo: el estado y su siguiente paso están en «Exportar», y publicar no aprueba', async () => {
-    seedReady('agency');
+  it('sin cuenta conectada lo dice antes, con el enlace, y no aprueba nada', async () => {
+    seedReady({ workMode: 'self', accounts: false });
     await open();
-    expect(screen.getByTestId('reel-status')).toHaveTextContent('Borrador');
+    const panel = await openPublish();
+    const warning = await within(panel).findByTestId('reel-publish-no-account');
+    expect(warning).toHaveTextContent('No hay ninguna cuenta conectada');
+    expect(within(warning).getByRole('link')).toHaveAttribute('href', expect.stringContaining('/marca?seccion=datos'));
+    expect(within(panel).getByTestId('reel-publish-submit')).toBeDisabled();
+    expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
+  });
+
+  it('el pie que propuso «Hacer un reel como este» llega solo al abrir «Publicar o programar»', async () => {
+    const REF = '0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a41';
+    const data = {
+      ...project,
+      guide: {
+        referenceId: REF,
+        shots: [{ id: 's1', label: 'La hogaza', kind: 'detalle', media: 'foto', seconds: 2, clipId: 'c1' }],
+        texts: [],
+      },
+    };
+    seedReady({ workMode: 'self', data });
+    const result = buildReelLikeResult(
+      parseMeasurement({
+        reference: { id: REF },
+        source: { kind: 'upload', durationSeconds: 2, width: 540, height: 960, fps: 30, hasAudio: false },
+        shots: [{ index: 0, start: 0, end: 2, seconds: 2, motion: 0, still: true }],
+        frames: [{ path: `${ORG_ID}/${BRAND_ID}/referencias/${REF}/f-01.jpg`, at: 0.5, shot: 0 }],
+        audio: { present: false, silent: true, bpm: null, confidence: 0, cutsOnBeat: 0, beatsPerCut: 0, speech: [] },
+        warnings: [],
+      })!,
+      {
+        name: 'Un plano',
+        summary: 'Un plano y ya.',
+        pace: 'medio',
+        audioKind: 'musica',
+        title: 'La hogaza',
+        idea: 'El pan.',
+        shots: [
+          { index: 1, kind: 'detalle', media: 'foto', description: 'El pan', what: 'La hogaza', tip: '', search: ['pan'] },
+        ],
+        texts: [],
+        hook: 'El pan',
+        caption: 'Así se hace nuestra hogaza.',
+        hashtags: ['pan'],
+        coverShot: 1,
+        coverNote: 'La hogaza',
+      },
+      { transcriptUsed: false },
+    );
+    fake.tables.reel_references = [
+      { id: REF, brand_id: BRAND_ID, organization_id: ORG_ID, status: 'ready', result },
+    ];
+    await open();
+    const panel = await openPublish();
+    await waitFor(() => expect(within(panel).getByTestId('reel-caption')).toHaveValue('Así se hace nuestra hogaza.'), SLOW);
+    expect(within(panel).getByTestId('reel-hashtags')).toHaveValue('#pan');
+  });
+
+  it('ya publicada: «Publicada» con fecha y enlace, y «Publicar otra vez» avisa de que saldrá repetida', async () => {
+    seedReady({ workMode: 'self', published: true });
+    await open();
+    expect(await screen.findByTestId('reel-published-badge')).toHaveTextContent('Publicada');
     fireEvent.click(screen.getByTestId('reel-export'));
     const sheet = await screen.findByTestId('reel-export-sheet');
-    const approval = within(sheet).getByTestId('reel-approval');
-    expect(approval).toHaveTextContent('Borrador');
-    expect(within(approval).getByTestId('reel-status-approved')).toHaveTextContent('Aprobar');
+    expect(within(sheet).getByTestId('reel-published')).toHaveTextContent('Publicada');
+    expect(within(sheet).getByTestId('reel-published-link')).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/reel/AbC123/',
+    );
+    const publish = within(sheet).getByTestId('reel-export-publish');
+    expect(publish).toHaveTextContent('Publicar otra vez');
+    expect(publish).not.toHaveTextContent('Publicar o programar');
+    await waitFor(() => expect(publish).toBeEnabled(), SLOW);
+    fireEvent.click(publish);
+    expect(await screen.findByRole('dialog', { name: '¿Publicar otra vez?' })).toHaveTextContent(/saldrá dos veces/);
+  });
+
+  it('en modo agencia se conserva el flujo: el estado y su siguiente paso, y lo no aprobado queda en espera', async () => {
+    seedReady({ workMode: 'agency' });
+    await open();
+    expect(screen.getByTestId('reel-status')).toHaveTextContent('Borrador');
     // Lo que no es el siguiente paso, en «⋯».
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cerrar' }));
     const user = userEvent.setup();
     await openMoreMenu(user, 'reel-more');
     expect(screen.getByTestId('reel-status-in_review')).toBeInTheDocument();
     expect(screen.queryByTestId('reel-status-approved')).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
 
-    fireEvent.click(screen.getByTestId('reel-export'));
-    const publish = within(await screen.findByTestId('reel-export-sheet')).getByTestId('reel-export-publish');
-    await waitFor(() => expect(publish).toBeEnabled());
-    fireEvent.click(publish);
-    expect(await screen.findByRole('dialog', { name: 'Programar una publicación' })).toBeInTheDocument();
+    const panel = await openPublish();
+    const approval = within(panel).getByTestId('reel-approval');
+    expect(approval).toHaveTextContent('Borrador');
+    expect(within(approval).getByTestId('reel-status-approved')).toHaveTextContent('Aprobar');
+    // Ahora no se puede (no está aprobada); programar sí, y queda en espera hasta aprobarla.
+    expect(within(panel).getByTestId('reel-publish-submit')).toBeDisabled();
+    fireEvent.click(within(panel).getByTestId('reel-publish-mode-schedule'));
+    fireEvent.change(within(panel).getByTestId('reel-publish-when'), { target: { value: '2030-05-04T13:00' } });
+    fireEvent.click(within(panel).getByTestId('reel-publish-submit'));
+    await waitFor(() => expect(fake.callsTo('save_publication', 'rpc')).toHaveLength(1), SLOW);
+    expect(fake.callsTo('save_publication', 'rpc')[0]!.payload).toMatchObject({
+      p_media_asset_ids: ['asset-9'],
+      p_content_version: null,
+    });
     expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
   });
 });

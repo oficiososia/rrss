@@ -4,7 +4,7 @@
 // se descarga, se abre en la biblioteca o se publica o programa. También
 // están la portada, los vídeos anteriores y los avisos de la vista previa, en
 // una línea. En móvil el diálogo ya es una hoja que sube desde abajo.
-import { CalendarClock, ChevronRight, Download, FolderOpen, Loader2, TriangleAlert } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Download, FolderOpen, Loader2, TriangleAlert } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Dialog, ErrorState, Skeleton } from '@/components/ui';
@@ -25,6 +25,14 @@ export interface PreviousRender {
 export interface ExportSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** «Exportar», o «Publicar o programar» cuando se enseña `publishView`. */
+  title?: string;
+  /** El paso «Publicar o programar» (pie, cuenta y cuándo): sustituye al resto de la hoja. */
+  publishView?: ReactNode;
+  /** Vuelve de «Publicar o programar» a la hoja. */
+  onBack?: () => void;
+  /** «Publicada», con su fecha y el enlace (si la pieza ya está en Instagram). */
+  published?: ReactNode;
   brandId: string;
   state: ExportState;
   /** ¿Puede montar quien mira? (no, en solo lectura). */
@@ -37,7 +45,16 @@ export interface ExportSheetProps {
   libraryPathOf: (assetId: string) => string;
   /** Lo que la vista previa enseña distinto del vídeo. */
   warnings: string[];
-  publish: { disabled: boolean; hint?: string; busy: boolean; onPublish: () => void };
+  publish: {
+    /** «Publicar o programar», o «Publicar otra vez» si ya está publicada. */
+    label?: string;
+    /** Lo que se dice debajo cuando hay vídeo (programada para…, saldrá repetido…). */
+    detail?: string;
+    disabled: boolean;
+    hint?: string;
+    busy: boolean;
+    onPublish: () => void;
+  };
   /** En modo agencia: el estado de la pieza y su siguiente paso (enviar a revisión, aprobar…). */
   approval?: ReactNode;
   /** Elegir la portada. */
@@ -68,142 +85,178 @@ export function ExportSheet(props: ExportSheetProps) {
         if (!open) setViewing(null);
         props.onOpenChange(open);
       }}
-      title="Exportar"
+      title={props.title ?? 'Exportar'}
       size="lg"
     >
-      <div className="space-y-4" data-testid="reel-export-sheet" data-state={state.kind}>
-        <StateLine {...props} viewing={viewing !== null} onBack={() => setViewing(null)} />
-
-        {current && (
-          <div className="flex justify-center" data-testid="reel-viewer">
-            {assets.isError || signed.isError ? (
-              <ErrorState error={assets.error ?? signed.error} />
-            ) : url ? (
-              <video
-                src={url}
-                controls
-                playsInline
-                className="aspect-[9/16] max-h-[40dvh] rounded-xl bg-black"
-                aria-label="Vídeo montado del reel"
-                data-testid="reel-viewer-video"
-              />
-            ) : assets.isSuccess && !asset ? (
-              <p className="text-sm text-muted">El vídeo ya no está en la biblioteca.</p>
-            ) : (
-              <Skeleton className="aspect-[9/16] h-[30dvh]" />
-            )}
-          </div>
-        )}
-
-        {/* Las tres salidas: siempre en el mismo orden; se encienden cuando hay vídeo. */}
-        <ul className="divide-y divide-border rounded-xl border border-border" data-testid="reel-export-actions">
-          <li>
-            {url ? (
-              <a
-                href={url}
-                download={asset?.file_name ?? 'reel.mp4'}
-                target="_blank"
-                rel="noreferrer"
-                className={rowClass(true)}
-                data-testid="reel-export-download"
-              >
-                <Row icon={<Download className="h-5 w-5" aria-hidden />} title="Descargar" detail="El vídeo en tu dispositivo." />
-              </a>
-            ) : (
-              <button type="button" disabled className={rowClass(false)} data-testid="reel-export-download">
-                <Row icon={<Download className="h-5 w-5" aria-hidden />} title="Descargar" detail="Cuando el vídeo esté listo." />
-              </button>
-            )}
-          </li>
-          <li>
-            {current ? (
-              <Link to={props.libraryPathOf(current)} className={rowClass(true)} data-testid="reel-export-library">
-                <Row
-                  icon={<FolderOpen className="h-5 w-5" aria-hidden />}
-                  title="Guardar en la biblioteca"
-                  detail="Ya se guarda solo, en la carpeta «Reels». Ábrelo allí."
-                />
-              </Link>
-            ) : (
-              <button type="button" disabled className={rowClass(false)} data-testid="reel-export-library">
-                <Row
-                  icon={<FolderOpen className="h-5 w-5" aria-hidden />}
-                  title="Guardar en la biblioteca"
-                  detail="Se guarda solo al montarlo."
-                />
-              </button>
-            )}
-          </li>
-          <li>
+      {props.publishView ? (
+        <div className="space-y-3" data-testid="reel-export-sheet" data-state={state.kind} data-step="publish">
+          {props.onBack && (
             <button
               type="button"
-              onClick={props.publish.onPublish}
-              disabled={!ready || viewing !== null || props.publish.disabled || props.publish.busy}
-              title={props.publish.hint}
-              className={rowClass(ready && viewing === null && !props.publish.disabled)}
-              data-testid="reel-export-publish"
+              onClick={props.onBack}
+              className="-ml-1 inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
+              data-testid="reel-publish-back"
             >
-              <Row
-                icon={
-                  props.publish.busy ? (
-                    <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                  ) : (
-                    <CalendarClock className="h-5 w-5" aria-hidden />
-                  )
-                }
-                title="Publicar o programar"
-                detail={
-                  !ready
-                    ? 'Cuando el vídeo esté listo.'
-                    : viewing !== null
-                      ? 'Se publica el vídeo de ahora, no uno anterior.'
-                      : (props.publish.hint ?? 'Ahora o el día y la hora que elijas.')
-                }
-              />
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+              Volver
             </button>
-          </li>
-        </ul>
+          )}
+          {props.publishView}
+        </div>
+      ) : (
+        <div className="space-y-4" data-testid="reel-export-sheet" data-state={state.kind}>
+          {props.published}
+          <StateLine {...props} viewing={viewing !== null} onBack={() => setViewing(null)} />
 
-        {props.approval}
+          {current && (
+            <div className="flex justify-center" data-testid="reel-viewer">
+              {assets.isError || signed.isError ? (
+                <ErrorState error={assets.error ?? signed.error} />
+              ) : url ? (
+                <video
+                  src={url}
+                  controls
+                  playsInline
+                  className="aspect-[9/16] max-h-[40dvh] rounded-xl bg-black"
+                  aria-label="Vídeo montado del reel"
+                  data-testid="reel-viewer-video"
+                />
+              ) : assets.isSuccess && !asset ? (
+                <p className="text-sm text-muted">El vídeo ya no está en la biblioteca.</p>
+              ) : (
+                <Skeleton className="aspect-[9/16] h-[30dvh]" />
+              )}
+            </div>
+          )}
 
-        {props.warnings.length > 0 && <Warnings warnings={props.warnings} />}
+          {/* Las tres salidas: siempre en el mismo orden; se encienden cuando hay vídeo. */}
+          <ul className="divide-y divide-border rounded-xl border border-border" data-testid="reel-export-actions">
+            <li>
+              {url ? (
+                <a
+                  href={url}
+                  download={asset?.file_name ?? 'reel.mp4'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={rowClass(true)}
+                  data-testid="reel-export-download"
+                >
+                  <Row
+                    icon={<Download className="h-5 w-5" aria-hidden />}
+                    title="Descargar"
+                    detail="El vídeo en tu dispositivo."
+                  />
+                </a>
+              ) : (
+                <button type="button" disabled className={rowClass(false)} data-testid="reel-export-download">
+                  <Row
+                    icon={<Download className="h-5 w-5" aria-hidden />}
+                    title="Descargar"
+                    detail="Cuando el vídeo esté listo."
+                  />
+                </button>
+              )}
+            </li>
+            <li>
+              {current ? (
+                <Link to={props.libraryPathOf(current)} className={rowClass(true)} data-testid="reel-export-library">
+                  <Row
+                    icon={<FolderOpen className="h-5 w-5" aria-hidden />}
+                    title="Guardar en la biblioteca"
+                    detail="Ya se guarda solo, en la carpeta «Reels». Ábrelo allí."
+                  />
+                </Link>
+              ) : (
+                <button type="button" disabled className={rowClass(false)} data-testid="reel-export-library">
+                  <Row
+                    icon={<FolderOpen className="h-5 w-5" aria-hidden />}
+                    title="Guardar en la biblioteca"
+                    detail="Se guarda solo al montarlo."
+                  />
+                </button>
+              )}
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={props.publish.onPublish}
+                disabled={!ready || viewing !== null || props.publish.disabled || props.publish.busy}
+                title={props.publish.hint}
+                className={rowClass(ready && viewing === null && !props.publish.disabled)}
+                data-testid="reel-export-publish"
+              >
+                <Row
+                  icon={
+                    props.publish.busy ? (
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                    ) : (
+                      <CalendarClock className="h-5 w-5" aria-hidden />
+                    )
+                  }
+                  title={props.publish.label ?? 'Publicar o programar'}
+                  detail={
+                    !ready
+                      ? 'Cuando el vídeo esté listo.'
+                      : viewing !== null
+                        ? 'Se publica el vídeo de ahora, no uno anterior.'
+                        : (props.publish.hint ??
+                          props.publish.detail ??
+                          'Ahora o el día y la hora que elijas, con su pie.')
+                  }
+                />
+              </button>
+            </li>
+          </ul>
 
-        <details className="group rounded-xl border border-border" open={props.coverOpen} data-testid="reel-export-cover">
-          <summary className={summaryClass}>
-            Portada
-            <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" aria-hidden />
-          </summary>
-          <div className="border-t border-border p-3">{props.cover}</div>
-        </details>
+          {props.approval}
 
-        {older.length > 0 && (
-          <details className="group rounded-xl border border-border" data-testid="reel-export-previous">
+          {props.warnings.length > 0 && <Warnings warnings={props.warnings} />}
+
+          <details
+            className="group rounded-xl border border-border"
+            open={props.coverOpen}
+            data-testid="reel-export-cover"
+          >
             <summary className={summaryClass}>
-              Vídeos anteriores ({older.length})
+              Portada
               <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" aria-hidden />
             </summary>
-            <ul className="divide-y divide-border border-t border-border px-3" data-testid="reel-piece-jobs">
-              {older.map((job) => (
-                <li key={job.id} className="flex flex-wrap items-center gap-2 py-2 text-sm" data-testid="reel-piece-job">
-                  <span>Versión {job.version ?? '?'}</span>
-                  <Badge tone={TONE[job.tone]}>{job.label}</Badge>
-                  <span className="text-xs text-muted">{formatDateTime(job.createdAt)}</span>
-                  {job.detail && <span className="w-full text-xs text-danger">{job.detail}</span>}
-                  {job.assetId && (
-                    <button
-                      type="button"
-                      className="ml-auto font-medium text-primary hover:underline"
-                      onClick={() => setViewing(job.assetId)}
-                    >
-                      Ver
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <div className="border-t border-border p-3">{props.cover}</div>
           </details>
-        )}
-      </div>
+
+          {older.length > 0 && (
+            <details className="group rounded-xl border border-border" data-testid="reel-export-previous">
+              <summary className={summaryClass}>
+                Vídeos anteriores ({older.length})
+                <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" aria-hidden />
+              </summary>
+              <ul className="divide-y divide-border border-t border-border px-3" data-testid="reel-piece-jobs">
+                {older.map((job) => (
+                  <li
+                    key={job.id}
+                    className="flex flex-wrap items-center gap-2 py-2 text-sm"
+                    data-testid="reel-piece-job"
+                  >
+                    <span>Versión {job.version ?? '?'}</span>
+                    <Badge tone={TONE[job.tone]}>{job.label}</Badge>
+                    <span className="text-xs text-muted">{formatDateTime(job.createdAt)}</span>
+                    {job.detail && <span className="w-full text-xs text-danger">{job.detail}</span>}
+                    {job.assetId && (
+                      <button
+                        type="button"
+                        className="ml-auto font-medium text-primary hover:underline"
+                        onClick={() => setViewing(job.assetId)}
+                      >
+                        Ver
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
     </Dialog>
   );
 }
@@ -311,7 +364,9 @@ function StateLine({
       return (
         <div className="flex flex-wrap items-center gap-2" data-testid="reel-render-state">
           <p className="min-w-0 flex-1 text-sm text-muted">
-            {state.first || !canRender ? 'Todavía no hay vídeo de este reel.' : 'El vídeo todavía no tiene los últimos cambios.'}
+            {state.first || !canRender
+              ? 'Todavía no hay vídeo de este reel.'
+              : 'El vídeo todavía no tiene los últimos cambios.'}
           </p>
           {canRender && (
             <Button size="sm" onClick={onRender} data-testid="reel-render">

@@ -40,8 +40,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { toast } from 'sonner';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { notify } from './notify';
 import {
   Badge,
   Button,
@@ -82,8 +82,14 @@ import { assetKeys, uploadAsset, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { useWorkMode } from '@/features/orgs/workMode';
 import { useFeature } from '@/features/platform/integrations/useFeature';
-import { socialKeys } from '@/features/social/api';
-import { ScheduleDialog } from '@/features/social/ScheduleDialog';
+import {
+  socialKeys,
+  useContentPublication,
+  useSavePublication,
+  useSocialAccounts,
+} from '@/features/social/api';
+import { PublishNowDialog } from '@/features/social/PublishNowDialog';
+import { useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspaceMode } from '@/layout/workspace';
 import type { ContentItemRow, ContentStatus, ContentVersionRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
@@ -117,7 +123,8 @@ import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, panelTitle, type BarAction } from './ContextBar';
 import { ExportSheet, type PreviousRender } from './ExportSheet';
-import { exportState, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
+import { exportState, renderOfPlan, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
+import { EMPTY_COPY, parseHashtags, PublishedLine, PublishPanel, type PublishInput } from './PublishPanel';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
 import {
@@ -154,6 +161,7 @@ import {
   planTimeline,
   projectProblems,
   ProjectError,
+  REEL_CAPTION_MAX,
   REEL_MAX_CLIPS,
   REEL_MAX_SECONDS,
   type ReelProject,
@@ -171,6 +179,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { fillGuideShot } from '../like/draft';
 import { GuidePanel } from '../like/GuidePanel';
 import { useReelLikeDraft } from '../like/useDraft';
+import { useReelReference } from '../like/api';
+import { parseReelLikeResult } from '../../../../supabase/functions/_shared/reels/like';
 
 const DEFAULT_TEMPLATE_ID = 'fundido-suave';
 const fmt = (n: number) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n);
@@ -339,14 +349,16 @@ function Editor({
   /** Selector de fotos y clips: para añadir o para sustituir un elemento. */
   const [media, setMedia] = useState<{ mode: 'add' } | { mode: 'replace'; id: string } | null>(null);
   const [musicOpen, setMusicOpen] = useState(false);
-  /** Hoja «Exportar» (con la portada desplegada si se abre para arreglarla). */
-  const [exportOpen, setExportOpen] = useState<false | 'open' | 'cover'>(false);
+  /** Hoja «Exportar»: abierta, con la portada desplegada (para arreglarla) o en «Publicar o programar». */
+  const [exportOpen, setExportOpen] = useState<false | 'open' | 'cover' | 'publish'>(false);
+  /** «Publicar ahora» con la cuenta elegida en la hoja (el diálogo que publica y enseña cómo va). */
+  const [publishNow, setPublishNow] = useState<{ accountId: string } | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [confirmRepublish, setConfirmRepublish] = useState(false);
   /** Versión cuyo montaje se acaba de encargar (hasta que el trabajo aparece en la lista). */
   const [requestedVersion, setRequestedVersion] = useState<number | null>(null);
   /** Se ha pulsado «Exportar»: se monta en cuanto se sepa si hace falta (al llegar la lista de montajes). */
   const exportWanted = useRef(false);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [approving, setApproving] = useState(false);
   const [safeZones, setSafeZones] = useState(false);
   const narrow = useNarrow();
   const [busyStatus, setBusyStatus] = useState<ContentStatus | null>(null);
@@ -456,7 +468,30 @@ function Editor({
       setMedia({ mode: 'add' });
     }
   }
+  // ¿Se está esperando a la plantilla pedida en la dirección (`?plantilla=`) para pedir sus fotos?
+  const awaitingTemplate =
+    Boolean(askedTemplate) &&
+    !templateAsked &&
+    brandTemplates.isPending &&
+    !readOnly &&
+    project.plan.clips.length === 0 &&
+    !project.guide;
   const request = useRequestReel(brand.id);
+  const navigate = useNavigate();
+  const accounts = useSocialAccounts(brand.id, exportOpen !== false);
+  const publication = useContentPublication(brand.id, item.id);
+  const savePublication = useSavePublication(brand.id);
+  const captionTask = useTextTask('post.caption');
+  // El pie que propuso «Hacer un reel como este» (si el reel sale de un análisis y todavía no tiene pie).
+  const reference = useReelReference(brand.id, project.copy ? undefined : project.guide?.referenceId);
+  const suggestedCopy = useMemo(() => {
+    const result = parseReelLikeResult(reference.data?.status === 'ready' ? reference.data.result : null);
+    if (!result?.texts.caption.trim()) return null;
+    return {
+      caption: [...result.texts.caption].slice(0, REEL_CAPTION_MAX).join(''),
+      hashtags: parseHashtags(result.texts.hashtags.join(' ')),
+    };
+  }, [reference.data]);
   const saveReel = useSaveReelVersion(brand.id);
   const mutations = useContentMutations(org.id, brand.id);
 
@@ -532,7 +567,7 @@ function Editor({
         : clipIndexAt(timeline, t);
     const clip = project.plan.clips[index];
     if (!clip || !canSplitAt(project, timeline, index, t)) {
-      toast.info('Para dividir, lleva el cabezal dentro del clip, a más de medio segundo de sus extremos.');
+      notify.info('Para dividir, lleva el cabezal dentro del clip, a más de medio segundo de sus extremos.');
       return;
     }
     const secondId = newId('c', takenIds());
@@ -689,7 +724,7 @@ function Editor({
   useEffect(
     () => () => {
       if (leaving.current.announce) {
-        toast.info(`«${leaving.current.title}» queda guardado como borrador: al volver estará como lo has dejado.`);
+        notify.info(`«${leaving.current.title}» queda guardado como borrador: al volver estará como lo has dejado.`);
       }
     },
     [],
@@ -714,10 +749,10 @@ function Editor({
       setStaleDraft(null);
       dispatch({ type: 'commit' });
       setSaveOpen(false);
-      if (announce) toast.success(`Versión ${row.version} guardada.`);
+      if (announce) notify.success(`Versión ${row.version} guardada.`);
       return row.version;
     } catch (error) {
-      toast.error(
+      notify.error(
         isVersionConflict(error)
           ? 'Otra persona ha guardado una versión más reciente. Vuelve a abrir la pieza antes de guardar.'
           : error instanceof ProjectError
@@ -732,9 +767,9 @@ function Editor({
     setBusyStatus(to);
     try {
       await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion });
-      toast.success(statusChangedMessage(to));
+      notify.success(statusChangedMessage(to));
     } catch (error) {
-      toast.error(translateError(error));
+      notify.error(translateError(error));
     } finally {
       setBusyStatus(null);
     }
@@ -754,7 +789,7 @@ function Editor({
           setRequestedVersion(version);
           void queryClient.invalidateQueries({ queryKey: pieceJobKeys(brand.id, item.id) });
         },
-        onError: (error) => toast.error(translateError(error)),
+        onError: (error) => notify.error(translateError(error)),
       },
     );
   }
@@ -764,7 +799,7 @@ function Editor({
     if (problems.length > 0 || rendering) return;
     // Con un archivo borrado no se encarga: el servidor lo rechazaría. Se dice qué pasa y se va a él.
     if (missingText) {
-      toast.error(missingText);
+      notify.error(missingText);
       setExportOpen(false);
       goToMissing();
       return;
@@ -782,9 +817,9 @@ function Editor({
     try {
       await mutations.update.mutateAsync({ contentId: item.id, title });
       setRenameOpen(false);
-      toast.success('Nombre cambiado');
+      notify.success('Nombre cambiado');
     } catch (error) {
-      toast.error(translateError(error));
+      notify.error(translateError(error));
     }
   }
 
@@ -793,11 +828,11 @@ function Editor({
     mutations.archive.mutateAsync({ contentId: item.id, archived }).then(
       () => {
         setConfirmArchive(false);
-        toast.success(archived ? 'Contenido archivado' : 'Contenido recuperado');
+        notify.success(archived ? 'Contenido archivado' : 'Contenido recuperado');
       },
       (error: unknown) => {
         setConfirmArchive(false);
-        toast.error(translateError(error));
+        notify.error(translateError(error));
       },
     );
   }
@@ -816,9 +851,9 @@ function Editor({
         onReopen();
       }
       setHistoryOpen(false);
-      toast.success(`Versión ${versionNumber} restaurada como versión ${row.version}.`);
+      notify.success(`Versión ${versionNumber} restaurada como versión ${row.version}.`);
     } catch (error) {
-      toast.error(translateError(error));
+      notify.error(translateError(error));
     }
   }
 
@@ -870,7 +905,7 @@ function Editor({
         select: { kind: 'clip', id: 'c1' },
       });
       const music = chosen.template.music?.suggestion;
-      toast.success(
+      notify.success(
         `Reel montado con «${chosen.name}». Cambia los textos de muestra por los tuyos.${music ? ` Música que le va: ${music}` : ''}`,
       );
       setStartTemplate(null);
@@ -927,7 +962,7 @@ function Editor({
     setStyleOpen(false);
     seek(0);
     const music = chosen.template.music?.suggestion;
-    toast.success(
+    notify.success(
       `Plantilla «${chosen.name}» aplicada. Cambia los textos de muestra por los tuyos.${music ? ` Música que le va: ${music}` : ''}`,
     );
   };
@@ -936,6 +971,9 @@ function Editor({
   const empty = project.plan.clips.length === 0;
 
   // ── Exportar: en qué punto está el vídeo de lo que se ve ──
+  // El vídeo que vale para lo que se ve: el del mismo montaje, aunque sea de otra versión (cambiar el pie no
+  // pide montar otra vez). Para publicar vale cualquier vídeo de la marca (publication_media_problem).
+  const planRender = useMemo(() => renderOfPlan(jobs.data ?? [], project), [jobs.data, project]);
   const exportNow = exportState({
     empty,
     // Un archivo borrado también impide montar: va primero.
@@ -946,8 +984,9 @@ function Editor({
     rendering,
     renderLabel: versionView?.label,
     dirty,
+    anyRender: (jobs.data ?? []).some((j) => describeJob(j).assetId),
     version: expectedVersion,
-    render,
+    render: planRender,
     failed: versionView?.tone === 'danger' ? { detail: versionView.detail } : null,
   });
   /** «Exportar»: abre la hoja y monta el vídeo si lo que se ve todavía no lo tiene. */
@@ -973,30 +1012,83 @@ function Editor({
   }, [jobsKnown]);
 
   /**
-   * «Publicar o programar»: abre el calendario con esta pieza. En autogestión, antes la aprueba por debajo
-   * (la base de datos solo publica lo aprobado); en modo agencia, el estado lo decide quien revisa.
+   * «Publicar o programar» (desde la hoja «Exportar»): guarda lo que se ve como versión si hace falta (el pie va
+   * en ella), en autogestión la aprueba por debajo (la base de datos solo publica lo aprobado) y después la
+   * programa o la publica ya con el vídeo de este montaje. En modo agencia el estado lo decide quien revisa: lo
+   * que no está aprobado queda en el calendario en espera.
    */
-  async function publishOrSchedule() {
-    if (selfManaged) {
-      setApproving(true);
-      try {
-        for (const to of selfApprovalSteps(item.status)) {
-          await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion });
-        }
-      } catch (error) {
-        toast.error(translateError(error));
-        return;
-      } finally {
-        setApproving(false);
+  async function submitPublish(input: PublishInput) {
+    if (!planRender) return;
+    setPublishing(true);
+    try {
+      let version = expectedVersion;
+      let status = item.status;
+      if (dirty || version === 0) {
+        const saved = await save('Para publicar', false);
+        if (saved === null) return;
+        version = saved;
+        // Una versión nueva vuelve a borrador una idea o una pieza aprobada (save_content_version).
+        if (status === 'idea' || status === 'approved') status = 'draft';
       }
+      if (selfManaged) {
+        for (const to of selfApprovalSteps(status)) {
+          await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion: version });
+          status = to;
+        }
+      }
+      await Promise.all(
+        [
+          socialKeys.contentItem(brand.id, item.id),
+          socialKeys.contentPublication(brand.id, item.id),
+          socialKeys.candidates(brand.id),
+          socialKeys.media(brand.id),
+        ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      );
+      if (input.mode === 'now') {
+        setExportOpen(false);
+        setPublishNow({ accountId: input.accountId });
+        return;
+      }
+      const saved = await savePublication.mutateAsync({
+        publicationId: publication.data && publication.data.status !== 'published' ? publication.data.id : null,
+        contentId: item.id,
+        scheduledAt: input.scheduledAt!,
+        accountId: input.accountId,
+        mediaAssetIds: [planRender],
+        contentVersion: status === 'approved' ? version : null,
+      });
+      void queryClient.invalidateQueries({ queryKey: socialKeys.contentPublication(brand.id, item.id) });
+      setExportOpen(false);
+      notify.success(
+        saved.status === 'scheduled'
+          ? `Programada para el ${formatDateTime(saved.scheduled_at)}.`
+          : `En el calendario para el ${formatDateTime(saved.scheduled_at)}; se programará al aprobarla.`,
+      );
+    } catch (error) {
+      notify.error(translateError(error));
+    } finally {
+      setPublishing(false);
     }
-    // El calendario tiene que ver el estado nuevo y el vídeo recién montado.
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: socialKeys.candidates(brand.id) }),
-      queryClient.invalidateQueries({ queryKey: socialKeys.media(brand.id) }),
-    ]);
-    setExportOpen(false);
-    setScheduleOpen(true);
+  }
+
+  /** «Publicar otra vez» una pieza ya publicada: una copia (la base de datos publica cada pieza una sola vez). */
+  async function republish() {
+    try {
+      const copy = await mutations.duplicate.mutateAsync(item.id);
+      setConfirmRepublish(false);
+      setExportOpen(false);
+      notify.success('Copia hecha: exporta y publica desde aquí.');
+      navigate(paths.item((copy as { id: string }).id));
+    } catch (error) {
+      setConfirmRepublish(false);
+      notify.error(translateError(error));
+    }
+  }
+
+  /** Al abrir «Publicar o programar» sin pie, el que propuso «Hacer un reel como este», si lo hay. */
+  function openPublish() {
+    if (!project.copy && suggestedCopy && !readOnly) apply((p) => ({ ...p, copy: suggestedCopy }));
+    setExportOpen('publish');
   }
 
   const previousRenders: PreviousRender[] = (jobs.data ?? []).map((job) => {
@@ -1018,6 +1110,13 @@ function Editor({
       : selfManaged && !canApprove
         ? 'Tu papel en la marca no deja publicar: pídeselo a quien la gestiona.'
         : undefined;
+  const published = publication.data?.status === 'published' ? publication.data : null;
+  const scheduled = publication.data && publication.data.status !== 'published' ? publication.data : null;
+  // En modo agencia, «Publicar ahora» solo con la pieza aprobada y sin cambios (lo demás queda en espera).
+  const nowBlocked =
+    !selfManaged && (item.status !== 'approved' || dirty)
+      ? 'Para publicarla ya tiene que estar aprobada, sin cambios después. Puedes programarla: saldrá al aprobarla.'
+      : undefined;
 
   // ── Aprobación (solo en modo agencia): el siguiente paso, en «Exportar»; los demás, en «⋯» ──
   const primary = selfManaged
@@ -1219,12 +1318,17 @@ function Editor({
           {item.title}
         </h1>
         {/* En modo agencia, el estado de la pieza (en autogestión no hay aprobación a la vista). */}
-        {!selfManaged && (
+        {!selfManaged && !published && (
           <Badge tone={STATUS_TONE[item.status]} className="shrink-0 max-sm:hidden">
             <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
           </Badge>
         )}
         {item.archived_at && <Badge tone="warning">Archivado</Badge>}
+        {published && (
+          <Badge tone="success" className="shrink-0">
+            <span data-testid="reel-published-badge">Publicada</span>
+          </Badge>
+        )}
         {autosaveText && (
           <span
             className={cn(
@@ -1394,7 +1498,14 @@ function Editor({
               onSelectClip={(id) => select({ kind: 'clip', id })}
             />
           )}
-          {!readOnly && !project.guide && (
+          {/* «Nuevo reel → Desde una plantilla»: mientras llegan las plantillas de la marca no se enseña la
+              galería otra vez; en cuanto llegan se piden las fotos de la elegida. */}
+          {awaitingTemplate && (
+            <div role="status" aria-label="Preparando la plantilla" data-testid="reel-template-loading">
+              <Skeleton className="h-64 w-full" />
+            </div>
+          )}
+          {!readOnly && !project.guide && !awaitingTemplate && !(startTemplate && media) && (
             <Starter
               templates={REEL_TEMPLATES}
               templateId={template.id}
@@ -1780,6 +1891,7 @@ function Editor({
       <ExportSheet
         open={exportOpen !== false}
         onOpenChange={(open) => setExportOpen(open ? 'open' : false)}
+        title={exportOpen === 'publish' ? 'Publicar o programar' : 'Exportar'}
         key={exportOpen === 'cover' ? 'cover' : 'sheet'}
         coverOpen={exportOpen === 'cover'}
         brandId={brand.id}
@@ -1796,12 +1908,47 @@ function Editor({
         }
         libraryPathOf={(assetId) => `/o/${org.id}/m/${brand.id}/biblioteca?recurso=${assetId}`}
         warnings={warnings}
-        publish={{
-          disabled: Boolean(publishHint),
-          hint: publishHint,
-          busy: approving,
-          onPublish: () => void publishOrSchedule(),
-        }}
+        publish={
+          published
+            ? {
+                label: 'Publicar otra vez',
+                detail: 'Saldrá repetido en Instagram: se hace una copia del reel.',
+                disabled: Boolean(publishHint),
+                hint: publishHint,
+                busy: mutations.duplicate.isPending,
+                onPublish: () => setConfirmRepublish(true),
+              }
+            : {
+                detail: scheduled ? `Programada para el ${formatDateTime(scheduled.scheduled_at)}.` : undefined,
+                disabled: Boolean(publishHint),
+                hint: publishHint,
+                busy: false,
+                onPublish: openPublish,
+              }
+        }
+        published={published ? <PublishedLine publication={published} /> : undefined}
+        publishView={
+          exportOpen === 'publish' && planRender ? (
+            <PublishPanel
+              brandId={brand.id}
+              network={item.network}
+              format={item.format}
+              copy={project.copy ?? EMPTY_COPY}
+              onCopy={(copy) => apply((p) => ({ ...p, copy }), 'copy')}
+              readOnly={readOnly}
+              captionAi={captionTask && brand.ai_mode !== 'agency'}
+              accounts={accounts.data}
+              accountsPath={`/o/${org.id}/m/${brand.id}/marca?seccion=datos`}
+              publication={publication.data ?? null}
+              blocked={publishHint}
+              nowBlocked={nowBlocked}
+              approval={approval}
+              busy={publishing}
+              onSubmit={(input) => void submitPublish(input)}
+            />
+          ) : undefined
+        }
+        onBack={() => setExportOpen('open')}
         approval={approval}
         cover={
           <CoverSection
@@ -1817,14 +1964,31 @@ function Editor({
         }
         previous={previousRenders}
       />
-      {scheduleOpen && (
-        <ScheduleDialog
+      {publishNow && planRender && (
+        <PublishNowDialog
           brandId={brand.id}
-          open={scheduleOpen}
-          onOpenChange={setScheduleOpen}
-          initialContentId={item.id}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setPublishNow(null);
+              void queryClient.invalidateQueries({ queryKey: socialKeys.contentPublication(brand.id, item.id) });
+            }
+          }}
+          contentId={item.id}
+          accountId={publishNow.accountId}
+          assetIds={[planRender]}
+          editorPath={paths.item(item.id)}
         />
       )}
+      <ConfirmDialog
+        open={confirmRepublish}
+        onOpenChange={setConfirmRepublish}
+        title="¿Publicar otra vez?"
+        description="Este reel ya está publicado. Se hace una copia para publicarla: en Instagram saldrá dos veces."
+        confirmLabel="Hacer una copia"
+        loading={mutations.duplicate.isPending}
+        onConfirm={() => void republish()}
+      />
     </div>
   );
 }
@@ -1903,7 +2067,7 @@ function MusicPicker({
   const upload = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('audio/')) {
-      toast.error('Elige un archivo de audio (MP3, M4A o WAV).');
+      notify.error('Elige un archivo de audio (MP3, M4A o WAV).');
       return;
     }
     setUploading(true);
@@ -1920,9 +2084,9 @@ function MusicPicker({
       setChoice(row.id);
       void queryClient.invalidateQueries({ queryKey: reelKeys.sources(brandId) });
       void queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
-      toast.success(`«${row.file_name}» está en la biblioteca. Confirma la licencia para usarla.`);
+      notify.success(`«${row.file_name}» está en la biblioteca. Confirma la licencia para usarla.`);
     } catch (error) {
-      toast.error(translateError(error));
+      notify.error(translateError(error));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
