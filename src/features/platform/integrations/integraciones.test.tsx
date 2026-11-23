@@ -1025,7 +1025,7 @@ describe('interruptores: compilación Y servidor', () => {
       body: { ...ALL_AVAILABLE, aiText: false, aiTextTasks: NO_TEXT_TASKS },
     }));
     renderApp(`${BRAND_BASE}/campanas`);
-    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/inicio`));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario`));
     expect(screen.queryByRole('link', { name: /Campañas/ })).not.toBeInTheDocument();
   });
 
@@ -1037,7 +1037,7 @@ describe('interruptores: compilación Y servidor', () => {
       body: { ...ALL_AVAILABLE, aiText: true, aiTextTasks: { ...NO_TEXT_TASKS, 'editor.copilot': true } },
     }));
     renderApp(`${BRAND_BASE}/campanas`);
-    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/inicio`));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario`));
     expect(screen.queryByRole('link', { name: /Campañas/ })).not.toBeInTheDocument();
   });
 

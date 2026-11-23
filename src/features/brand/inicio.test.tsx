@@ -69,27 +69,25 @@ afterEach(() => {
 });
 
 describe('Inicio de la marca', () => {
-  it('ofrece cuatro accesos grandes y «Nuevo reel» abre «Nueva idea» con el reel elegido', async () => {
+  it('no repite los accesos de crear: están en «＋ Crear» del menú', async () => {
     seed();
     const { user } = renderApp(`${BRAND_BASE}/inicio`);
-    const tiles = await screen.findByTestId('home-tiles');
-    expect(within(tiles).getByTestId('home-new-post')).toHaveTextContent('Nueva publicación');
-    expect(within(tiles).getByTestId('home-new-reel')).toHaveTextContent('Nuevo reel');
-    expect(within(tiles).getByTestId('home-upload')).toHaveTextContent('Subir fotos');
+    await screen.findAllByTestId('home-day');
+    expect(screen.queryByTestId('home-tiles')).toBeNull();
     // «Hacer un reel como este» solo sale si el servidor puede (aquí no está activado).
-    expect(within(tiles).queryByTestId('home-reel-like')).toBeNull();
-
-    await user.click(within(tiles).getByTestId('home-new-reel'));
+    await user.click(await screen.findByTestId('create-menu'));
+    expect(screen.queryByTestId('create-menu-reel-like')).toBeNull();
+    await user.click(await screen.findByTestId('create-menu-reel'));
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByTestId('create-content-format-reel').querySelector('input')).toBeChecked();
   });
 
-  it('quien solo mira no ve accesos para crear', async () => {
+  it('quien solo mira no tiene «＋ Crear»', async () => {
     seed({ orgRole: 'member', brandRole: 'viewer' });
     renderApp(`${BRAND_BASE}/inicio`);
-    const tiles = await screen.findByTestId('home-tiles');
-    expect(within(tiles).queryByTestId('home-new-post')).toBeNull();
-    expect(within(tiles).getByTestId('home-upload')).toHaveTextContent('Ver la biblioteca');
+    await screen.findAllByTestId('home-day');
+    expect(screen.queryByTestId('create-menu')).toBeNull();
+    expect(screen.queryByTestId('home-tiles')).toBeNull();
   });
 
   it('la semana enseña la pieza programada y, sin nada, lo dice en una frase', async () => {

@@ -132,8 +132,13 @@ describe('Barra inferior del móvil', () => {
   async function mobileNav() {
     return within(await screen.findByTestId('mobile-nav'));
   }
+  // El avatar de la cabecera del móvil es el segundo menú de la cuenta (el primero, el del menú lateral).
+  async function openAvatarMenu(user: ReturnType<typeof renderApp>['user']) {
+    await user.click((await screen.findAllByTestId('user-menu'))[1]!);
+    return within(await screen.findByRole('menu'));
+  }
 
-  it('deja 4 secciones fijas y «Más» con el resto', async () => {
+  it('Inicio, Contenidos, «＋» en medio, Calendario y Biblioteca; nada de «Más»', async () => {
     seedWorkspace({ orgRole: 'owner' });
     renderApp(`${BRAND_BASE}/inicio`);
     const nav = await mobileNav();
@@ -143,33 +148,33 @@ describe('Barra inferior del móvil', () => {
       'Calendario',
       'Biblioteca',
     ]);
-    const more = nav.getByRole('button', { name: 'Más' });
-    expect(more).toHaveAttribute('aria-haspopup', 'dialog');
+    // El «＋ Crear» va entre Contenidos y Calendario.
+    const slots = [...(await screen.findByTestId('mobile-nav')).children];
+    expect(slots).toHaveLength(5);
+    expect(within(slots[2] as HTMLElement).getByTestId('create-menu-mobile')).toHaveAccessibleName('Crear');
+    expect(nav.queryByRole('button', { name: 'Más' })).not.toBeInTheDocument();
     expect(nav.getByRole('link', { name: 'Inicio' })).toHaveAttribute('aria-current', 'page');
-    expect(more).toHaveAttribute('data-active', 'false');
   });
 
-  it('«Más» abre una hoja con el resto y lleva a la sección elegida', async () => {
+  it('el avatar lleva Resultados y los ajustes, y abre la sección elegida', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(`${BRAND_BASE}/inicio`);
-    const nav = await mobileNav();
-    await user.click(nav.getByRole('button', { name: 'Más' }));
-
-    const sheet = within(await screen.findByTestId('mobile-more-sheet'));
-    expect(sheet.getAllByRole('link').map((link) => link.textContent)).toEqual([
-      'Analítica',
-      'Marca',
-      'Equipo',
-      'Configuración',
-    ]);
-    await user.click(sheet.getByRole('link', { name: 'Equipo' }));
+    const menu = await openAvatarMenu(user);
+    const names = menu.getAllByRole('menuitem').map((item) => item.textContent);
+    expect(names.slice(0, 4)).toEqual(['Resultados', 'Marca', 'Equipo', 'Configuración']);
+    await user.click(menu.getByRole('menuitem', { name: 'Equipo' }));
     await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/equipo`));
-    await waitFor(() => expect(screen.queryByTestId('mobile-more-sheet')).not.toBeInTheDocument());
-    // La sección está dentro de «Más»: es «Más» la que queda marcada.
-    expect((await mobileNav()).getByRole('button', { name: 'Más' })).toHaveAttribute('data-active', 'true');
   });
 
-  it('con modo agencia, Encargos va en «Más» y su insignia se ve en el botón', async () => {
+  it('quien solo mira no tiene «＋» y le quedan las cuatro secciones', async () => {
+    seedWorkspace({ orgRole: 'member', brandRole: 'viewer' });
+    renderApp(`${BRAND_BASE}/inicio`);
+    const nav = await mobileNav();
+    expect(nav.getAllByRole('link')).toHaveLength(4);
+    expect(nav.queryByTestId('create-menu-mobile')).not.toBeInTheDocument();
+  });
+
+  it('con modo agencia, Encargos va en el avatar y su insignia se ve en él', async () => {
     seedWorkspace({ orgRole: 'owner', brands: [brandRow({ ai_mode: 'agency' })] });
     const { fake } = await import('@/test/fakeSupabase');
     fake.tables.request_notifications = [
@@ -187,43 +192,38 @@ describe('Barra inferior del móvil', () => {
     const { user } = renderApp(`${BRAND_BASE}/inicio`);
     const nav = await mobileNav();
     expect(nav.queryByRole('link', { name: /Encargos/ })).not.toBeInTheDocument();
-    await waitFor(() => expect(nav.getByTestId('nav-badge')).toHaveTextContent('1'));
-    await user.click(nav.getByRole('button', { name: /Más/ }));
-    const sheet = within(await screen.findByTestId('mobile-more-sheet'));
-    expect(sheet.getByRole('link', { name: /Encargos/ })).toBeInTheDocument();
+    const avatar = (await screen.findAllByTestId('user-menu'))[1]!;
+    await waitFor(() => expect(within(avatar).getByTestId('nav-badge')).toHaveTextContent('1'));
+    const menu = await openAvatarMenu(user);
+    expect(menu.getByRole('menuitem', { name: /Encargos/ })).toBeInTheDocument();
   });
 
-  it('sin marca, caben todas y no hace falta «Más»', async () => {
+  it('sin marca, solo «Marcas» y sin «＋»', async () => {
     seedWorkspace({ orgRole: 'owner' });
     renderApp(BASE);
     const nav = await mobileNav();
-    expect(nav.getAllByRole('link').map((link) => link.textContent)).toEqual(['Marcas', 'Configuración']);
-    expect(nav.queryByRole('button', { name: 'Más' })).not.toBeInTheDocument();
+    expect(nav.getAllByRole('link').map((link) => link.textContent)).toEqual(['Marcas']);
+    expect(nav.queryByTestId('create-menu-mobile')).not.toBeInTheDocument();
   });
 });
 
 describe('Configuración sin perder la marca', () => {
-  it('mantiene la última marca en el menú y marca Configuración como activa', async () => {
+  it('mantiene la última marca en el menú y Configuración sale marcada en el menú de la cuenta', async () => {
     seedWorkspace({ orgRole: 'owner' });
     window.localStorage.setItem(
       lastSelectionKey(ME.id),
       JSON.stringify({ orgId: ORG_ID, brandByOrg: { [ORG_ID]: BRAND_ID } }),
     );
-    renderApp(`${BASE}/ajustes/general`);
+    const { user } = renderApp(`${BASE}/ajustes/general`);
 
     const navs = await screen.findAllByRole('navigation', { name: 'Principal' });
     const side = within(navs[0]!);
-    await waitFor(() =>
-      expect(side.getByRole('link', { name: 'Configuración' })).toHaveAttribute('aria-current', 'page'),
-    );
-    expect(side.getByRole('link', { name: 'Inicio' })).toHaveAttribute('href', `${BRAND_BASE}/inicio`);
+    await waitFor(() => expect(side.getByRole('link', { name: 'Inicio' })).toHaveAttribute('href', `${BRAND_BASE}/inicio`));
     expect(side.getByRole('link', { name: 'Inicio' })).not.toHaveAttribute('aria-current');
     expect(screen.getAllByTestId('brand-switcher')[0]).toHaveAccessibleName('Marca: Casa Demo. Cambiar');
-    // En el móvil, Configuración está dentro de «Más», que queda marcada.
-    expect(within(screen.getByTestId('mobile-nav')).getByRole('button', { name: 'Más' })).toHaveAttribute(
-      'data-active',
-      'true',
-    );
+    await user.click(screen.getAllByTestId('user-menu')[0]!);
+    const menu = within(await screen.findByRole('menu'));
+    expect(menu.getByRole('menuitem', { name: /Configuración/ })).toHaveTextContent('(estás aquí)');
   });
 
   it('sin marca recordada, el menú sigue siendo el de la organización', async () => {
@@ -235,7 +235,7 @@ describe('Configuración sin perder la marca', () => {
         within(navs[0]!)
           .getAllByRole('link')
           .map((link) => link.textContent),
-      ).toEqual(['Marcas', 'Configuración']),
+      ).toEqual(['Marcas']),
     );
   });
 });

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// «Editar foto → Fondo con IA» en un navegador real, sin Supabase (banco de tests/layout/fotos-ia.tsx):
+// «Editar foto → Fondo → Cambiar con IA» en un navegador real, sin Supabase (banco de tests/layout/fotos-ia.tsx):
 // que el resultado se vea en la vista previa con «Antes / Después», que los botones de decidir se puedan
 // tocar con el dedo, que nada se salga de 375 px y que «Probar otra vez» deje un segundo intento con su coste.
 
@@ -35,7 +35,8 @@ for (const size of SIZES) {
       await page.getByTestId('asset-edit-photo').click();
       const screen = page.getByTestId('photo-edit');
       await expect(screen.getByTestId('photo-edit-preview')).toBeVisible();
-      await screen.getByRole('tab', { name: 'Fondo con IA' }).click();
+      await screen.getByRole('tab', { name: 'Fondo', exact: true }).click();
+      await screen.getByRole('radio', { name: 'Cambiar con IA' }).click();
       const panel = screen.getByTestId('photo-edit-ai-replace_background');
       // La foto ya viene sin fondo: no se vuelve a recortar.
       await expect(panel).toContainText('no se vuelve a recortar');

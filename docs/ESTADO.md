@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -14,7 +14,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | --- | --- | --- | --- | --- |
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
-| Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
+| Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
 | Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
@@ -618,6 +618,20 @@ bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto
 - **Plantillas de la marca:** Marca → Identidad visual → «Plantillas de la marca»: lista con miniatura, origen (Importada, Manual, Del editor), renombrar, duplicar y borrar. Migración `20261220010000` (`rename_design_template`, `duplicate_design_template`, tope de 50 del editor) con vuelta atrás y pruebas de permisos.
 - **Guías y zonas seguras:** con varias capas se ajusta la caja conjunta a los bordes y centros del lienzo y de las capas que no se mueven (`snapGroup`). Las publicaciones de Instagram en 1:1 y 4:5 enseñan la franja que recorta la rejilla 3:4 del perfil (12,5 % por lado en 1:1; 3,1 % en 4:5): **cálculo propio, orientativo, sin cifra publicada** (el catálogo lo marca como tal).
 - **Sin probar:** nada a mano en un navegador real (pincel con teclado, arrastre de varias capas con las guías, miniaturas de la lista de plantillas a 375 px); el worker real del guardado (en las pruebas es un doble); la migración en staging.
+
+### Menú de 5 secciones con «＋ Crear» (rama `f50/menu-simple`, 23/11/2026)
+
+Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa/simplificacion/`).
+
+- **Menú lateral:** selector de marca (el único, como antes), botón **«＋ Crear»** y cinco secciones: Inicio, Contenidos, Calendario, Biblioteca y **Resultados** (antes «Analítica»; la ruta sigue siendo `/analitica`). Con la marca en modo agencia se añade Encargos. Antes: 8 entradas (9 con Campañas y 10 en agencia), sin botón de crear.
+- **«＋ Crear»** (`src/layout/CreateMenu.tsx`): Publicación, Carrusel, Reel, Historia (abren la ventana «Nueva idea» de siempre con ese formato), «Hacer un reel como este» (si el servidor puede), Subir fotos (Biblioteca) y «Preparar un plan con IA» / «Pedir un plan a la agencia» (Calendario → Campañas con la ventana abierta, `?nuevo=1`). Cada entrada sale según los permisos de siempre; quien solo mira no tiene el botón. `CreateContentDialog` no se ha tocado.
+- **Menú de la cuenta** (abajo a la izquierda; el avatar en móvil): Marca, Equipo, Configuración y, para quien administra la plataforma, Integraciones y Plataforma; luego apariencia, «Mi cuenta y privacidad» y cerrar sesión. En móvil lleva además Resultados (y Encargos con su insignia, que también sale en el avatar).
+- **Móvil:** barra inferior Inicio, Contenidos, «＋», Calendario y Biblioteca; ya no hay hoja «Más».
+- **Campañas dentro de Calendario:** pestañas «Calendario · Campañas» en la cabecera de las dos vistas (solo si hay forma de preparar un plan). Rutas nuevas `calendario/campanas` y `calendario/campanas/:id`; **`/campanas` y `/campanas/:id` redirigen** (con su `?…` y `#…`). `/marca`, `/equipo`, `/ajustes/*` y `/plataforma/*` no cambian. Sin IA de texto ni agencia, la lista vuelve al calendario (antes, al inicio).
+- **Una sola forma de crear:** el Inicio ya no repite las cuatro tarjetas de crear (Nueva publicación, Nuevo reel, Reel como este, Subir fotos).
+- **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
+- **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
+- **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
 
 ## Sin probar contra el servicio real
 
@@ -1268,7 +1282,7 @@ De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de 
     pero no quedan anotadas).
   - Textos con «cupo» o «plan» que quedan en autogestión porque viven en zonas que no se tocaron en
     esta rama: editor de reels («Cuenta en el cupo de IA…»), «Hacer un reel como este» (su página),
-    «Editar foto» («se descuenta del cupo…»), copiloto, importar publicaciones («Ocupan espacio de
+    copiloto (el de «Editar foto» se quitó en `f51/editar-foto-simple`), importar publicaciones («Ocupan espacio de
     tu plan») y el aviso «Cambiar de plan» del calendario (lleva a una pestaña que en autogestión ya
     no existe y vuelve a General).
   - El criterio de «uso interno» de Plataforma mira las organizaciones de quien abre la pantalla, no
@@ -1351,3 +1365,27 @@ diseñadas con fotos.
 - **Sin probar**: arrastrar archivos de verdad desde el escritorio (solo con eventos simulados y en
   Chromium sin archivo real); la imagen con IA real (solo con `ai-media` simulada); la migración en
   staging; un móvil de verdad.
+
+## «Editar foto» en tres pestañas (rama `f51/editar-foto-simple`, 23/11/2026)
+
+Cambio «"Editar foto" en 3 pestañas» de la propuesta de simplificación aceptada por el dueño
+(`rrss-recursos-comparativa/simplificacion/`, F1, F2, F3, F6 y F7). Solo `src/features/photo-edit/`;
+sin tocar el recorte ni el servidor. Detalle en `docs/edicion-fotos.md` §15.
+
+- **Implementado.** Tres pestañas: **Ajustar** (automático + intensidad; Luz, Contraste, Color y
+  Calidez a la vista; el resto en «Más ajustes»), **Recortar** (Entera, 1:1, 4:5, 9:16, siempre con
+  encuadre inteligente; «Ampliar con IA» debajo) y **Fondo** (Quitar, Desenfocar, Cambiar con IA). Cada
+  acción en un solo sitio: el encuadre sale de Ajustar, «Deshacer cambios» lo hace «Cancelar», la
+  casilla de encuadre centrado desaparece. Ajustar y Recortar se guardan en una sola copia.
+  **«Mejorar con IA» oculto** (`HIDDEN_AI_OPERATIONS`; el código y la tarea del servidor se quedan).
+  Párrafos largos → una línea con «Más información»; el aviso de fuera de la UE y el coste máximo,
+  siempre a la vista antes de gastar. En autogestión el coste ya no habla del cupo. Móvil: pestañas
+  arriba, foto en medio, ajustes en hoja baja (≤ 45 %) que se oculta; sin scroll de página.
+- **Probado.** `npm test` (componentes de `editarFoto.test.tsx` adaptados y 6 casos nuevos),
+  `test:layout` (`editar-foto-pestanas.spec.ts` a 375 y 1366 px; `fotos-ia.spec.ts` por el camino nuevo).
+- **Sin probar.** A mano en un navegador o un móvil reales; la e2e 26 (ajustada a «Fondo → Cambiar con
+  IA» y a «Usar esta») no se ha ejecutado.
+- **Pendiente / para decidir.** De la propuesta quedan fuera «Cancelar» y «Listo» (F5), el formato
+  «libre» (F4) y lo repetido del panel del editor de piezas (P3). «Ampliar con IA» sigue ofreciéndose
+  (en Recortar): si «la IA solo crea fondos» vale también para él, se oculta añadiéndolo a
+  `HIDDEN_AI_OPERATIONS`.

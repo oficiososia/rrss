@@ -14,6 +14,7 @@ import {
 import { contentPaths } from '@/features/content/labels';
 import { networkLabel } from '@/features/content/labels';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { useWorkspaceMode } from '@/layout/workspace';
@@ -33,7 +34,6 @@ import {
   DISPLAY_STATES,
   dayKey,
   displayState,
-  HOLD_REASON_TEXT,
   isEditable,
   isPast,
   moveToDay,
@@ -57,7 +57,15 @@ import { formatLabel } from './formatLabel';
 import { CalendarQuickView } from './CalendarQuickView';
 import { CalendarTray } from './CalendarTray';
 import { AgendaView, DayPanel, MonthView, PlanStrip, WeekView, type ViewCommon } from './CalendarViews';
-import { activeAccountOf, heldCountText, holdAdvice, type HoldAdvice } from './holdAdvice';
+import {
+  activeAccountOf,
+  heldCountText,
+  holdAdvice,
+  holdReasonText,
+  selfManagedAdvice,
+  type HoldAdvice,
+} from './holdAdvice';
+import { CalendarTabs } from './CalendarTabs';
 import { connectedAccountsPath, exportPath, planPath } from './links';
 import { PublicationDialog } from './PublicationDialog';
 import { useEntryThumbs } from './previewData';
@@ -69,9 +77,13 @@ import { differsFromDevice, fromZoned, nowInZone, toZoned, zoneLabel } from './z
 import { useFeature } from '@/features/platform/integrations/useFeature';
 
 /** Motivo en una frase y botón que lo arregla, para una publicación detenida (o null si no lo está). */
-function entryAdvice(e: CalendarEntry, accounts: SocialAccountRow[] | undefined): HoldAdvice | null {
+function entryAdvice(
+  e: CalendarEntry,
+  accounts: SocialAccountRow[] | undefined,
+  selfManaged: boolean,
+): HoldAdvice | null {
   return e.status === 'planned' && e.hold_reason && displayState(e, e.content?.status ?? null) === 'held'
-    ? holdAdvice(e.hold_reason, activeAccountOf(accounts, e.network))
+    ? selfManagedAdvice(holdAdvice(e.hold_reason, activeAccountOf(accounts, e.network)), selfManaged)
     : null;
 }
 
@@ -128,6 +140,7 @@ export function CalendarPage() {
   const canEdit = can('edit');
   const canApprove = can('approve');
   const publishing = useFeature('publishing');
+  const { selfManaged } = useWorkMode();
 
   const [view, setView] = useCalendarView();
   const zone = useBrandZone();
@@ -218,12 +231,12 @@ export function CalendarPage() {
       ? today
       : range.days.find((d) => d.getDate() === 1) ?? range.days[0]!;
 
-  const adviceFor = (e: CalendarEntry) => entryAdvice(e, accounts.data);
+  const adviceFor = (e: CalendarEntry) => entryAdvice(e, accounts.data, selfManaged);
   // Un aviso por motivo encima del calendario, con cuántas hay en estas fechas.
   const heldGroups = useMemo(() => {
     const groups = new Map<string, { advice: HoldAdvice; reason: string; entries: CalendarEntry[] }>();
     for (const e of calendar.data ?? []) {
-      const advice = entryAdvice(e, accounts.data);
+      const advice = entryAdvice(e, accounts.data, selfManaged);
       if (!advice || !e.hold_reason) continue;
       const key = `${advice.fix}:${advice.short}`;
       const group = groups.get(key) ?? { advice, reason: e.hold_reason, entries: [] };
@@ -231,7 +244,7 @@ export function CalendarPage() {
       groups.set(key, group);
     }
     return [...groups.values()];
-  }, [calendar.data, accounts.data]);
+  }, [calendar.data, accounts.data, selfManaged]);
 
   /** Volver a guardar las publicaciones con la cuenta conectada (las que se detuvieron por no tenerla). */
   const chooseAccount = async (list: CalendarEntry[]) => {
@@ -269,7 +282,8 @@ export function CalendarPage() {
           </LinkButton>
         );
       case 'change_plan':
-        return isAdmin ? (
+        // En autogestión no se llega aquí (selfManagedAdvice lo cambia por 'none').
+        return isAdmin && !selfManaged ? (
           <LinkButton to={planPath(org.id)} data-testid={testId}>
             {advice.label}
           </LinkButton>
@@ -464,6 +478,7 @@ export function CalendarPage() {
             : null,
         ]}
         moreTestId="calendar-more"
+        meta={<CalendarTabs />}
       />
 
       <div className="max-h-[24dvh] space-y-2 overflow-y-auto empty:hidden">
@@ -477,7 +492,7 @@ export function CalendarPage() {
                 key={`${advice.fix}:${advice.short}`}
                 title={`${heldCountText(list.length)}: ${advice.short.charAt(0).toLowerCase()}${advice.short.slice(1)}`}
                 action={fixButton(advice, list, `calendar-held-fix-${reason}`)}
-                why={HOLD_REASON_TEXT[reason as keyof typeof HOLD_REASON_TEXT]}
+                why={holdReasonText(reason as Parameters<typeof holdReasonText>[0], selfManaged)}
                 data-testid={`calendar-held-${reason}`}
               />
             ))}
