@@ -870,6 +870,13 @@ Tres fallos que salieron al montar y publicar una historia de verdad con la plan
   deshacer, con aviso «Hemos puesto la versión del logotipo que se ve…», y cada capa se mira una vez por sesión. Si la
   marca solo tiene una variante y no contrasta, sale el aviso «El logotipo apenas se ve sobre este fondo» (no se tiñe
   el logotipo: haría falta un campo nuevo en el documento, la exportación y el trabajador).
+- **Logotipo del cierre de los reels** (`reelLogoPath`, `reels/quality.ts`). Antes: el primer logotipo PNG, JPEG o
+  WebP del perfil, aunque fuera el oscuro, sobre el fondo oscurecido del cierre. Ahora la misma regla de contraste
+  con el fondo como oscuro: con la luminancia medida (parámetro opcional `tones`), la variante que llega a 3:1; sin
+  medir, la que su nombre de archivo, su ruta o sus etiquetas dicen clara («claro», «blanco», «white», «negativo»…).
+  **Hoy ningún llamador pasa `tones`** (`reels/editor/ReelEditor.tsx` y `campaigns/api.ts`, fuera de esta rama):
+  solo actúa el nombre; si el logotipo claro de la marca no lo dice, sigue saliendo el primero. Para medirlo de
+  verdad, esos dos llamadores tendrían que cargar las imágenes como hace `useLogoContrast.tsx`.
 - **Doble clic en un texto.** Antes: había que elegir el texto y pulsar «Escribir». Causa: Konva solo da su doble clic
   si ninguna pulsación se mueve 3 px (si se mueve, arrastra) y la mano casi siempre se mueve algo. Ahora el lienzo
   escucha el doble clic del navegador y busca la capa bajo el puntero (`canvas/scene.ts`); el doble toque táctil sigue
@@ -878,7 +885,8 @@ Tres fallos que salieron al montar y publicar una historia de verdad con la plan
 - **Plantillas de la marca en el móvil.** Antes: a 402 px el nombre salía partido («Dos / tapas») junto a Renombrar,
   Duplicar y Borrar. Ahora, por debajo de `sm`, la miniatura y el nombre van arriba y las acciones en «⋯»
   (`BrandTemplatesCard.tsx`); en el ordenador siguen a la vista.
-- **Probado:** unitarias (`logoContrast.test.ts`: claro sobre oscuro con la «Tapa del día» del catálogo, oscuro sobre
+- **Probado:** unitarias (`logoCierre.test.ts`: cierre con luminancia medida, por nombre, ruta y etiquetas;
+  `logoContrast.test.ts`: claro sobre oscuro con la «Tapa del día» del catálogo, oscuro sobre
   claro, una sola variante, foto detrás), componentes (`plantillasMarca.test.tsx`: el menú «⋯») y `test:layout` en
   Chromium real: `editor-logotipo.spec.ts` (cambio al abrir, Ctrl+Z y aviso), `editor-doble-clic.spec.ts` (doble
   clic con el temblor de la mano, a 1366 y 402 px, fallaba antes del arreglo) y `plantillas-marca.spec.ts` (375, 402
