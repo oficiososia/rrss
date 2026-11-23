@@ -93,11 +93,12 @@ test.afterAll(async () => {
   }
 });
 
-test('la sección Campañas está en el menú de la marca (IA de texto activa)', async ({ browser }) => {
+test('Campañas está dentro de Calendario (IA de texto activa)', async ({ browser }) => {
   const s = await abrir(browser, 'bruno');
   await s.page.goto(`${marca()}/inicio`);
-  await s.page.getByRole('link', { name: 'Campañas' }).first().click();
-  await expect(s.page).toHaveURL(/\/campanas$/);
+  await s.page.getByTestId('nav-calendario').click();
+  await s.page.getByTestId('calendar-tab-campaigns').click();
+  await expect(s.page).toHaveURL(/\/calendario\/campanas$/);
   await expect(s.page.getByRole('heading', { level: 1, name: 'Campañas' })).toBeVisible();
   sinErrores(s);
   await s.context.close();

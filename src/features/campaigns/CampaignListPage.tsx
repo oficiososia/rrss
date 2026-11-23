@@ -1,6 +1,6 @@
 import { CalendarDays, Megaphone, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Skeleton, Spinner } from '@/components/ui';
 import { useSources } from '@/features/brand/api';
 import { networkLabel } from '@/features/content/labels';
@@ -13,8 +13,12 @@ import { shortDay } from './plan';
 import { PiecePreview } from './PiecePreview';
 import { usePiecePreviews, type PreviewRequest } from './previews';
 import { useTextTaskStatus } from '@/features/platform/integrations/useFeature';
+import { CalendarTabs } from '@/features/social/CalendarTabs';
 
-/** Campañas de la marca: pedir un plan y ver en qué punto está cada uno. */
+/**
+ * Campañas de la marca (una vista del Calendario): pedir un plan y ver en qué punto está cada uno.
+ * Con `?nuevo=1` (desde «＋ Crear») se abre directamente la ventana de pedir el plan.
+ */
 export function CampaignListPage() {
   const { org } = useOrg();
   const { brand } = useBrand();
@@ -22,7 +26,7 @@ export function CampaignListPage() {
   // Con la marca en modo agencia no hace falta esperar al servidor.
   if (aiText === undefined && brand.ai_mode !== 'agency') return <Spinner />;
   const available = campaignsAvailable(brand, aiText === true);
-  if (!available) return <Navigate to={`/o/${org.id}/m/${brand.id}/inicio`} replace />;
+  if (!available) return <Navigate to={`/o/${org.id}/m/${brand.id}/calendario`} replace />;
   return <CampaignList />;
 }
 
@@ -35,7 +39,17 @@ function CampaignList() {
   const campaigns = useCampaigns(brand.id);
   const sources = useSources(brand.id);
   const textSources = (sources.data ?? []).filter((s) => s.kind === 'text' && s.storage_path !== null).length;
-  const [creating, setCreating] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const [creating, setCreatingState] = useState(() => canAsk && params.get('nuevo') === '1');
+  // Al cerrar la ventana se quita `?nuevo=1`, para que recargar no la vuelva a abrir.
+  const setCreating = (open: boolean) => {
+    setCreatingState(open);
+    if (!open && params.has('nuevo')) {
+      const next = new URLSearchParams(params);
+      next.delete('nuevo');
+      setParams(next, { replace: true });
+    }
+  };
   const rows = campaigns.data ?? [];
 
   const newButton = canAsk && (
@@ -55,6 +69,7 @@ function CampaignList() {
             : 'La agencia prepara el plan; al aceptarlo, sus piezas se crean como borradores.'
         }
         action={newButton}
+        meta={<CalendarTabs />}
       />
 
       {campaigns.isPending ? (

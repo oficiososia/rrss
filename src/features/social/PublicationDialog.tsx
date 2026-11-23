@@ -6,6 +6,7 @@ import { ActionNotice, Badge, Button, Dialog, Field, Input, LinkButton, Notice, 
 import { contentPaths, targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
 import { useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { PublicationAttemptOutcome } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import {
@@ -28,12 +29,11 @@ import {
   DISPLAY_TONE,
   displayState,
   fromLocalInput,
-  HOLD_REASON_TEXT,
   isEditable,
   toLocalInput,
 } from './calendar';
 import { useFeature } from '@/features/platform/integrations/useFeature';
-import { activeAccountOf, holdAdvice } from './holdAdvice';
+import { activeAccountOf, holdAdvice, holdReasonText, selfManagedAdvice } from './holdAdvice';
 import { connectedAccountsPath, exportPath, planPath } from './links';
 import { useBrandZone } from './useBrandZone';
 import { differsFromDevice, formatDateTimeIn, zoneLabel } from './zone';
@@ -81,6 +81,7 @@ export function PublicationDialog({
   onPublishNow,
 }: PublicationDialogProps) {
   const { isAdmin } = useOrg();
+  const { selfManaged } = useWorkMode();
   const zone = useBrandZone();
   const fmt = (iso: string) => formatDateTimeIn(iso, zone);
   const attempts = usePublicationAttempts(brandId, entry?.id ?? null);
@@ -113,7 +114,7 @@ export function PublicationDialog({
       : null;
   const held = entry.status === 'planned' && entry.hold_reason ? entry.hold_reason : null;
   const account = activeAccountOf(accounts.data, entry.network);
-  const advice = held ? holdAdvice(held, account) : null;
+  const advice = held ? selfManagedAdvice(holdAdvice(held, account), selfManaged) : null;
 
   const approvedButton = plan && content && (
     <Button
@@ -136,7 +137,7 @@ export function PublicationDialog({
               pub.status === 'scheduled'
                 ? toast.success(`Programada con la versión ${plan.version}`)
                 : toast.info(
-                    `Guardada, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+                    `Guardada, pero aún no se publicará. ${pub.hold_reason ? holdReasonText(pub.hold_reason, selfManaged) : ''}`,
                   ),
             onError: failed,
           },
@@ -180,7 +181,7 @@ export function PublicationDialog({
                     pub.status === 'scheduled'
                       ? toast.success('Programada')
                       : toast.info(
-                          `Cuenta elegida, pero aún no se publicará. ${pub.hold_reason ? HOLD_REASON_TEXT[pub.hold_reason] : ''}`,
+                          `Cuenta elegida, pero aún no se publicará. ${pub.hold_reason ? holdReasonText(pub.hold_reason, selfManaged) : ''}`,
                         ),
                   onError: failed,
                 },
@@ -193,7 +194,7 @@ export function PublicationDialog({
         ) : null;
       }
       case 'change_plan':
-        return isAdmin ? (
+        return isAdmin && !selfManaged ? (
           <LinkButton to={planPath(orgId)} data-testid="publication-hold-fix">
             {advice.label}
           </LinkButton>
@@ -276,7 +277,7 @@ export function PublicationDialog({
             tone={state === 'held' ? 'warning' : 'info'}
             title={advice.short}
             action={fix}
-            why={<span data-testid="publication-hold">{HOLD_REASON_TEXT[held]}</span>}
+            why={<span data-testid="publication-hold">{holdReasonText(held, selfManaged)}</span>}
             data-testid="publication-hold-notice"
           />
         )}

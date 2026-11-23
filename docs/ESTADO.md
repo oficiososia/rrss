@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -618,6 +618,20 @@ bilinear y escalaba la máscara sin limpiarla ni pegarla a los bordes de la foto
 - **Plantillas de la marca:** Marca → Identidad visual → «Plantillas de la marca»: lista con miniatura, origen (Importada, Manual, Del editor), renombrar, duplicar y borrar. Migración `20261220010000` (`rename_design_template`, `duplicate_design_template`, tope de 50 del editor) con vuelta atrás y pruebas de permisos.
 - **Guías y zonas seguras:** con varias capas se ajusta la caja conjunta a los bordes y centros del lienzo y de las capas que no se mueven (`snapGroup`). Las publicaciones de Instagram en 1:1 y 4:5 enseñan la franja que recorta la rejilla 3:4 del perfil (12,5 % por lado en 1:1; 3,1 % en 4:5): **cálculo propio, orientativo, sin cifra publicada** (el catálogo lo marca como tal).
 - **Sin probar:** nada a mano en un navegador real (pincel con teclado, arrastre de varias capas con las guías, miniaturas de la lista de plantillas a 375 px); el worker real del guardado (en las pruebas es un doble); la migración en staging.
+
+### Menú de 5 secciones con «＋ Crear» (rama `f50/menu-simple`, 23/11/2026)
+
+Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa/simplificacion/`).
+
+- **Menú lateral:** selector de marca (el único, como antes), botón **«＋ Crear»** y cinco secciones: Inicio, Contenidos, Calendario, Biblioteca y **Resultados** (antes «Analítica»; la ruta sigue siendo `/analitica`). Con la marca en modo agencia se añade Encargos. Antes: 8 entradas (9 con Campañas y 10 en agencia), sin botón de crear.
+- **«＋ Crear»** (`src/layout/CreateMenu.tsx`): Publicación, Carrusel, Reel, Historia (abren la ventana «Nueva idea» de siempre con ese formato), «Hacer un reel como este» (si el servidor puede), Subir fotos (Biblioteca) y «Preparar un plan con IA» / «Pedir un plan a la agencia» (Calendario → Campañas con la ventana abierta, `?nuevo=1`). Cada entrada sale según los permisos de siempre; quien solo mira no tiene el botón. `CreateContentDialog` no se ha tocado.
+- **Menú de la cuenta** (abajo a la izquierda; el avatar en móvil): Marca, Equipo, Configuración y, para quien administra la plataforma, Integraciones y Plataforma; luego apariencia, «Mi cuenta y privacidad» y cerrar sesión. En móvil lleva además Resultados (y Encargos con su insignia, que también sale en el avatar).
+- **Móvil:** barra inferior Inicio, Contenidos, «＋», Calendario y Biblioteca; ya no hay hoja «Más».
+- **Campañas dentro de Calendario:** pestañas «Calendario · Campañas» en la cabecera de las dos vistas (solo si hay forma de preparar un plan). Rutas nuevas `calendario/campanas` y `calendario/campanas/:id`; **`/campanas` y `/campanas/:id` redirigen** (con su `?…` y `#…`). `/marca`, `/equipo`, `/ajustes/*` y `/plataforma/*` no cambian. Sin IA de texto ni agencia, la lista vuelve al calendario (antes, al inicio).
+- **Una sola forma de crear:** el Inicio ya no repite las cuatro tarjetas de crear (Nueva publicación, Nuevo reel, Reel como este, Subir fotos).
+- **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
+- **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
+- **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
 
 ## Sin probar contra el servicio real
 

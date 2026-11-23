@@ -16,6 +16,7 @@ import {
   sinErrores,
   sql,
   type Alias,
+  irAAjuste,
 } from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
@@ -182,7 +183,7 @@ test('editora: sube a la biblioteca, pero no toca el perfil, el equipo ni la org
   await expect(page.getByTestId('upload-item-done')).toContainText('foto-de-carla.png');
   await expect(page.getByTestId('library-asset').filter({ hasText: 'foto-de-carla.png' })).toBeVisible();
 
-  await page.getByTestId('nav-marca').click();
+  await irAAjuste(page, 'nav-marca');
   await expect(page.getByTestId('profile-description')).toBeDisabled();
   await expect(page.getByTestId('profile-description')).not.toHaveValue('');
   await page.getByRole('tab', { name: 'Datos de la marca' }).click();
@@ -190,11 +191,11 @@ test('editora: sube a la biblioteca, pero no toca el perfil, el equipo ni la org
   await expect(page.getByTestId('brand-data-save')).toHaveCount(0);
   await expect(page.getByTestId('brand-archive')).toHaveCount(0);
 
-  await page.getByTestId('nav-equipo').click();
+  await irAAjuste(page, 'nav-equipo');
   await expect(page.getByTestId(`brand-member-${correo('carla')}`)).toContainText('Editor');
   await expect(page.getByTestId('brand-invite-open')).toHaveCount(0);
 
-  await page.getByTestId('nav-configuración').click();
+  await irAAjuste(page, 'nav-configuración');
   await expect(page.getByTestId('org-settings-name')).toBeDisabled();
   await expect(page.getByTestId('org-settings-save')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Actividad' })).toHaveCount(0);
@@ -233,9 +234,9 @@ test('cliente: ve la marca y su biblioteca, pero no puede subir, editar ni borra
   await expect(ficha.locator('img')).toHaveJSProperty('naturalWidth', 200);
   await ficha.getByRole('button', { name: 'Cerrar' }).last().click();
 
-  await page.getByTestId('nav-marca').click();
+  await irAAjuste(page, 'nav-marca');
   await expect(page.getByTestId('profile-description')).toBeDisabled();
-  await page.getByTestId('nav-equipo').click();
+  await irAAjuste(page, 'nav-equipo');
   await expect(page.getByTestId('brand-invite-open')).toHaveCount(0);
 
   // La otra marca de la organización no existe para él.

@@ -29,37 +29,116 @@ const ROLES: { label: string; orgRole: OrgRole; brandRole?: BrandRole }[] = [
 ];
 
 describe('Menú de una marca', () => {
-  it.each(ROLES)('para $label muestra solo lo que ya existe, sin áreas futuras', async ({ orgRole, brandRole }) => {
+  it.each(ROLES)('para $label: cinco secciones y los ajustes en el menú de la cuenta', async ({ orgRole, brandRole }) => {
     seedWorkspace({ orgRole, brandRole });
-    renderApp(`${BRAND_BASE}/inicio`);
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
     const nav = await mainNav();
-    expect(linkNames(nav)).toEqual([
-      'Inicio',
-      'Contenidos',
-      'Calendario',
-      'Analítica',
-      'Biblioteca',
-      'Marca',
-      'Equipo',
-      'Configuración',
+    expect(linkNames(nav)).toEqual(['Inicio', 'Contenidos', 'Calendario', 'Biblioteca', 'Resultados']);
+    for (const fuera of ['Campañas', 'Marca', 'Equipo', 'Configuración', 'Analítica', 'Estadísticas', 'Asistente'])
+      expect(nav.queryByRole('link', { name: fuera })).not.toBeInTheDocument();
+    const menu = await openMenu(user, 'user-menu');
+    expect(
+      menu
+        .getAllByRole('menuitem')
+        .slice(0, 3)
+        .map((item) => item.textContent),
+    ).toEqual(['Marca', 'Equipo', 'Configuración']);
+  });
+
+  it.each(ROLES)('«Crear» para $label: solo lo que puede hacer', async ({ orgRole, brandRole }) => {
+    seedWorkspace({ orgRole, brandRole });
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    await mainNav();
+    const canEdit = brandRole !== 'viewer';
+    if (!canEdit) {
+      expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
+      return;
+    }
+    await user.click(await screen.findByTestId('create-menu'));
+    const items = within(await screen.findByTestId('create-menu-items'));
+    expect(items.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Publicación',
+      'Carrusel',
+      'Reel',
+      'Historia',
+      'Subir fotos',
     ]);
-    for (const futura of ['Crear', 'Campañas', 'Estadísticas', 'Asistente'])
-      expect(nav.queryByRole('link', { name: futura })).not.toBeInTheDocument();
   });
 
-  it('sin marca elegida, el menú es el de la organización', async () => {
+  it('«Crear → Reel» abre «Nueva idea» con el reel elegido', async () => {
     seedWorkspace({ orgRole: 'owner' });
-    renderApp(BASE);
-    const nav = await mainNav();
-    expect(linkNames(nav)).toEqual(['Marcas', 'Configuración']);
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    await user.click(await screen.findByTestId('create-menu'));
+    await user.click(await screen.findByTestId('create-menu-reel'));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByRole('heading', { name: 'Nueva idea' })).toBeInTheDocument();
+    expect(dialog.getByTestId('create-content-format-reel').querySelector('input')).toBeChecked();
   });
 
-  it('el enlace de la sección actual queda marcado', async () => {
+  it('«Crear → Subir fotos» lleva a la Biblioteca', async () => {
     seedWorkspace({ orgRole: 'owner' });
-    renderApp(`${BRAND_BASE}/equipo`);
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    await user.click(await screen.findByTestId('create-menu'));
+    await user.click(await screen.findByTestId('create-menu-upload'));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/biblioteca`));
+  });
+
+  it('con la marca en modo agencia, «Crear» ofrece pedir un plan y abre su ventana en Calendario → Campañas', async () => {
+    seedWorkspace({ orgRole: 'owner', brands: [brandRow({ ai_mode: 'agency' })] });
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    await user.click(await screen.findByTestId('create-menu'));
+    await user.click(await screen.findByTestId('create-menu-plan'));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario/campanas`));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    // Al cerrarla, «?nuevo=1» se va (recargar no la vuelve a abrir).
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(window.location.search).toBe(''));
+  });
+
+  it('sin marca elegida, el menú es el de la organización y no hay «Crear»', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    const { user } = renderApp(BASE);
     const nav = await mainNav();
-    expect(nav.getByRole('link', { name: 'Equipo' })).toHaveAttribute('aria-current', 'page');
+    expect(linkNames(nav)).toEqual(['Marcas']);
+    expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
+    const menu = await openMenu(user, 'user-menu');
+    expect(menu.getByRole('menuitem', { name: 'Configuración' })).toBeInTheDocument();
+    expect(menu.queryByRole('menuitem', { name: 'Marca' })).not.toBeInTheDocument();
+  });
+
+  it('el enlace de la sección actual queda marcado (Campañas está dentro de Calendario)', async () => {
+    seedWorkspace({ orgRole: 'owner', brands: [brandRow({ ai_mode: 'agency' })] });
+    renderApp(`${BRAND_BASE}/calendario/campanas`);
+    const nav = await mainNav();
+    expect(nav.getByRole('link', { name: 'Calendario' })).toHaveAttribute('aria-current', 'page');
     expect(nav.getByRole('link', { name: 'Inicio' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('las direcciones de antes siguen funcionando: /campanas lleva a Calendario → Campañas', async () => {
+    seedWorkspace({ orgRole: 'owner', brands: [brandRow({ ai_mode: 'agency' })] });
+    renderApp(`${BRAND_BASE}/campanas?x=1`);
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario/campanas`));
+    expect(window.location.search).toBe('?x=1');
+  });
+
+  it('y /campanas/:id lleva a la misma campaña', async () => {
+    seedWorkspace({ orgRole: 'owner', brands: [brandRow({ ai_mode: 'agency' })] });
+    renderApp(`${BRAND_BASE}/campanas/camp-9`);
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario/campanas/camp-9`));
+  });
+
+  it('Marca, Equipo y Configuración siguen en sus direcciones de siempre', async () => {
+    seedWorkspace({ orgRole: 'owner' });
+    const { user } = renderApp(`${BRAND_BASE}/inicio`);
+    for (const [name, path] of [
+      ['Marca', `${BRAND_BASE}/marca`],
+      ['Equipo', `${BRAND_BASE}/equipo`],
+      ['Configuración', `${BASE}/ajustes/general`],
+    ] as const) {
+      const menu = await openMenu(user, 'user-menu');
+      await user.click(menu.getByRole('menuitem', { name }));
+      await waitFor(() => expect(window.location.pathname).toBe(path));
+    }
   });
 });
 
@@ -181,18 +260,20 @@ describe('Configuración de la organización', () => {
 });
 
 describe('Zona de la plataforma', () => {
-  it('el menú de cuenta solo ofrece «Plataforma» a quien administra la plataforma', async () => {
+  it('el menú de cuenta solo ofrece «Integraciones» y «Plataforma» a quien administra la plataforma', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const first = renderApp(`${BRAND_BASE}/inicio`);
     let menu = await openMenu(first.user, 'user-menu');
     expect(menu.getByRole('menuitem', { name: 'Cerrar sesión' })).toBeInTheDocument();
     expect(menu.queryByRole('menuitem', { name: 'Plataforma' })).not.toBeInTheDocument();
+    expect(menu.queryByRole('menuitem', { name: 'Integraciones' })).not.toBeInTheDocument();
     first.unmount();
 
     seedWorkspace({ orgRole: 'owner', platformAdmin: true });
     const second = renderApp(`${BRAND_BASE}/inicio`);
     menu = await openMenu(second.user, 'user-menu');
     await waitFor(() => expect(menu.getByRole('menuitem', { name: 'Plataforma' })).toBeInTheDocument());
+    expect(menu.getByRole('menuitem', { name: 'Integraciones' })).toBeInTheDocument();
   });
 
   it('quien no la administra ve «Zona reservada» y no se piden datos', async () => {

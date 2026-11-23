@@ -5,7 +5,8 @@ import { Skeleton } from '@/components/ui';
 import { contentPaths, networkLabel } from '@/features/content/labels';
 import { PieceThumbView } from '@/features/content/lista/PieceThumb';
 import { useContentThumbs } from '@/features/content/lista/useContentThumbs';
-import { activeAccountOf, holdAdvice } from '@/features/social/holdAdvice';
+import { useWorkMode } from '@/features/orgs/workMode';
+import { activeAccountOf, holdAdvice, selfManagedAdvice } from '@/features/social/holdAdvice';
 import { useCalendar, useSocialAccounts } from '@/features/social/api';
 import { useBrandZone } from '@/features/social/useBrandZone';
 import { shortDateTime } from '@/features/content/lista/dateText';
@@ -117,13 +118,16 @@ export function WeekStrip({ orgId, brandId, now }: { orgId: string; brandId: str
 export function StalledList({ orgId, brandId, items, canFix }: { orgId: string; brandId: string; items: WithPiece[]; canFix: boolean }) {
   const accounts = useSocialAccounts(brandId);
   const zone = useBrandZone();
+  const { selfManaged } = useWorkMode();
   const shown = items.slice(0, 3);
   return (
     <Section title="Parado" testId="home-stalled">
       <ul className="space-y-2">
         {shown.map(({ publication, piece }) => {
           const reason = publication.hold_reason;
-          const advice = reason ? holdAdvice(reason, activeAccountOf(accounts.data, publication.network)) : null;
+          const advice = reason
+            ? selfManagedAdvice(holdAdvice(reason, activeAccountOf(accounts.data, publication.network)), selfManaged)
+            : null;
           const target = advice
             ? fixTarget(advice.fix, { orgId, brandId, contentId: publication.content_id })
             : { to: `/o/${orgId}/m/${brandId}/calendario`, label: 'Ver en el calendario' };
