@@ -14,6 +14,20 @@
 // que los casos se pueden ejecutar de principio a fin y enseña cuánto ocupa el
 // prompt en cada ruta. Sale con código distinto de 0 si algún caso no cuadra.
 //
+// El grupo `plan` son órdenes que MONTAN una pieza («haz el menú de otoño: crea
+// un fondo otoñal y pon los platos en el centro»). De esas se evalúa SOLO el
+// plan (pasos, fondo sin comida ni productos, fotos de la biblioteca,
+// disposición, titular): el banco nunca ejecuta pasos de pago, no genera
+// imágenes y no recorta, ni en seco ni con --apply.
+//
+// El grupo `multi` son órdenes con VARIAS acciones y/o corregidas a mitad de
+// frase («quita la franja y sube el título», «el título, no, el subtítulo…»):
+// aciertan solo si llegan TODAS las operaciones esperadas y sobre la capa que se
+// dijo al final. En seco se prueban de dos formas: con el modelo llamando a
+// todas las herramientas en una respuesta (y cerrando con `done`) y llamándolas
+// de una en una (el servidor le devuelve «hecho» y le deja seguir, con tope de
+// vueltas).
+//
 // Con --apply llama a la función desplegada `ai-generate` (CUESTA DINERO y gasta
 // cupo de IA de la organización). Antes dice cuántas llamadas va a hacer y pide
 // confirmación (o --si). Variables de entorno, todas obligatorias:
@@ -27,7 +41,7 @@
 //   --apply               llamar al servicio real (sin esto, en seco)
 //   --modos tools,json    rutas que se prueban (por defecto, las dos)
 //   --grupo <nombre>      solo un grupo: simple, compuesta, ambigua, imposible,
-//                         hosteleria, gimnasio, titubeo, plan
+//                         hosteleria, gimnasio, titubeo, multi, plan
 //   --caso <id>           solo un caso
 //   --detalle             en seco: una línea por caso y ruta
 //   --repeticiones <n>    veces que se envía cada caso (por defecto 1)
@@ -43,6 +57,17 @@
 // El modelo real, los tokens, el coste y la latencia de cada llamada se leen de
 // `ai_generations` con la sesión de la persona; si no se pueden leer, sigue y lo
 // dice («desconocido», «—»).
+//
+// OJO CON EL COSTE POR HERRAMIENTAS: una orden puede ser de VARIAS generaciones.
+// Si el modelo llama a una herramienta y no cierra con `done`, el servidor le
+// devuelve «hecho» y vuelve a preguntar (hasta 5 vueltas), y cada vuelta es una
+// generación con su coste. La respuesta solo trae el `generationId` de la
+// primera, así que el banco SOLO VE LA PRIMERA: el coste, los tokens y la
+// latencia del servidor de la tabla son los de esa primera generación (la
+// latencia de extremo a extremo sí las incluye todas). La tabla dice cuántas
+// órdenes cerraron en la primera vuelta; cuántas vueltas más hubo en las demás
+// no se puede saber desde fuera. Y separa las órdenes INCOMPLETAS (faltó alguna
+// operación esperada) de las EQUIVOCADAS (otra capa, otro valor, una de más).
 import { createInterface } from 'node:readline/promises';
 import {
   BENCH_MODES,
@@ -134,7 +159,7 @@ export async function main(argv: string[], log: (line: string) => void = console
   if (!args.apply) {
     const cases = selectCases(args);
     if (cases.length === 0) {
-      log(args.group === 'plan' ? 'El grupo «plan» todavía no tiene casos (es un punto de extensión).' : 'No hay casos con esos filtros.');
+      log('No hay casos con esos filtros.');
       return 0;
     }
     const report = await dryRun(cases, args.modes);

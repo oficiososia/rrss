@@ -23,10 +23,13 @@ export async function runQuickEdit(options: {
   edit: QuickEdit;
   save: Saver;
   onProgress?: (progress: CutoutProgress) => void;
+  /** Para cancelar el recorte a medias (lo usa el plan del copiloto). Cancelado, no se guarda nada. */
+  signal?: AbortSignal;
 }): Promise<MediaAssetRow> {
-  const { asset, url, save, onProgress } = options;
+  const { asset, url, save, onProgress, signal } = options;
   const { pixels } = await loadPixels(url);
-  const cut = await removeBackground(pixels, onProgress, undefined, { brandId: asset.brand_id, source: asset });
+  const cut = await removeBackground(pixels, onProgress, signal, { brandId: asset.brand_id, source: asset });
+  signal?.throwIfAborted();
   const result = cut.pixels;
   const steps: PhotoEditStep[] = [{ kind: 'remove_background', engine: 'browser', model: cut.model }];
   const transparent = analyzeImage(result).transparent;

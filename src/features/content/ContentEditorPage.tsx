@@ -100,6 +100,7 @@ import {
 } from './api';
 import { aiContentReasons, describeAiReasons } from './aiLabel';
 import { toneOfPalette } from './copilot/legibility';
+import { createCopilotPlanHost } from './copilot/planHost';
 import type { CopilotHost } from './copilot/VoiceCopilot';
 import {
   allLayers,
@@ -1093,6 +1094,25 @@ function Editor({
     });
   }
 
+  /**
+   * Lo que un plan del copiloto puede gastar o leer. La imagen con IA solo se
+   * ofrece si el servidor la tiene configurada y esta persona puede usarla en
+   * la marca; si no, el plan lo dice y propone un fondo de color (sin simular nada).
+   */
+  const copilotPlanHost = createCopilotPlanHost({
+    brandId: brand.id,
+    imageAi: aiImage
+      ? { available: true }
+      : {
+          available: false,
+          reason: imageAgencyBlocked
+            ? 'En modo agencia, la imagen con IA la usa solo el personal de la agencia.'
+            : 'La imagen con IA no está configurada.',
+        },
+    saveEdit: (input) => saveEdit.mutateAsync(input),
+    onLibraryChange: () => void queryClient.invalidateQueries({ queryKey: assetKeys.all(brand.id) }),
+  });
+
   /** Lo que el copiloto pide al editor que no es cambiar el documento. */
   const copilotHost: CopilotHost = {
     history: (kind) => {
@@ -1133,6 +1153,8 @@ function Editor({
       setPhotoEditing(true);
       return null;
     },
+    // Órdenes que montan una pieza: el fondo con `ai-media`, las fotos de la biblioteca y el recorte de siempre.
+    plan: copilotPlanHost,
   };
 
   const canvas = state.document.canvas;

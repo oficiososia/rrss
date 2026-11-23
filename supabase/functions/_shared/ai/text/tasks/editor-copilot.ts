@@ -12,10 +12,19 @@
 // el menú con estos platos…») y esta tarea convierte lo dictado en OPERACIONES
 // DE EDITOR de una lista cerrada: añadir o cambiar un texto, poner una foto de
 // fondo, desenfocarla, poner el logotipo, mover, borrar y cambiar el color de
-// fondo. No genera imágenes ni redacta: los textos van exactamente como se han
-// dictado. Quien aplica las operaciones es el editor (src/features/content/
-// copilot/apply.ts), que las vuelve a validar y valida el documento resultante
-// con su esquema antes de tocar nada; cada orden dictada es un paso de deshacer.
+// fondo. No redacta: los textos van exactamente como se han dictado. Quien
+// aplica las operaciones es el editor (src/features/content/copilot/apply.ts),
+// que las vuelve a validar y valida el documento resultante con su esquema
+// antes de tocar nada; cada orden dictada es un paso de deshacer.
+//
+// Por la ruta de herramientas hay además PASOS DE PLAN, para montar una pieza
+// entera («haz el menú de otoño: un fondo otoñal y los platos en el centro»):
+// `generate_background`, `find_photos` y `place_photos`. Esta tarea NO genera
+// nada ni busca en la biblioteca: devuelve los pasos, y el editor los enseña con
+// su coste y pide confirmación antes de gastar (copilot/plan.ts). Regla del
+// producto: la IA solo crea el FONDO; los platos y productos son siempre fotos
+// reales de la biblioteca. Un fondo cuya descripción nombre comida o productos
+// se descarta aquí (`namesFoodOrProduct`).
 //
 // Defensa ante instrucciones maliciosas (en el dictado, en el perfil, en los
 // textos del documento o en los nombres de las fotos):
@@ -38,12 +47,19 @@ import {
   compactDocument,
   compactPhotos,
   EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+  closingNote,
+  DONE_TOOL,
   EDITOR_COPILOT_TOOL_PROMPT,
   EDITOR_COPILOT_TOOLS,
+  MAX_BACKGROUND_PROMPT_CHARS,
+  MAX_PHOTO_QUERY_CHARS,
+  MAX_PLAN_PHOTOS,
   operationsFromToolCalls,
   TOOL_EDITOR_ACTIONS,
+  TOOL_LAYOUTS,
   TOOL_PAGE_ACTIONS,
   TOOL_PHOTO_FLOWS,
+  TOOL_RATIOS,
 } from './editor-copilot-tools.ts';
 import {
   AiTaskInputError,
@@ -106,6 +122,10 @@ export const COPILOT_OPS = [
   'set_canvas_ratio',
   'page',
   'editor',
+  // Pasos de plan (montar una pieza): el editor los enseña y pide confirmación antes de gastar.
+  'generate_background',
+  'find_photos',
+  'place_photos',
 ] as const;
 export type CopilotOp = (typeof COPILOT_OPS)[number];
 
@@ -174,6 +194,14 @@ export interface CopilotOperation {
   action: string | null;
   page: number | null;
   direction: string | null;
+  /** generate_background: descripción del fondo. La escribe la IA; no va al diseño como texto. */
+  prompt: string | null;
+  /** find_photos: qué buscar en la biblioteca y cuántas fotos. */
+  query: string | null;
+  count: number | null;
+  /** place_photos: disposición y si se recortan (quitar el fondo). */
+  layout: string | null;
+  cutout: boolean | null;
 }
 
 const LEGACY_FIELDS = ['target', 'text', 'style', 'assetId', 'position', 'align', 'color', 'font', 'blur'] as const;
@@ -207,6 +235,11 @@ const EXTRA_FIELDS = [
   'action',
   'page',
   'direction',
+  'prompt',
+  'query',
+  'count',
+  'layout',
+  'cutout',
 ] as const;
 
 /** Operación con todos sus campos a null. */
@@ -700,6 +733,11 @@ export function sanitizeOperations(
         continue;
       }
 
+      // Los campos de los pasos de plan solo valen en su paso.
+      if (op.op !== 'generate_background') op.prompt = null;
+      if (op.op !== 'find_photos') op.query = op.count = null;
+      if (op.op !== 'place_photos') op.layout = op.cutout = null;
+
       // Lo propio de cada operación nueva.
       const problem = checkExtra(op, pageCount);
       if (problem) {
@@ -762,9 +800,100 @@ function checkExtra(op: CopilotOperation, pageCount: number | undefined): string
     }
     case 'editor':
       return op.action !== null && TOOL_EDITOR_ACTIONS.includes(op.action) ? null : 'No dice qué acción del editor.';
+    case 'generate_background': {
+      const prompt = (op.prompt ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_BACKGROUND_PROMPT_CHARS);
+      if (!prompt) return 'Falta la descripción del fondo.';
+      if (namesFoodOrProduct(prompt)) return BACKGROUND_ONLY_REASON;
+      op.prompt = prompt;
+      if (op.ratio !== null && !TOOL_RATIOS.includes(op.ratio)) op.ratio = null;
+      return null;
+    }
+    case 'find_photos': {
+      const query = (op.query ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_PHOTO_QUERY_CHARS);
+      if (!query) return 'No dice qué fotos buscar.';
+      op.query = query;
+      op.count = clamp(Math.round(op.count ?? 1), 1, MAX_PLAN_PHOTOS);
+      return null;
+    }
+    case 'place_photos':
+      if (op.layout === null || !TOOL_LAYOUTS.includes(op.layout)) op.layout = 'center';
+      op.cutout = op.cutout === true;
+      op.on = op.on === true;
+      return null;
     default:
       return null;
   }
+}
+
+/** Motivo con el que se descarta un fondo que nombra comida o productos. */
+export const BACKGROUND_ONLY_REASON = 'La IA solo crea el fondo: los platos y productos son fotos de la biblioteca.';
+
+/**
+ * Palabras que delatan comida o producto en la descripción de un fondo. Lista
+ * corta y prudente (sin tildes; singular y plural): nada de palabras que
+ * también son colores o ambiente («vino», «café», «naranja», «copa»).
+ */
+const FOOD_WORDS = new Set([
+  ...['plato', 'comida', 'alimento', 'hamburguesa', 'pizza', 'bocadillo', 'postre', 'tarta', 'bebida', 'cerveza'].flatMap(
+    (word) => [word, `${word}s`],
+  ),
+  ...['refresco', 'producto', 'botella'].flatMap((word) => [word, `${word}s`]),
+  ...['coctel', 'cocteles', 'food', 'foods', 'dish', 'dishes', 'meal', 'meals', 'burger', 'burgers'],
+  ...['drink', 'drinks', 'cocktail', 'cocktails', 'product', 'products', 'bottle', 'bottles'],
+]);
+/** Negaciones: lo que va detrás NO se pide («sin comida, platos ni personas»). */
+const NEGATORS = new Set(['sin', 'ni', 'ningun', 'ninguna', 'ningunos', 'ningunas', 'no', 'without']);
+/** Dentro de una frase, esto acaba la negación: «sin personas, con un plato». */
+const NEGATION_BREAKERS = new Set(['con', 'pero', 'sobre', 'junto', 'encima', 'bajo', 'entre', 'donde', 'que', 'with', 'but', 'on']);
+/** Lo que cierra una lista negada: «sin comida, platos NI personas». */
+const LIST_CLOSERS = new Set(['ni', 'y', 'o', 'e', 'u', 'nor', 'and', 'or']);
+/** Un trozo que empieza así no sigue una lista negada: es otra frase. */
+const CLAUSE_STARTERS = new Set(['con', 'un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'y', 'with', 'a', 'an', 'the']);
+/** Palabras de un elemento de una lista negada, como mucho («platos preparados»). */
+const MAX_LIST_ITEM_WORDS = 3;
+
+/**
+ * ¿Pide la descripción de un fondo comida o un producto? Lo negado no cuenta
+ * («sin comida, platos ni personas» es justo lo que se quiere); lo demás, sí.
+ * Es una defensa por palabras, no entiende la frase: ante la duda, descarta.
+ * Igual que en el editor (`namesFoodOrProduct` de copilot/plan.ts).
+ */
+export function namesFoodOrProduct(prompt: string): boolean {
+  const plain = prompt
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase();
+  for (const sentence of plain.split(/[.;:!?\n]+/)) {
+    const clauses = sentence.split(',').map((clause) => clause.match(/[a-z0-9]+/g) ?? []);
+    /** Un trozo corto que puede seguir una lista negada («…, platos, bebidas ni personas»). */
+    const listItem = (words: string[]) =>
+      words.length > 0 &&
+      words.length <= MAX_LIST_ITEM_WORDS &&
+      !CLAUSE_STARTERS.has(words[0]!) &&
+      !NEGATORS.has(words[0]!);
+    let open = false;
+    for (let index = 0; index < clauses.length; index += 1) {
+      if (open) {
+        // La lista negada sigue hasta el trozo que la cierra («ni», «y», «o»); si no se cierra, no era una lista.
+        let end = index;
+        while (end < clauses.length && listItem(clauses[end]!) && !clauses[end]!.some((word) => LIST_CLOSERS.has(word))) end += 1;
+        if (end < clauses.length && listItem(clauses[end]!)) {
+          index = end;
+          open = false;
+          continue;
+        }
+        open = false;
+      }
+      let negated = false;
+      for (const word of clauses[index]!) {
+        if (negated && NEGATION_BREAKERS.has(word)) negated = false;
+        if (NEGATORS.has(word)) negated = true;
+        else if (!negated && FOOD_WORDS.has(word)) return true;
+      }
+      open = negated;
+    }
+  }
+  return false;
 }
 
 // ── Tarea ────────────────────────────────────────────────────────────────
@@ -812,30 +941,77 @@ export async function runEditorCopilot(
     }
     const compact = compactDocument(document);
     const photos = compactPhotos(assets);
-    const result = await service.generate({
-      userId: actor.userId,
-      brandId: actor.brandId,
-      task: 'text',
-      purpose: EDITOR_COPILOT_PURPOSE,
-      input: {
-        instructions: EDITOR_COPILOT_TOOL_INSTRUCTIONS,
-        prompt: EDITOR_COPILOT_TOOL_PROMPT,
-        context: [
-          { label: 'marca', content: compactBrand(request.brandProfile, allowance), cacheable: true },
-          { label: 'documento', content: compact.text },
-          ...(assets.length > 0 ? [{ label: 'fotos', content: photos.text }] : []),
-          { label: 'orden', content: transcript },
-        ],
-        tools: EDITOR_COPILOT_TOOLS,
-        // La misma clave para todas las marcas: herramientas e instrucciones son idénticas.
-        cacheKey: `${EDITOR_COPILOT_PURPOSE}:tools`,
-        params: { max_output_tokens: TOOLS_MAX_OUTPUT_TOKENS, ...effort },
-      },
-    });
-    const calls = Array.isArray(result.output.tool_calls) ? (result.output.tool_calls as unknown as AiToolCall[]) : [];
-    if (calls.length === 0 && result.output.finish_reason === 'length') {
+    const capabilities = service.capabilities?.('text', EDITOR_COPILOT_PURPOSE) ?? null;
+    const ask = (toolTurns: { calls: AiToolCall[]; results: string[] }[]) =>
+      service.generate({
+        userId: actor.userId,
+        brandId: actor.brandId,
+        task: 'text',
+        purpose: EDITOR_COPILOT_PURPOSE,
+        input: {
+          instructions: EDITOR_COPILOT_TOOL_INSTRUCTIONS,
+          prompt: EDITOR_COPILOT_TOOL_PROMPT,
+          context: [
+            { label: 'marca', content: compactBrand(request.brandProfile, allowance), cacheable: true },
+            { label: 'documento', content: compact.text },
+            ...(assets.length > 0 ? [{ label: 'fotos', content: photos.text }] : []),
+            { label: 'orden', content: transcript },
+          ],
+          tools: EDITOR_COPILOT_TOOLS,
+          // Siempre hay algo que llamar (como mínimo, el cierre con su nota).
+          toolChoice: 'required',
+          ...(toolTurns.length > 0 ? { toolTurns } : {}),
+          // La misma clave para todas las marcas: herramientas e instrucciones son idénticas.
+          cacheKey: `${EDITOR_COPILOT_PURPOSE}:tools`,
+          params: { max_output_tokens: TOOLS_MAX_OUTPUT_TOKENS, ...effort },
+        },
+      });
+
+    // Lo normal es UNA vuelta: todas las llamadas juntas y el cierre (`done`).
+    // Pero hay modelos que llaman a una herramienta y esperan su resultado antes
+    // de la siguiente (medido el 22/11/2026 con gpt-6-luna: de «quita la franja y
+    // sube el título» solo llegaba lo primero). Si hay llamadas y no hay cierre,
+    // se le devuelve «hecho» y se le deja seguir, con tope de vueltas.
+    const first = await ask([]);
+    let result = first;
+    const calls: AiToolCall[] = [];
+    const turns: { calls: AiToolCall[]; results: string[] }[] = [];
+    const usage: Record<string, number> = {};
+    let costMicros = 0;
+    let latencyMs = 0;
+    let note = '';
+    for (let turn = 0; ; turn += 1) {
+      for (const [unit, amount] of Object.entries(result.usage)) usage[unit] = (usage[unit] ?? 0) + amount;
+      costMicros += result.costMicros;
+      latencyMs += result.latencyMs;
+      const turnCalls = Array.isArray(result.output.tool_calls) ? (result.output.tool_calls as unknown as AiToolCall[]) : [];
+      const closed = closingNote(turnCalls);
+      calls.push(...turnCalls.filter((call) => call.name !== DONE_TOOL));
+      const text = typeof result.output.text === 'string' ? result.output.text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+      if (closed !== null) {
+        note = closed || text;
+        break;
+      }
+      if (text) note = text;
+      const more =
+        turnCalls.length > 0 &&
+        capabilities?.toolTurns === true &&
+        turn + 1 < MAX_TOOL_TURNS &&
+        calls.length < MAX_OPERATIONS &&
+        result.output.finish_reason !== 'length';
+      if (!more) break;
+      turns.push({ calls: turnCalls, results: turnCalls.map(() => 'hecho') });
+      try {
+        // Una copia: la lista sigue creciendo y la petición enviada no debe cambiar después.
+        result = await ask([...turns]);
+      } catch {
+        // La vuelta de más ha fallado (cupo, proveedor…): vale lo que ya había.
+        break;
+      }
+    }
+    if (calls.length === 0 && note === '' && first.output.finish_reason === 'length') {
       throw new AiError('invalid_output', 'La respuesta de la IA se ha cortado antes de terminar. Inténtalo de nuevo.', {
-        generationId: result.generationId,
+        generationId: first.generationId,
         retryable: true,
       });
     }
@@ -845,14 +1021,13 @@ export async function runEditorCopilot(
       emptyOperation,
     );
     const { operations, discarded } = sanitizeOperations(converted.operations, context, converted.indexes);
-    const note = typeof result.output.text === 'string' ? result.output.text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
     return {
-      generationId: result.generationId,
-      provider: result.provider,
-      model: result.model,
-      usage: result.usage,
-      costMicros: result.costMicros,
-      latencyMs: result.latencyMs,
+      generationId: first.generationId,
+      provider: first.provider,
+      model: first.model,
+      usage,
+      costMicros,
+      latencyMs,
       mode,
       operations: operations.map(toResponseOperation),
       discarded: [...converted.discarded, ...discarded].sort((a, b) => a.index - b.index).slice(0, 40),
@@ -884,6 +1059,14 @@ export async function runEditorCopilot(
   const { operations, discarded } = sanitizeOperations(answer.operations, context);
   return { ...meta, mode, operations: operations.map(toResponseOperation), discarded, note: answer.note.trim() };
 }
+
+/**
+ * Vueltas como mucho por orden en la ruta de herramientas: la normal y cuatro
+ * más para un modelo que llama a las herramientas de una en una (una orden que
+ * monta una pieza son cuatro o cinco llamadas). Cada vuelta es una
+ * generación más (con su cupo y su coste, casi todo leído de caché).
+ */
+export const MAX_TOOL_TURNS = 5;
 
 /** Salida corta: unas pocas llamadas con pocos argumentos. */
 export const TOOLS_MAX_OUTPUT_TOKENS = 1000;
