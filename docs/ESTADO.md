@@ -701,7 +701,7 @@ Cambios 2 y 3 de la propuesta de simplificación aceptada (`rrss-recursos-compar
 - **Letra por defecto:** Inter (SIL OFL 1.1, `@fontsource-variable/inter`) va incluida y es la reserva de cada texto en lienzo, campo de escribir y exportación; un texto nuevo sin letra de marca nace con ella. Antes salía Times.
 - **Copiloto:** en autogestión, sus textos no hablan de cupo (sí del coste). El panel sigue acoplado a la izquierda del lienzo.
 - **Contenidos:** «Nueva idea» solo en la pantalla vacía (se crea con «＋ Crear»).
-- **Probado:** typecheck, lint, `npm test`, `npm run test:db`, `npm run build` y `test:layout` (ver «Pruebas»). E2E 09, 10, 12, 13, 19, 20, 21, 23, 27 y 28 adaptadas **sin ejecutar** (piden Supabase local); la de reels no se ha tocado. `src/features/photo-edit/editarFoto.test.tsx` se adaptó solo en lo que abre «Editar foto» desde el editor.
+- **Probado (23/11/2026, en la rama, en local):** typecheck y lint (0 errores); `npm test` 2132 de 2133 (la que falla es de `editorReels.test.tsx`, de `f52`, por tiempo con la máquina cargada: el archivo pasa entero, 42 de 42, solo); `npm run test:db` 1265 (4 omitidas); `npm run build`; `test:layout` 161 de 161 con 2 trabajadores. E2E 09, 10, 12, 13, 19, 20, 21, 23, 27 y 28 adaptadas **sin ejecutar** (piden Supabase local); la de reels no se ha tocado. `src/features/photo-edit/editarFoto.test.tsx` se adaptó solo en lo que abre «Editar foto» desde el editor.
 - **Sin probar:** en un navegador y un móvil reales; publicar o programar de verdad; el paso a Reel con el editor de reels real (solo componentes); arrastrar el divisor con el dedo en una tableta.
 
 ## Sin probar contra el servicio real
