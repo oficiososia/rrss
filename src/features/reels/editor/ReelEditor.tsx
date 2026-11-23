@@ -126,7 +126,7 @@ import {
 import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, panelTitle, type BarAction } from './ContextBar';
-import { AudioNotice } from './AudioNotice';
+import { AudioNotice, audioNoticeText } from './AudioNotice';
 import { ExportSheet, type PreviousRender } from './ExportSheet';
 import { exportState, renderOfPlan, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
 import { FinishInInstagram, ManualPublicationLine } from './FinishInInstagram';
@@ -2047,7 +2047,7 @@ function Editor({
             : undefined
         }
         libraryPathOf={(assetId) => `/o/${org.id}/m/${brand.id}/biblioteca?recurso=${assetId}`}
-        warnings={warnings}
+        warnings={withAudioNotice(warnings, audioNoticeText(project.plan, true))}
         publish={
           anyPublished
             ? {
@@ -2528,4 +2528,9 @@ function useNarrow(): boolean {
     return () => list.removeEventListener('change', onChange);
   }, []);
   return narrow;
+}
+
+/** El aviso «Sin música» va también en la hoja «Exportar», remitiendo a «Terminar en Instagram». */
+function withAudioNotice(warnings: string[], notice: string | null): string[] {
+  return notice && !warnings.includes(notice) ? [...warnings, notice] : warnings;
 }
