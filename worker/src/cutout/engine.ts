@@ -5,7 +5,13 @@
 // escritorio; por eso la máquina de Fly pasa a 4 GB. La sesión (219 MB de pesos + grafo) se
 // abre al empezar CADA trabajo y se libera al terminar, haya ido bien o mal: entre trabajos
 // la máquina no guarda nada del modelo en memoria, y si la cola se vacía se apaga.
-import { existsSync } from 'node:fs';
+//
+// OJO: onnxruntime-node carga el modelo y ejecuta la inferencia de forma SÍNCRONA (su `run`
+// es una llamada nativa dentro de un `setImmediate`): mientras dura, el proceso que la hace no
+// atiende temporizadores, señales ni red. Por eso el trabajador no usa este motor en su propio
+// proceso sino en uno hijo (`process-engine.ts`); este archivo es lo que corre dentro del hijo
+// (y en `scripts/bench-cutout.ts` con BENCH_ENGINE=inline).
+import { createReadStream, existsSync } from 'node:fs';
 import os from 'node:os';
 
 /** Modelo, tal y como se guarda en la procedencia y en la carga del trabajo (la fija la base de datos). */
@@ -15,18 +21,43 @@ export const DEFAULT_MODEL_PATH = '/app/models/ben2-base-fp16.onnx';
 /** Hilos de cálculo: la máquina es shared-cpu-2x. Con más no se gana y se reparte peor la memoria. */
 export const DEFAULT_THREADS = 2;
 
+/** Qué costó abrir la sesión, para el registro por fases. */
+export interface CutoutOpenStats {
+  /** Tamaño del archivo del modelo. */
+  modelBytes: number;
+  /** Leer el archivo entero del disco (en Fly, de la imagen): si esto es lento, es el disco. */
+  modelReadMs: number;
+  /** Crear la sesión de onnxruntime (analizar y optimizar el grafo): es procesador. */
+  sessionMs: number;
+  /** CPU (usuario + sistema) gastada en abrirla. */
+  cpuMs: number;
+}
+
+/** Qué costó la última inferencia. */
+export interface CutoutRunStats {
+  cpuMs: number;
+  /** Pico de memoria del proceso que ejecuta el modelo. */
+  peakRssMb: number;
+}
+
 /** Una sesión abierta del modelo. */
 export interface CutoutSession {
   /** Tensor 1×3×1024×1024 (ImageNet) → `alphas` 1×1×1024×1024 (de 0 a 1). */
   run(input: Float32Array, signal?: AbortSignal): Promise<Float32Array>;
   /** Suelta la sesión y su memoria. Se puede llamar más de una vez. */
   release(): Promise<void>;
+  /** Lo que costó abrirla (los motores de verdad lo miden; los dobles de las pruebas, no). */
+  opened?: CutoutOpenStats;
+  /** Lo que costó la última inferencia. */
+  lastRun?: CutoutRunStats;
+  /** CPU que lleva gastada quien ejecuta el modelo, para el latido del registro (solo en Linux). */
+  cpuMs?(): number | undefined;
 }
 
 /** Abre sesiones del modelo (en las pruebas, un doble sin onnxruntime). */
 export interface CutoutEngine {
   model: string;
-  open(): Promise<CutoutSession>;
+  open(signal?: AbortSignal): Promise<CutoutSession>;
 }
 
 export interface OrtEngineOptions {
@@ -39,11 +70,36 @@ export function modelAvailable(modelPath: string): boolean {
   return existsSync(modelPath);
 }
 
+const elapsed = (since: number) => Math.round(performance.now() - since);
+const cpuSince = (start: NodeJS.CpuUsage) => {
+  const used = process.cpuUsage(start);
+  return Math.round((used.user + used.system) / 1000);
+};
+
+/**
+ * Lee el archivo del modelo entero y dice cuánto pesa. No guarda nada: sirve para MEDIR lo que
+ * tarda el disco (y dejar el archivo en la caché del sistema) antes de que onnxruntime lo abra,
+ * y así no confundir «el disco va lento» con «crear la sesión va lento».
+ */
+export async function readModel(modelPath: string, signal?: AbortSignal): Promise<number> {
+  let bytes = 0;
+  for await (const chunk of createReadStream(modelPath, { highWaterMark: 4 * 1024 * 1024, signal })) {
+    bytes += (chunk as Buffer).length;
+  }
+  return bytes;
+}
+
 export function createOrtEngine(options: OrtEngineOptions): CutoutEngine {
   const threads = Math.max(1, Math.min(options.threads ?? DEFAULT_THREADS, os.availableParallelism()));
   return {
     model: BEN2_MODEL_NAME,
-    async open() {
+    async open(signal) {
+      signal?.throwIfAborted();
+      const cpuStart = process.cpuUsage();
+      let t = performance.now();
+      const modelBytes = await readModel(options.modelPath, signal);
+      const modelReadMs = elapsed(t);
+      t = performance.now();
       // Carga diferida: sin el modelo o sin el módulo nativo el resto del trabajador sigue funcionando.
       const ort = await import('onnxruntime-node');
       const session = await ort.InferenceSession.create(options.modelPath, {
@@ -56,23 +112,31 @@ export function createOrtEngine(options: OrtEngineOptions): CutoutEngine {
         enableMemPattern: false,
         extra: { session: { intra_op: { allow_spinning: '0' } } },
       });
+      const opened: CutoutOpenStats = { modelBytes, modelReadMs, sessionMs: elapsed(t), cpuMs: cpuSince(cpuStart) };
       let released = false;
-      return {
-        async run(input, signal) {
+      const handle: CutoutSession = {
+        opened,
+        async run(input, runSignal) {
           if (released) throw new Error('La sesión del modelo ya se ha liberado');
-          signal?.throwIfAborted();
+          runSignal?.throwIfAborted();
+          const cpuRun = process.cpuUsage();
           const feeds = { [session.inputNames[0]!]: new ort.Tensor('float32', input, [1, 3, 1024, 1024]) };
           const outputs = await session.run(feeds);
           const tensor = outputs[session.outputNames[0]!]!;
           // Copia: el tensor es memoria de onnxruntime y se libera con la sesión.
-          return Float32Array.from(tensor.data as Float32Array);
+          const alphas = Float32Array.from(tensor.data as Float32Array);
+          // `maxRSS` va en KB.
+          handle.lastRun = { cpuMs: cpuSince(cpuRun), peakRssMb: Math.round(process.resourceUsage().maxRSS / 1024) };
+          return alphas;
         },
         async release() {
           if (released) return;
           released = true;
           await session.release();
         },
+        cpuMs: () => cpuSince(cpuStart),
       };
+      return handle;
     },
   };
 }

@@ -102,6 +102,22 @@ describe('progreso del recorte', () => {
     expect(running.expected).toMatch(/segundos/);
   });
 
+  it('si el servidor no llegó, cada frase del motor siguiente empieza diciéndolo', () => {
+    const running = describeProgress({ phase: 'running', after: 'server-timeout' });
+    expect(running.label).toBe(
+      'El servidor no ha respondido a tiempo; se termina con el recorte de calidad básica. Recortando en tu equipo…',
+    );
+    expect(running).toMatchObject({ where: 'browser', step: null });
+    expect(describeProgress({ phase: 'loading', after: 'server-timeout' }).label).toMatch(
+      /^El servidor no ha respondido a tiempo.*Preparando el recorte en tu equipo…$/,
+    );
+    const download = describeProgress({ phase: 'downloading', received: 1, total: 2, after: 'server-failed' });
+    expect(download.label).toMatch(/^El servidor no ha podido quitar el fondo.*Descargando el modelo/);
+    expect(download.pct).toBe(50);
+    // Sin ese motivo, el texto de siempre.
+    expect(describeProgress({ phase: 'running' }).label).toBe('Recortando en tu equipo…');
+  });
+
   it('un solo texto de privacidad según lo que haya encendido', () => {
     expect(removalPrivacyNote(false)).toMatch(/la foto no sale de él/);
     expect(removalPrivacyNote(false)).not.toMatch(/servidor/);

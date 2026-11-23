@@ -13,6 +13,7 @@ import { BEN2_MODEL_NAME, type CutoutEngine } from '../src/cutout/engine.ts';
 import { PermanentError } from '../src/errors.ts';
 import { createCutoutHandler, cutoutPayloadSchema, type CutoutPayload } from '../src/handlers/cutout.ts';
 import { createMediaHandlers } from '../src/handlers/index.ts';
+import { createMemoryLogger } from '../src/logger.ts';
 import { renderShared, TARGET_DIR } from '../scripts/sync-cutout.ts';
 import { createBucket, deps, inBrand, OTHER_BRAND, ORG, runHandler, type Bucket } from './helpers/media.ts';
 
@@ -190,6 +191,110 @@ describe('media.cutout', () => {
     expect(
       cutoutPayloadSchema.safeParse({ ...payload('plana.png'), output: { path: 'x/y/z/w/q', x: 1 } }).success,
     ).toBe(false);
+  });
+});
+
+describe('registro por fases de media.cutout', () => {
+  const phaseLines = (log: ReturnType<typeof createMemoryLogger>) =>
+    log.entries.filter((entry) => entry.event === 'cutout.phase');
+
+  it('escribe una línea por fase, con su duración, y ninguna lleva rutas, nombres de archivo ni URL', async () => {
+    const fake = fakeEngine();
+    const open = fake.engine.open.bind(fake.engine);
+    // Un motor de verdad dice además qué costó abrir el modelo (leerlo del disco y crear la sesión).
+    fake.engine.open = async (signal) => {
+      const session = await open(signal);
+      session.opened = { modelBytes: 219_121_675, modelReadMs: 90, sessionMs: 1400, cpuMs: 1500 };
+      const run = session.run.bind(session);
+      session.run = async (input, runSignal) => {
+        const alphas = await run(input, runSignal);
+        session.lastRun = { cpuMs: 30_000, peakRssMb: 2200 };
+        return alphas;
+      };
+      return session;
+    };
+    const log = createMemoryLogger();
+    const p = payload('movil.jpg');
+    const result = await runHandler(createCutoutHandler({ engine: fake.engine }), bucket, p, {}, { log });
+
+    const lines = phaseLines(log);
+    expect(lines.map((line) => line.phase)).toEqual([
+      'download',
+      'decode',
+      'model_fetch',
+      'load',
+      'inference',
+      'refine',
+      'encode',
+      'upload',
+    ]);
+    for (const line of lines) {
+      expect(line).toMatchObject({ level: 'info', jobId: 'prueba', attempt: 1 });
+      expect(typeof line.ms, String(line.phase)).toBe('number');
+      expect(line.ms).toBeGreaterThanOrEqual(0);
+    }
+    const byPhase = Object.fromEntries(lines.map((line) => [line.phase, line]));
+    expect(byPhase.model_fetch).toMatchObject({ ms: 90, bytes: 219_121_675, source: 'local-file' });
+    expect(byPhase.load).toMatchObject({ cpuMs: 1500, sessionMs: 1400 });
+    expect(byPhase.inference).toMatchObject({ cpuMs: 30_000, modelPeakRssMb: 2200 });
+    expect(byPhase.decode).toMatchObject({ width: 400, height: 600 });
+    expect(byPhase.upload!.bytes).toBe((result.output as { bytes: number }).bytes);
+
+    // Nada que identifique a nadie: ni la organización ni la marca (van en las rutas), ni archivos, ni direcciones.
+    const text = JSON.stringify(log.entries);
+    expect(text).not.toContain(ORG);
+    expect(text).not.toContain('2222-4222');
+    expect(text).not.toMatch(/movil|\.jpg|\.png|https?:|ediciones|pruebas/);
+
+    // Los tiempos del resultado no se solapan (la base de datos los SUMA como segundos de máquina) y el pico es el del modelo.
+    const timings = result.timings as Record<string, number>;
+    expect(Object.keys(timings).sort()).toEqual(
+      ['downloadMs', 'encodeMs', 'inferenceMs', 'loadMs', 'modelReadMs', 'postMs', 'prepareMs', 'uploadMs'].sort(),
+    );
+    expect(timings.modelReadMs).toBe(90);
+    expect(Object.values(timings).every((value) => Number.isFinite(value) && value >= 0)).toBe(true);
+    expect(result.peakRssMb).toBe(2200);
+  });
+
+  it('si una fase se corta (fallo o cancelación), queda dicho en cuál y la señal llega al motor', async () => {
+    const roto = fakeEngine(() => new Error('onnxruntime se ha quedado sin memoria'));
+    const log = createMemoryLogger();
+    await expect(
+      runHandler(createCutoutHandler({ engine: roto.engine }), bucket, payload('plana.png'), {}, { log }),
+    ).rejects.toThrow(/sin memoria/);
+    expect(phaseLines(log).at(-1)).toMatchObject({ level: 'warn', phase: 'inference', ok: false });
+
+    // Cancelado mientras el modelo calcula: el motor recibe la señal (el de verdad mata su proceso).
+    const controller = new AbortController();
+    const reason = new Error('La reserva ya no es de este trabajador');
+    let released = 0;
+    const colgado: CutoutEngine = {
+      model: BEN2_MODEL_NAME,
+      async open() {
+        return {
+          run: (_input, signal) =>
+            new Promise<Float32Array>((_resolve, reject) => {
+              signal!.addEventListener('abort', () => reject(signal!.reason), { once: true });
+              setTimeout(() => controller.abort(reason), 20);
+            }),
+          async release() {
+            released += 1;
+          },
+        };
+      },
+    };
+    const log2 = createMemoryLogger();
+    await expect(
+      runHandler(
+        createCutoutHandler({ engine: colgado }),
+        bucket,
+        payload('plana.png'),
+        {},
+        { log: log2, signal: controller.signal },
+      ),
+    ).rejects.toBe(reason);
+    expect(released).toBe(1);
+    expect(phaseLines(log2).at(-1)).toMatchObject({ phase: 'inference', ok: false });
   });
 });
 

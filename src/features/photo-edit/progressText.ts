@@ -22,8 +22,22 @@ export const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(bytes < 
 
 const SERVER_STEPS = { sending: 1, queued: 2, running: 3, receiving: 4 } as const;
 
-/** Qué enseñar según la fase en la que va el recorte. */
+/** Lo que se dice mientras otro motor termina un recorte que el servidor dejó a medias. */
+const FALLBACK_NOTE = {
+  'server-timeout': 'El servidor no ha respondido a tiempo; se termina con el recorte de calidad básica.',
+  'server-failed': 'El servidor no ha podido quitar el fondo; se termina con el recorte de calidad básica.',
+} as const;
+
+/**
+ * Qué enseñar según la fase en la que va el recorte. Si viene de un servidor que no pudo
+ * (`after`), la frase empieza diciéndolo: nunca se cambia de motor en silencio.
+ */
 export function describeProgress(progress: CutoutProgress | null): ProgressView {
+  const view = describePhase(progress);
+  return progress?.after ? { ...view, label: `${FALLBACK_NOTE[progress.after]} ${view.label}` } : view;
+}
+
+function describePhase(progress: CutoutProgress | null): ProgressView {
   if (progress?.phase === 'downloading') {
     const pct = Math.min(100, Math.round((progress.received / Math.max(1, progress.total)) * 100));
     return {

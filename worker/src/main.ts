@@ -5,7 +5,9 @@
 // arranca el bucle. Por defecto (`WORKER_MODE=drain`) vacía la cola
 // y termina, para alojamientos que arrancan el contenedor bajo demanda.
 import { loadConfig } from './config.ts';
+import { statSync } from 'node:fs';
 import { createOrtEngine, modelAvailable } from './cutout/engine.ts';
+import { createProcessEngine } from './cutout/process-engine.ts';
 import { errorMessage } from './errors.ts';
 import { findDefaultFont } from './ffmpeg/fonts.ts';
 import { runProcess, toolsFromEnv } from './ffmpeg/run.ts';
@@ -40,10 +42,21 @@ async function main(): Promise<number> {
     logger.warn('worker.font_missing', { hint: 'Define WORKER_FONT_FILE para poner texto en los vídeos' });
 
   // «Quitar el fondo» solo si el modelo está en la máquina (en Fly va dentro de la imagen).
-  const cutout = modelAvailable(config.WORKER_CUTOUT_MODEL)
-    ? createOrtEngine({ modelPath: config.WORKER_CUTOUT_MODEL, threads: config.WORKER_CUTOUT_THREADS })
-    : undefined;
-  if (!cutout) {
+  const cutoutOptions = { modelPath: config.WORKER_CUTOUT_MODEL, threads: config.WORKER_CUTOUT_THREADS };
+  const cutout = !modelAvailable(config.WORKER_CUTOUT_MODEL)
+    ? undefined
+    : config.WORKER_CUTOUT_ISOLATION === 'process'
+      ? createProcessEngine(cutoutOptions)
+      : createOrtEngine(cutoutOptions);
+  if (cutout) {
+    // El modelo va dentro de la imagen: aquí se ve, en cada arranque, que está y cuánto pesa (no se descarga nada).
+    logger.info('worker.cutout_model', {
+      bytes: statSync(config.WORKER_CUTOUT_MODEL).size,
+      source: 'local-file',
+      isolation: config.WORKER_CUTOUT_ISOLATION,
+      threads: config.WORKER_CUTOUT_THREADS,
+    });
+  } else {
     logger.warn('worker.cutout_disabled', {
       hint: `No está el modelo (${config.WORKER_CUTOUT_MODEL}): no se atienden los trabajos media.cutout`,
     });

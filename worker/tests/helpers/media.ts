@@ -11,7 +11,7 @@ import { probeMedia, type MediaInfo } from '../../src/ffmpeg/probe.ts';
 import { toolsFromEnv } from '../../src/ffmpeg/run.ts';
 import type { Handler } from '../../src/handler.ts';
 import type { MediaDeps } from '../../src/handlers/shared.ts';
-import { createMemoryLogger } from '../../src/logger.ts';
+import { createMemoryLogger, type Logger } from '../../src/logger.ts';
 import type { JsonObject } from '../../src/queue.ts';
 import { createFolderStorage } from '../../src/storage.ts';
 
@@ -213,6 +213,8 @@ export async function runHandler(
   bucket: Bucket,
   payload: unknown,
   job: { organization_id?: string; brand_id?: string | null } = {},
+  /** Para mirar lo que el manejador escribe en el registro o cancelarlo a medias. */
+  extra: { log?: Logger; signal?: AbortSignal } = {},
 ): Promise<JsonObject> {
   const workDir = await mkdtemp(path.join(os.tmpdir(), 'rrss-worker-job-'));
   try {
@@ -226,10 +228,10 @@ export async function runHandler(
         attempts: 1,
         max_attempts: 3,
       },
-      signal: new AbortController().signal,
+      signal: extra.signal ?? new AbortController().signal,
       storage: createFolderStorage(bucket.root),
       workDir,
-      log: createMemoryLogger(),
+      log: extra.log ?? createMemoryLogger(),
     });
   } finally {
     await rm(workDir, { recursive: true, force: true });

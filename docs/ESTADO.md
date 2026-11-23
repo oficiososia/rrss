@@ -550,6 +550,24 @@ Auditoría en staging del 21/11/2026. Detalle de plantillas en `docs/importar-pu
   real, recorte real con BEN2 o con Fly, y el aviso neutro contra OpenAI (solo respuestas simuladas).
 - Pendiente: el aviso de «Animar con IA» sigue hablando de comida (zona de la biblioteca).
 
+### «Quitar el fondo» en el servidor tarda a veces 3 minutos (rama `f47/cutout-lento`, 23/11/2026)
+
+En staging un recorte tardó 54 s y otro más de 176 s (detalle en `docs/alojamiento.md`, §3.1).
+
+- **Diagnóstico:** el modelo va dentro de la imagen (no se descarga al arrancar). Causa más probable:
+  la cuota de procesador de la máquina `shared-cpu-2x` de Fly (0,125 núcleos garantizados; un recorte
+  necesita ~40 s de procesador). **Deducido** del registro y del código y cuadrado con la documentación
+  de Fly; **sin comprobar** en las métricas de Fly.
+- **Implementado y probado en local:** registro por fases (`cutout.phase`, `cutout.heartbeat`, con
+  procesador, memoria y tiempo robado); el modelo en un proceso hijo, para que el trabajador siga
+  renovando la reserva y pueda cortar un recorte cancelado; en el panel, paso inmediato al recorte del
+  navegador al vencer el plazo y aviso en la barra. Medido con el modelo real: 19,9 s en total, 17,8 s de
+  inferencia, 2,2 GB de pico.
+- **Sin desplegar:** la imagen del trabajador y la web. **Sin probar:** en Fly (memoria con dos
+  procesos, tiempo robado visible desde dentro de la máquina) y en un navegador real.
+- **Decisión del dueño:** pasar la máquina a `performance-2x` (~0,10 $/h mientras trabaja, ~2,2 $ por
+  cada 1000 recortes) o quedarse como está. El plazo del navegador sigue en 3 minutos.
+
 ### Quitar el fondo en el servidor con el trabajador de Fly (rama `f21/cutout-fly`, 22/11/2026)
 
 Decisión del dueño: BEN2 en el servidor con la máquina de Fly que ya existe (detalle en

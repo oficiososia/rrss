@@ -2,7 +2,9 @@
 // tiempo por fase y memoria. Es el mismo manejador que corre en Fly, con una carpeta local de cubo.
 //
 //   node scripts/bench-cutout.ts <modelo.onnx> <foto1> [foto2 …]
-//   (variables: WORKER_CUTOUT_THREADS, por defecto 2; BENCH_OUT, carpeta donde dejar los PNG)
+//   (variables: WORKER_CUTOUT_THREADS, por defecto 2; BENCH_OUT, carpeta donde dejar los PNG;
+//    BENCH_ENGINE=process (por defecto, como en Fly: el modelo en un proceso hijo) o inline;
+//    BENCH_PHASES=1 imprime también las líneas `cutout.phase` del registro)
 //
 // Para la memoria, cada foto va en un proceso nuevo si se pasa BENCH_FRESH=1 (lo hace el propio
 // script volviéndose a lanzar): así el pico de cada foto no se mezcla con el de las anteriores.
@@ -11,6 +13,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createOrtEngine } from '../src/cutout/engine.ts';
+import { createProcessEngine } from '../src/cutout/process-engine.ts';
 import { createCutoutHandler } from '../src/handlers/cutout.ts';
 import { createMemoryLogger } from '../src/logger.ts';
 import { createFolderStorage } from '../src/storage.ts';
@@ -26,7 +29,12 @@ async function runOne(model: string, photo: string): Promise<void> {
   copyFileSync(photo, path.join(dir, name));
   const work = mkdtempSync(path.join(os.tmpdir(), 'rrss-bench-job-'));
   const threads = Number(process.env.WORKER_CUTOUT_THREADS) || 2;
-  const handler = createCutoutHandler({ engine: createOrtEngine({ modelPath: model, threads }) });
+  const engineKind = process.env.BENCH_ENGINE === 'inline' ? 'inline' : 'process';
+  const engineOptions = { modelPath: model, threads };
+  const handler = createCutoutHandler({
+    engine: engineKind === 'inline' ? createOrtEngine(engineOptions) : createProcessEngine(engineOptions),
+  });
+  const log = createMemoryLogger();
   let peak = 0;
   const timer = setInterval(() => (peak = Math.max(peak, process.memoryUsage().rss)), 50);
   const started = performance.now();
@@ -50,7 +58,7 @@ async function runOne(model: string, photo: string): Promise<void> {
       signal: new AbortController().signal,
       storage: createFolderStorage(root),
       workDir: work,
-      log: createMemoryLogger(),
+      log,
     });
     const total = Math.round(performance.now() - started);
     peak = Math.max(peak, process.memoryUsage().rss);
@@ -58,9 +66,13 @@ async function runOne(model: string, photo: string): Promise<void> {
       mkdirSync(process.env.BENCH_OUT, { recursive: true });
       copyFileSync(path.join(root, outPath), path.join(process.env.BENCH_OUT, path.basename(outPath)));
     }
+    if (process.env.BENCH_PHASES === '1') {
+      for (const entry of log.entries) process.stdout.write(`${JSON.stringify(entry)}\n`);
+    }
     process.stdout.write(
       `${JSON.stringify({
         photo: name,
+        engine: engineKind,
         threads,
         totalMs: total,
         timings: result.timings,
