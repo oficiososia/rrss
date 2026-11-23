@@ -23,6 +23,8 @@ import { isDrivePath, signDrivePaths, type DriveVariant } from '@/features/drive
   uploadTarget,
 } from '@/features/storage/api';
 
+import { isAppDesign } from './filters';
+
 export const ASSET_PAGE_SIZE = 48;
 
 export interface AssetFilters {
@@ -30,6 +32,28 @@ export interface AssetFilters {
   tag: string;
   folder: string;
   search: string;
+  /**
+   * Incluir lo que ya diseñó o montó la aplicación (exportaciones del editor, reels, portadas,
+   * informes). Por defecto NO: `useAssets` lo usan los selectores de fotos, y una exportación no es
+   * material para otra pieza (fallo 17 de la prueba en staging).
+   */
+  includeDesigns?: boolean;
+}
+
+/** Carpetas de primer nivel donde la aplicación deja piezas ya hechas (ver `isAppDesign` en filters.ts). */
+const DESIGN_FOLDERS = ['Exportaciones', 'Reels', 'Informes'];
+
+/**
+ * Quita de una consulta de `media_assets` lo que `isAppDesign` considera pieza ya hecha: por su
+ * procedencia (exportación, portada) o por su carpeta. Se hace en el servidor para que la
+ * paginación no se quede corta.
+ */
+function withoutAppDesigns<Q extends { not: (c: string, o: string, v: string) => Q; or: (f: string) => Q }>(query: Q): Q {
+  let q = query.not('folder', 'in', `(${DESIGN_FOLDERS.map((f) => `"${f}"`).join(',')})`);
+  for (const folder of DESIGN_FOLDERS) q = q.not('folder', 'like', `${folder} / *`);
+  return q
+    .or('provenance->>type.is.null,provenance->>type.neq.export')
+    .or('provenance->>role.is.null,provenance->>role.neq.cover');
 }
 
 export const assetKeys = {
@@ -64,6 +88,7 @@ export function useAssets(brandId: string, filters: AssetFilters) {
       if (filters.tag) query = query.contains('tags', [filters.tag]);
       if (filters.folder) query = query.eq('folder', filters.folder);
       if (filters.search.trim()) query = query.ilike('file_name', likePattern(filters.search.trim()));
+      if (!filters.includeDesigns) query = withoutAppDesigns(query);
       return unwrap(await query);
     },
     getNextPageParam: (lastPage, pages) =>
@@ -114,16 +139,20 @@ export async function fetchRecentImages(
   brandId: string,
   limit = LIBRARY_SEARCH_LIMIT,
 ): Promise<Pick<MediaAssetRow, 'id' | 'file_name' | 'tags' | 'folder' | 'width' | 'height' | 'provenance'>[]> {
-  return unwrap(
-    await supabase
-      .from('media_assets')
-      .select('id, file_name, tags, folder, width, height, provenance')
-      .eq('brand_id', brandId)
-      .eq('kind', 'image')
+  // Sin exportaciones ni piezas ya montadas: el copiloto elegía una exportación como «foto de un plato».
+  const rows = unwrap(
+    await withoutAppDesigns(
+      supabase
+        .from('media_assets')
+        .select('id, file_name, tags, folder, width, height, provenance')
+        .eq('brand_id', brandId)
+        .eq('kind', 'image'),
+    )
       .order('created_at', { ascending: false })
       .order('id')
       .limit(limit),
   );
+  return rows.filter((row) => !isAppDesign(row));
 }
 
 export function useAssetsByIds(brandId: string, ids: string[]) {

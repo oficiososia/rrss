@@ -8,7 +8,10 @@ import { previewPath, useSignedUrls } from './api';
 import { useAllAssets } from './catalog';
 import { applyFilters, countByFolder, EMPTY_FILTERS, isGenerated } from './filters';
 import { folderParts } from './folders';
+import { AssetName } from './AssetName';
+import { distinctNames, type DistinctName } from './assetNames';
 import { ThumbImage } from './ThumbImage';
+import { useNameReveal } from './useNameReveal';
 import { UploadPanel } from './UploadPanel';
 
 /** Tipo con el que `PhotoPanel` arrastra una foto: `{ assetId, fileName }` en texto. */
@@ -79,6 +82,8 @@ export function PhotoPanel({
     [offered, folder, deferred],
   );
   const visible = rows.slice(0, shown);
+  // Nombres que se distinguen entre sí (tres «Arroz meloso…» no pueden verse iguales).
+  const names = useMemo(() => distinctNames(rows), [rows]);
   const urls = useSignedUrls(
     useMemo(() => visible.filter((a) => a.mime_type.startsWith('image/')).map(previewPath), [visible]),
     { variant: 'thumb' },
@@ -170,40 +175,15 @@ export function PhotoPanel({
           <>
             <ul className="grid grid-cols-3 gap-2" data-testid="photo-panel-grid">
               {visible.map((asset) => (
-                <li key={asset.id}>
-                  <button
-                    type="button"
-                    onClick={() => onPick(asset)}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(PHOTO_DRAG_TYPE, JSON.stringify({ assetId: asset.id, fileName: asset.file_name }));
-                      event.dataTransfer.effectAllowed = 'copy';
-                      onDragStart?.(asset, event);
-                    }}
-                    aria-pressed={selectedId === asset.id}
-                    title={asset.file_name}
-                    data-testid="photo-panel-item"
-                    className={cn(
-                      'block w-full overflow-hidden rounded-lg border bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
-                      selectedId === asset.id ? 'border-primary ring-2 ring-primary' : 'border-border',
-                    )}
-                  >
-                    <span className="block aspect-square">
-                      {asset.mime_type.startsWith('image/') ? (
-                        urls.data?.get(previewPath(asset)) ? (
-                          <ThumbImage url={urls.data.get(previewPath(asset))!} size={160} />
-                        ) : (
-                          <Skeleton className="h-full w-full rounded-none" />
-                        )
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center text-muted">
-                          <Film className="h-6 w-6" aria-hidden />
-                        </span>
-                      )}
-                    </span>
-                    <span className="sr-only">{asset.file_name}</span>
-                  </button>
-                </li>
+                <PhotoTile
+                  key={asset.id}
+                  asset={asset}
+                  name={names.get(asset.id)}
+                  url={urls.data?.get(previewPath(asset))}
+                  selected={selectedId === asset.id}
+                  onPick={onPick}
+                  onDragStart={onDragStart}
+                />
               ))}
             </ul>
             {rows.length > shown && (
@@ -217,6 +197,68 @@ export function PhotoPanel({
         )}
       </div>
     </section>
+  );
+}
+
+/** Una foto del panel: miniatura y nombre (entero al pasar el ratón o al mantener pulsado). */
+function PhotoTile({
+  asset,
+  name,
+  url,
+  selected,
+  onPick,
+  onDragStart,
+}: {
+  asset: MediaAssetRow;
+  name: DistinctName | undefined;
+  url: string | undefined;
+  selected: boolean;
+  onPick: (asset: MediaAssetRow) => void;
+  onDragStart?: (asset: MediaAssetRow, event: DragEvent) => void;
+}) {
+  const reveal = useNameReveal();
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onPick(asset)}
+        {...reveal.handlers}
+        onBlur={reveal.hide}
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.setData(PHOTO_DRAG_TYPE, JSON.stringify({ assetId: asset.id, fileName: asset.file_name }));
+          event.dataTransfer.effectAllowed = 'copy';
+          onDragStart?.(asset, event);
+        }}
+        aria-pressed={selected}
+        aria-label={asset.file_name}
+        title={asset.file_name}
+        data-testid="photo-panel-item"
+        className={cn(
+          'block w-full overflow-hidden rounded-lg border bg-subtle text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+          selected ? 'border-primary ring-2 ring-primary' : 'border-border',
+        )}
+      >
+        <span className="block aspect-square">
+          {asset.mime_type.startsWith('image/') ? (
+            url ? (
+              <ThumbImage url={url} size={160} />
+            ) : (
+              <Skeleton className="h-full w-full rounded-none" />
+            )
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-muted">
+              <Film className="h-6 w-6" aria-hidden />
+            </span>
+          )}
+        </span>
+        {name && (
+          <span className="block bg-surface px-1.5 py-1" aria-hidden>
+            <AssetName name={name} revealed={reveal.revealed} />
+          </span>
+        )}
+      </button>
+    </li>
   );
 }
 

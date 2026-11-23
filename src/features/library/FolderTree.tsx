@@ -20,6 +20,11 @@ export interface FolderTreeProps {
   canDrop: boolean;
   onDropAssets: (folder: string, ids: string[]) => void;
   onDropFiles: (folder: string, files: File[]) => void;
+  /**
+   * «Exportaciones» (las imágenes que guarda el editor al descargar o programar): va aparte, al
+   * final, y no cuenta en «Toda la biblioteca».
+   */
+  exportsNode?: FolderNode | null;
 }
 
 const isFileDrag = (event: DragEvent) => event.dataTransfer.types.includes('Files');
@@ -136,7 +141,7 @@ function Row({
 
 /** Barra lateral de carpetas (escritorio): árbol con contadores; admite soltar archivos encima. */
 export function FolderTree(props: FolderTreeProps) {
-  const { tree, total, unfiled, selected, onSelect, canDrop, onDropAssets, onDropFiles } = props;
+  const { tree, total, unfiled, selected, onSelect, canDrop, onDropAssets, onDropFiles, exportsNode } = props;
   // Plegadas a mano; por defecto todo está desplegado.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const toggle = (path: string) =>
@@ -206,6 +211,16 @@ export function FolderTree(props: FolderTreeProps) {
           </li>
         )}
         {tree.map(renderNode)}
+        {exportsNode && (
+          <li role="none" className="mt-2 border-t border-border pt-2" data-testid="library-exports-group">
+            <p className="px-2 pb-1 text-xs text-muted" aria-hidden>
+              Aparte: lo que exporta el editor
+            </p>
+            <ul role="group" aria-label="Aparte" className="space-y-0.5">
+              {renderNode(exportsNode)}
+            </ul>
+          </li>
+        )}
       </ul>
     </nav>
   );
@@ -218,7 +233,8 @@ export function FolderSelect({
   unfiled,
   selected,
   onSelect,
-}: Pick<FolderTreeProps, 'tree' | 'total' | 'unfiled' | 'selected' | 'onSelect'>) {
+  exportsNode,
+}: Pick<FolderTreeProps, 'tree' | 'total' | 'unfiled' | 'selected' | 'onSelect' | 'exportsNode'>) {
   return (
     <Select
       aria-label="Filtrar por carpeta"
@@ -236,6 +252,15 @@ export function FolderSelect({
           {`${' '.repeat(node.depth)}${node.name} (${node.total})`}
         </option>
       ))}
+      {exportsNode && (
+        <optgroup label="Aparte: lo que exporta el editor">
+          {flattenTree([exportsNode]).map((node) => (
+            <option key={node.path} value={node.path}>
+              {`${' '.repeat(node.depth)}${node.name} (${node.total})`}
+            </option>
+          ))}
+        </optgroup>
+      )}
     </Select>
   );
 }

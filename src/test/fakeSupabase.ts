@@ -124,10 +124,49 @@ class Query implements PromiseLike<QueryResult> {
     this.filters.push((row) => (value === null ? row[column] == null : row[column] === value));
     return this;
   }
-  /** Solo la forma que usa la aplicación: `.not(col, 'is', null)`. */
+  /** Las formas que usa la aplicación: `.not(col, 'is', null)`, `.not(col, 'in', '("a","b")')` y `.not(col, 'like', 'A / *')`. */
   not(column: string, operator: string, value: unknown) {
-    if (operator !== 'is' || value !== null) throw new Error(`not(${operator}) sin simular en la prueba`);
-    this.filters.push((row) => row[column] != null);
+    if (operator === 'is' && value === null) {
+      this.filters.push((row) => row[column] != null);
+    } else if (operator === 'in' && typeof value === 'string') {
+      const list = [...value.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+      this.filters.push((row) => !list.includes(String(row[column] ?? '')));
+    } else if (operator === 'like' && typeof value === 'string') {
+      const source = value
+        .split('')
+        .map((c) => (c === '*' || c === '%' ? '.*' : c === '_' ? '.' : c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+        .join('');
+      const regex = new RegExp(`^${source}$`, 's');
+      this.filters.push((row) => !regex.test(String(row[column] ?? '')));
+    } else {
+      throw new Error(`not(${operator}) sin simular en la prueba`);
+    }
+    return this;
+  }
+  /**
+   * `.or('a.is.null,a.neq.x')`, con columnas JSON (`provenance->>type`). Solo `is`, `eq` y `neq`,
+   * que son las que usa la aplicación.
+   */
+  or(expression: string) {
+    const read = (row: Row, path: string): unknown => {
+      const [column, key] = path.split('->>');
+      const base = row[column!];
+      if (key === undefined) return base;
+      const value = base && typeof base === 'object' ? (base as Row)[key] : undefined;
+      return value == null ? null : typeof value === 'string' ? value : JSON.stringify(value);
+    };
+    const tests = expression.split(',').map((part) => {
+      const match = /^(.+?)\.(is|eq|neq)\.(.*)$/.exec(part.trim());
+      if (!match) throw new Error(`or(${part}) sin simular en la prueba`);
+      const [, path, op, raw] = match as unknown as [string, string, string, string];
+      return (row: Row) => {
+        const value = read(row, path);
+        if (op === 'is') return raw === 'null' ? value == null : String(value) === raw;
+        if (op === 'eq') return value != null && String(value) === raw;
+        return value != null && String(value) !== raw;
+      };
+    });
+    this.filters.push((row) => tests.some((t) => t(row)));
     return this;
   }
   /** LIKE sin distinguir mayúsculas, con los comodines escapados por `likePattern`. */

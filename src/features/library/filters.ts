@@ -80,6 +80,19 @@ export function isAiMade(asset: Pick<MediaAssetRow, 'provenance'>): boolean {
   return type === 'ai_generation' || type === 'ai_animation' || stepKinds(asset).includes('ai_background');
 }
 
+/**
+ * Carpeta donde quedan las imágenes exportadas del editor («Descargar», «Programar», «Publicar
+ * ahora»). La biblioteca la enseña aparte y no sale en «Toda la biblioteca» ni en los selectores.
+ */
+export const EXPORTS_FOLDER = 'Exportaciones';
+
+/** ¿Es una exportación del editor? Por su procedencia o porque está en «Exportaciones». */
+export function isExport(asset: Pick<MediaAssetRow, 'provenance' | 'folder'>): boolean {
+  if (provenanceOf(asset)?.type === 'export') return true;
+  const top = (asset.folder ?? '').split(' / ')[0] ?? '';
+  return top === EXPORTS_FOLDER;
+}
+
 /** Carpetas donde la propia aplicación deja lo que genera (exportaciones, ediciones, reels, informes). */
 const GENERATED_FOLDERS = ['Exportaciones', 'Ediciones', 'Reels', 'Informes'];
 
@@ -153,6 +166,8 @@ export function applyFilters(
   const kindChips = [...filters.chips].filter((c) => KIND_CHIPS.has(c));
   const otherChips = [...filters.chips].filter((c) => !KIND_CHIPS.has(c));
   const out = assets.filter((a) => {
+    // Las exportaciones van aparte: no salen en «Toda la biblioteca» (ni al buscar en ella), solo en su carpeta.
+    if (filters.folder === null && isExport(a)) return false;
     if (filters.folder === '' && a.folder !== '') return false;
     if (filters.folder && !isInside(a.folder, filters.folder)) return false;
     if (filters.tag && !a.tags.includes(filters.tag)) return false;

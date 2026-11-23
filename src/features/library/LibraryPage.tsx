@@ -53,6 +53,8 @@ import {
 } from './catalog';
 import {
   applyFilters,
+  EXPORTS_FOLDER,
+  isExport,
   CHIPS,
   countByFolder,
   EMPTY_FILTERS,
@@ -140,8 +142,12 @@ export function LibraryPage() {
 
   // ── Carpetas ──
   const counts = useMemo(() => countByFolder(all), [all]);
-  const tree = useMemo(() => buildFolderTree(counts, empty.folders), [counts, empty.folders]);
-  const flat = useMemo(() => flattenTree(tree), [tree]);
+  const fullTree = useMemo(() => buildFolderTree(counts, empty.folders), [counts, empty.folders]);
+  // «Exportaciones» va aparte (al final) y no cuenta en «Toda la biblioteca».
+  const tree = useMemo(() => fullTree.filter((n) => n.path !== EXPORTS_FOLDER), [fullTree]);
+  const exportsNode = useMemo(() => fullTree.find((n) => n.path === EXPORTS_FOLDER) ?? null, [fullTree]);
+  const libraryTotal = useMemo(() => all.filter((a) => !isExport(a)).length, [all]);
+  const flat = useMemo(() => flattenTree(fullTree), [fullTree]);
   const folderPaths = useMemo(() => flat.map((n) => n.path), [flat]);
   const unfiled = counts.get('') ?? 0;
   const currentNode: FolderNode | undefined = folder ? flat.find((n) => n.path === folder) : undefined;
@@ -428,8 +434,8 @@ export function LibraryPage() {
             {everything.isPending
               ? 'Cargando…'
               : filtering
-                ? `${plural(rows.length, 'archivo', 'archivos')} de ${all.length}`
-                : plural(all.length, 'archivo', 'archivos')}
+                ? `${plural(rows.length, 'archivo', 'archivos')} de ${libraryTotal}`
+                : plural(libraryTotal, 'archivo', 'archivos')}
           </span>
         }
         action={
@@ -467,8 +473,9 @@ export function LibraryPage() {
           )}
           <FolderTree
             tree={tree}
-            total={all.length}
+            total={libraryTotal}
             unfiled={unfiled}
+            exportsNode={exportsNode}
             selected={folder}
             onSelect={pickFolder}
             canDrop={canEdit}
@@ -480,7 +487,14 @@ export function LibraryPage() {
         <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-2" aria-label="Archivos">
           {/* Móvil: selector de carpeta */}
           <div className="lg:hidden">
-            <FolderSelect tree={tree} total={all.length} unfiled={unfiled} selected={folder} onSelect={pickFolder} />
+            <FolderSelect
+              tree={tree}
+              total={libraryTotal}
+              unfiled={unfiled}
+              selected={folder}
+              onSelect={pickFolder}
+              exportsNode={exportsNode}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -651,6 +665,21 @@ export function LibraryPage() {
               </nav>
               {canEdit && folder !== '' && <MoreMenu items={folderMenu} label="Acciones de la carpeta" testId="folder-menu" size="sm" />}
             </div>
+          )}
+
+          {folder === null && exportsNode && (
+            <p className="text-xs text-muted" data-testid="library-exports-hint">
+              Las imágenes que exporta el editor no salen aquí ni al elegir fotos: están aparte, en{' '}
+              <button
+                type="button"
+                className="font-medium text-primary underline"
+                onClick={() => pickFolder(EXPORTS_FOLDER)}
+                data-testid="library-exports-open"
+              >
+                {EXPORTS_FOLDER} ({exportsNode.total})
+              </button>
+              .
+            </p>
           )}
 
           {everything.data?.truncated && (

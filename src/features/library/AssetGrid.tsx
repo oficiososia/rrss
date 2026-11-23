@@ -1,5 +1,15 @@
 import { FileText, Film, Music } from 'lucide-react';
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type DragEvent,
+  type MouseEvent,
+} from 'react';
 import { Badge, Skeleton } from '@/components/ui';
 import { isDriveAsset } from '@/features/drive/api';
 import type { MediaAssetRow } from '@/lib/database.types';
@@ -7,7 +17,10 @@ import { cn } from '@/lib/utils';
 import { previewPath } from './api';
 import { DRAG_ASSETS } from './FolderTree';
 import { ASSET_KIND_LABEL } from './labels';
+import { AssetName } from './AssetName';
+import { distinctNames, type DistinctName } from './assetNames';
 import { ThumbImage } from './ThumbImage';
+import { useNameReveal } from './useNameReveal';
 
 /** Cuántas miniaturas se pintan de golpe; al llegar al final de la lista se añaden otras tantas. */
 export const GRID_BATCH = 96;
@@ -22,6 +35,36 @@ function Thumbnail({ asset, url }: { asset: MediaAssetRow; url: string | undefin
       <Icon className="h-8 w-8" aria-hidden />
     </span>
   );
+}
+
+const RevealContext = createContext(false);
+
+/** El botón de la tarjeta: con el ratón, el nombre entero en el título; en el móvil, manteniendo pulsado. */
+function GridTileButton({
+  assetName,
+  children,
+  onClick,
+  ...props
+}: { assetName: DistinctName | undefined } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  const reveal = useNameReveal();
+  return (
+    <button
+      type="button"
+      {...props}
+      onClick={onClick}
+      {...reveal.handlers}
+      onBlur={reveal.hide}
+      data-testid="library-asset"
+    >
+      <RevealContext.Provider value={reveal.revealed && Boolean(assetName)}>{children}</RevealContext.Provider>
+    </button>
+  );
+}
+
+function NameSlot({ name, fallback }: { name: DistinctName | undefined; fallback: string }) {
+  const revealed = useContext(RevealContext);
+  if (!name) return <span className="min-w-0 truncate text-xs font-medium">{fallback}</span>;
+  return <AssetName name={name} revealed={revealed} className="flex-1" />;
 }
 
 export interface AssetGridProps {
@@ -63,6 +106,8 @@ export function AssetGrid({
   const selecting = selection.size > 0;
   const shown = assets.slice(0, visible);
   const [dragging, setDragging] = useState<string | null>(null);
+  // Nombres que se distinguen entre sí (tres «Arroz meloso…» no pueden verse iguales).
+  const names = useMemo(() => distinctNames(assets), [assets]);
 
   useEffect(() => {
     const node = sentinel.current;
@@ -109,8 +154,9 @@ export function AssetGrid({
         const chosen = selection.has(asset.id);
         return (
           <li key={asset.id} className="group relative">
-            <button
-              type="button"
+            <GridTileButton
+              assetName={names.get(asset.id)}
+              title={asset.file_name}
               onClick={(event) => click(event, asset)}
               draggable={canDrag}
               onDragStart={(event) => dragStart(event, asset)}
@@ -123,13 +169,12 @@ export function AssetGrid({
                 chosen || openId === asset.id ? 'border-primary ring-2 ring-primary' : 'border-border',
                 dragging === asset.id && 'opacity-50',
               )}
-              data-testid="library-asset"
             >
               <span className="block aspect-square overflow-hidden bg-subtle">
                 <Thumbnail asset={asset} url={urls?.get(previewPath(asset))} />
               </span>
               <span className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="min-w-0 truncate text-xs font-medium">{asset.file_name}</span>
+                <NameSlot name={names.get(asset.id)} fallback={asset.file_name} />
                 {isDriveAsset(asset) ? (
                   <span data-testid="library-asset-drive" className="shrink-0">
                     <Badge>Drive</Badge>
@@ -140,7 +185,7 @@ export function AssetGrid({
                   )
                 )}
               </span>
-            </button>
+            </GridTileButton>
             {canSelect && (
               <label
                 className={cn(

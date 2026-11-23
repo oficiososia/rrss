@@ -81,10 +81,11 @@ function seed(options: { role?: 'owner' | 'viewer'; usage?: boolean } = {}) {
   ]);
 }
 
+// El nombre entero va en el título de la tarjeta (en la tarjeta, la parte que lo distingue).
 const names = () =>
   screen
     .getAllByTestId('library-asset')
-    .map((el) => within(el).getByText(/\.(jpg|png|mp4)$/).textContent)
+    .map((el) => el.getAttribute('title'))
     .filter(Boolean);
 
 const open = async () => {
