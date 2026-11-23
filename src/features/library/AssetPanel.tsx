@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { usageWarning } from './usageText';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -505,8 +506,8 @@ export function AssetPanel({
         onOpenChange={setConfirming}
         title="¿Eliminar este archivo?"
         description={
-          usage && usage.some((u) => !u.archived)
-            ? `«${asset.file_name}» está en ${usage.filter((u) => !u.archived).length} ${usage.filter((u) => !u.archived).length === 1 ? 'pieza' : 'piezas'}: esas piezas perderán la imagen. Se borrará de la biblioteca de forma definitiva. No se puede deshacer.`
+          usage && usageWarning(usage)
+            ? `«${asset.file_name}» se borrará de la biblioteca de forma definitiva. No se puede deshacer. ${usageWarning(usage)}`
             : `«${asset.file_name}» se borrará de la biblioteca de forma definitiva. No se puede deshacer.`
         }
         confirmLabel="Eliminar"

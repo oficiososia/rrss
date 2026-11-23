@@ -1,21 +1,37 @@
 // «Editar foto» a PANTALLA COMPLETA dentro de la propia página (no es una
 // ventana emergente), desde la ficha de la biblioteca o desde una capa de imagen
-// del editor (docs/edicion-fotos.md, §11). La foto, lo más grande posible, y los
-// controles en una columna (debajo en el móvil, con las pestañas fijas y la foto
-// siempre a la vista). Cuatro pestañas:
-//   · Mejorar   luz, color y nitidez (automático o a mano) y encuadre, SIN IA;
-//   · Recortes  1:1, 4:5 y 9:16 con encuadre inteligente, SIN IA;
-//   · Fondo     quitar el fondo (en el navegador, gratis; o con IA si el
-//               servidor la tiene) y poner uno liso, de la marca o de la
-//               biblioteca, con sombra suave opcional (sin IA);
-//   · Ampliar   ×2 o ×4 (IA).
+// del editor (docs/edicion-fotos.md, §11 y §15). La foto, lo más grande posible, y
+// los ajustes en una columna a la derecha; en el móvil, las pestañas arriba, la
+// foto en medio y los ajustes en una hoja baja (sin scroll de página). Tres
+// pestañas, y cada acción en un solo sitio:
+//   · Ajustar   «Mejorar automáticamente» con su intensidad; Luz, Contraste,
+//               Color y Calidez a la vista y el resto en «Más ajustes», SIN IA;
+//   · Recortar  la foto entera, 1:1, 4:5 o 9:16, siempre con encuadre
+//               inteligente, SIN IA (y «Ampliar con IA» si el servidor puede).
+//               Ajustar y Recortar van juntos: se guardan en una sola copia;
+//   · Fondo     Quitar (en el navegador, gratis; o con IA) y poner uno liso, de
+//               la marca o de la biblioteca; Desenfocar (modo retrato); y
+//               Cambiar con IA (el resultado se ve antes de aplicarlo).
+// «Mejorar con IA» no se ofrece (la IA solo crea fondos): ver HIDDEN_AI_OPERATIONS.
 // Lo de IA solo sale con `VITE_AI_PHOTO_EDIT_ENABLED` y si el servidor tiene
 // modelo para esa acción. Cada resultado es un recurso NUEVO de la biblioteca,
 // con su procedencia; la foto original no se toca nunca. Desde el editor, el
 // botón principal es «Aplicar a la capa» (la capa pasa a usar la copia y se
 // deshace con Ctrl+Z); desde la biblioteca, «Guardar copia», con «Deshacer».
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Eraser, Eye, ImagePlus, Maximize2, Paintbrush, Sparkles, Undo2, Wand2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  Eraser,
+  Eye,
+  ImagePlus,
+  Maximize2,
+  Paintbrush,
+  Sparkles,
+  Undo2,
+  Wand2,
+} from 'lucide-react';
 import {
   createContext,
   useCallback,
@@ -25,7 +41,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type SetStateAction,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -36,6 +55,7 @@ import { useGenerationProgress } from '@/features/ai/imageApi';
 import { formatMicros } from '@/features/ai/money';
 import { useActiveProfile } from '@/features/brand/api';
 import { BrandContext, OrgContext } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import { parseProfile } from '@/features/brand/profile';
 import { ImagePickerDialog } from '@/features/content/editor/AssetPickerDialog';
 import { assetKeys, deleteAssets, useSignedUrls } from '@/features/library/api';
@@ -58,15 +78,7 @@ import {
   type AiPhotoOperation,
 } from './api';
 import { encodePixels, loadCoverPixels, loadPixels, paint, PhotoLoadError } from './canvas';
-import {
-  centeredCrop,
-  interestMap,
-  NETWORK_ASPECT_LABEL,
-  NETWORK_ASPECTS,
-  smartCrop,
-  type Box,
-  type NetworkAspect,
-} from './framing';
+import { interestMap, NETWORK_ASPECT_LABEL, NETWORK_ASPECTS, smartCrop, type Box, type NetworkAspect } from './framing';
 import {
   analyzeImage,
   applyAdjustments,
@@ -80,22 +92,10 @@ import {
   type Adjustments,
   type Pixels,
 } from './pixels';
-import {
-  EMPTY_AI_REVIEW,
-  existingSubject,
-  spentMicros,
-  type AiCandidate,
-  type AiReview,
-} from './aiBackground';
+import { EMPTY_AI_REVIEW, existingSubject, spentMicros, type AiCandidate, type AiReview } from './aiBackground';
 import { CutoutProgressBar } from './CutoutProgressBar';
 import { removalPrivacyNote } from './progressText';
-import {
-  aiSubjectFor,
-  backgroundSuggestionsFor,
-  mentionsFood,
-  sectorKindOf,
-  type SectorKind,
-} from './sector';
+import { aiSubjectFor, backgroundSuggestionsFor, mentionsFood, sectorKindOf, type SectorKind } from './sector';
 import { composeCutout } from './cutout/composition';
 import { alphaOf, restorePlate, sameAspect, subjectMaskPixels } from './cutout/plate';
 import {
@@ -118,14 +118,55 @@ import {
 } from './portrait/brush';
 import { renderRetouch } from './portrait/retouch';
 
-type Tab = 'enhance' | 'crops' | 'background' | 'upscale' | 'ai';
+/** Las tres pestañas: Ajustar, Recortar y Fondo. */
+type Tab = 'enhance' | 'crops' | 'background';
+/**
+ * Con qué se abre la pantalla. «ai» y «upscale» son nombres de antes, cuando eran pestañas
+ * propias: abren «Fondo → Cambiar con IA» y «Recortar» (donde está «Ampliar con IA»).
+ */
+export type PhotoEditInitialTab = Tab | 'ai' | 'upscale';
+/** Qué se hace con el fondo, dentro de la pestaña «Fondo». */
+type BackgroundMode = 'remove' | 'blur' | 'ai';
+
+const TAB_LABEL: Record<Tab, string> = { enhance: 'Ajustar', crops: 'Recortar', background: 'Fondo' };
+
+/**
+ * Ediciones con IA que el servidor sabe hacer pero esta pantalla NO ofrece.
+ * «Mejorar con IA» (`enhance`) puede cambiar el plato o el producto y choca con la regla de que
+ * la IA solo crea fondos (decisión del dueño, 23/11/2026). Su código (aquí y la tarea del
+ * servidor en `ai-media`) se conserva: para recuperarla basta con quitarla de esta lista.
+ */
+const HIDDEN_AI_OPERATIONS: ReadonlySet<AiPhotoOperation> = new Set<AiPhotoOperation>(['enhance']);
+
+/** Nombre del proveedor para la línea «Usa IA (…)», sacado del modelo (`proveedor:modelo`). */
+const AI_PROVIDER_LABEL: Record<string, string> = { openai: 'OpenAI', comfyui: 'servidor propio' };
+function aiProviderOf(model: string): string {
+  const id = model.split(':')[0] ?? model;
+  return AI_PROVIDER_LABEL[id] ?? id;
+}
+
+/** Una línea a la vista y el resto plegado detrás de «Más información». */
+function MoreInfo({ line, children, testId }: { line: ReactNode; children: ReactNode; testId?: string }) {
+  return (
+    <details className="text-xs text-muted">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        {line}{' '}
+        <span className="whitespace-nowrap font-medium text-fg underline underline-offset-2">Más información</span>
+      </summary>
+      <div className="mt-1 space-y-1" data-testid={testId}>
+        {children}
+      </div>
+    </details>
+  );
+}
 
 /** Tipo de negocio de la marca (por su sector y, si hace falta, su descripción), para no suponer siempre un restaurante. */
 function useSectorKind(brandId: string): SectorKind {
   const org = useContext(OrgContext);
   const current = useContext(BrandContext);
   const profile = useActiveProfile(brandId);
-  const sector = current?.brand.id === brandId ? current.brand.sector : org?.brands.find((b) => b.id === brandId)?.sector;
+  const sector =
+    current?.brand.id === brandId ? current.brand.sector : org?.brands.find((b) => b.id === brandId)?.sector;
   const description = profile.data ? parseProfile(profile.data.data).business.description : '';
   return useMemo(() => sectorKindOf(sector, description), [sector, description]);
 }
@@ -155,9 +196,9 @@ export interface PhotoEditScreenProps {
    * retocar el plato.
    */
   getSubjectMask?: (asset: MediaAssetRow) => Promise<Blob | null>;
-  /** Pestaña con la que se abre (por defecto, «Mejorar»). */
-  initialTab?: Tab;
-  /** En la pestaña «Fondo», con el «Modo retrato» ya elegido (cuando la foto tenga recorte). */
+  /** Pestaña con la que se abre (por defecto, «Ajustar»). */
+  initialTab?: PhotoEditInitialTab;
+  /** En la pestaña «Fondo», con «Desenfocar» (modo retrato) ya elegido. */
   initialPortrait?: boolean;
 }
 
@@ -173,22 +214,47 @@ const NO_STROKES: BrushStroke[] = [];
 
 /** Lado mayor de la vista previa: se ve grande y los ajustes siguen siendo instantáneos. */
 const PREVIEW_SIDE = 1000;
-const SLIDERS: Array<{
+interface Slider {
   key:
     'exposure' | 'contrast' | 'saturation' | 'warmth' | 'sharpness' | 'shadows' | 'highlights' | 'clarity' | 'vibrance';
   label: string;
   min: number;
-}> = [
+}
+/** Los cuatro a la vista en «Ajustar». */
+const MAIN_SLIDERS: Slider[] = [
   { key: 'exposure', label: 'Luz', min: -100 },
   { key: 'contrast', label: 'Contraste', min: -100 },
-  { key: 'saturation', label: 'Color (saturación)', min: -100 },
-  { key: 'warmth', label: 'Temperatura (fría ↔ cálida)', min: -100 },
+  { key: 'saturation', label: 'Color', min: -100 },
+  { key: 'warmth', label: 'Calidez', min: -100 },
+];
+/** Los de «Más ajustes» (plegados). */
+const MORE_SLIDERS: Slider[] = [
   { key: 'sharpness', label: 'Nitidez', min: 0 },
   { key: 'shadows', label: 'Sombras (aclarar lo oscuro)', min: -100 },
   { key: 'highlights', label: 'Luces (recuperar lo claro)', min: -100 },
   { key: 'clarity', label: 'Claridad (relieve)', min: -100 },
   { key: 'vibrance', label: 'Viveza (sin pasarse en la carne)', min: -100 },
 ];
+
+/** Lo de «Ajustar» y «Recortar»: vive en la pantalla para que las dos pestañas guarden UNA copia. */
+interface LookState {
+  adjustments: Adjustments;
+  /** La mejora automática está puesta (y no se ha tocado a mano). */
+  auto: boolean;
+  /** Lo que había antes de pulsar «Mejorar automáticamente», para volver en un clic. */
+  beforeAuto: Adjustments | null;
+  /** Cuánto de lo calculado se aplica: suave, normal o fuerte. */
+  intensity: AutoIntensity;
+  /** Formato del recorte ('' = la foto entera), siempre con encuadre inteligente. */
+  framing: NetworkAspect | '';
+}
+const NEUTRAL_LOOK: LookState = {
+  adjustments: NEUTRAL_ADJUSTMENTS,
+  auto: false,
+  beforeAuto: null,
+  intensity: 'normal',
+  framing: '',
+};
 
 /** Cuadrícula de ajedrez para que se note lo transparente. */
 const CHECKER_STYLE = {
@@ -265,8 +331,12 @@ function useScreen(): ScreenContextValue {
   return value;
 }
 
-/** La pestaña activa dice qué hace el botón principal y si hay cambios sin guardar. */
-function useCommit(commit: CommitState) {
+/**
+ * La pestaña activa dice qué hace el botón principal y si hay cambios sin guardar.
+ * Con `enabled` a falso no hay botón principal (p. ej. «Fondo → Cambiar con IA», que decide con
+ * sus propios botones «Usar esta» / «Probar otra vez»).
+ */
+function useCommit(commit: CommitState, enabled = true) {
   const { setCommit } = useScreen();
   const latest = useRef(commit);
   useEffect(() => {
@@ -274,6 +344,7 @@ function useCommit(commit: CommitState) {
   });
   const { disabled, dirty, busy } = commit;
   useEffect(() => {
+    if (!enabled) return;
     setCommit({
       disabled,
       dirty,
@@ -282,7 +353,7 @@ function useCommit(commit: CommitState) {
       reset: () => latest.current.reset(),
     });
     return () => setCommit(null);
-  }, [disabled, dirty, busy, setCommit]);
+  }, [enabled, disabled, dirty, busy, setCommit]);
 }
 
 /** La foto grande: se pinta en el escenario de la pantalla; mantener «Ver la original» enseña la de antes. */
@@ -329,7 +400,21 @@ export function PhotoEditScreen({
   } | null>(null);
   const loaded = load && load.url === url ? (load.result ?? null) : null;
   const loadError = load && load.url === url ? (load.error ?? null) : null;
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'enhance');
+  const [tab, setTab] = useState<Tab>(
+    initialTab === 'ai' || initialPortrait
+      ? 'background'
+      : initialTab === 'upscale'
+        ? 'crops'
+        : (initialTab ?? 'enhance'),
+  );
+  // «Fondo»: Quitar, Desenfocar o Cambiar con IA (se conserva al cambiar de pestaña).
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>(
+    initialPortrait ? 'blur' : initialTab === 'ai' ? 'ai' : 'remove',
+  );
+  // «Ajustar» y «Recortar» comparten lo hecho: se guarda en una sola copia.
+  const [look, setLook] = useState<LookState>(NEUTRAL_LOOK);
+  // En el móvil los ajustes son una hoja baja que se puede ocultar para ver la foto entera.
+  const [sheetOpen, setSheetOpen] = useState(true);
   const [results, setResults] = useState<Array<{ row: MediaAssetRow; undoable: boolean }>>([]);
   const [commit, setCommit] = useState<CommitState | null>(null);
   const [stage, setStage] = useState<HTMLElement | null>(null);
@@ -343,7 +428,8 @@ export function PhotoEditScreen({
   const save = useSaveEdit(asset.brand_id);
   const queryClient = useQueryClient();
   const aiOptions = useAiEditOptions(asset.brand_id, canEditWithAi(asset));
-  const aiChoice = (operation: AiPhotoOperation) => aiOptions.data?.find((c) => c.operation === operation);
+  const aiChoice = (operation: AiPhotoOperation) =>
+    HIDDEN_AI_OPERATIONS.has(operation) ? undefined : aiOptions.data?.find((c) => c.operation === operation);
   const rootRef = useRef<HTMLDivElement>(null);
   const applyMode = Boolean(onApply);
 
@@ -426,7 +512,9 @@ export function PhotoEditScreen({
     setAsset(row);
     setCutout(null);
     setAiReview(EMPTY_AI_REVIEW);
+    setLook(NEUTRAL_LOOK);
     setTab('background');
+    setBackgroundMode('remove');
   };
 
   const requestClose = () => {
@@ -482,6 +570,10 @@ export function PhotoEditScreen({
   );
   const resultAction = onApply ?? onResult;
   const busy = Boolean(commit?.busy) || save.isPending;
+  const ready = Boolean(!loadError && loaded && stats && preview && map && context);
+  // «Cambiar con IA» solo si el servidor tiene modelo (mientras se pregunta, «Quitar»).
+  const effectiveMode: BackgroundMode =
+    backgroundMode === 'ai' && !aiChoice('replace_background') ? 'remove' : backgroundMode;
 
   const body = (
     <div
@@ -589,8 +681,58 @@ export function PhotoEditScreen({
         </section>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className="relative h-[38dvh] shrink-0 bg-subtle lg:h-auto lg:flex-1">
+      {/*
+        Ancho: la foto a la izquierda y, a la derecha, las pestañas encima de los ajustes.
+        Móvil: las pestañas arriba, la foto en medio y los ajustes en una hoja baja (hasta el 45 %
+        del alto) que se oculta para ver la foto entera. Nunca hay scroll de página: solo se
+        desplaza el interior de la hoja (o de la columna).
+      */}
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as Tab)}
+        className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[auto_minmax(0,1fr)]"
+      >
+        <div
+          className="flex shrink-0 items-center gap-1 bg-surface px-2 lg:col-start-2 lg:row-start-1 lg:border-l lg:border-border"
+          data-testid="photo-edit-tabs"
+        >
+          {ready && (
+            <>
+              <div className="min-w-0 flex-1">
+                <TabsList label="Ediciones">
+                  {(Object.keys(TAB_LABEL) as Tab[]).map((value) => (
+                    <TabsTrigger
+                      key={value}
+                      value={value}
+                      className="max-lg:min-h-[2.75rem]"
+                      onClick={() => setSheetOpen(true)}
+                    >
+                      {TAB_LABEL[value]}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 lg:hidden"
+                aria-expanded={sheetOpen}
+                aria-label={sheetOpen ? 'Ocultar los ajustes' : 'Ver los ajustes'}
+                title={sheetOpen ? 'Ocultar los ajustes' : 'Ver los ajustes'}
+                onClick={() => setSheetOpen((open) => !open)}
+                data-testid="photo-edit-sheet-toggle"
+              >
+                {sheetOpen ? (
+                  <ChevronDown className="h-4 w-4" aria-hidden />
+                ) : (
+                  <ChevronUp className="h-4 w-4" aria-hidden />
+                )}
+              </Button>
+            </>
+          )}
+        </div>
+
+        <div className="relative min-h-0 flex-1 bg-subtle lg:col-start-1 lg:row-span-2 lg:row-start-1">
           <div
             ref={setStage}
             className="absolute inset-3 flex items-center justify-center"
@@ -634,87 +776,41 @@ export function PhotoEditScreen({
         </div>
 
         <aside
-          className="flex min-h-0 flex-1 flex-col border-t border-border bg-surface lg:w-[24rem] lg:flex-none lg:border-l lg:border-t-0"
-          aria-label="Controles"
+          className={cn(
+            'min-h-0 flex-col border-t border-border bg-surface lg:col-start-2 lg:row-start-2 lg:flex lg:border-l lg:border-t-0',
+            sheetOpen ? 'flex max-h-[45dvh] lg:max-h-none' : 'hidden',
+          )}
+          aria-label="Ajustes"
+          data-testid="photo-edit-sheet"
         >
-          {loadError ? (
-            <div className="p-4">
-              <Notice tone="warning">{loadError}</Notice>
-            </div>
-          ) : !loaded || !stats || !preview || !map || !context ? null : (
-            <ScreenContext.Provider value={context}>
-              <Tabs
-                value={tab}
-                onValueChange={(value) => setTab(value as Tab)}
-                className="flex min-h-0 flex-1 flex-col"
-              >
-                <div className="shrink-0 px-2">
-                  <TabsList label="Ediciones">
-                    <TabsTrigger value="enhance">Mejorar</TabsTrigger>
-                    <TabsTrigger value="crops">Recortes</TabsTrigger>
-                    <TabsTrigger value="background">Fondo</TabsTrigger>
-                    {(aiChoice('replace_background') || aiChoice('enhance')) && (
-                      <TabsTrigger value="ai">Fondo con IA</TabsTrigger>
-                    )}
-                    {aiChoice('upscale') && <TabsTrigger value="upscale">Ampliar</TabsTrigger>}
-                  </TabsList>
-                </div>
-                {/* Una sola zona de desplazamiento: los controles. */}
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-                  {loaded.reduced && (
-                    <div className="pt-3">
-                      <Notice tone="warning">
-                        La foto es muy grande: se edita reducida a {loaded.pixels.width} × {loaded.pixels.height} px.
-                      </Notice>
-                    </div>
-                  )}
-                  <TabsContent value="enhance" className="pt-4">
-                    <EnhanceTab pixels={loaded.pixels} preview={preview} stats={stats} map={map} onSave={commitEdit} />
-                  </TabsContent>
-                  <TabsContent value="crops" className="pt-4">
-                    <CropsTab pixels={loaded.pixels} preview={preview} map={map} onSave={commitEdit} />
-                  </TabsContent>
-                  <TabsContent value="background" className="pt-4">
-                    <BackgroundTab
-                      key={asset.id}
-                      asset={asset}
-                      pixels={loaded.pixels}
-                      transparent={stats.transparent}
-                      onSave={commitEdit}
-                      cutout={cutout}
-                      setCutout={setCutout}
-                      portraitFirst={Boolean(initialPortrait)}
-                      ai={aiChoice('remove_background')}
-                      sector={sector}
-                      onAiResult={(row) => {
-                        addResult(row);
-                        switchTo(row);
-                      }}
-                    />
-                  </TabsContent>
-                  {(aiChoice('replace_background') || aiChoice('enhance')) && (
-                    <TabsContent value="ai" className="space-y-6 pt-4">
-                      <Stage
-                        pixels={aiReview.candidate && !aiReview.candidate.showBefore ? aiReview.candidate.preview : null}
-                        testId="photo-edit-ai-preview"
-                      />
-                      {aiChoice('replace_background') && (
-                        <AiAction
-                          asset={asset}
-                          operation="replace_background"
-                          choice={aiChoice('replace_background')!}
-                          onDone={addResult}
-                          getSubjectMask={getSubjectMask}
-                          pixels={loaded.pixels}
-                          transparent={stats.transparent}
-                          cutout={cutout}
-                          setCutout={setCutout}
-                          sector={sector}
-                          review={aiReview}
-                          setReview={setAiReview}
-                        />
-                      )}
-                      {aiChoice('enhance') && (
+          {/* Una sola zona de desplazamiento: los ajustes. */}
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6" data-testid="photo-edit-panel">
+            {loadError ? (
+              <div className="pt-4">
+                <Notice tone="warning">{loadError}</Notice>
+              </div>
+            ) : !loaded || !stats || !preview || !map || !context ? null : (
+              <ScreenContext.Provider value={context}>
+                {loaded.reduced && (
+                  <div className="pt-3">
+                    <Notice tone="warning">
+                      La foto es muy grande: se edita reducida a {loaded.pixels.width} × {loaded.pixels.height} px.
+                    </Notice>
+                  </div>
+                )}
+                <TabsContent value="enhance" className="pt-4">
+                  <LookTab
+                    view="adjust"
+                    look={look}
+                    setLook={setLook}
+                    pixels={loaded.pixels}
+                    preview={preview}
+                    stats={stats}
+                    map={map}
+                    onSave={commitEdit}
+                    extra={
+                      // Oculto (HIDDEN_AI_OPERATIONS): «Mejorar con IA» se queda en el código para poder recuperarlo.
+                      aiChoice('enhance') && (
                         <AiAction
                           asset={asset}
                           operation="enhance"
@@ -722,109 +818,237 @@ export function PhotoEditScreen({
                           onDone={addResult}
                           sector={sector}
                         />
-                      )}
-                    </TabsContent>
-                  )}
-                  {aiChoice('upscale') && (
-                    <TabsContent value="upscale" className="pt-4">
-                      <Stage pixels={null} />
-                      <AiAction
-                        asset={asset}
-                        operation="upscale"
-                        choice={aiChoice('upscale')!}
-                        onDone={addResult}
-                        sector={sector}
-                      />
-                    </TabsContent>
-                  )}
-                </div>
-              </Tabs>
-            </ScreenContext.Provider>
-          )}
+                      )
+                    }
+                  />
+                </TabsContent>
+                <TabsContent value="crops" className="pt-4">
+                  <LookTab
+                    view="crop"
+                    look={look}
+                    setLook={setLook}
+                    pixels={loaded.pixels}
+                    preview={preview}
+                    stats={stats}
+                    map={map}
+                    onSave={commitEdit}
+                    extra={
+                      aiChoice('upscale') && (
+                        <section
+                          className="space-y-2 border-t border-border pt-4"
+                          aria-label="Ampliar con IA"
+                          data-testid="photo-edit-upscale"
+                        >
+                          <h3 className="text-sm font-medium">Ampliar con IA</h3>
+                          <AiAction
+                            asset={asset}
+                            operation="upscale"
+                            choice={aiChoice('upscale')!}
+                            onDone={addResult}
+                            sector={sector}
+                          />
+                        </section>
+                      )
+                    }
+                  />
+                </TabsContent>
+                <TabsContent value="background" className="pt-4">
+                  <BackgroundTab
+                    key={asset.id}
+                    asset={asset}
+                    pixels={loaded.pixels}
+                    transparent={stats.transparent}
+                    onSave={commitEdit}
+                    cutout={cutout}
+                    setCutout={setCutout}
+                    mode={effectiveMode}
+                    setMode={setBackgroundMode}
+                    ai={aiChoice('remove_background')}
+                    sector={sector}
+                    onAiResult={(row) => {
+                      addResult(row);
+                      switchTo(row);
+                    }}
+                    aiSection={
+                      aiChoice('replace_background') && (
+                        <div className="space-y-6">
+                          <Stage
+                            pixels={
+                              aiReview.candidate && !aiReview.candidate.showBefore ? aiReview.candidate.preview : null
+                            }
+                            testId="photo-edit-ai-preview"
+                          />
+                          <AiAction
+                            asset={asset}
+                            operation="replace_background"
+                            choice={aiChoice('replace_background')!}
+                            onDone={addResult}
+                            getSubjectMask={getSubjectMask}
+                            pixels={loaded.pixels}
+                            transparent={stats.transparent}
+                            cutout={cutout}
+                            setCutout={setCutout}
+                            sector={sector}
+                            review={aiReview}
+                            setReview={setAiReview}
+                          />
+                        </div>
+                      )
+                    }
+                  />
+                </TabsContent>
+              </ScreenContext.Provider>
+            )}
+          </div>
         </aside>
-      </div>
+      </Tabs>
     </div>
   );
 
   return createPortal(body, document.body);
 }
 
-// ─────────────────────────────── Mejorar ───────────────────────────────
+// ─────────────────────────────── Ajustar y Recortar ───────────────────────────────
 
-function EnhanceTab({
+/** Nombre corto de cada formato en «Recortar» (el largo va en la ayuda del botón). */
+const CROP_HINT: Record<NetworkAspect, string> = { '1:1': 'Cuadrado', '4:5': 'Vertical', '9:16': 'Historia' };
+
+/** Caja de la foto completa pasada al tamaño de la vista previa. */
+function scaleBox(box: Box, scale: number): Box {
+  return { x: box.x * scale, y: box.y * scale, width: box.width * scale, height: box.height * scale };
+}
+
+/** Un deslizador de «Ajustar». */
+function AdjustSlider({
+  slider,
+  value,
+  onChange,
+}: {
+  slider: Slider;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="flex justify-between">
+        {slider.label}
+        <span className="tabular-nums text-muted">{value}</span>
+      </span>
+      <input
+        type="range"
+        min={slider.min}
+        max={100}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="mt-1 w-full"
+        data-testid={`photo-edit-${slider.key}`}
+      />
+    </label>
+  );
+}
+
+/**
+ * «Ajustar» (`view="adjust"`) y «Recortar» (`view="crop"`): las dos miran y cambian el mismo
+ * `LookState` de la pantalla, así que lo ajustado se ve recortado y se guarda en UNA copia.
+ */
+function LookTab({
+  view,
+  look,
+  setLook,
   pixels,
   preview,
   stats,
   map,
   onSave,
+  extra,
 }: {
+  view: 'adjust' | 'crop';
+  look: LookState;
+  setLook: Dispatch<SetStateAction<LookState>>;
   pixels: Pixels;
   preview: Pixels;
   stats: ReturnType<typeof analyzeImage>;
   map: ReturnType<typeof interestMap>;
   onSave: SaveEditResult;
+  /** Lo de IA que va en esta pestaña (Recortar: «Ampliar con IA»). */
+  extra?: ReactNode;
 }) {
-  const [adjustments, setAdjustments] = useState<Adjustments>(NEUTRAL_ADJUSTMENTS);
-  /** La mejora automática está puesta (y no se ha tocado a mano). */
-  const [auto, setAuto] = useState(false);
-  /** Lo que había antes de pulsar «Mejorar automáticamente», para volver en un clic. */
-  const [beforeAuto, setBeforeAuto] = useState<Adjustments | null>(null);
-  /** Cuánto de lo calculado se aplica: suave, normal o fuerte. */
-  const [intensity, setIntensity] = useState<AutoIntensity>('normal');
-  const [framing, setFraming] = useState<NetworkAspect | ''>('');
+  const { adjustments, auto, intensity, framing } = look;
   const [busy, setBusy] = useState(false);
   // Los controles responden al instante; la foto grande se rehace en cuanto puede.
   const live = useDeferredValue(adjustments);
   const adjusted = useMemo(() => applyAdjustments(preview, live), [preview, live]);
+  const scale = preview.width / pixels.width;
   const box = useMemo(() => (framing ? smartCrop(pixels, framing, map) : null), [pixels, map, framing]);
-  const shown = useMemo(() => {
-    if (!box) return adjusted;
-    const scale = preview.width / pixels.width;
-    return cropPixels(adjusted, {
-      x: box.x * scale,
-      y: box.y * scale,
-      width: box.width * scale,
-      height: box.height * scale,
-    });
-  }, [adjusted, box, preview.width, pixels.width]);
+  const shown = useMemo(() => (box ? cropPixels(adjusted, scaleBox(box, scale)) : adjusted), [adjusted, box, scale]);
   const unchanged = isNeutral(adjustments) && !framing;
 
+  // Miniaturas de cada formato (solo en «Recortar»), con lo ajustado.
+  const boxes = useMemo(
+    () =>
+      view === 'crop'
+        ? (Object.fromEntries(NETWORK_ASPECTS.map((a) => [a, smartCrop(pixels, a, map)])) as Record<NetworkAspect, Box>)
+        : null,
+    [view, pixels, map],
+  );
+  const thumbs = useMemo(() => {
+    if (!boxes) return null;
+    const entries = NETWORK_ASPECTS.map((a) => [a, downscale(cropPixels(adjusted, scaleBox(boxes[a], scale)), 160)]);
+    return { whole: downscale(adjusted, 160), ...(Object.fromEntries(entries) as Record<NetworkAspect, Pixels>) };
+  }, [boxes, adjusted, scale]);
+
   const reset = useCallback(() => {
-    setAdjustments(NEUTRAL_ADJUSTMENTS);
-    setAuto(false);
-    setBeforeAuto(null);
-    setFraming('');
-  }, []);
+    // La intensidad elegida se queda: es una preferencia, no un cambio de la foto.
+    setLook((current) => ({ ...NEUTRAL_LOOK, intensity: current.intensity }));
+  }, [setLook]);
 
   /** Cambia la intensidad; si la mejora automática está puesta, se recalcula al momento. */
   function chooseIntensity(next: AutoIntensity) {
-    setIntensity(next);
-    if (auto) setAdjustments(autoAdjustments(stats, AUTO_INTENSITIES[next]));
+    setLook((current) => ({
+      ...current,
+      intensity: next,
+      adjustments: current.auto ? autoAdjustments(stats, AUTO_INTENSITIES[next]) : current.adjustments,
+    }));
   }
 
   function toggleAuto() {
-    if (auto) {
-      setAdjustments(beforeAuto ?? NEUTRAL_ADJUSTMENTS);
-      setBeforeAuto(null);
-      setAuto(false);
-    } else {
-      setBeforeAuto(adjustments);
-      setAdjustments(autoAdjustments(stats, AUTO_INTENSITIES[intensity]));
-      setAuto(true);
-    }
+    setLook((current) =>
+      current.auto
+        ? { ...current, adjustments: current.beforeAuto ?? NEUTRAL_ADJUSTMENTS, beforeAuto: null, auto: false }
+        : {
+            ...current,
+            beforeAuto: current.adjustments,
+            adjustments: autoAdjustments(stats, AUTO_INTENSITIES[current.intensity]),
+            auto: true,
+          },
+    );
+  }
+
+  function setSlider(key: Slider['key'], value: number) {
+    // A mano ya no es la mejora automática tal cual.
+    setLook((current) => ({ ...current, adjustments: { ...current.adjustments, [key]: value }, auto: false }));
   }
 
   async function submit() {
     setBusy(true);
     try {
-      let result = applyAdjustments(pixels, adjustments);
+      const adjust = !isNeutral(adjustments);
+      let result = adjust ? applyAdjustments(pixels, adjustments) : pixels;
       const steps: PhotoEditStep[] = [];
-      if (!isNeutral(adjustments)) steps.push({ kind: 'adjust', adjustments, auto });
+      if (adjust) steps.push({ kind: 'adjust', adjustments, auto });
       if (framing && box) {
         result = cropPixels(result, box);
         steps.push({ kind: 'crop', aspect: framing, box, smart: true });
       }
-      await onSave(result, steps, 'Foto mejorada guardada en la biblioteca. La original no ha cambiado.');
+      await onSave(
+        result,
+        steps,
+        adjust && framing
+          ? 'Foto ajustada y recortada guardada en la biblioteca. La original no ha cambiado.'
+          : framing
+            ? 'Recorte guardado en la biblioteca. La original no ha cambiado.'
+            : 'Foto mejorada guardada en la biblioteca. La original no ha cambiado.',
+      );
       // La siguiente edición parte de cero: nada se arrastra de esta.
       reset();
     } catch (error) {
@@ -835,6 +1059,75 @@ function EnhanceTab({
   }
 
   useCommit({ run: submit, disabled: unchanged, dirty: !unchanged, busy, reset });
+
+  if (view === 'crop') {
+    const options: Array<{
+      value: NetworkAspect | '';
+      label: string;
+      hint: string;
+      title: string;
+      thumb: Pixels | undefined;
+    }> = [
+      {
+        value: '',
+        label: 'Entera',
+        hint: 'Sin recortar',
+        title: `Sin recortar (${pixels.width} × ${pixels.height} px)`,
+        thumb: thumbs?.whole,
+      },
+      ...NETWORK_ASPECTS.map((a) => ({
+        value: a,
+        label: a,
+        hint: CROP_HINT[a],
+        title: `${NETWORK_ASPECT_LABEL[a]}${boxes ? ` (${boxes[a].width} × ${boxes[a].height} px)` : ''}`,
+        thumb: thumbs?.[a],
+      })),
+    ];
+    return (
+      <div className="space-y-4">
+        <Stage pixels={shown} testId="photo-edit-crop-preview" />
+        <MoreInfo line="Se encuadra solo, donde hay más detalle." testId="photo-edit-crop-info">
+          <p>
+            Es el recorte más grande que cabe en cada formato, colocado donde hay más detalle y color. No usa IA: no
+            reconoce objetos, así que con fondos muy cargados mira la vista previa. Para guardar otro formato, repite.
+          </p>
+        </MoreInfo>
+        <fieldset className="grid grid-cols-4 gap-2">
+          <legend className="sr-only">Formato del recorte</legend>
+          {options.map((option) => {
+            const checked = framing === option.value;
+            return (
+              <label
+                key={option.value || 'whole'}
+                className={cn(
+                  'flex min-w-0 cursor-pointer flex-col items-center gap-1 rounded-lg border p-1.5 text-xs',
+                  checked ? 'border-primary bg-primary-soft' : 'border-border',
+                )}
+                title={option.title}
+              >
+                <span className="flex h-16 w-full items-center justify-center">
+                  <PixelsCanvas pixels={option.thumb ?? null} className="max-h-16 rounded" />
+                </span>
+                <span className="flex items-center gap-1 font-medium">
+                  <input
+                    type="radio"
+                    name="crop-aspect"
+                    checked={checked}
+                    onChange={() => setLook((current) => ({ ...current, framing: option.value }))}
+                    aria-label={option.title}
+                    data-testid={`photo-edit-crop-${option.value || 'none'}`}
+                  />
+                  {option.label}
+                </span>
+                <span className="truncate text-muted">{option.hint}</span>
+              </label>
+            );
+          })}
+        </fieldset>
+        {extra}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -871,189 +1164,45 @@ function EnhanceTab({
           </Button>
         ))}
       </div>
-      {auto && (
-        <p className="text-xs text-muted">
-          Los deslizadores muestran lo que se ha ajustado; puedes retocarlos. Además se han ajustado los negros y
-          blancos y el tinte, que no tienen deslizador.
-        </p>
-      )}
-      {SLIDERS.map((slider) => (
-        <label key={slider.key} className="block text-sm">
-          <span className="flex justify-between">
-            {slider.label}
-            <span className="tabular-nums text-muted">{adjustments[slider.key]}</span>
-          </span>
-          <input
-            type="range"
-            min={slider.min}
-            max={100}
-            value={adjustments[slider.key]}
-            onChange={(e) => {
-              setAdjustments((current) => ({ ...current, [slider.key]: Number(e.target.value) }));
-              // A mano ya no es la mejora automática tal cual.
-              setAuto(false);
-            }}
-            className="mt-1 w-full"
-            data-testid={`photo-edit-${slider.key}`}
-          />
-        </label>
-      ))}
-      <label className="block text-sm">
-        Encuadre
-        <select
-          className="mt-1 block w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
-          value={framing}
-          onChange={(e) => setFraming(e.target.value as NetworkAspect | '')}
-          data-testid="photo-edit-framing"
-        >
-          <option value="">Como está</option>
-          {NETWORK_ASPECTS.map((aspect) => (
-            <option key={aspect} value={aspect}>
-              {NETWORK_ASPECT_LABEL[aspect]}, encuadre inteligente
-            </option>
-          ))}
-        </select>
-      </label>
-      <Button variant="ghost" size="sm" onClick={reset} disabled={unchanged} data-testid="photo-edit-reset">
-        Deshacer cambios
-      </Button>
-      <p className="text-xs text-muted">Vista previa reducida. Se guarda a tamaño completo.</p>
-    </div>
-  );
-}
-
-// ─────────────────────────────── Recortes ───────────────────────────────
-
-function CropsTab({
-  pixels,
-  preview,
-  map,
-  onSave,
-}: {
-  pixels: Pixels;
-  preview: Pixels;
-  map: ReturnType<typeof interestMap>;
-  onSave: SaveEditResult;
-}) {
-  const [aspect, setAspect] = useState<NetworkAspect>(NETWORK_ASPECTS[0]!);
-  const [smart, setSmart] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const boxes = useMemo(
-    () =>
-      Object.fromEntries(
-        NETWORK_ASPECTS.map((a) => [a, smart ? smartCrop(pixels, a, map) : centeredCrop(pixels, a)]),
-      ) as Record<NetworkAspect, Box>,
-    [pixels, map, smart],
-  );
-  const previews = useMemo(() => {
-    const scale = preview.width / pixels.width;
-    return Object.fromEntries(
-      NETWORK_ASPECTS.map((a) => {
-        const box = boxes[a];
-        return [
-          a,
-          cropPixels(preview, {
-            x: box.x * scale,
-            y: box.y * scale,
-            width: box.width * scale,
-            height: box.height * scale,
-          }),
-        ];
-      }),
-    ) as Record<NetworkAspect, Pixels>;
-  }, [preview, pixels.width, boxes]);
-  const thumbs = useMemo(
-    () =>
-      Object.fromEntries(NETWORK_ASPECTS.map((a) => [a, downscale(previews[a], 220)])) as Record<NetworkAspect, Pixels>,
-    [previews],
-  );
-
-  async function submit() {
-    setBusy(true);
-    try {
-      const box = boxes[aspect];
-      await onSave(
-        cropPixels(pixels, box),
-        [{ kind: 'crop', aspect, box, smart }],
-        'Recorte guardado en la biblioteca. La original no ha cambiado.',
-      );
-    } catch (error) {
-      toast.error(translateError(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  useCommit({
-    run: submit,
-    disabled: false,
-    dirty: false,
-    busy,
-    reset: () => {
-      setAspect(NETWORK_ASPECTS[0]!);
-      setSmart(true);
-    },
-  });
-
-  return (
-    <div className="space-y-4">
-      <Stage pixels={previews[aspect]} testId="photo-edit-crop-preview" />
-      <p className="text-sm text-muted">
-        El recorte más grande que cabe en cada formato, colocado donde hay más detalle y color (sin IA: no reconoce
-        objetos; con fondos muy cargados, mira la vista previa). Elige un formato; para guardar otro, repite.
-      </p>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={smart}
-          onChange={(e) => setSmart(e.target.checked)}
-          data-testid="photo-edit-smart"
+      {MAIN_SLIDERS.map((slider) => (
+        <AdjustSlider
+          key={slider.key}
+          slider={slider}
+          value={adjustments[slider.key]}
+          onChange={(value) => setSlider(slider.key, value)}
         />
-        Encuadre inteligente (si no, centrado)
-      </label>
-      <fieldset className="grid grid-cols-3 gap-2">
-        <legend className="sr-only">Formato del recorte</legend>
-        {NETWORK_ASPECTS.map((a) => {
-          const checked = aspect === a;
-          const box = boxes[a];
-          return (
-            <label
-              key={a}
-              className={cn(
-                'flex cursor-pointer flex-col items-center gap-2 rounded-lg border p-2 text-xs',
-                checked ? 'border-primary bg-primary-soft' : 'border-border',
-              )}
-            >
-              <span className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  name="crop-aspect"
-                  checked={checked}
-                  onChange={() => setAspect(a)}
-                  data-testid={`photo-edit-crop-${a}`}
-                />
-                {NETWORK_ASPECT_LABEL[a]}
-              </span>
-              <PixelsCanvas pixels={thumbs[a]} className="max-h-24 rounded" />
-              <span className="text-muted">
-                {box.width} × {box.height} px
-              </span>
-            </label>
-          );
-        })}
-      </fieldset>
+      ))}
+      <details className="group space-y-4" data-testid="photo-edit-more-adjustments">
+        <summary className="cursor-pointer text-sm font-medium text-muted hover:text-fg">Más ajustes</summary>
+        <div className="space-y-4 pt-3">
+          {MORE_SLIDERS.map((slider) => (
+            <AdjustSlider
+              key={slider.key}
+              slider={slider}
+              value={adjustments[slider.key]}
+              onChange={(value) => setSlider(slider.key, value)}
+            />
+          ))}
+        </div>
+      </details>
+      {extra}
     </div>
   );
 }
 
 // ─────────────────────────────── Fondo ───────────────────────────────
 
-/** Qué se pone detrás del plato. */
-type BackgroundChoice =
-  | { type: 'none' }
-  | { type: 'color'; hex: string }
-  | { type: 'asset'; asset: MediaAssetRow; cover: Pixels }
-  | { type: 'portrait' };
+/** Qué se pone detrás del plato al quitar el fondo. */
+type BackdropChoice =
+  { type: 'none' } | { type: 'color'; hex: string } | { type: 'asset'; asset: MediaAssetRow; cover: Pixels };
+/** Lo que de verdad se hace: un fondo nuevo, o el modo retrato (desenfocar). */
+type BackgroundChoice = BackdropChoice | { type: 'portrait' };
+
+const BACKGROUND_MODE_LABEL: Record<BackgroundMode, string> = {
+  remove: 'Quitar',
+  blur: 'Desenfocar',
+  ai: 'Cambiar con IA',
+};
 
 function BackgroundTab({
   asset,
@@ -1062,10 +1211,12 @@ function BackgroundTab({
   onSave,
   cutout,
   setCutout,
-  portraitFirst,
+  mode,
+  setMode,
   ai,
   sector,
   onAiResult,
+  aiSection,
 }: {
   asset: MediaAssetRow;
   pixels: Pixels;
@@ -1073,11 +1224,15 @@ function BackgroundTab({
   onSave: SaveEditResult;
   cutout: CutoutState | null;
   setCutout: (cutout: CutoutState | null) => void;
-  /** Se abrió desde «Modo retrato»: es lo primero que se ofrece al tener el recorte. */
-  portraitFirst: boolean;
+  /** Quitar, Desenfocar o Cambiar con IA (vive en la pantalla: se conserva al cambiar de pestaña). */
+  mode: BackgroundMode;
+  setMode: (mode: BackgroundMode) => void;
+  /** Quitar el fondo con IA (si el servidor tiene modelo). */
   ai: AiEditChoice | undefined;
   sector: SectorKind;
   onAiResult: (row: MediaAssetRow) => void;
+  /** «Cambiar con IA» ya montado (vacío si el servidor no tiene modelo: entonces no se ofrece). */
+  aiSection: ReactNode;
 }) {
   const profile = useActiveProfile(asset.brand_id);
   const brandColors = useMemo(
@@ -1095,9 +1250,7 @@ function BackgroundTab({
   const [cutError, setCutError] = useState<string | null>(null);
   const [shadow, setShadow] = useState(false);
   const [color, setColor] = useState('#FFFFFF');
-  const [choice, setChoice] = useState<BackgroundChoice>(
-    portraitFirst && !transparent ? { type: 'portrait' } : { type: 'color', hex: '#FFFFFF' },
-  );
+  const [choice, setChoice] = useState<BackdropChoice>({ type: 'color', hex: '#FFFFFF' });
   const [portrait, setPortrait] = useState<PortraitOptions>(PORTRAIT_DEFAULTS);
   const deferredPortrait = useDeferredValue(portrait);
   const [retouching, setRetouching] = useState(false);
@@ -1114,10 +1267,15 @@ function BackgroundTab({
   const selectable =
     !transparent && cutout !== null && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height;
   const strokes = cutout?.strokes ?? NO_STROKES;
+  const modes: BackgroundMode[] = aiSection ? ['remove', 'blur', 'ai'] : ['remove', 'blur'];
+  // Desenfocar necesita la selección hecha aquí; una foto que ya viene sin fondo no tiene nada que desenfocar.
+  const blurUnavailable = mode === 'blur' && hasSubject && !selectable;
   const effectiveChoice = useMemo<BackgroundChoice>(
-    () => (choice.type === 'portrait' && !selectable ? { type: 'color', hex: '#FFFFFF' } : choice),
-    [choice, selectable],
+    () => (mode === 'blur' && selectable ? { type: 'portrait' } : choice),
+    [mode, selectable, choice],
   );
+  // Desenfocar se hace siempre en este navegador: el recorte con IA da una foto nueva sin fondo, sin nada que desenfocar.
+  const engineNow = mode === 'blur' ? 'browser' : engine;
   const retouched = selectable && strokes.length > 0;
   const prefix: PhotoEditStep[] =
     !transparent && cutout
@@ -1306,25 +1464,48 @@ function BackgroundTab({
     setRetouching(false);
   }, [setCutout]);
 
-  useCommit({
-    run: submit,
-    // Ya sin fondo y sin elegir otro: no hay nada que guardar.
-    disabled: !hasSubject || (effectiveChoice.type === 'none' && !cutout),
-    dirty: Boolean(cutout) && !transparent,
-    busy,
-    reset,
-  });
+  useCommit(
+    {
+      run: submit,
+      // Ya sin fondo y sin elegir otro (o sin nada que desenfocar): no hay nada que guardar.
+      disabled: !hasSubject || blurUnavailable || (effectiveChoice.type === 'none' && !cutout),
+      dirty: Boolean(cutout) && !transparent,
+      busy,
+      reset,
+    },
+    // «Cambiar con IA» decide con sus propios botones.
+    mode !== 'ai',
+  );
 
   return (
     <div className="space-y-4">
-      {!hasSubject && (
+      <div role="radiogroup" aria-label="Qué hacer con el fondo" className="flex gap-1">
+        {modes.map((value) => (
+          <Button
+            key={value}
+            size="sm"
+            role="radio"
+            aria-checked={mode === value}
+            variant={mode === value ? 'primary' : 'secondary'}
+            className="flex-auto whitespace-nowrap px-3"
+            onClick={() => setMode(value)}
+            disabled={busy || cutting}
+            data-testid={`photo-edit-bg-mode-${value}`}
+          >
+            {BACKGROUND_MODE_LABEL[value]}
+          </Button>
+        ))}
+      </div>
+      {mode === 'ai' && aiSection}
+      {mode !== 'ai' && !hasSubject && (
         <div className="space-y-3" data-testid="photo-edit-cutout">
           <Stage pixels={null} />
           <p className="text-sm">
-            Para cambiar el fondo o desenfocarlo (modo retrato), primero hay que separar lo principal de la foto del
-            fondo. Después podrás retocar la selección a mano.
+            {mode === 'blur'
+              ? 'Para desenfocar el fondo, primero se separa lo principal de la foto.'
+              : 'Primero se separa lo principal de la foto del fondo.'}
           </p>
-          {ai && (
+          {ai && mode === 'remove' && (
             <fieldset className="space-y-1 text-sm">
               <legend className="sr-only">Cómo quitar el fondo</legend>
               <label className="flex items-center gap-2">
@@ -1349,19 +1530,19 @@ function BackgroundTab({
               </label>
             </fieldset>
           )}
-          {engine === 'browser' && (
+          {engineNow === 'browser' && (
             <div className="space-y-2" data-testid="photo-edit-cutout-browser">
               {support.ok ? (
                 <>
-                  <p className="text-xs text-muted" data-testid="photo-edit-cutout-privacy">
-                    {removalPrivacyNote()}
-                  </p>
+                  <MoreInfo line="Gratis. No usa IA.">
+                    <p data-testid="photo-edit-cutout-privacy">{removalPrivacyNote()}</p>
+                  </MoreInfo>
                   {cutError && <Notice tone="warning">{cutError}</Notice>}
                   {cutting && <CutoutProgressBar progress={progress} onCancel={() => cutAbort.current?.abort()} />}
                   {!cutting && (
                     <Button onClick={() => void cut()} data-testid="photo-edit-cutout-run">
                       <Eraser className="h-4 w-4" aria-hidden />
-                      Quitar el fondo
+                      {mode === 'blur' ? 'Desenfocar el fondo' : 'Quitar el fondo'}
                     </Button>
                   )}
                 </>
@@ -1372,18 +1553,12 @@ function BackgroundTab({
               )}
             </div>
           )}
-          {engine === 'ai' && ai && (
-            <AiAction
-              asset={asset}
-              operation="remove_background"
-              choice={ai}
-              onDone={onAiResult}
-              sector={sector}
-            />
+          {engineNow === 'ai' && ai && (
+            <AiAction asset={asset} operation="remove_background" choice={ai} onDone={onAiResult} sector={sector} />
           )}
         </div>
       )}
-      {hasSubject && (
+      {mode !== 'ai' && hasSubject && (
         <div className="space-y-3" data-testid="photo-edit-backgrounds">
           {retouching && selectable && previewBaseAlpha && previewAlpha ? (
             <RetouchStage
@@ -1399,33 +1574,33 @@ function BackgroundTab({
           ) : (
             <Stage pixels={shown} testId="photo-edit-cutout-preview" checker={effectiveChoice.type === 'none'} />
           )}
-          <p className="text-sm">
-            {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo (sin IA) o usa
-            el modo retrato:
-          </p>
-          {cutout?.quality === 'basic' && !transparent && (
-            <p className="text-xs text-muted" data-testid="photo-edit-cutout-basic">
-              Calidad básica: este navegador no tiene aceleración gráfica (WebGPU) suficiente para el recorte fino, así
-              que se ha usado el modelo ligero. Los bordes de pelo, cristal o salsa pueden salir menos limpios; en
-              Chrome o Edge recientes, con tarjeta gráfica, sale mejor.
+          {mode === 'remove' && (
+            <p className="text-sm">
+              {transparent && !cutout ? 'Esta foto ya no tiene fondo.' : 'Fondo quitado.'} Elige uno nuevo:
             </p>
           )}
+          {blurUnavailable && (
+            <Notice tone="info">
+              <span data-testid="photo-edit-blur-unavailable">
+                Esta foto ya no tiene fondo: no hay nada que desenfocar. En «Quitar» puedes ponerle uno nuevo.
+              </span>
+            </Notice>
+          )}
+          {cutout?.quality === 'basic' && !transparent && (
+            <div data-testid="photo-edit-cutout-basic">
+              <MoreInfo line="Calidad básica: los bordes finos pueden salir menos limpios.">
+                <p>
+                  Este navegador no tiene aceleración gráfica (WebGPU) suficiente para el recorte fino, así que se ha
+                  usado el modelo ligero. Los bordes de pelo, cristal o salsa pueden salir menos limpios; en Chrome o
+                  Edge recientes, con tarjeta gráfica, sale mejor.
+                </p>
+              </MoreInfo>
+            </div>
+          )}
           {selectable && (
-            <div className="space-y-3 rounded-md border border-border p-3" data-testid="photo-edit-portrait">
-              <Button
-                size="sm"
-                variant={effectiveChoice.type === 'portrait' ? 'primary' : 'secondary'}
-                aria-pressed={effectiveChoice.type === 'portrait'}
-                onClick={() =>
-                  setChoice(effectiveChoice.type === 'portrait' ? { type: 'color', hex: color } : { type: 'portrait' })
-                }
-                disabled={busy}
-                data-testid="photo-edit-portrait-toggle"
-              >
-                Modo retrato: desenfocar solo el fondo
-              </Button>
-              {effectiveChoice.type === 'portrait' && (
-                <div className="space-y-3">
+            <div className="space-y-3" data-testid="photo-edit-portrait">
+              {mode === 'blur' && (
+                <div className="space-y-3" data-testid="photo-edit-portrait-controls">
                   <label className="block text-sm">
                     <span className="flex justify-between">
                       Intensidad del desenfoque
@@ -1466,8 +1641,7 @@ function BackgroundTab({
                     />
                   </label>
                   <p className="text-xs text-muted">
-                    Lo principal queda tal cual y solo se desenfoca lo de alrededor. Si el borde no sale bien, retoca la
-                    selección.
+                    Lo principal no se toca. Si el borde no sale bien, retoca la selección.
                   </p>
                 </div>
               )}
@@ -1492,10 +1666,7 @@ function BackgroundTab({
                     retouchShortcut(event);
                   }}
                 >
-                  <p className="text-xs text-muted">
-                    Pasa el dedo o el ratón por la foto para pintar. Lo que se ve en rosa es lo principal; lo demás es
-                    fondo. Sirve igual para quitar el fondo, ponerle un color o el modo retrato.
-                  </p>
+                  <p className="text-xs text-muted">Pinta sobre la foto: lo rosa es lo principal; lo demás, fondo.</p>
                   <details className="text-xs text-muted" data-testid="photo-edit-retouch-keys">
                     <summary className="cursor-pointer">Pintar con el teclado</summary>
                     <ul className="mt-1 list-disc space-y-0.5 pl-4">
@@ -1577,70 +1748,74 @@ function BackgroundTab({
               )}
             </div>
           )}
-          {brandColors.length > 0 && (
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Colores de la marca">
-              {brandColors.map((c) => (
-                <button
-                  key={c.hex}
-                  type="button"
-                  className={cn(
-                    'flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-subtle',
-                    choice.type === 'color' && choice.hex === c.hex
-                      ? 'border-primary bg-primary-soft'
-                      : 'border-border',
-                  )}
-                  aria-pressed={choice.type === 'color' && choice.hex === c.hex}
-                  onClick={() => chooseColor(c.hex)}
-                  disabled={busy}
-                  data-testid="photo-edit-brand-color"
-                >
-                  <span
-                    className="h-4 w-4 rounded border border-border"
-                    style={{ backgroundColor: c.hex }}
-                    aria-hidden
+          {mode === 'remove' && (
+            <>
+              {brandColors.length > 0 && (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Colores de la marca">
+                  {brandColors.map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      className={cn(
+                        'flex items-center gap-2 rounded-md border px-2 py-1 text-xs hover:bg-subtle',
+                        choice.type === 'color' && choice.hex === c.hex
+                          ? 'border-primary bg-primary-soft'
+                          : 'border-border',
+                      )}
+                      aria-pressed={choice.type === 'color' && choice.hex === c.hex}
+                      onClick={() => chooseColor(c.hex)}
+                      disabled={busy}
+                      data-testid="photo-edit-brand-color"
+                    >
+                      <span
+                        className="h-4 w-4 rounded border border-border"
+                        style={{ backgroundColor: c.hex }}
+                        aria-hidden
+                      />
+                      {c.name || c.hex}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-sm">
+                  Color liso
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => chooseColor(e.target.value.toUpperCase())}
+                    data-testid="photo-edit-color"
                   />
-                  {c.name || c.hex}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              Color liso
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => chooseColor(e.target.value.toUpperCase())}
-                data-testid="photo-edit-color"
-              />
-            </label>
-            <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy}>
-              <ImagePlus className="h-4 w-4" aria-hidden />
-              Imagen de la biblioteca
-            </Button>
-            {choice.type === 'asset' && <Badge tone="neutral">{choice.asset.file_name}</Badge>}
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={shadow}
-              onChange={(e) => setShadow(e.target.checked)}
-              disabled={effectiveChoice.type === 'none' || effectiveChoice.type === 'portrait'}
-              data-testid="photo-edit-shadow"
-            />
-            Sombra suave (para que no parezca flotar)
-          </label>
-          {cutout && !transparent && (
-            <Button
-              size="sm"
-              variant={choice.type === 'none' ? 'primary' : 'ghost'}
-              aria-pressed={choice.type === 'none'}
-              onClick={() => setChoice({ type: 'none' })}
-              disabled={busy}
-              data-testid="photo-edit-cutout-save"
-            >
-              Dejarlo sin fondo (PNG transparente)
-            </Button>
+                </label>
+                <Button size="sm" variant="secondary" onClick={() => setPicking(true)} disabled={busy}>
+                  <ImagePlus className="h-4 w-4" aria-hidden />
+                  Imagen de la biblioteca
+                </Button>
+                {choice.type === 'asset' && <Badge tone="neutral">{choice.asset.file_name}</Badge>}
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={shadow}
+                  onChange={(e) => setShadow(e.target.checked)}
+                  disabled={effectiveChoice.type === 'none' || effectiveChoice.type === 'portrait'}
+                  data-testid="photo-edit-shadow"
+                />
+                Sombra suave (para que no parezca flotar)
+              </label>
+              {cutout && !transparent && (
+                <Button
+                  size="sm"
+                  variant={choice.type === 'none' ? 'primary' : 'ghost'}
+                  aria-pressed={choice.type === 'none'}
+                  onClick={() => setChoice({ type: 'none' })}
+                  disabled={busy}
+                  data-testid="photo-edit-cutout-save"
+                >
+                  Dejarlo sin fondo (PNG transparente)
+                </Button>
+              )}
+            </>
           )}
           <BackgroundPicker
             brandId={asset.brand_id}
@@ -1928,6 +2103,8 @@ function AiAction({
   review?: AiReview;
   setReview?: (update: AiReview | ((current: AiReview) => AiReview)) => void;
 }) {
+  // En autogestión no hay cupos de por medio: solo se dice el coste (docs/modo-de-trabajo.md).
+  const { selfManaged } = useWorkMode();
   const factors = operation === 'upscale' ? upscaleFactors(asset.width, asset.height) : [];
   const [scale, setScale] = useState<2 | 4>(factors[0] ?? 2);
   const isBackground = operation === 'replace_background';
@@ -1936,8 +2113,7 @@ function AiAction({
   // o se puede recortar en este navegador / en el servidor.
   const hasExisting = Boolean(
     pixels &&
-      (transparent ||
-        (cutout && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height)),
+    (transparent || (cutout && cutout.pixels.width === pixels.width && cutout.pixels.height === pixels.height)),
   );
   const browserCutout = useMemo(() => removalSupport().ok && Boolean(pixels), [pixels]);
   const withMask =
@@ -2224,6 +2400,7 @@ function AiAction({
   const Icon = operation === 'upscale' ? Maximize2 : isBackground || operation === 'enhance' ? Sparkles : Eraser;
   const spent = spentMicros(review.attempts);
   const maxCost = estimate.data ? formatMicros(estimate.data.costMicros) : null;
+  const provider = aiProviderOf(choice.model);
   return (
     <div className="space-y-3" data-testid={`photo-edit-ai-${operation}`}>
       {operation === 'upscale' && (
@@ -2347,11 +2524,21 @@ function AiAction({
           )}
           {withMask ? (
             <div className="space-y-2">
-              <Notice tone="info">
-                {hasExisting
-                  ? 'Se usa el recorte que ya tiene esta foto (no se vuelve a recortar). Se le dice a la IA que no toque lo principal y, al terminar, se vuelve a pegar encima el original.'
-                  : `Primero se recorta lo principal de la foto, una sola vez (después se reutiliza en la pestaña «Fondo»). ${removalPrivacyNote()} Para pintar el fondo, la foto sí se envía al proveedor de IA, y al terminar se vuelve a pegar encima lo principal del original.`}
-              </Notice>
+              <MoreInfo
+                line={
+                  canProtect && protect
+                    ? `Usa IA (${provider}) solo para el fondo: lo principal de tu foto se vuelve a pegar tal cual.`
+                    : `Usa IA (${provider}) para el fondo; se le pide que no toque lo principal.`
+                }
+                testId="photo-edit-ai-mask-info"
+              >
+                <p>
+                  {hasExisting
+                    ? 'Se usa el recorte que ya tiene esta foto (no se vuelve a recortar). Se le dice a la IA que no toque lo principal y, al terminar, se vuelve a pegar encima el original.'
+                    : `Primero se recorta lo principal de la foto, una sola vez (después se reutiliza en «Quitar» y «Desenfocar»). ${removalPrivacyNote()} Para pintar el fondo, la foto sí se envía al proveedor de IA, y al terminar se vuelve a pegar encima lo principal del original.`}
+                </p>
+                {choice.untestedAdapter && <p>Proveedor sin probar todavía.</p>}
+              </MoreInfo>
               {canProtect && (
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -2368,8 +2555,8 @@ function AiAction({
           ) : (
             <Notice tone="warning">
               No hay recorte de la foto: la IA puede retocar también lo principal
-              {food ? ' (forma, colores, guarnición)' : ' (forma, colores, detalles)'}. Revisa el resultado; la
-              original no cambia.
+              {food ? ' (forma, colores, guarnición)' : ' (forma, colores, detalles)'}. Revisa el resultado; la original
+              no cambia.
             </Notice>
           )}
         </div>
@@ -2377,21 +2564,30 @@ function AiAction({
       {operation === 'enhance' && (
         <p className="text-sm">
           Mejora la luz y el color con IA. Puede cambiar detalles {food ? 'del plato' : 'de lo principal de la foto'}:
-          revisa el resultado. Si solo quieres ajustar luz y color, la pestaña «Mejorar» lo hace sin IA y sin tocar
-          nada más.
+          revisa el resultado. Si solo quieres ajustar luz y color, la pestaña «Ajustar» lo hace sin IA y sin tocar nada
+          más.
         </p>
       )}
-      <div className="flex flex-wrap gap-2 text-xs">
-        <Badge tone="neutral">Con IA</Badge>
-        {!choice.euProcessing && <Badge tone="warning">Se procesa fuera de la UE o en región desconocida</Badge>}
-        {choice.untestedAdapter && <Badge tone="neutral">Proveedor sin probar todavía</Badge>}
-      </div>
+      {!withMask &&
+        (choice.untestedAdapter ? (
+          <MoreInfo line={`Usa IA (${provider}).`}>
+            <p>Proveedor sin probar todavía.</p>
+          </MoreInfo>
+        ) : (
+          <p className="text-xs text-muted">Usa IA ({provider}).</p>
+        ))}
+      {/* Antes de gastar, siempre a la vista: dónde se procesa y el coste máximo. */}
+      {!choice.euProcessing && (
+        <div className="text-xs">
+          <Badge tone="warning">Se procesa fuera de la UE o en región desconocida</Badge>
+        </div>
+      )}
       {possible && !reviewing && (
         <p className="text-xs text-muted" data-testid="photo-edit-ai-cost">
           {estimate.isPending
             ? 'Calculando el coste…'
             : estimate.data
-              ? `${review.attempts.length > 0 ? 'Un intento más costará' : 'Coste'} máximo: ${formatMicros(estimate.data.costMicros)} (se descuenta del cupo de IA de la organización).`
+              ? `${review.attempts.length > 0 ? 'Un intento más costará' : 'Coste'} máximo: ${formatMicros(estimate.data.costMicros)}${selfManaged ? '.' : ' (se descuenta del cupo de IA de la organización).'}`
               : null}
         </p>
       )}

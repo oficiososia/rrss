@@ -101,6 +101,16 @@ import {
   type ReelDraft,
 } from './api';
 import { createClock, useClockValue, type PlayClock } from './clock';
+import {
+  fileNameOf,
+  missingItems,
+  missingSummary,
+  planPaths,
+  replaceClipAndCover,
+  useMissingPaths,
+  type MissingItem,
+} from './missing';
+import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, type BarAction } from './ContextBar';
 import { editorReducer, initEditor, type Selection } from './history';
@@ -119,7 +129,6 @@ import {
   removeClip,
   removeMusic,
   removeText,
-  replaceClip,
   setCover,
   setMusic,
   setTextOffset,
@@ -348,7 +357,8 @@ function Editor({
   const template = REEL_TEMPLATES.find((t) => t.id === project.template.id) ?? defaultTemplate();
   const sources = useReelSources(brand.id);
   const byPath = useMemo(() => new Map((sources.data ?? []).map((a) => [a.storage_path, a])), [sources.data]);
-  const labelOf = useCallback((path: string) => byPath.get(path)?.file_name ?? path.split('/').pop() ?? path, [byPath]);
+  // Sin recurso (borrado, o fuera de los 300 más recientes): el nombre del archivo, sin el identificador delante.
+  const labelOf = useCallback((path: string) => byPath.get(path)?.file_name ?? fileNameOf(path), [byPath]);
   const fileSecondsOf = useCallback(
     (path: string) => {
       const ms = byPath.get(path)?.duration_ms;
@@ -362,17 +372,12 @@ function Editor({
   );
 
   // Direcciones firmadas de todo lo que suena o se ve en el reel.
-  const usedPaths = useMemo(
-    () =>
-      [
-        ...new Set([
-          ...project.plan.clips.map((c) => c.path),
-          ...(project.plan.music ? [project.plan.music.path] : []),
-          ...(project.plan.cover?.type === 'photo' ? [project.plan.cover.path] : []),
-        ]),
-      ].sort(),
-    [project.plan.clips, project.plan.music, project.plan.cover],
-  );
+  const usedPaths = useMemo(() => planPaths(project.plan), [project.plan]);
+  // Lo que se borró de la biblioteca después de ponerlo en el reel (sin saberlo todavía, nada).
+  const missingPaths = useMissingPaths(brand.id, usedPaths);
+  const isMissing = useCallback((path: string) => missingPaths?.has(path) ?? false, [missingPaths]);
+  const missing = useMemo(() => missingItems(project.plan, isMissing), [project.plan, isMissing]);
+  const missingText = missingSummary(missing);
   const signed = useSignedUrls(usedPaths);
   const urls = useMemo(() => signed.data ?? new Map<string, string>(), [signed.data]);
   const urlOf = useCallback((path: string) => urls.get(path), [urls]);
@@ -442,6 +447,8 @@ function Editor({
   const mutations = useContentMutations(org.id, brand.id);
 
   const problems = projectProblems(project, template, { fileSeconds: fileSecondsOf });
+  // En «Avisos», lo que falta va primero; no desactiva «Montar el vídeo»: al pulsarlo se explica y se va a ello.
+  const notices = missingText ? [missingText, ...problems] : problems;
   const warnings = previewWarnings(project.plan, template, {
     loadedFamilies: fontFaces.families,
     brandReelFont: Boolean(reelFont.data),
@@ -536,6 +543,33 @@ function Editor({
     else if (selection?.kind === 'music') apply((p) => removeMusic(p));
     else return;
     setPanel(null);
+  };
+
+  /** Lleva a lo que falta: elige el clip (y pone el cabezal en él), la música o la portada. */
+  const goToMissing = (target: MissingItem | undefined = missing[0]) => {
+    if (!target) return;
+    if (target.kind === 'clip') {
+      const index = project.plan.clips.findIndex((c) => c.id === target.id);
+      if (index >= 0) seek(timeline.starts[index]! + timeline.transitions[index]!);
+      dispatch({ type: 'select', selection: { kind: 'clip', id: target.id } });
+      setPanel(null);
+    } else if (target.kind === 'music') {
+      dispatch({ type: 'select', selection: { kind: 'music' } });
+      setPanel(null);
+    } else {
+      dispatch({ type: 'select', selection: null });
+      setPanel('cover');
+    }
+  };
+  const replaceMissing = (target: MissingItem) => {
+    if (target.kind === 'clip') setMedia({ mode: 'replace', id: target.id });
+    else if (target.kind === 'music') setMusicOpen(true);
+    else goToMissing(target);
+  };
+  const removeMissing = (target: MissingItem) => {
+    if (target.kind === 'clip') apply((p) => removeClip(p, target.id));
+    else if (target.kind === 'music') apply((p) => removeMusic(p));
+    else apply((p) => setCover(p, undefined));
   };
 
   // Teclado (fuera de los campos): Espacio reproduce, S divide, Supr borra, flechas mueven un fotograma,
@@ -706,6 +740,12 @@ function Editor({
   /** Un solo botón: si hay cambios los guarda como versión nueva y después monta. */
   async function saveAndRender() {
     if (problems.length > 0 || rendering) return;
+    // Con un archivo borrado no se encarga: el servidor lo rechazaría. Se dice qué pasa y se va a él.
+    if (missingText) {
+      toast.error(missingText);
+      goToMissing();
+      return;
+    }
     let version = expectedVersion;
     if (dirty || version === 0) {
       const saved = await save('Antes de montar el vídeo');
@@ -789,7 +829,8 @@ function Editor({
     if (assets.length === 0) return;
     if (media?.mode === 'replace') {
       const id = media.id;
-      apply((p) => replaceClip(p, id, assets[0]!, template));
+      // Con su duración, movimiento, filtro y transición; si era la foto de la portada, la portada la sigue.
+      apply((p) => replaceClipAndCover(p, id, assets[0]!, template));
       return;
     }
     if (project.plan.clips.length === 0 && startTemplate) {
@@ -1138,12 +1179,12 @@ function Editor({
             {autosaveText}
           </span>
         )}
-        {!empty && (problems.length > 0 || warnings.length > 0) && (
+        {!empty && (notices.length > 0 || warnings.length > 0) && (
           <button
             type="button"
             className={cn(
               'inline-flex items-center gap-1 rounded-md px-1 py-0.5 hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
-              problems.length > 0 ? 'font-medium text-danger' : 'text-warning',
+              notices.length > 0 ? 'font-medium text-danger' : 'text-warning',
             )}
             onClick={() => {
               dispatch({ type: 'select', selection: null });
@@ -1152,9 +1193,9 @@ function Editor({
             data-testid="reel-notices-chip"
           >
             <TriangleAlert className="h-3.5 w-3.5" aria-hidden />
-            {problems.length > 0 ? problems.length : warnings.length}
+            {notices.length > 0 ? notices.length : warnings.length}
             <span className="max-sm:sr-only">
-              {problems.length > 0 ? ' por arreglar' : warnings.length === 1 ? ' aviso' : ' avisos'}
+              {notices.length > 0 ? ' por arreglar' : warnings.length === 1 ? ' aviso' : ' avisos'}
             </span>
           </button>
         )}
@@ -1225,6 +1266,9 @@ function Editor({
 
       {/* ── Avisos de la pieza (pocas líneas; si hay muchos, se desplazan dentro) ── */}
       <div className="max-h-24 shrink-0 space-y-1 overflow-y-auto empty:hidden">
+        {missingText && (
+          <MissingNotice text={missingText} first={missing[0]} readOnly={readOnly} onGo={() => goToMissing()} />
+        )}
         {item.archived_at && (
           <Notice tone="warning">Está archivado: se puede ver, pero no cambiar hasta recuperarlo.</Notice>
         )}
@@ -1342,7 +1386,17 @@ function Editor({
         <>
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
             {/* ── Vista previa ── */}
-            <div className="flex min-h-0 flex-col" data-reel-keys>
+            <div className="relative flex min-h-0 flex-col" data-reel-keys>
+              {missing.length > 0 && (
+                <MissingOverlay
+                  clock={clock}
+                  timeline={timeline}
+                  missing={missing}
+                  readOnly={readOnly}
+                  onReplace={replaceMissing}
+                  onRemove={removeMissing}
+                />
+              )}
               <ReelPlayer
                 plan={project.plan}
                 timeline={timeline}
@@ -1460,9 +1514,9 @@ function Editor({
                   )}
                   <PanelSection name="warnings" active={panel}>
                     <h2 className="text-sm font-semibold">Avisos</h2>
-                    {problems.length > 0 && (
+                    {notices.length > 0 && (
                       <ul className="space-y-1 text-sm text-danger" data-testid="reel-problems">
-                        {problems.map((p) => (
+                        {notices.map((p) => (
                           <li key={p}>{p}</li>
                         ))}
                       </ul>
@@ -1619,6 +1673,7 @@ function Editor({
                 selection={selection}
                 readOnly={readOnly}
                 labelOf={labelOf}
+                isMissing={isMissing}
                 fileSecondsOf={fileSecondsOf}
                 urlOf={urlOf}
                 thumbOf={thumbOf}
@@ -1993,7 +2048,7 @@ function MusicPicker({
       void queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
       toast.success(`«${row.file_name}» está en la biblioteca. Confirma la licencia para usarla.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : translateError(error));
+      toast.error(translateError(error));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -2049,6 +2104,18 @@ function MusicPicker({
         </>
       }
     >
+      {/* También se puede soltar aquí la pista desde el ordenador. */}
+      <div
+        onDragOver={(e) => {
+          if (canUpload && Array.from(e.dataTransfer?.types ?? []).includes('Files')) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (!canUpload || !Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          void upload(e.dataTransfer.files[0]);
+        }}
+        data-testid="reel-music-drop"
+      >
       {all.length === 0 ? (
         <div className="space-y-3" data-testid="reel-music-empty">
           <p className="text-sm text-muted">
@@ -2097,6 +2164,7 @@ function MusicPicker({
           />
         </div>
       )}
+      </div>
     </Dialog>
   );
 }

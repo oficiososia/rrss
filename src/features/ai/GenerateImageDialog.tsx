@@ -39,8 +39,10 @@ export interface GenerateImageDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Proporción del lienzo: la de partida. */
   canvasRatio: ImageAspectRatio;
-  /** Recibe la imagen ya guardada en la biblioteca, para ponerla como capa. */
+  /** Recibe la imagen ya guardada en la biblioteca, para ponerla como capa (o elegirla en un selector). */
   onGenerated: (image: GeneratedImage) => void;
+  /** Qué pasará con la imagen al terminar. Por defecto, la del editor de piezas (se añade como capa). */
+  description?: string;
 }
 
 function regionLabel(model: ImageModelChoice): string {
@@ -55,15 +57,10 @@ export function GenerateImageDialog({
   onOpenChange,
   canvasRatio,
   onGenerated,
+  description = 'Describe la imagen. Al terminar se guarda en la biblioteca y se añade al diseño como capa.',
 }: GenerateImageDialogProps) {
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      size="lg"
-      title="Generar imagen con IA"
-      description="Describe la imagen. Al terminar se guarda en la biblioteca y se añade al diseño como capa."
-    >
+    <Dialog open={open} onOpenChange={onOpenChange} size="lg" title="Generar imagen con IA" description={description}>
       {open && <ImageGenerator brandId={brandId} canvasRatio={canvasRatio} onGenerated={onGenerated} />}
     </Dialog>
   );

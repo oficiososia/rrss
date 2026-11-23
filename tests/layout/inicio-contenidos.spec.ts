@@ -37,18 +37,15 @@ for (const size of SIZES) {
       await page.setViewportSize({ width: size.width, height: size.height });
     });
 
-    test('inicio: accesos grandes, semana, lo parado y lo último publicado, sin scroll lateral', async ({ page }) => {
+    test('inicio: semana, lo parado y lo último publicado, sin scroll lateral', async ({ page }) => {
       await open(page, 'vista=inicio');
-      await expect(page.getByTestId('home-tiles')).toBeVisible();
+      // Crear ya no se repite aquí: está en «＋ Crear» (tests/layout/menu.spec.ts).
+      await expect(page.getByTestId('home-tiles')).toHaveCount(0);
       await expect(page.getByTestId('home-day')).toHaveCount(7);
       await expect(page.getByTestId('home-week-piece').first()).toBeVisible();
       await expect(page.getByTestId('home-stalled-item')).toHaveCount(1);
       await expect(page.getByTestId('home-published-figures')).toContainText('personas');
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
-      // Los accesos se pueden tocar con el dedo.
-      for (const id of ['home-new-post', 'home-new-reel', 'home-upload']) {
-        expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(44);
-      }
       // El arreglo de lo parado también.
       expect((await page.getByTestId('home-stalled-fix').boundingBox())!.height).toBeGreaterThanOrEqual(40);
     });

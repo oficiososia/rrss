@@ -291,6 +291,27 @@ describe('Calendario: bajar a un plan sin publicación', () => {
     const notice = await screen.findByTestId('calendar-held-plan_no_publishing');
     expect(within(notice).queryByRole('link', { name: 'Cambiar de plan' })).toBeNull();
   });
+
+  it('en autogestión no se habla de planes ni se ofrece «Cambiar de plan» (tampoco en la ficha)', async () => {
+    seedWorkspace({ orgRole: 'owner', workMode: 'self' });
+    fake.tables.content_items = [content('c-1')];
+    fake.tables.scheduled_publications = [
+      held('p-1', 'c-1', { hold_reason: 'plan_no_publishing', social_account_id: 'acc-1' }),
+    ];
+    fake.tables.publication_attempts = [];
+    fake.tables.content_comments = [];
+    fake.tables.social_accounts = [account()];
+    fake.tables.media_assets = [];
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    const notice = await screen.findByTestId('calendar-held-plan_no_publishing');
+    expect(notice).toHaveTextContent('la publicación en redes no está activa en esta organización');
+    expect(notice).not.toHaveTextContent(/plan/i);
+    expect(within(notice).queryByRole('link', { name: 'Cambiar de plan' })).toBeNull();
+    await openFicha(user, screen.getByTestId('calendar-entry'));
+    const dialog = await screen.findByTestId('publication-dialog');
+    expect(within(dialog).queryByTestId('publication-hold-fix')).toBeNull();
+    expect(dialog).not.toHaveTextContent(/plan de la organización|Cambiar de plan/);
+  });
 });
 
 describe('Estados vacíos que llevan al sitio', () => {

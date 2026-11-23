@@ -160,11 +160,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('Analítica', () => {
-  it('está en el menú y enseña cifras medidas, datos, hipótesis y lo que no se puede medir', async () => {
+describe('Resultados (Analítica)', () => {
+  it('está en el menú como «Resultados» y enseña cifras medidas, datos, hipótesis y lo que no se puede medir', async () => {
     seed();
     const { user } = renderApp(`${BRAND_BASE}/inicio`);
-    await user.click((await screen.findAllByRole('link', { name: 'Analítica' }))[0]!);
+    await user.click((await screen.findAllByRole('link', { name: 'Resultados' }))[0]!);
 
     const kpis = await screen.findByTestId('analytics-kpis');
     const reach = within(kpis).getByTestId('kpi-instagram.account.reach');

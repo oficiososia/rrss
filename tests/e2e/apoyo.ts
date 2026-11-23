@@ -173,6 +173,15 @@ export async function guardarSesion(context: BrowserContext, alias: Alias): Prom
   await context.storageState({ path: rutaSesion(alias) });
 }
 
+/**
+ * Marca, Equipo y Configuración ya no están en el menú lateral: van en el menú de la cuenta (abajo a
+ * la izquierda). Abre ese menú y pulsa la entrada (`nav-marca`, `nav-equipo`, `nav-configuración`…).
+ */
+export async function irAAjuste(page: Page, testId: string): Promise<void> {
+  await page.getByTestId('user-menu').first().click();
+  await page.getByTestId(testId).click();
+}
+
 export async function cerrarSesion(page: Page): Promise<void> {
   await page.getByTestId('user-menu').first().click();
   await page.getByTestId('sign-out').click();

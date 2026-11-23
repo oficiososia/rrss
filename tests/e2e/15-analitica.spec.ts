@@ -130,7 +130,7 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/inicio`);
-  await page.getByRole('link', { name: 'Analítica' }).first().click();
+  await page.getByRole('link', { name: 'Resultados' }).first().click();
   await expect(page).toHaveURL(new RegExp(`${marca()}/analitica`));
 
   // Por defecto, «Últimos 28 días»: días completos, sin hoy. Ahí están las

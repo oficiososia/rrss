@@ -277,6 +277,10 @@ describe('Biblioteca: selección y acciones por lotes', () => {
     // Eliminar avisa de que está en piezas y pide confirmar.
     await user.click(screen.getByTestId('bulk-delete'));
     expect(await screen.findByText(/está en alguna pieza/)).toBeInTheDocument();
+    // Dice cuál (la archivada no cuenta) y qué le pasará.
+    expect(screen.getByText(/está en alguna pieza/)).toHaveTextContent(
+      'Se usa en «Menú de otoño»: esa pieza quedará con un hueco que se puede sustituir por otra foto desde el editor.',
+    );
     await user.click(screen.getByTestId('confirm-action'));
     await waitFor(() => expect(fake.tables.media_assets!.some((a) => a.id === 'a1')).toBe(false));
   });

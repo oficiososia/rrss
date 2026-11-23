@@ -141,7 +141,7 @@ describe('Aviso de que el acceso a Instagram caduca', () => {
     seed([account({ status: 'needs_reauth' })]);
     vi.unstubAllEnvs();
     renderApp(`${BRAND_BASE}/inicio`);
-    await screen.findByTestId('home-tiles');
+    await screen.findAllByTestId('home-day');
     expect(screen.queryByTestId('account-attention')).toBeNull();
   });
 });

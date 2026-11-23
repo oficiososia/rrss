@@ -95,6 +95,26 @@ export function isGenerated(asset: Pick<MediaAssetRow, 'provenance' | 'folder' |
   return GENERATED_FOLDERS.includes(top);
 }
 
+/** Carpetas donde la aplicación deja piezas ya diseñadas o montadas (no material en bruto). */
+const DESIGN_FOLDERS = ['Exportaciones', 'Reels', 'Informes'];
+
+/**
+ * Pieza ya diseñada o montada por la propia aplicación: una exportación del editor (con sus
+ * titulares y su logotipo), un reel montado o su portada, un informe. No sirve como material de
+ * otra pieza, así que los selectores de material la ocultan salvo que se pida. Las fotos hechas
+ * con IA y las ediciones («Fondo nuevo», «Sin fondo», recortes) SÍ son material: no cuentan aquí.
+ */
+export function isAppDesign(asset: Pick<MediaAssetRow, 'provenance' | 'folder'>): boolean {
+  const p = provenanceOf(asset) as (Provenance & { role?: unknown }) | null;
+  if (p?.type === 'export') return true;
+  if (p?.role === 'cover') return true;
+  if (p?.type === 'media_job' && typeof (p.kind ?? p.job_kind) === 'string' && String(p.kind ?? p.job_kind).startsWith('media.reel')) {
+    return true;
+  }
+  const top = (asset.folder ?? '').split(' / ')[0] ?? '';
+  return DESIGN_FOLDERS.includes(top);
+}
+
 export const isPhoto = (asset: Pick<MediaAssetRow, 'kind' | 'mime_type'>): boolean =>
   asset.kind === 'image' && asset.mime_type.startsWith('image/');
 

@@ -114,6 +114,15 @@ async function openPhoto(
   return app;
 }
 
+/** «Fondo» → «Cambiar con IA» (antes, la pestaña «Fondo con IA»). */
+async function openChangeWithAi(
+  user: Awaited<ReturnType<typeof openPhoto>>['user'],
+  dialog: ReturnType<typeof within>,
+) {
+  await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+  await user.click(await dialog.findByRole('radio', { name: 'Cambiar con IA' }));
+}
+
 async function openEditDialog(user: Awaited<ReturnType<typeof openPhoto>>['user']) {
   await user.click(await screen.findByTestId('asset-edit-photo'));
   const dialog = await screen.findByTestId('photo-edit');
@@ -178,8 +187,9 @@ describe('Editar foto desde la biblioteca', () => {
     const { user } = await openPhoto({ orgRole: 'member', brandRole: 'editor' }, [original]);
     const dialog = await openEditDialog(user);
 
-    // Sin IA: no hay pestaña de ampliar ni se pregunta al servidor.
-    expect(dialog.queryByRole('tab', { name: 'Ampliar' })).not.toBeInTheDocument();
+    // Tres pestañas; sin IA no hay «Ampliar con IA» ni se pregunta al servidor.
+    expect(dialog.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Ajustar', 'Recortar', 'Fondo']);
+    expect(dialog.queryByTestId('photo-edit-upscale')).not.toBeInTheDocument();
     expect(dialog.getByTestId('photo-edit-save')).toBeDisabled();
     await user.click(dialog.getByTestId('photo-edit-auto'));
     await user.click(dialog.getByTestId('photo-edit-save'));
@@ -206,7 +216,12 @@ describe('Editar foto desde la biblioteca', () => {
   it('recortes por red: guarda un recurso nuevo con el formato elegido y su caja', async () => {
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
-    await user.click(dialog.getByRole('tab', { name: 'Recortes' }));
+    await user.click(dialog.getByRole('tab', { name: 'Recortar' }));
+    // Se abre con la foto entera: sin cambios no hay nada que guardar.
+    expect(await dialog.findByTestId('photo-edit-crop-none')).toBeChecked();
+    expect(dialog.getByTestId('photo-edit-save')).toBeDisabled();
+    // Siempre con encuadre inteligente: ya no hay casilla.
+    expect(dialog.queryByTestId('photo-edit-smart')).not.toBeInTheDocument();
     await user.click(await dialog.findByTestId('photo-edit-crop-4:5'));
     await user.click(dialog.getByTestId('photo-edit-save'));
     await waitFor(() => expect(uploaded).toHaveLength(1));
@@ -432,7 +447,10 @@ describe('Editar foto desde la biblioteca', () => {
     });
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
-    expect(await dialog.findByRole('tab', { name: 'Ampliar' })).toBeInTheDocument();
+    // «Ampliar con IA» ya no es una pestaña: está en «Recortar».
+    expect(dialog.queryByRole('tab', { name: 'Ampliar' })).not.toBeInTheDocument();
+    await user.click(dialog.getByRole('tab', { name: 'Recortar' }));
+    expect(await dialog.findByTestId('photo-edit-ai-upscale')).toBeInTheDocument();
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     // Con las dos opciones, la del navegador viene marcada por defecto.
     expect(await dialog.findByTestId('photo-edit-engine-browser')).toBeChecked();
@@ -460,7 +478,7 @@ describe('Editar foto desde la biblioteca', () => {
     fakeBackgroundAi(calls);
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     // Sin recorte de la foto se avisa; sin texto no se puede lanzar.
     expect(ai.getByText(/No hay recorte de la foto/)).toBeInTheDocument();
@@ -512,7 +530,7 @@ describe('Editar foto desde la biblioteca', () => {
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
     const { user } = await openPhoto({ orgRole: 'owner' }, [original]);
     const dialog = await openEditDialog(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     // Hay recorte posible: nada de «no hay recorte»; la casilla viene marcada.
     expect(ai.queryByText(/No hay recorte de la foto/)).not.toBeInTheDocument();
@@ -570,7 +588,7 @@ describe('Editar foto desde la biblioteca', () => {
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     await user.click(ai.getByTestId('photo-edit-ai-protect'));
     await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
@@ -607,7 +625,7 @@ describe('Editar foto desde la biblioteca', () => {
         ? { pixels: pixels(160, 40), reduced: false, natural: { width: 160, height: 40 } }
         : { pixels: pixels(120, 90), reduced: false, natural: { width: 120, height: 90 } },
     );
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
     await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
@@ -621,13 +639,15 @@ describe('Editar foto desde la biblioteca', () => {
     expect(removed).not.toHaveBeenCalled();
   });
 
-  it('con IA: si no hay modelo de cambiar el fondo, no sale la pestaña', async () => {
+  it('con IA: si no hay modelo de cambiar el fondo, no sale «Cambiar con IA»', async () => {
     vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
     fake.fn('ai-media', (body) => ({ status: 200, body: { action: (body as { action: string }).action, edits: [] } }));
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
     await waitFor(() => expect(fake.calls.some((c) => c.kind === 'function' && c.name === 'ai-media')).toBe(true));
-    expect(dialog.queryByRole('tab', { name: 'Fondo con IA' })).not.toBeInTheDocument();
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    expect(await dialog.findByTestId('photo-edit-bg-mode-blur')).toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-bg-mode-ai')).not.toBeInTheDocument();
   });
 
   it('con IA activada pero sin modelo en el servidor, no sale nada de IA', async () => {
@@ -636,9 +656,11 @@ describe('Editar foto desde la biblioteca', () => {
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openEditDialog(user);
     await waitFor(() => expect(fake.calls.some((c) => c.kind === 'function' && c.name === 'ai-media')).toBe(true));
-    expect(dialog.queryByRole('tab', { name: 'Ampliar' })).not.toBeInTheDocument();
+    await user.click(dialog.getByRole('tab', { name: 'Recortar' }));
+    expect(dialog.queryByTestId('photo-edit-upscale')).not.toBeInTheDocument();
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
-    // Sin modelo de IA queda el del navegador, sin elegir.
+    // Sin modelo de IA queda el del navegador, sin elegir, y no se ofrece «Cambiar con IA».
+    expect(dialog.queryByTestId('photo-edit-bg-mode-ai')).not.toBeInTheDocument();
     expect(await dialog.findByTestId('photo-edit-cutout-run')).toBeInTheDocument();
     expect(dialog.queryByTestId('photo-edit-engine-ai')).not.toBeInTheDocument();
   });
@@ -788,9 +810,11 @@ describe('Editar foto desde el editor', () => {
     expect(screen.queryByTestId('photo-blur-background')).not.toBeInTheDocument();
     await user.click(await screen.findByTestId('photo-portrait'));
     const dialog = within(await screen.findByTestId('photo-edit'));
-    await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
+    expect(await dialog.findByTestId('photo-edit-bg-mode-blur')).toHaveAttribute('aria-checked', 'true');
+    expect(dialog.getByTestId('photo-edit-cutout-run')).toHaveTextContent('Desenfocar el fondo');
+    await user.click(dialog.getByTestId('photo-edit-cutout-run'));
     await dialog.findByTestId('photo-edit-backgrounds');
-    expect(dialog.getByTestId('photo-edit-portrait-toggle')).toHaveAttribute('aria-pressed', 'true');
+    expect(dialog.getByTestId('photo-edit-portrait-controls')).toBeInTheDocument();
     expect(dialog.getByTestId('photo-edit-save')).toHaveTextContent('Aplicar a la capa');
     await user.click(dialog.getByTestId('photo-edit-save'));
     await waitFor(() => expect(screen.queryByTestId('photo-edit')).not.toBeInTheDocument());
@@ -949,18 +973,18 @@ describe('Modo retrato y retoque de la selección', () => {
 
   it('«Modo retrato» se ve al momento, tiene sus controles y guarda una copia con la operación y la intensidad', async () => {
     const { user, dialog } = await cutAndOpenBackgrounds();
-    const toggle = dialog.getByTestId('photo-edit-portrait-toggle');
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    const toggle = dialog.getByTestId('photo-edit-bg-mode-blur');
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
     expect(dialog.queryByTestId('photo-edit-portrait-amount')).not.toBeInTheDocument();
     await user.click(toggle);
-    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
     const amount = dialog.getByTestId('photo-edit-portrait-amount');
     expect(amount).toHaveValue('60');
     fireEvent.change(amount, { target: { value: '85' } });
     fireEvent.change(dialog.getByTestId('photo-edit-portrait-dim'), { target: { value: '30' } });
     await user.click(dialog.getByTestId('photo-edit-portrait-progressive'));
-    // Con retrato no hay sombra suave que elegir.
-    expect(dialog.getByTestId('photo-edit-shadow')).toBeDisabled();
+    // Con retrato no hay fondo nuevo ni sombra suave que elegir.
+    expect(dialog.queryByTestId('photo-edit-shadow')).not.toBeInTheDocument();
     expect(uploaded).toHaveLength(0);
 
     await user.click(dialog.getByTestId('photo-edit-save'));
@@ -1137,8 +1161,12 @@ describe('Modo retrato y retoque de la selección', () => {
     const dialog = await openEditDialog(user);
     await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     await dialog.findByTestId('photo-edit-backgrounds');
-    expect(dialog.queryByTestId('photo-edit-portrait-toggle')).not.toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-portrait')).not.toBeInTheDocument();
     expect(dialog.queryByTestId('photo-edit-retouch-toggle')).not.toBeInTheDocument();
+    // «Desenfocar» lo explica y no deja guardar.
+    await user.click(dialog.getByTestId('photo-edit-bg-mode-blur'));
+    expect(dialog.getByTestId('photo-edit-blur-unavailable')).toHaveTextContent(/no hay nada que desenfocar/);
+    expect(dialog.getByTestId('photo-edit-save')).toBeDisabled();
   });
 });
 
@@ -1168,7 +1196,9 @@ describe('Fondo con IA: un solo recorte', () => {
     vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
     const calls: Array<{ action: string; input?: unknown }> = [];
     fakeBackgroundAi(calls);
-    const cut = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => halfCutout(image));
+    const cut = vi
+      .spyOn(cutoutEngine, 'removeBackgroundInBrowser')
+      .mockImplementation(async (image) => halfCutout(image));
     vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openAiTab(user);
@@ -1177,7 +1207,7 @@ describe('Fondo con IA: un solo recorte', () => {
     await dialog.findByTestId('photo-edit-backgrounds');
     expect(cut).toHaveBeenCalledTimes(1);
 
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     expect(ai.getByText(/no se vuelve a recortar/i)).toBeInTheDocument();
     await user.click(ai.getByRole('button', { name: 'mantel de lino beige' }));
@@ -1194,7 +1224,8 @@ describe('Fondo con IA: un solo recorte', () => {
     fakeBackgroundAi(calls);
     const cut = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser');
     mocks.loadPixels.mockImplementation(async (url: string) => {
-      if (!/sin[- ]fondo/i.test(url)) return { pixels: pixels(120, 90), reduced: false, natural: { width: 120, height: 90 } };
+      if (!/sin[- ]fondo/i.test(url))
+        return { pixels: pixels(120, 90), reduced: false, natural: { width: 120, height: 90 } };
       const p = pixels(40, 30);
       for (let i = 0; i < 40 * 30; i += 1) p.data[i * 4 + 3] = i % 40 < 12 ? 255 : 0;
       return { pixels: p, reduced: false, natural: { width: 40, height: 30 } };
@@ -1202,33 +1233,40 @@ describe('Fondo con IA: un solo recorte', () => {
     const { user } = await openPhoto({ orgRole: 'owner' }, [
       asset('sin-fondo', 'sin-fondo.png', {
         mime_type: 'image/png',
-        provenance: { type: 'photo_edit', steps: [{ kind: 'remove_background', engine: 'browser', model: 'ben2-test' }] },
+        provenance: {
+          type: 'photo_edit',
+          steps: [{ kind: 'remove_background', engine: 'browser', model: 'ben2-test' }],
+        },
       }),
     ]);
     const dialog = await openAiTab(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     expect(ai.getByText(/no se vuelve a recortar/i)).toBeInTheDocument();
     await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
     await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
     expect(await dialog.findByTestId('photo-edit-ai-review')).toBeInTheDocument();
     expect(cut).not.toHaveBeenCalled();
-    expect(typeof (calls.find((c) => c.action === 'photo.edit')!.input as Record<string, unknown>).subjectMask).toBe('string');
+    expect(typeof (calls.find((c) => c.action === 'photo.edit')!.input as Record<string, unknown>).subjectMask).toBe(
+      'string',
+    );
   });
 
-  it('el recorte hecho desde «Fondo con IA» queda para la pestaña «Fondo» (se recorta una sola vez en total)', async () => {
+  it('el recorte hecho desde «Cambiar con IA» queda para «Quitar» (se recorta una sola vez en total)', async () => {
     vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
     fakeBackgroundAi([]);
-    const cut = vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockImplementation(async (image) => halfCutout(image));
+    const cut = vi
+      .spyOn(cutoutEngine, 'removeBackgroundInBrowser')
+      .mockImplementation(async (image) => halfCutout(image));
     vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openAiTab(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     await user.click(ai.getByRole('button', { name: 'pizarra oscura' }));
     await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
     await dialog.findByTestId('photo-edit-ai-review');
-    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    await user.click(dialog.getByRole('radio', { name: 'Quitar' }));
     expect(await dialog.findByTestId('photo-edit-backgrounds')).toBeInTheDocument();
     expect(cut).toHaveBeenCalledTimes(1);
   });
@@ -1243,7 +1281,7 @@ describe('Fondo con IA: ver el resultado antes de aplicarlo', () => {
     const removed = vi.spyOn(libraryApi, 'deleteAssets').mockResolvedValue(undefined);
     const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
     const dialog = await openAiTab(user);
-    await user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     await user.click(ai.getByRole('button', { name: 'mantel de lino beige' }));
     await user.click(ai.getByTestId('photo-edit-ai-run-replace_background'));
@@ -1280,7 +1318,9 @@ describe('Fondo con IA: ver el resultado antes de aplicarlo', () => {
     const second = calls.filter((c) => c.action === 'photo.edit')[1]!.input as Record<string, unknown>;
     expect(second).toMatchObject({ operation: 'replace_background', prompt: 'mantel de lino beige' });
     const review = within(await dialog.findByText(/Intento 2/).then(() => dialog.getByTestId('photo-edit-ai-review')));
-    expect(review.getByTestId('photo-edit-ai-attempt-cost')).toHaveTextContent(/Este intento ha costado 0,20.*En total llevas 0,40 .* 2 intentos/);
+    expect(review.getByTestId('photo-edit-ai-attempt-cost')).toHaveTextContent(
+      /Este intento ha costado 0,20.*En total llevas 0,40 .* 2 intentos/,
+    );
   });
 
   it('«Cambiar la indicación» vuelve al texto, con la misma indicación escrita y el gasto hecho', async () => {
@@ -1302,7 +1342,9 @@ describe('Quitar el fondo: progreso por fases y un solo texto de privacidad', ()
       (image, onProgress, options) =>
         new Promise((resolve, reject) => {
           onProgress?.({ phase: 'running' });
-          options?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('x'), { name: 'AbortError' })));
+          options?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('x'), { name: 'AbortError' })),
+          );
           release = () => resolve(halfCutout(image));
         }),
     );
@@ -1314,7 +1356,9 @@ describe('Quitar el fondo: progreso por fases y un solo texto de privacidad', ()
     expect(dialog.queryByText(/en el servidor/)).not.toBeInTheDocument();
     await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
     expect(await dialog.findByTestId('photo-edit-cutout-phase')).toHaveTextContent('Recortando en tu equipo');
-    expect(dialog.getByTestId('photo-edit-cutout-elapsed')).toHaveTextContent(/Suele tardar entre 5 y 30 segundos\. Llevas \d+ s\./);
+    expect(dialog.getByTestId('photo-edit-cutout-elapsed')).toHaveTextContent(
+      /Suele tardar entre 5 y 30 segundos\. Llevas \d+ s\./,
+    );
     expect(dialog.getByRole('progressbar')).toBeInTheDocument();
     await user.click(dialog.getByTestId('photo-edit-cutout-cancel'));
     await waitFor(() => expect(dialog.queryByTestId('photo-edit-cutout-progress')).not.toBeInTheDocument());
@@ -1339,7 +1383,9 @@ describe('Quitar el fondo: progreso por fases y un solo texto de privacidad', ()
     expect(dialog.getByTestId('photo-edit-cutout-privacy')).toHaveTextContent(/servidor de la aplicación/);
     expect(dialog.getByTestId('photo-edit-cutout-privacy')).toHaveTextContent(/la foto no sale de él/);
     await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
-    expect(await dialog.findByTestId('photo-edit-cutout-phase')).toHaveTextContent(/Paso 2 de 4: En cola en el servidor/);
+    expect(await dialog.findByTestId('photo-edit-cutout-phase')).toHaveTextContent(
+      /Paso 2 de 4: En cola en el servidor/,
+    );
   });
 });
 
@@ -1358,7 +1404,7 @@ describe('Fondo con IA: textos según el sector de la marca', () => {
     await app.user.click(await screen.findByTestId('library-asset'));
     await screen.findByRole('dialog');
     const dialog = await openEditDialog(app.user);
-    await app.user.click(await dialog.findByRole('tab', { name: 'Fondo con IA' }));
+    await openChangeWithAi(app.user, dialog);
     const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
     return { user: app.user, dialog, ai, calls };
   }
@@ -1389,5 +1435,131 @@ describe('Fondo con IA: textos según el sector de la marca', () => {
     expect(ai.getAllByTestId('photo-edit-ai-background-idea').map((b) => b.textContent)).toContain(
       'mesa de mármol blanco con luz cálida',
     );
+  });
+});
+
+// ───────────────── Tres pestañas: cada acción en un solo sitio, sin «Mejorar con IA» y sin cupos en autogestión ─────────────────
+
+describe('«Editar foto» en tres pestañas', () => {
+  /** `ai-media` simulado con las cuatro ediciones (también «Mejorar con IA», que no se ofrece). */
+  function fakeAllAi(calls: Array<{ action: string; input?: unknown }>) {
+    fake.fn('ai-media', (body) => {
+      const { action, input } = body as { action: string; input?: Record<string, unknown> };
+      calls.push({ action, input });
+      const choice = (operation: string) => ({
+        operation,
+        model: `openai:${operation}`,
+        delivery: 'sync',
+        dataRegion: 'global',
+        euProcessing: false,
+        trainsOnInputs: 'no',
+        untestedAdapter: false,
+        usesSubjectMask: operation === 'replace_background',
+      });
+      if (action === 'photo.options') {
+        return {
+          status: 200,
+          body: {
+            action,
+            edits: ['remove_background', 'upscale', 'replace_background', 'enhance'].map(choice),
+          },
+        };
+      }
+      return { status: 200, body: { action, costMicros: 200_000, model: 'openai:x' } };
+    });
+  }
+
+  async function openWith(workMode: 'self' | 'agency') {
+    vi.stubEnv('VITE_AI_PHOTO_EDIT_ENABLED', 'true');
+    const calls: Array<{ action: string; input?: unknown }> = [];
+    fakeAllAi(calls);
+    seedWorkspace({ orgRole: 'owner', workMode });
+    fake.tables.media_assets = [asset('foto-1', 'plato.jpg')];
+    fake.tables.jobs = [];
+    fake.tables.brand_profiles = [];
+    const app = renderApp(`${BRAND_BASE}/biblioteca`);
+    await app.user.click(await screen.findByTestId('library-asset'));
+    await screen.findByRole('dialog');
+    const dialog = await openEditDialog(app.user);
+    await waitFor(() => expect(calls.some((c) => c.action === 'photo.options')).toBe(true));
+    return { user: app.user, dialog, calls };
+  }
+
+  it('«Mejorar con IA» no se ofrece aunque el servidor lo tenga; la mejora sin IA sigue', async () => {
+    const { user, dialog } = await openWith('self');
+    // Lo demás de IA sí llega (Ampliar en Recortar), así que las opciones ya están cargadas.
+    await user.click(dialog.getByRole('tab', { name: 'Recortar' }));
+    expect(await dialog.findByTestId('photo-edit-ai-upscale')).toBeInTheDocument();
+    for (const name of ['Ajustar', 'Recortar', 'Fondo']) {
+      await user.click(dialog.getByRole('tab', { name }));
+      expect(dialog.queryByTestId('photo-edit-ai-enhance')).not.toBeInTheDocument();
+      expect(dialog.queryByText(/Mejorar con IA/)).not.toBeInTheDocument();
+    }
+    await user.click(dialog.getByRole('tab', { name: 'Ajustar' }));
+    expect(dialog.getByTestId('photo-edit-auto')).toHaveTextContent('Mejorar automáticamente');
+  });
+
+  it('Ajustar enseña cuatro deslizadores y el resto en «Más ajustes»; sin encuadre (está en Recortar)', async () => {
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    const more = dialog.getByTestId('photo-edit-more-adjustments');
+    for (const key of ['exposure', 'contrast', 'saturation', 'warmth']) {
+      expect(more).not.toContainElement(dialog.getByTestId(`photo-edit-${key}`));
+    }
+    for (const key of ['sharpness', 'shadows', 'highlights', 'clarity', 'vibrance']) {
+      expect(more).toContainElement(dialog.getByTestId(`photo-edit-${key}`));
+    }
+    expect(more).not.toHaveAttribute('open');
+    expect(dialog.queryByTestId('photo-edit-framing')).not.toBeInTheDocument();
+    expect(dialog.queryByTestId('photo-edit-reset')).not.toBeInTheDocument();
+  });
+
+  it('lo ajustado y el recorte se guardan en UNA copia, aunque se hagan en pestañas distintas', async () => {
+    const { user } = await openPhoto({ orgRole: 'owner' }, [asset('foto-1', 'plato.jpg')]);
+    const dialog = await openEditDialog(user);
+    fireEvent.change(dialog.getByTestId('photo-edit-exposure'), { target: { value: '20' } });
+    await user.click(dialog.getByRole('tab', { name: 'Recortar' }));
+    await user.click(await dialog.findByTestId('photo-edit-crop-1:1'));
+    // Volver a Ajustar no pierde nada.
+    await user.click(dialog.getByRole('tab', { name: 'Ajustar' }));
+    expect(dialog.getByTestId('photo-edit-exposure')).toHaveValue('20');
+    await user.click(dialog.getByTestId('photo-edit-save'));
+    await waitFor(() => expect(uploaded).toHaveLength(1));
+    const steps = (uploaded[0]!.provenance as { steps: Array<{ kind: string }> }).steps;
+    expect(steps.map((step) => step.kind)).toEqual(['adjust', 'crop']);
+    expect(uploaded[0]!.dimensions).toEqual({ width: 90, height: 90, durationMs: null });
+  });
+
+  it('en autogestión el coste se dice sin hablar de cupos; el aviso de fuera de la UE sigue a la vista', async () => {
+    const { user, dialog } = await openWith('self');
+    await openChangeWithAi(user, dialog);
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    expect(await ai.findByTestId('photo-edit-ai-cost')).toHaveTextContent('Coste máximo: 0,20');
+    expect(ai.getByTestId('photo-edit-ai-cost')).not.toHaveTextContent(/cupo/);
+    expect(screen.getByTestId('photo-edit').textContent).not.toMatch(/cupo/i);
+    expect(ai.getByText('Se procesa fuera de la UE o en región desconocida')).toBeInTheDocument();
+    // Una línea a la vista; el detalle, en «Más información».
+    expect(ai.getByText(/Usa IA \(OpenAI\) solo para el fondo/)).toBeInTheDocument();
+    expect(ai.getByTestId('photo-edit-ai-mask-info').closest('details')).not.toHaveAttribute('open');
+  });
+
+  it('en modo agencia todo queda como estaba: el coste dice que se descuenta del cupo', async () => {
+    const { user, dialog } = await openWith('agency');
+    await openChangeWithAi(user, dialog);
+    const ai = within(await dialog.findByTestId('photo-edit-ai-replace_background'));
+    expect(await ai.findByTestId('photo-edit-ai-cost')).toHaveTextContent(
+      /Coste máximo: 0,20.*\(se descuenta del cupo de IA de la organización\)\./,
+    );
+  });
+
+  it('«Cambiar con IA» no tiene botón principal: se decide con «Usar esta»; Quitar y Desenfocar sí', async () => {
+    const { user, dialog } = await openWith('self');
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
+    expect(dialog.getByTestId('photo-edit-save')).toBeInTheDocument();
+    await openChangeWithAi(user, dialog);
+    await dialog.findByTestId('photo-edit-ai-replace_background');
+    expect(dialog.queryByTestId('photo-edit-save')).not.toBeInTheDocument();
+    await user.click(dialog.getByRole('radio', { name: 'Desenfocar' }));
+    expect(dialog.getByTestId('photo-edit-save')).toBeInTheDocument();
   });
 });
