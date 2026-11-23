@@ -33,6 +33,7 @@ import {
   type ReelLikeFrame,
 } from '../_shared/ai/text/tasks/reel-like.ts';
 import { AiTaskInputError } from '../_shared/ai/text/tasks/shared.ts';
+import { effectiveBrandProfile, type BrandBasics } from '../_shared/ai/text/tasks/brand-context.ts';
 import { REFERENCE_TRANSCRIPT_PURPOSE } from '../_shared/ai/transcription/config.ts';
 import { LIKE_LIMITS, parseMeasurement, parseReelLikeResult, REFERENCE_LIMITS } from '../_shared/reels/like.ts';
 
@@ -54,8 +55,10 @@ export interface ReferenceRow {
 export interface ReelLikeBrand {
   /** ¿Ve la persona esta marca? Si no, se responde como si no existiera. */
   visible: boolean;
-  /** Perfil activo, o null si la marca aún no tiene. */
+  /** Perfil activo, o null si la marca aún no tiene (entonces se usa lo básico de la marca: brand-context.ts). */
   profile: Json | null;
+  /** Nombre, sector y web de la marca. */
+  basics?: BrandBasics;
   aiMode: 'api' | 'agency';
   /** ¿Es personal de la agencia o de la plataforma? (`ai_brand_access`) */
   agencyStaff: boolean;
@@ -200,10 +203,14 @@ export function createAiReelLikeHandler(deps: AiReelLikeDeps): (request: Request
       if (!figures) {
         return json(200, { available: false, reason: 'not_configured', speechAvailable, estimate: null, limits });
       }
-      if (brand.profile === null) {
-        return json(200, { available: false, reason: 'profile_missing', speechAvailable, estimate: figures, limits });
-      }
-      return json(200, { available: true, speechAvailable, estimate: figures, limits });
+      // Sin perfil también se puede: la IA escribe con el nombre y el sector de la marca (antes, «profile_missing»).
+      return json(200, {
+        available: true,
+        speechAvailable,
+        estimate: figures,
+        limits,
+        ...(brand.profile === null ? { profileMissing: true } : {}),
+      });
     }
 
     // ── La parte de IA de un análisis ya medido ──
@@ -217,10 +224,8 @@ export function createAiReelLikeHandler(deps: AiReelLikeDeps): (request: Request
         'Esta marca trabaja por encargo a la agencia: «Hacer un reel como este» lo usa el equipo de la agencia.',
       );
     }
-    if (brand.profile === null) {
-      return fail(409, 'brand_profile_missing', 'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.');
-    }
-    if (estimate(brandId, brand.profile) === null) {
+    const brandProfile = effectiveBrandProfile(brand.profile, brand.basics ?? null).profile;
+    if (estimate(brandId, brandProfile) === null) {
       deps.log?.('not_configured', { brandId });
       return fail(503, 'not_configured', '«Hacer un reel como este» no está disponible. Avisa a quien administra la plataforma.');
     }
@@ -317,7 +322,7 @@ export function createAiReelLikeHandler(deps: AiReelLikeDeps): (request: Request
 
       // 3. Mirar los fotogramas y escribir.
       const studied = await studyReferenceReel(deps.textService, actor, {
-        brandProfile: brand.profile,
+        brandProfile,
         measurement,
         frames,
         transcript,

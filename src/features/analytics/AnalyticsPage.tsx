@@ -30,6 +30,7 @@ import {
   Skeleton,
 } from '@/components/ui';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
+import { networkLabel } from '@/features/content/labels';
 import { summarizeAnalytics, type AnalyticsSummaryResult } from '@/features/ai/api';
 import { useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
@@ -47,6 +48,7 @@ import {
   monthPeriod,
   previousPeriod,
   type Analysis,
+  type MediaSummary,
   type Period,
   type RankedPost,
 } from '../../../supabase/functions/_shared/analytics/analyst';
@@ -64,15 +66,17 @@ import {
 } from './api';
 import {
   dayLabel,
+  footnote,
   headlineSentence,
   periodText,
   pickHeadlines,
   RANGES,
-  tileNotes,
+  secondaryFigures,
+  topPosts,
   type Headline,
   type RangeKey,
 } from './summary';
-import { TrendChart } from './TrendChart';
+import { DailyTable, TrendChart } from './TrendChart';
 import { useTextTask } from '@/features/platform/integrations/useFeature';
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
@@ -101,9 +105,10 @@ const REPORT_STATUS: Record<
 };
 
 /**
- * Analítica de la marca. De un vistazo: la frase del periodo, de tres a cuatro cifras con su
- * cambio, un gráfico y lo que mejor funcionó. Todo lo demás (comparación, resumen del analista,
- * lo que no se puede medir, informes) queda plegado en «Más detalle».
+ * Resultados de la marca (antes «Analítica»). De un vistazo: la frase del periodo, tres cifras
+ * grandes, un gráfico, las tres mejores piezas y una sola nota al pie sobre las cifras. Todo lo
+ * demás (veces que te han visto, día a día, comparación, resumen del analista, lo que no se puede
+ * medir, informes) queda plegado en «Más detalle».
  */
 export function AnalyticsPage() {
   useWorkspaceMode();
@@ -145,7 +150,7 @@ export function AnalyticsPage() {
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <PageHeader
         compact
-        title="Analítica"
+        title="Resultados"
         meta={hasAccount && analysis ? <span>{`Del ${periodText(period)}`}</span> : undefined}
         action={
           hasAccount && (
@@ -176,8 +181,8 @@ export function AnalyticsPage() {
               title="Todavía no hay nada que medir"
               description={
                 can('manage')
-                  ? 'Conecta la cuenta de Instagram de la marca. Las cifras se recogen una vez al día: las primeras llegan al día siguiente.'
-                  : 'Cuando quien gestiona la marca conecte su cuenta de Instagram, las cifras llegarán al día siguiente.'
+                  ? 'Conecta Instagram: las primeras cifras llegan al día siguiente.'
+                  : 'Cuando se conecte Instagram, las cifras llegarán al día siguiente.'
               }
               action={
                 can('manage') && (
@@ -203,19 +208,26 @@ export function AnalyticsPage() {
                 )}
               </Notice>
             )}
-            <Overview analysis={analysis} points={points.data ?? []} range={range} brandId={brand.id} />
+            <Overview
+              analysis={analysis}
+              points={points.data ?? []}
+              media={media.data ?? []}
+              range={range}
+              brandId={brand.id}
+            />
             <details className="group rounded-xl border border-border bg-surface shadow-card" data-testid="analytics-more">
               <summary className="flex min-h-[2.75rem] cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                 <span>Más detalle</span>
                 <span className="flex items-center gap-1 text-xs font-normal text-muted">
-                  <span className="hidden sm:inline">Comparación, análisis, lo que no se puede medir e informes</span>
+                  <span className="hidden sm:inline">Veces que te han visto, día a día, comparación e informes</span>
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden />
                 </span>
               </summary>
               <div className="space-y-6 border-t border-border p-4">
+                <MoreFigures analysis={analysis} points={points.data ?? []} />
                 <p className="text-sm text-muted">
-                  Comparado con {periodText(previous)}. Los días se cuentan con la hora universal (una o dos horas menos
-                  que en España).
+                  Comparado con {periodText(previous)}. Los días van en hora universal (una o dos horas menos que en
+                  España).
                 </p>
                 <Comparison analysis={analysis} />
                 <Posts analysis={analysis} />
@@ -239,11 +251,8 @@ export function AnalyticsPage() {
 
 /** Variación frente al periodo anterior: con flecha y signo, nunca solo con el color. */
 function Change({ total }: { total: Headline }) {
-  if (total.changePct === null) {
-    return (
-      <span className="text-xs text-muted">{total.previous === null ? 'sin periodo anterior' : 'sin comparación'}</span>
-    );
-  }
+  // Sin con qué comparar no se dice nada en la cifra: lo explica la nota al pie.
+  if (total.changePct === null) return null;
   const up = total.changePct > 0;
   const down = total.changePct < 0;
   const Icon = up ? ArrowUp : down ? ArrowDown : Minus;
@@ -258,11 +267,13 @@ function Change({ total }: { total: Headline }) {
 function Overview({
   analysis,
   points,
+  media,
   range,
   brandId,
 }: {
   analysis: Analysis;
   points: Parameters<typeof dailySeries>[0];
+  media: MediaSummary[];
   range: RangeKey;
   brandId: string;
 }) {
@@ -274,11 +285,10 @@ function Overview({
     return (
       <div className="space-y-4">
         <Notice>
-          Todavía no hay cifras de la cuenta en este periodo. Se recogen una vez al día y Meta tarda hasta 48 horas en
-          dar algunas: prueba con otro periodo o vuelve mañana. Si la cuenta se conectó hoy, las primeras llegan al día
-          siguiente.
+          Todavía no hay cifras de la cuenta en este periodo. Llegan una vez al día: vuelve mañana o elige otro
+          periodo.
         </Notice>
-        <BestPosts analysis={analysis} brandId={brandId} />
+        <BestPosts analysis={analysis} media={media} brandId={brandId} />
       </div>
     );
   }
@@ -290,14 +300,13 @@ function Overview({
         </p>
       )}
       <div
-        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        className="grid grid-cols-3 gap-2 sm:gap-3"
         role="group"
         aria-label="Cifras del periodo: elige una para verla en el gráfico"
         data-testid="analytics-kpis"
       >
         {headlines.map((t) => {
           const on = t.metricId === selected.metricId;
-          const notes = tileNotes(t);
           return (
             <button
               key={t.metricId}
@@ -306,18 +315,22 @@ function Overview({
               onClick={() => setMetric(t.metricId)}
               data-testid={`kpi-${t.metricId}`}
               className={cn(
-                'rounded-xl border bg-surface p-3 text-left shadow-card transition-colors sm:p-4',
+                'flex min-w-0 flex-col justify-start rounded-xl border bg-surface p-2.5 text-left shadow-card transition-colors sm:p-4',
                 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
                 on ? 'border-primary ring-1 ring-primary' : 'border-border hover:bg-subtle',
               )}
             >
-              <span className="block text-sm text-muted">{t.plainLabel}</span>
-              <span className="mt-0.5 block text-3xl font-semibold tabular-nums">{formatNumber(t.value!)}</span>
-              <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                <Change total={t} />
-                {t.changePct !== null && <span className="text-xs text-muted">frente al periodo anterior</span>}
+              <span lang="es" className="block break-words text-xs leading-tight text-muted [hyphens:auto] sm:text-sm">
+                {t.plainLabel}
               </span>
-              {notes.length > 0 && <span className="mt-1 block text-xs text-muted">{notes.join(' · ')}</span>}
+              <span className="mt-0.5 block truncate text-2xl font-semibold tabular-nums sm:text-3xl">
+                {formatNumber(t.value!)}
+              </span>
+              {t.changePct !== null && (
+                <span className="mt-1 flex">
+                  <Change total={t} />
+                </span>
+              )}
             </button>
           );
         })}
@@ -330,8 +343,41 @@ function Overview({
             testId="analytics-chart"
           />
         </Card>
-        <BestPosts analysis={analysis} brandId={brandId} />
+        <BestPosts analysis={analysis} media={media} brandId={brandId} />
       </div>
+      <p className="text-xs text-muted" data-testid="analytics-footnote">
+        {footnote(headlines, range)}
+      </p>
+    </div>
+  );
+}
+
+/** En «Más detalle»: las cifras que no van arriba («Veces que te han visto») y todas, día a día. */
+function MoreFigures({ analysis, points }: { analysis: Analysis; points: Parameters<typeof dailySeries>[0] }) {
+  const extra = secondaryFigures(analysis.totals);
+  const series = [...pickHeadlines(analysis.totals), ...extra]
+    .filter((h) => h.aggregation === 'daily')
+    .map((h) => ({ title: h.plainLabel, points: dailySeries(points, h.metricId, analysis.period) }));
+  return (
+    <div className="space-y-3">
+      {extra.length > 0 && (
+        <ul className="flex flex-wrap gap-x-6 gap-y-2" data-testid="analytics-more-figures">
+          {extra.map((t) => (
+            <li key={t.metricId}>
+              <span className="block text-sm text-muted">{t.plainLabel}</span>
+              <span className="block text-xl font-semibold tabular-nums">{formatNumber(t.value!)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {series.length > 0 && (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted hover:text-fg">Cifras día a día</summary>
+          <div className="mt-2">
+            <DailyTable series={series} testId="analytics-daily" />
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -341,9 +387,9 @@ const scoreText = (p: RankedPost) =>
     ? `${formatNumber(p.score)} ${p.score === 1 ? 'interacción' : 'interacciones'}`
     : `Llegó a ${formatNumber(p.score)} ${p.score === 1 ? 'persona' : 'personas'}`;
 
-/** Las publicaciones que mejor han ido, con su miniatura. Sin publicaciones, dice cómo conseguirlas. */
-function BestPosts({ analysis, brandId }: { analysis: Analysis; brandId: string }) {
-  const best = analysis.posts.best.slice(0, 3);
+/** Las tres piezas que mejor han ido, con su miniatura. Sin ninguna con cifras, lo dice en una línea. */
+function BestPosts({ analysis, media, brandId }: { analysis: Analysis; media: MediaSummary[]; brandId: string }) {
+  const best = useMemo(() => topPosts(media, 3), [media]);
   const ids = best.flatMap((p) => (p.publication_id ? [p.publication_id] : []));
   const postMedia = usePostMedia(brandId, ids);
   const paths = useMemo(
@@ -357,8 +403,8 @@ function BestPosts({ analysis, brandId }: { analysis: Analysis; brandId: string 
       {best.length === 0 ? (
         <p className="mt-2 text-sm text-muted" data-testid="analytics-no-posts">
           {analysis.posts.count === 0
-            ? 'Todavía no hay publicaciones hechas desde aquí en este periodo. Cuando publiques desde la plataforma, verás cuáles funcionan mejor.'
-            : 'Hay pocas publicaciones con cifras para compararlas. Las cifras de cada una tardan en llegar.'}
+            ? 'Todavía no has publicado desde aquí en este periodo.'
+            : 'Las cifras de cada publicación tardan en llegar.'}
         </p>
       ) : (
         <ol className="mt-3 space-y-3" data-testid="analytics-top-posts">
@@ -382,7 +428,7 @@ function BestPosts({ analysis, brandId }: { analysis: Analysis; brandId: string 
                       <>
                         {' · '}
                         <a href={p.external_url} target="_blank" rel="noreferrer" className="underline">
-                          Verla en la red
+                          Ver en {networkLabel(p.network)}
                         </a>
                       </>
                     )}
@@ -476,7 +522,7 @@ function PostList({ posts, testId }: { posts: RankedPost[]; testId: string }) {
                 <>
                   {' · '}
                   <a href={p.external_url} target="_blank" rel="noreferrer" className="underline">
-                    Ver en la red
+                    Ver en {networkLabel(p.network)}
                   </a>
                 </>
               )}
@@ -554,7 +600,7 @@ function Summary({
     <Card>
       <CardHeader
         title="Resumen del analista"
-        description="Sin IA: reglas fijas sobre las cifras medidas. Un dato es una cifra; una interpretación, una explicación posible."
+        description="Lo que dicen las cifras y lo que podría explicarlas."
         action={
           aiAvailable && analysis.hasData ? (
             <Button variant="secondary" onClick={() => void askAi()} disabled={busy} data-testid="analytics-ai">
@@ -676,7 +722,7 @@ function Captures({ runs }: { runs: Parameters<typeof latestUnavailable>[0] }) {
   return (
     <p className="text-xs text-muted" data-testid="analytics-captures">
       {latest.length === 0
-        ? 'Todavía no se ha capturado ninguna cifra: la primera captura llega en la próxima hora en punto y diecisiete.'
+        ? 'Todavía no se ha recogido ninguna cifra: las primeras llegan en menos de una hora.'
         : latest
             .map(
               (r) =>

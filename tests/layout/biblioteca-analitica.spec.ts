@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// Biblioteca y Analítica en un navegador real, sin Supabase (banco de
+// Biblioteca y Resultados (antes «Analítica») en un navegador real, sin Supabase (banco de
 // tests/layout/biblioteca-analitica.tsx). Regla de la casa: el alto de la página
 // es el alto de la pantalla y el scroll vive dentro de la lista; nada se sale por
 // la derecha, ni en un móvil de 375 px.
@@ -180,10 +180,16 @@ for (const size of SIZES) {
       await expect(panel).toHaveCount(0);
     });
 
-    test('analítica: frase, cifras, gráfico y lo mejor, sin scroll de página', async ({ page }) => {
+    test('resultados: frase, tres cifras, gráfico, las tres mejores y una nota al pie, sin scroll de página', async ({
+      page,
+    }) => {
       await open(page, 'analitica');
+      await expect(page.getByRole('heading', { name: 'Resultados' })).toBeVisible();
       await expect(page.getByTestId('analytics-sentence')).toContainText('llegaste a');
-      await expect(page.getByTestId('analytics-kpis').getByRole('button')).toHaveCount(4);
+      await expect(page.getByTestId('analytics-kpis').getByRole('button')).toHaveCount(3);
+      await expect(page.getByTestId('analytics-kpis')).not.toContainText('Veces que te han visto');
+      await expect(page.getByTestId('analytics-kpis')).not.toContainText(/Provisional|Estimación de Meta|sin comparación/);
+      await expect(page.getByTestId('analytics-footnote')).toContainText('Cifras de Meta.');
       await expect(page.getByTestId('analytics-chart')).toBeVisible();
       await expect(page.getByTestId('analytics-top-posts').getByRole('listitem')).toHaveCount(3);
       expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
@@ -194,13 +200,25 @@ for (const size of SIZES) {
       expect(chart.x + chart.width).toBeLessThanOrEqual(size.width + 1);
       // «Más detalle» está plegado y, al abrirlo, el scroll es interno.
       await expect(page.getByTestId('analytics-comparison')).toBeHidden();
-      await page.getByTestId('analytics-more').locator('summary').click();
+      await page.getByTestId('analytics-more').locator('summary').first().click();
       await expect(page.getByTestId('analytics-comparison')).toBeVisible();
+      await expect(page.getByTestId('analytics-more-figures')).toContainText('Veces que te han visto');
       expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
       expect(await spilling(page)).toEqual([]);
     });
 
-    test('analítica: la guía del gráfico sigue al puntero y dice el valor del día', async ({ page }) => {
+    test('resultados con pocos datos: se lee bien y cabe', async ({ page }) => {
+      await open(page, 'pocas');
+      await expect(page.getByTestId('analytics-sentence')).toContainText('llegaste a 12 personas');
+      await expect(page.getByTestId('analytics-kpis').getByRole('button')).toHaveCount(2);
+      await expect(page.getByTestId('analytics-top-posts').getByRole('listitem')).toHaveCount(1);
+      await expect(page.getByTestId('analytics-footnote')).toBeVisible();
+      expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
+      expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
+      expect(await spilling(page)).toEqual([]);
+    });
+
+    test('resultados: la guía del gráfico sigue al puntero y dice el valor del día', async ({ page }) => {
       await open(page, 'analitica');
       const hit = page.getByTestId('chart-hit');
       const box = (await hit.boundingBox())!;
@@ -208,7 +226,7 @@ for (const size of SIZES) {
       await expect(page.getByTestId('chart-readout')).toContainText(/^\d\d\/\d\d: /);
     });
 
-    test('analítica: sin cifras y sin cuenta lo dicen y caben', async ({ page }) => {
+    test('resultados: sin cifras y sin cuenta lo dicen y caben', async ({ page }) => {
       await open(page, 'sin-cifras');
       await expect(page.getByText(/Todavía no hay cifras de la cuenta/)).toBeVisible();
       expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);

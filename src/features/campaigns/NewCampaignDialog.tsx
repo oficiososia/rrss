@@ -1,10 +1,12 @@
-import { ChevronDown, Sparkles, Wand2 } from 'lucide-react';
+import { ChevronDown, Loader2, Sparkles, Wand2 } from 'lucide-react';
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice } from '@/components/ui';
-import { AiRequestError } from '@/features/ai/api';
+import { AiRequestError, useAiCostEstimate } from '@/features/ai/api';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
+import { MaxCostLine, ProfileHint, SectorField } from '@/features/ai/BrandAiReadiness';
+import { useBrandAiReadiness, useRememberSector, useSettled } from '@/features/ai/brandReadiness';
 import { DictableField } from '@/features/ai/DictableField';
 import { formatMicros } from '@/features/ai/money';
 import { networkLabel } from '@/features/content/labels';
@@ -12,7 +14,7 @@ import { NETWORKS } from '@/features/content/networks';
 import { useBrand } from '@/features/orgs/context';
 import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
-import { useCampaignMutations, validatePlanRequest, type PlanRequestInput } from './api';
+import { planInput, useCampaignMutations, validatePlanRequest, type PlanRequestInput } from './api';
 import {
   agreementFor,
   durationText,
@@ -82,6 +84,10 @@ export function NewCampaignDialog({
   const [briefError, setBriefError] = useState<unknown>(null);
   const detailsId = useId();
   const answerRef = useRef<HTMLInputElement | null>(null);
+  const readiness = useBrandAiReadiness(brandId);
+  const rememberSector = useRememberSector();
+  const [sector, setSector] = useState('');
+  const brandSector = readiness.needsSector && sector.trim() ? sector.trim() : undefined;
 
   const networks = pickedNetworks ?? brandNetworks.networks;
   const pending = mutations.createWithAi.isPending || mutations.requestFromAgency.isPending;
@@ -108,12 +114,18 @@ export function NewCampaignDialog({
       setProblem('Cuenta primero qué quieres preparar (puedes dictarlo).');
       return;
     }
+    if (readiness.needsSector && !sector.trim()) {
+      setProblem('Di antes a qué se dedica la marca: la IA lo necesita para proponer algo con sentido.');
+      return;
+    }
     setProblem(null);
     setBriefError(null);
+    if (brandSector) rememberSector(brandSector);
     try {
       const result: CampaignBriefResult = await briefMutation.mutateAsync({
         instruction,
         networks: brandNetworks.networks,
+        ...(brandSector ? { brandSector } : {}),
         ...(extra.adjust && proposal ? { current: proposal, adjust: extra.adjust } : {}),
         ...(extra.answer ? { answer: extra.answer } : {}),
       });
@@ -151,14 +163,20 @@ export function NewCampaignDialog({
       endsOn,
       useSources: useSources && textSourceCount > 0,
       ...(mode === 'ai' ? { agreement: agreementFor(proposal, networks, startsOn, endsOn) } : {}),
+      ...(mode === 'ai' && brandSector ? { brandSector } : {}),
     };
-    const invalid = validatePlanRequest(input);
+    const invalid =
+      validatePlanRequest(input) ??
+      (mode === 'ai' && readiness.needsSector && !sector.trim()
+        ? 'Di antes a qué se dedica la marca: la IA lo necesita para preparar el plan.'
+        : null);
     setProblem(invalid);
     // Si lo que falla está en «Detalles», se abre para que se vea.
     if (invalid && instruction.trim()) setDetailsOpen(true);
     if (invalid) return;
     try {
       if (mode === 'ai') {
+        if (brandSector) rememberSector(brandSector);
         const { campaign, discarded } = await mutations.createWithAi.mutateAsync(input);
         toast.success(
           discarded.length
@@ -178,6 +196,28 @@ export function NewCampaignDialog({
       if (!(error instanceof AiRequestError)) toast.error(translateError(error));
     }
   }
+
+  // Coste máximo del plan antes de pulsar: lo que cambia el coste son las redes, las fechas, el ritmo
+  // acordado, las fuentes y (algo) la instrucción.
+  const settledInstruction = useSettled(instruction.trim());
+  const estimateInput: PlanRequestInput = {
+    brandId,
+    title: 'Plan',
+    instruction: settledInstruction || 'Plan de publicaciones',
+    networks: NETWORKS.map((n) => n.id).filter((id) => networks.includes(id)),
+    startsOn,
+    endsOn,
+    useSources: useSources && textSourceCount > 0,
+    ...(mode === 'ai' ? { agreement: agreementFor(proposal, networks, startsOn, endsOn) } : {}),
+  };
+  const planEstimate = useAiCostEstimate(
+    brandId,
+    'campaign.plan',
+    [settledInstruction, estimateInput.networks, startsOn, endsOn, estimateInput.useSources, estimateInput.agreement],
+    mode === 'ai' && estimateInput.networks.length > 0 && !validatePlanRequest(estimateInput)
+      ? () => planInput(estimateInput)
+      : null,
+  );
 
   const otherNetworks = NETWORKS.filter((n) => !brandNetworks.networks.includes(n.id));
   const shownNetworks = [
@@ -210,6 +250,8 @@ export function NewCampaignDialog({
       }
     >
       <form id="new-campaign-form" onSubmit={(e) => void submit(e)} className="space-y-4">
+        {mode === 'ai' && <ProfileHint readiness={readiness} />}
+        {mode === 'ai' && readiness.needsSector && <SectorField value={sector} onChange={setSector} />}
         <Field
           label="¿Qué quieres preparar?"
           hint="Por ejemplo: «Prepárame la campaña del menú de otoño, que dure hasta navidades, sobre todo reels». Pulsa el micrófono para dictarlo."
@@ -488,6 +530,19 @@ export function NewCampaignDialog({
           </div>
         </div>
 
+        {mode === 'ai' && (
+          <MaxCostLine micros={planEstimate.data} testId="campaign-plan-cost" what="este plan" />
+        )}
+        {mutations.createWithAi.isPending && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-lg bg-subtle px-3 py-2 text-sm"
+            data-testid="campaign-plan-pending"
+          >
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            Preparando el plan… suele tardar entre 20 segundos y un minuto. No cierres esta ventana.
+          </div>
+        )}
         {problem && <Notice tone="warning">{problem}</Notice>}
         {aiError && <AiErrorNotice error={aiError} />}
       </form>

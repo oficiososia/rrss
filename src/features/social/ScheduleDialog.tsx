@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice, Select } from '@/components/ui';
+import { usePlannedSlot } from '@/features/campaigns/api';
 import { targetLabel } from '@/features/content/labels';
 import { STATUS_LABEL } from '@/features/content/status';
 import { translateError } from '@/lib/errors';
@@ -72,6 +73,17 @@ export function ScheduleDialog({
     // `initialDate` viene del calendario como fecha de pared de la marca; sin ella, dentro de una hora.
     initialDate ? toLocalInput(defaultScheduleDate(initialDate)) : toLocalInput(defaultScheduleDate(null), zone),
   );
+  // Si la pieza sale del plan de una campaña, se propone su día y su hora (no «dentro de una hora»),
+  // mientras la persona no cambie la fecha a mano ni se abra desde un día del calendario.
+  const planned = usePlannedSlot(brandId, contentId);
+  const [whenTouched, setWhenTouched] = useState(false);
+  const [plannedApplied, setPlannedApplied] = useState<string | null>(null);
+  const plannedSlot = planned.data ?? null;
+  const plannedUsable = plannedSlot !== null && !isPast(fromLocalInput(plannedSlot, zone) ?? new Date(0));
+  if (!initialDate && !whenTouched && plannedUsable && plannedApplied !== `${contentId}:${plannedSlot}`) {
+    setPlannedApplied(`${contentId}:${plannedSlot}`);
+    setWhen(plannedSlot);
+  }
   // null = la primera cuenta conectada de la red de la pieza.
   const [accountChoice, setAccountChoice] = useState<string | null>(null);
   // null = lo automático: en un carrusel, la exportación de cada página de la versión, en su orden.
@@ -270,13 +282,19 @@ export function ScheduleDialog({
           </fieldset>
 
           {mode === 'later' ? (
-            <Field label="Día y hora" hint={`En la ${zoneLabel(zone)}, la de la marca${differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}.`}>
+            <Field
+              label="Día y hora"
+              hint={`${plannedUsable && when === plannedSlot ? 'El que propone el plan de la campaña. ' : ''}En la ${zoneLabel(zone)}, la de la marca${differsFromDevice(zone) ? ' (no la de tu dispositivo)' : ''}.`}
+            >
               {(props) => (
                 <Input
                   {...props}
                   type="datetime-local"
                   value={when}
-                  onChange={(e) => setWhen(e.target.value)}
+                  onChange={(e) => {
+                    setWhenTouched(true);
+                    setWhen(e.target.value);
+                  }}
                   data-testid="schedule-when"
                 />
               )}

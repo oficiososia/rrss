@@ -2,7 +2,8 @@ import { CalendarDays, Check, ChevronDown, ChevronLeft, ExternalLink, MessageSqu
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Badge, Button, ConfirmDialog, ErrorState, Notice, Skeleton, Spinner } from '@/components/ui';
+import { Badge, Button, ConfirmDialog, Dialog, ErrorState, Notice, Skeleton, Spinner } from '@/components/ui';
+import { mediaWorkerEnabled } from '@/config/app';
 import { contentPaths, networkLabel } from '@/features/content/labels';
 import { useBrandTemplates } from '@/features/content/templates/api';
 import { useAssetsByIds } from '@/features/library/api';
@@ -12,7 +13,16 @@ import { REQUEST_STATUS_LABEL, requestPaths } from '@/features/requests/labels';
 import type { CampaignRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn, formatDateTime } from '@/lib/utils';
-import { useCampaign, useCampaignContents, useCampaignMutations, useCampaignPlan, useCampaignRequest } from './api';
+import {
+  acceptedMessage,
+  reelIndexes,
+  useCampaign,
+  useCampaignContents,
+  useCampaignMutations,
+  useCampaignPlan,
+  useCampaignRequest,
+} from './api';
+import { draftTitle } from './engine';
 import { CAMPAIGN_STATUS_LABEL, CAMPAIGN_STATUS_TONE, campaignPaths } from './labels';
 import { campaignPlanSchema, shortDay, validatePlan, type CampaignPiece, type CampaignPlan } from './plan';
 import { PieceSheet, WeekStrip, type WeekPiece } from './PlanWeek';
@@ -57,6 +67,8 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
     setEdits({ planId: plan.data.id, plan: change(draft) });
   }
   const [confirmAccept, setConfirmAccept] = useState(false);
+  // Montar los reels al aceptar (solo con trabajador). Se ve antes lo que supone.
+  const [mountReels, setMountReels] = useState(true);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const closeSheet = useCallback(() => setSelected(null), []);
@@ -75,12 +87,15 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
     setDraft((current) => ({ ...current, pieces: current.pieces.filter((_, i) => i !== index) }));
   }
 
+  const reelCount = draft ? reelIndexes(draft).length : 0;
+  const canMount = mediaWorkerEnabled() && reelCount > 0;
+
   async function accept() {
     try {
-      await mutations.accept.mutateAsync({ campaign, plan: draft });
+      const { reels } = await mutations.accept.mutateAsync({ campaign, plan: draft, mountReels: canMount && mountReels });
       setConfirmAccept(false);
       setSelected(null);
-      toast.success('Plan aceptado: sus piezas están en Contenidos como borradores');
+      toast.success(acceptedMessage(reels));
     } catch (error) {
       setConfirmAccept(false);
       toast.error(translateError(error));
@@ -120,7 +135,7 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
           date: piece?.date ?? null,
           network: link.network || piece?.network || '',
           format: link.format || piece?.format || '',
-          title: piece?.idea ?? link.title,
+          title: piece ? draftTitle(piece) : link.title,
           piece,
           content: link,
           issues: [],
@@ -134,7 +149,7 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
       date: piece.date,
       network: piece.network,
       format: piece.format,
-      title: piece.idea,
+      title: draftTitle(piece),
       piece,
       content: null,
       issues: issues.filter((i) => i.path.startsWith(`pieces.${index}.`)),
@@ -332,16 +347,49 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
         </Fold>
       </div>
 
-      <ConfirmDialog
+      <Dialog
         open={confirmAccept}
         onOpenChange={setConfirmAccept}
         title="¿Aceptar el plan?"
         description={`Se crearán ${draft?.pieces.length ?? 0} piezas como borradores en Contenidos. No se aprueba, no se programa y no se publica nada.`}
-        confirmLabel="Aceptar y crear borradores"
-        destructive={false}
-        loading={mutations.accept.isPending}
-        onConfirm={() => void accept()}
-      />
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmAccept(false)} disabled={mutations.accept.isPending}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void accept()} loading={mutations.accept.isPending} data-testid="confirm-action">
+              Aceptar y crear borradores
+            </Button>
+          </>
+        }
+      >
+        {reelCount > 0 && (
+          <div className="space-y-2 text-sm" data-testid="campaign-accept-reels">
+            <p>
+              {reelCount === 1 ? 'El reel se prepara' : `Los ${reelCount} reels se preparan`} con una plantilla de reel
+              de la marca y fotos de la biblioteca elegidas por su tema, sin repetir. Luego puedes cambiarlas.
+            </p>
+            {canMount && (
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={mountReels}
+                  onChange={(event) => setMountReels(event.target.checked)}
+                  data-testid="campaign-accept-mount"
+                />
+                <span>
+                  Montar también {reelCount === 1 ? 'el vídeo' : `los ${reelCount} vídeos`} al aceptar.{' '}
+                  <span className="text-muted" data-testid="campaign-accept-mount-cost">
+                    No gasta cupo de IA: {reelCount === 1 ? 'es 1 montaje' : `son ${reelCount} montajes`} del trabajador,
+                    que cuentan para el límite mensual de montajes de la marca.
+                  </span>
+                </span>
+              </label>
+            )}
+          </div>
+        )}
+      </Dialog>
       <ConfirmDialog
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}

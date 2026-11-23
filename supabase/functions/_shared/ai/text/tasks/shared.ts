@@ -82,6 +82,8 @@ export interface StructuredTaskRequest {
   maxOutputTokens: number;
   /** Ajustes extra para el adaptador (por ejemplo, el esfuerzo de razonamiento). */
   params?: Record<string, string | number | boolean>;
+  /** Por qué no sirve un JSON que sí cumple el esquema, o null (ver `AiGenerateParams.accept`): no se cobra. */
+  accept?: (value: Json) => string | null;
 }
 
 /** Llama al servicio (reservar → generar → registrar) y devuelve el JSON ya validado. */
@@ -102,6 +104,7 @@ export async function runStructuredTask(
       cacheKey: `${request.purpose}:${request.actor.brandId}`,
       params: { max_output_tokens: request.maxOutputTokens, ...request.params },
     },
+    ...(request.accept ? { accept: request.accept } : {}),
   });
   const data = result.output.json;
   if (data === undefined) {

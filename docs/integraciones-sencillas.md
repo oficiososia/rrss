@@ -5,6 +5,63 @@ atrás en `supabase/rollbacks/`). Origen: la queja del dueño sobre la pestaña 
 («esto es muy complicado, hay demasiadas cosas») y sus dos peticiones siguientes (ver los
 precios de OpenAI y Claude al día; que la pantalla sugiera qué modelo usar para cada cosa).
 
+## 0. Una fila por función y una hoja con «Guardar y probar» (23/11/2026, rama `f58/integraciones-simple`)
+
+Cambio 10 (I1 a I4) de la propuesta de simplificación aceptada por el dueño
+(`rrss-recursos-comparativa/simplificacion/CAMBIOS.md`, §10).
+
+**Antes.** Diez tarjetas abiertas una debajo de otra, cada una con sus campos, «Guardar», «Probar
+conexión», «Con esto se enciende» y, en OpenAI y Claude, el resumen de gasto en US$, la fuente de
+precios (LiteLLM) y el aviso de precios distintos a la vista: **115 controles en 7.591 px de alto
+(9.589 px en móvil) y unas 1.250 palabras**.
+
+**Ahora.** **10 controles en 792 px** a 1366 px (872 px a 375 px) y unas 80 palabras; 9 controles en
+uso interno, sin la fila de pagos (medido en `tests/layout/integraciones.spec.ts` con el banco
+`integraciones.html`). Arriba, «N de M funciones listas» en una línea.
+
+| Antes | Ahora |
+| --- | --- |
+| Una tarjeta por servicio con todo a la vista | **I1.** Una fila por función («Textos, copiloto, imágenes y subtítulos · OpenAI», «Publicar en Instagram · Meta», «Guardar fotos y vídeos · Cloudflare R2», «Montar los reels · Fly.io», «Fotos desde Google Drive · Google» y, si no es uso interno, «Cobrar los planes · Stripe») con su estado en una palabra y **una sola acción** (Cambiar, Conectar o Completar). Toda la fila es el botón. |
+| «Guardar» y «Probar conexión» por separado | **I1.** Al tocar la fila se abre una **hoja** (abajo en móvil, centrada en ordenador) con el estado, la última prueba, los campos imprescindibles y **un único botón «Guardar y probar»**: guarda lo cambiado (también lo de «Opciones avanzadas») y prueba lo guardado. Sin cambios, solo prueba. Si guardar falla, no prueba. |
+| «Borrar» junto a cada campo | En el **«⋯»** de la hoja («Borrar «…»», con confirmación; guarda el borrado al momento). En «Opciones avanzadas» cada campo conserva su «Borrar». |
+| Modelos, precios en US$, LiteLLM, «Usar estos precios», coste real, a la vista | **I2.** Dentro de **«Opciones avanzadas»** de la hoja, con la región, la URL y los demás ajustes. |
+| «Con esto se enciende» en cada tarjeta | **I2.** Quitado: la fila y el resumen de arriba ya lo dicen. |
+| «Qué funciona ahora»: lista de 8 funciones con enlaces | Una línea: «6 de 8 funciones listas» (7 en uso interno). |
+| Claude, fal.ai, ComfyUI y «Otras imágenes» entre las demás | **I3.** En **«Opcionales (4): Claude, animar fotos, ComfyUI, otras imágenes»**, plegado. |
+| Se llegaba por `/plataforma/integraciones` | **I4.** Ya lo hizo la rama `f50/menu-simple`: «Integraciones» en el menú de la cuenta (solo superadministradores). No se ha tocado. |
+
+**Se mantiene todo lo que funcionaba:** cada hoja prueba solo su proveedor (`service` = `openai`,
+`claude`, `fal` o `images_other`); la sugerencia de modelo por tarea; «Usar estos precios» y «Usar la
+configuración recomendada» (ahora en «Opciones avanzadas»); los valores por defecto al guardar la
+clave de OpenAI con «Deshacer» (y después prueba); el arreglo de la región en un clic; el permiso
+de fal.ai fuera de la UE; generar y revocar el token del trabajador y la clave de cifrado de Meta. El
+**aviso de coste** de la prueba de IA de texto va junto al botón, en el pie de la hoja: «La prueba
+hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable,
+pero no cero.» El estado que da una prueba se ve en la hoja y en la fila aunque el servidor todavía no
+lo tenga anotado (vive en la página mientras dura la visita).
+
+**Uso interno** (`organizations.work_mode = 'self'` en todas las organizaciones de quien mira): lo
+que ya hacía `f38/autogestion` basta: sin la fila de pagos, sin «Cobrar los planes» en el recuento
+y sin la fila «Pago con Stripe» de los interruptores. La lista no habla de cupos, márgenes ni planes
+(comprobado en `test:layout`). En «Opciones avanzadas» siguen dos topes de seguridad de la plataforma
+(«Tope global de gasto mensual» de OpenAI y «Tope mensual de trabajos por marca» de Fly): no son
+cupos de un plan, sino frenos de gasto.
+
+**Archivos.** `IntegrationsPage.tsx` (lista, opcionales, resumen), `ServiceSheet.tsx` (antes
+`ServiceCard.tsx`: la hoja), `services.ts` (`does`, `provider`, `tier`, `short`, `rowAction`; fuera
+`unlocks`), `AiAdvisor.tsx` (sin su `<details>` propio: ya está dentro de «Opciones avanzadas»),
+`fields.tsx` (sin «Borrar» a la vista). Ningún cambio en el servidor ni en migraciones.
+
+**Pruebas.** `integraciones.test.tsx` adaptada (35 casos; nuevos: una fila por función y los
+opcionales plegados, un control por fila, un solo botón en la hoja, guardar y probar seguidos, no
+probar si guardar falla, borrar desde «⋯»); `usoInterno.test.tsx`; `tests/layout/integraciones.spec.ts`
+(a 375 y 1366 px, con agencia y en uso interno: ≤ 11 controles visibles, sin scroll lateral, cada
+fila cabe; la hoja de OpenAI con «Opciones avanzadas» abierto cabe a lo ancho y su botón se ve sin
+bajar). E2E 18 y 21 adaptadas, **sin ejecutar** (necesitan Supabase local; corren en CI).
+
+**Sin probar:** a mano en un navegador o un teléfono reales (solo Chromium de Playwright con el
+Supabase simulado); las e2e 18 y 21; nada contra los servicios reales (como antes).
+
 ## 1. Qué cambia
 
 **Antes.** Una pestaña por integración técnica (`ai_text`, `ai_image`, `meta`…), cada una con todos
@@ -14,7 +71,7 @@ variable de entorno del servidor». OpenAI estaba partido entre «IA de texto» 
 
 **Ahora.** Dos niveles.
 
-1. **Vista sencilla (por defecto).** Arriba, «Qué funciona ahora» (8 funciones en lenguaje llano con
+1. **Vista sencilla (por defecto; desde el 23/11/2026, filas y hojas: ver §0).** Arriba, «Qué funciona ahora» (8 funciones en lenguaje llano con
    su estado). Después, una tarjeta por servicio con nombre llano y una frase de para qué sirve,
    el estado en una palabra con color (Funciona, Sin probar, No funciona, Falta la clave, Falta
    algo con el qué, Sin configurar si es opcional), el campo o campos imprescindibles, «Guardar»,

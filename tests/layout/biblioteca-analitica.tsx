@@ -4,11 +4,12 @@ import '@/index.css';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
-// Banco de maquetación de Biblioteca y Analítica: la aplicación real con el
+// Banco de maquetación de Biblioteca y Resultados (antes «Analítica»): la aplicación real con el
 // Supabase simulado. Parámetro `?vista=`:
 //   biblioteca   ~270 archivos en carpetas «Platos / Mariscos», «Vinos / Tintos»…
 //   ficha        igual, con la ficha de un archivo abierta (?recurso=)
-//   analitica    cifras de 56 días y tres publicaciones
+//   analitica    cifras de 56 días y seis publicaciones
+//   pocas        cuenta recién conectada: tres días de cifras, sin periodo anterior y una publicación
 //   sin-cifras   la cuenta conectada, sin ninguna cifra todavía
 //   sin-cuenta   ninguna cuenta conectada
 const view = new URLSearchParams(window.location.search).get('vista') ?? 'biblioteca';
@@ -131,6 +132,11 @@ if (view === 'analitica') {
     value: 12_345,
     provisional: false,
   });
+} else if (view === 'pocas') {
+  for (const i of [-3, -2, -1]) {
+    metricRows.push({ brand_id: BRAND_ID, metric_id: 'instagram.account.reach', metric_date: day(i), value: '4', provisional: i > -3 });
+  }
+  metricRows.push({ brand_id: BRAND_ID, metric_id: 'instagram.account.followers', metric_date: day(-1), value: 2, provisional: false });
 }
 fake.tables.account_metrics_daily = metricRows;
 fake.tables.analytics_capture_runs = [];
@@ -149,7 +155,21 @@ fake.rpc('analytics_media_summary', () =>
         provisional: false,
         metrics: { 'instagram.media.total_interactions': n * 3, 'instagram.media.reach': n * 40 },
       }))
-    : [],
+    : view === 'pocas'
+      ? [
+          {
+            publication_id: 'p0',
+            title: 'Chuletón de vaca madurada',
+            format: 'post',
+            network: 'instagram',
+            media_product_type: 'FEED',
+            published_at: `${day(-2)}T10:00:00Z`,
+            external_url: 'https://instagram.simulado.invalid/p/1/',
+            provisional: true,
+            metrics: { 'instagram.media.reach': 3 },
+          },
+        ]
+      : [],
 );
 fake.tables.content_items = [];
 fake.tables.content_versions = [];

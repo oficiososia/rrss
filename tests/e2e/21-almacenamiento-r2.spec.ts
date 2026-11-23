@@ -51,22 +51,23 @@ test.afterAll(async () => {
   await new Promise((resolve) => setTimeout(resolve, 35_000));
 });
 
-test('la superadministradora configura Cloudflare R2 (aquí, MinIO) y «Probar conexión» funciona', async ({
+test('la superadministradora configura Cloudflare R2 (aquí, MinIO) y «Guardar y probar» funciona', async ({
   browser,
 }) => {
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto('/plataforma/integraciones');
-  // Una tarjeta por servicio (ya no hay pestañas): los datos del cubo y su clave están a la vista.
-  const r2 = page.getByTestId('integration-storage');
+  // Una fila por función; al tocarla, la hoja con los datos del cubo y su clave.
+  await page.getByTestId('integration-row-storage').click();
+  const r2 = page.getByRole('dialog').getByTestId('integration-storage');
   await r2.getByTestId('setting-R2_BUCKET').getByRole('textbox').fill(MINIO.cubo);
   await r2.getByLabel('Access Key ID').fill(MINIO.usuario);
   await r2.getByLabel('Secret Access Key').fill(MINIO.clave);
-  await r2.getByTestId('integration-save').click();
+  // «Guardar y probar»: guarda y prueba lo guardado.
+  await page.getByRole('dialog').getByTestId('integration-save').click();
   await aviso(page, 'Guardado');
   await expect(r2.getByTestId('setting-state-R2_SECRET_ACCESS_KEY')).toContainText('Configurado');
 
-  await r2.getByTestId('integration-test').click();
   const resultado = r2.getByTestId('integration-test-result');
   await expect(resultado).toContainText('Funciona');
   await expect(resultado).toContainText('El S3 local responde');

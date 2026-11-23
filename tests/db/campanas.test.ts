@@ -403,7 +403,8 @@ describe('el motor: plan aceptado → borradores', () => {
     const a = planToDrafts(shaped, frameOf(['instagram', 'facebook']));
     const b = planToDrafts(shaped, frameOf(['instagram', 'facebook']));
     expect(a).toEqual(b);
-    expect(a.drafts[0]!.title).toBe('26/11 · Facebook · Publicación de página · Recordatorio de reservas');
+    // Título corto (el del plan o, en planes antiguos, el principio de la idea), no «fecha · red · idea entera».
+    expect(a.drafts[0]!.title).toBe('Recordatorio de reservas');
     // Una red que no es de la campaña o un formato inventado: el motor no hace nada.
     expect(() => planToDrafts(shaped, frameOf(['instagram']))).toThrow(/no es de la campaña/);
   });
@@ -788,5 +789,140 @@ describe('modo agencia: el plan lo prepara la agencia', () => {
       `select public.request_campaign_plan($1, 't', 'i', array['instagram'], $2::date, $3::date)`,
       [t.brand, START, END],
     );
+  });
+});
+
+// ── Prueba de calidad del 23/11/2026, fallo 2: plan con «Detalles» a mano ──
+// Lo que respondió el modelo real cuando la persona escribió una descripción
+// detallada («3 posts y 1 reel, el 24, 26 y 27, franja pizarra…»): ideas largas,
+// fechas con hora, redes y formatos con mayúsculas, el nombre de la foto en vez
+// de su identificador y la proporción dentro de la idea. Antes, cualquiera de
+// esas cosas daba «no se puede usar» y se cobraba; ahora sale el plan.
+
+describe('plan con detalles a mano (fallo 2)', () => {
+  const realistic = (photos: string[]) =>
+    JSON.stringify({
+      objective: 'Que la gente pruebe los arroces de la semana del arroz y reserve.',
+      summary: 'Tres publicaciones en la semana del arroz.',
+      observed: ['La persona pide tres publicaciones en días concretos.'],
+      dataBacked: [],
+      hypotheses: [],
+      pieces: [
+        {
+          network: 'Instagram',
+          format: 'Publicación',
+          date: '2026-11-24 13:00',
+          time: '',
+          title: '',
+          idea: `Arroz meloso de langosta en formato 4:5 con la foto del plato a sangre, ${'una franja pizarra abajo con el titular de la semana del arroz y el logotipo, '.repeat(4)}para abrir la semana.`,
+          headline: 'Semana del arroz',
+          aspect: '',
+          caption: 'Arranca la semana del arroz.\n\nReserva tu mesa en Crevillent.',
+          hashtags: ['#SemanaDelArroz'],
+          assetIds: ['foto0.jpg'],
+          why: 'Martes: abrir la semana.',
+        },
+        {
+          network: 'instagram',
+          format: 'carousel',
+          date: '26/11/2026',
+          time: '20:30',
+          title: 'Tres arroces',
+          idea: 'Carrusel con los tres arroces de la carta.',
+          headline: '',
+          aspect: '4:5',
+          caption: 'Tres arroces, tres excusas. Reserva.',
+          hashtags: [],
+          assetIds: [photos[1]],
+          why: 'Jueves: decidir el finde.',
+        },
+      ],
+    });
+
+  it('sale el plan, saneado: fecha, hora, red, formato, foto, proporción, título y titular', async () => {
+    const photos: string[] = [];
+    const t = await setup({ respond: () => realistic(photos) });
+    photos.push(...t.photos);
+    const result = await planCampaign(
+      t.service,
+      { userId: t.editor.id, brandId: t.brand },
+      request(t, { instruction: 'Semana del arroz: 3 posts y 1 reel, el 24, 26 y 27; franja pizarra y titular.' }),
+    );
+    expect(result.discarded).toEqual([]);
+    const [martes, jueves] = result.plan.pieces;
+    expect(martes).toMatchObject({
+      network: 'instagram',
+      format: 'post',
+      date: '2026-11-24',
+      time: '13:00',
+      aspect: '4:5',
+      headline: 'Semana del arroz',
+      assetIds: [t.photos[0]],
+      caption: 'Arranca la semana del arroz.\n\nReserva tu mesa en Crevillent.',
+      hashtags: ['SemanaDelArroz'],
+    });
+    expect([...martes!.idea].length).toBeLessThanOrEqual(300);
+    expect([...martes!.title!].length).toBeLessThanOrEqual(60);
+    expect(jueves).toMatchObject({ date: '2026-11-26', time: '20:30', title: 'Tres arroces', aspect: '4:5' });
+    // El plan saneado pasa las reglas del cliente y de la base de datos.
+    expect(campaignPlanSchema.safeParse(result.plan).success).toBe(true);
+    const [gen] = await db.query(`select status, cost_micros from public.ai_generations where id = $1`, [
+      result.generationId,
+    ]);
+    expect(gen).toMatchObject({ status: 'succeeded' });
+  });
+
+  it('si al final no queda ninguna pieza utilizable, se dice y NO se cobra', async () => {
+    const t = await setup({
+      respond: () =>
+        JSON.stringify({ ...JSON.parse(realistic([])), pieces: [{ ...JSON.parse(realistic([])).pieces[0], date: '2027-03-01' }] }),
+    });
+    const error = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t)).catch((e) => e);
+    expect(error).toBeInstanceOf(AiError);
+    expect((error as AiError).code).toBe('invalid_output');
+    expect((error as AiError).message).toMatch(/No se ha consumido cupo/);
+    const [gen] = await db.query<Row>(
+      `select status, cost_micros, waived_cost_micros from public.ai_generations where id = $1`,
+      [(error as AiError).generationId],
+    );
+    expect(gen).toMatchObject({ status: 'failed', cost_micros: null });
+    expect(Number(gen!.waived_cost_micros)).toBeGreaterThan(0);
+    const [{ spent }] = (await db.query<{ spent: string }>(
+      `select coalesce(sum(cost_delta_micros), 0)::text as spent from public.ai_usage where generation_id = $1`,
+      [(error as AiError).generationId],
+    )) as [{ spent: string }];
+    expect(Number(spent)).toBe(0);
+  });
+
+  it('una respuesta cortada por el límite de salida tampoco se cobra, y el plan tiene más margen', async () => {
+    const t = await setup({ respond: () => ({ text: '{"objective": "a medias', finish_reason: 'length' }) });
+    const error = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t)).catch((e) => e);
+    expect((error as AiError).message).toMatch(/se ha cortado.*No se ha consumido cupo/);
+    expect(t.provider.calls[0]!.input.params!.max_output_tokens).toBeGreaterThanOrEqual(3000 + 4 * 800);
+  });
+
+  it('la base de datos acepta las piezas con título, hora, proporción y titular, y rechaza valores raros', async () => {
+    const photos: string[] = [];
+    const t = await setup({ respond: () => realistic(photos) });
+    photos.push(...t.photos);
+    const { result, campaign } = await planAndSave(t);
+    const accepted = await accept(t.editor, t, campaign, result.plan);
+    expect(accepted).toMatchObject({ status: 'accepted' });
+    const items = await brandItems(t.brand);
+    expect(items.map((i) => i.title).sort()).toEqual([result.plan.pieces[0]!.title, 'Tres arroces'].sort());
+    const versions = await db.query<{ data: { canvas: { aspectRatio: string } } }>(
+      `select v.data from public.content_versions v join public.campaign_contents l on l.content_id = v.content_id
+       where l.campaign_id = $1 order by l.piece_index`,
+      [campaign.id],
+    );
+    expect(versions.map((v) => v.data.canvas.aspectRatio)).toEqual(['4:5', '4:5']);
+    for (const bad of [{ time: '25:00' }, { aspect: '3:2' }, { title: 'x'.repeat(81) }]) {
+      const broken = { ...result.plan, pieces: [{ ...result.plan.pieces[0], ...bad }] };
+      const [{ problem }] = (await db.query<{ problem: string | null }>(
+        `select private.campaign_plan_problem($1::jsonb, c) as problem from public.campaigns c where c.id = $2`,
+        [JSON.stringify(broken), campaign.id],
+      )) as [{ problem: string | null }];
+      expect(problem).toMatch(/no es válid/);
+    }
   });
 });

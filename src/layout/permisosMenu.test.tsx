@@ -191,16 +191,16 @@ describe('Rutas según permisos', () => {
     expect(screen.getByRole('link', { name: 'Ir a mis organizaciones' })).toBeInTheDocument();
   });
 
-  it('el inicio de la marca dice el rol de cada persona', async () => {
+  it('la lista de marcas dice el rol de cada persona', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'client' });
-    renderApp(`${BRAND_BASE}/inicio`);
-    expect(await screen.findByText(/Tu rol: Cliente/)).toBeInTheDocument();
+    renderApp(BASE);
+    expect(await screen.findByText(/Cliente · desde/)).toBeInTheDocument();
   });
 
   it('los administradores de la organización entran como gestores de todas las marcas', async () => {
     seedWorkspace({ orgRole: 'admin', brands: [brandRow(), brandRow({ id: 'brand-2', name: 'Otra Marca' })] });
-    renderApp(`${BASE}/m/brand-2/inicio`);
-    expect(await screen.findByText(/Tu rol: Gestor/)).toBeInTheDocument();
+    renderApp(BASE);
+    expect(await screen.findAllByText(/Gestor · desde/)).toHaveLength(2);
   });
 
   it('en «Marca», los datos y el archivado son solo para gestores', async () => {

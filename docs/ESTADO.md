@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -685,6 +685,27 @@ sin migraciones, sin tocar el plan v2 ni el trabajador.
   ejecutar); «Redactar con IA» con proveedor real. Una aserción de `src/features/content/contenidos.test.tsx` se cambió
   porque miraba la cabecera vieja del editor de reels (`reel-version`).
 
+### Integraciones: una fila por función y una hoja con «Guardar y probar» (rama `f58/integraciones-simple`, 23/11/2026)
+
+Cambio 10 (I1–I4) de la propuesta de simplificación aceptada. Detalle en `docs/integraciones-sencillas.md` §0.
+
+- **Antes:** 115 controles en 7.591 px (9.589 px en móvil) y unas 1.250 palabras. **Ahora:** 10 controles en 792 px a 1366 px (872 px a 375 px), unas 80 palabras; 9 en uso interno.
+- **Lista:** «N de M funciones listas» y una fila por función (OpenAI, Instagram, R2, Fly, Drive y, si no es uso interno, Stripe) con su estado y una acción; Claude, fal.ai, ComfyUI y «Otras imágenes» en «Opcionales», plegado. Fuera «Con esto se enciende» y la lista de 8 funciones.
+- **Hoja** (al tocar la fila): estado, última prueba, la clave y un único botón **«Guardar y probar»**; borrar en «⋯»; modelos, región, URL, precios (US$, LiteLLM), «Usar estos precios» y coste real en «Opciones avanzadas». Cada hoja sigue probando solo su proveedor; el aviso de coste va junto al botón.
+- **I4:** ya estaba hecho por `f50/menu-simple` (Integraciones en el menú de la cuenta); no se ha tocado.
+- **Probado:** componentes (`integraciones.test.tsx`, `usoInterno.test.tsx`) y `test:layout` en Chromium real (`tests/layout/integraciones.spec.ts`, banco `integraciones.html`: a 375 y 1366 px, ≤ 11 controles, sin scroll lateral, hoja con «Opciones avanzadas» abierto que cabe a lo ancho). Solo interfaz: sin cambios en funciones ni migraciones.
+- **Sin probar:** e2e 18 y 21 (adaptadas; necesitan Supabase local); a mano en un navegador o un teléfono reales.
+
+### Inicio y Resultados más limpios (rama `f59/inicio-resultados`, 23/11/2026)
+
+Cambios H1 y A1 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa/simplificacion/`, apartado 11).
+
+- **Inicio:** sin «Tu rol: Gestor» bajo el nombre de la marca (solo el sector). La semana va ahora **de lunes a domingo** (antes: hoy y los seis días siguientes), con los días pasados atenuados, y lleva la ficha **«N de M publicadas»** (en móvil, «N de M»): M = lo programado esta semana sin contar lo cancelado; N = lo que de verdad salió (programado no cuenta como publicado). Sin nada en la semana no hay ficha. «Abrir el calendario» pasa a «Ver calendario». Lo último publicado enseña su **enlace a Instagram** («Ver en Instagram», icono en móvil) cuando la publicación tiene `external_url`, aparte del enlace a la pieza. Las cuatro tarjetas de crear ya no estaban (`f50`). El aviso del perfil de marca incompleto no se ha tocado (lo cambia `f55`).
+- **Resultados** (antes «Analítica»; la ruta sigue siendo `/analitica`): **tres cifras grandes** (Personas alcanzadas, Interacciones, Seguidores) en tres columnas también en móvil; cada una solo lleva la flecha con el porcentaje si hay con qué comparar. Ya no se repite «sin comparación», «sin periodo anterior», «frente al periodo anterior», «Provisional», «Estimación de Meta» ni «17 de 28 días»: **una nota al pie** dice solo lo que aplica («Cifras de Meta. Las de los últimos días pueden cambiar. Algunas son estimaciones. Los días sin cifra no cuentan como cero. Los porcentajes comparan con…»). «Lo que mejor funcionó» enseña **las tres mejores** del periodo (antes, como mucho la mitad de las publicaciones con cifra: con 2 o 3, solo una), con «Ver en Instagram». **«Veces que te han visto»** y las **cifras día a día** (antes, «Ver las cifras día a día» bajo el gráfico) pasan a «Más detalle». Textos fijos acortados: sin cuenta («Conecta Instagram: las primeras cifras llegan al día siguiente.»), sin cifras, sin publicaciones, resumen del analista y capturas.
+- **Autogestión:** ninguna de las dos pantallas habla de cupos ni de planes (lo parado del Inicio ya se explicaba sin planes en modo `self` desde `f50`).
+- **Probado:** unitarias (`week.test.ts`, `resumen.test.ts`), componentes (`inicio.test.tsx`, `analitica.test.tsx`) y `test:layout` en Chromium real a 375, 768 y 1366 px (`inicio-contenidos`, `biblioteca-analitica`, con una vista nueva `?vista=pocas`: cuenta recién conectada con tres días de cifras y una publicación): sin scroll lateral ni de página.
+- **Sin probar:** a mano en un navegador y un móvil reales contra la demo; con cifras reales de Meta.
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
@@ -701,7 +722,7 @@ sin migraciones, sin tocar el plan v2 ni el trabajador.
 | Subtítulos automáticos con OpenAI (`gpt-transcribe`)                                       | Adaptador escrito; solo con HTTP simulado y la transcripción simulada; sin clave                                                                                                                                    | `docs/editor-reels.md`                     |
 | IA de imagen y edición de fotos con OpenAI (GPT Image: cambiar el fondo, mejorar, generar) | Adaptador escrito; solo con HTTP simulado; sin clave; máscara y consumo real sin contrastar                                                                                                                         | `docs/ia-medios.md` §13                    |
 | Edición de fotos con IA (ComfyUI: quitar el fondo y ampliar)                               | Flujos escritos; solo con HTTP simulado y la edición simulada; nodo de quitar fondo sin contrastar                                                                                                                  | `docs/edicion-fotos.md`                    |
-| «Probar conexión» de Integraciones                                                         | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI                                                                                                                                 | `docs/05-puesta-en-marcha.md`              |
+| «Guardar y probar» de Integraciones                                                        | Probado con servicios simulados: ninguna llamada real a Meta, Stripe, IA ni ComfyUI                                                                                                                                 | `docs/05-puesta-en-marcha.md`              |
 
 ## En staging
 
@@ -1441,3 +1462,67 @@ sin tocar el recorte ni el servidor. Detalle en `docs/edicion-fotos.md` §15.
   «libre» (F4) y lo repetido del panel del editor de piezas (P3). «Ampliar con IA» sigue ofreciéndose
   (en Recortar): si «la IA solo crea fondos» vale también para él, se oculta añadiéndolo a
   `HIDDEN_AI_OPERATIONS`.
+
+## IA sin perfil, planes que no fallan ni cobran y reels de campaña listos (rama `f55/ia-campanas`, 23/11/2026)
+
+Arreglos de la prueba de calidad en staging del 23/11/2026 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`,
+fallos 1, 2, 3, 15, 16 y 23). Migración nueva `20270115010000_ia_inservible_y_piezas_de_plan` (con su vuelta atrás).
+
+- **IA sin perfil (fallo 1).** `ai-generate` y `ai-reel-like` ya no responden «Esta marca todavía no tiene perfil»: sin
+  perfil, la IA trabaja con el nombre, el sector y la web de la marca (`_shared/ai/text/tasks/brand-context.ts`, con una
+  nota para que no invente datos); con perfil, recibe además el nombre de la marca (los lugares, como en el perfil: fallo 23).
+  Solo si no hay perfil NI sector, `post.caption`, `campaign.brief`, `campaign.plan` y `brand.check` responden 409
+  `brand_basics_missing` antes de reservar cupo, y los diálogos piden «¿A qué se dedica la marca?» (se manda como
+  `brandSector` y, si la persona gestiona la marca, se guarda en `brands.sector`). Con un perfil incompleto, «Redactar
+  con IA» y «Preparar un plan» avisan en una línea con enlace a completarlo. El copiloto del editor recibe el perfil tal
+  cual si existe (no cambia nada más). Inicio ya no presenta el perfil como requisito. «Hacer un reel como este» sin
+  perfil responde `available: true, profileMissing: true` (la pantalla de reels/like no se ha tocado: su aviso
+  «profile_missing» ya no sale).
+- **Plan con «Detalles» a mano (fallo 2). Causa:** el servicio validaba la respuesta con el esquema completo y lo
+  único que el proveedor no garantiza (longitudes) tiraba el plan entero; con una descripción detallada el modelo
+  escribe ideas de más de 300 caracteres, fechas con hora o en «24/11/2026», «Instagram»/«Publicación», el nombre de la
+  foto en lugar de su id… y con 1.500 + 700 tokens por pieza un modelo que razona se cortaba. El camino de «Que la IA
+  proponga» tenía más piezas (más margen) y fases que acortaban las ideas. Además, lo inservible se cobraba (se cerraba
+  con `ai_complete_generation`). **Arreglo:** `campaign.plan` valida solo la forma (`AiOutputSchema.localSchema`: campos
+  y tipos; un campo no previsto sigue invalidando) y sanea el resto (`sanitizePlan`: recorta, normaliza red, formato,
+  fecha y hora, mapea nombres de foto), con `3000 + 800 × piezas` tokens de salida. Lo que no sirve (esquema roto,
+  cortado o un plan sin ninguna pieza válida, vía `AiGenerateParams.accept`) se cierra con `ai_waive_generation`:
+  reserva devuelta, nada en el libro de la organización y el coste real en `ai_generations.waived_cost_micros`, que
+  sí cuenta para el tope de gasto de la plataforma (`private.ai_global_committed`). La respuesta lleva `charged: false`
+  y la interfaz dice «No se ha descontado nada». Si la migración no está, se cobra como antes (no se rompe nada). El
+  diálogo enseña «Preparando el plan…» mientras espera. **No reproducido contra el modelo real**: la causa se ha
+  deducido del código y de lo que cuenta el informe; los registros `brief_mix_normalized` de staging no se han leído.
+- **Reels de campaña (fallo 3).** Al aceptar un plan, cada pieza en formato reel se guarda como versión 2 con un
+  proyecto de reel construido por el mismo camino que «Desde una plantilla» (`buildReelFromTemplate`, sin tocar el
+  montaje ni el plan v2): la plantilla de reel de la marca que sugiere la ficha (o la menos usada en la campaña; sin
+  plantillas, una sencilla sobre el primer estilo), y fotos o vídeos de la biblioteca elegidos por el tema de la pieza
+  (primero los que sugiere el plan), sin repetir dentro del reel y repartidos entre reels, sin exportaciones, montajes,
+  portadas, imágenes de IA ni recortes. El titular del plan sustituye al gancho de la plantilla y se quitan los textos
+  de muestra de planos concretos; el pie y los hashtags del plan van en `copy`. Con trabajador
+  (`VITE_MEDIA_WORKER_ENABLED`), el diálogo de aceptar ofrece montar los vídeos al momento, diciendo antes que no gasta
+  cupo de IA y cuántos montajes cuenta. Como el reel ya tiene material, el aviso de «diseño por capas» no sale. La IA
+  ya no debe proponer reels tipográficos sin imágenes (instrucciones de `campaign.plan` y `campaign.brief`).
+  Código: `src/features/campaigns/reelPieces.ts` y `prepareCampaignReels` en `api.ts`.
+- **Lo que promete el plan (fallo 15).** Las piezas del plan tienen cuatro campos opcionales (`title`, `time`, `aspect`,
+  `headline`; DB: `private.campaign_plan_problem`; cliente: `plan.ts`). El motor usa la proporción del plan si la red la
+  admite (4:5 es 4:5), pone el titular en una franja con el color y la tipografía de la marca, y llama a la pieza con
+  su título corto. «Programar» propone el día y la hora del plan (`usePlannedSlot`; sin hora, a las 10:00). El texto de
+  la propuesta se rehace si sus cifras no cuadran con el ritmo final y, si el reparto del modelo no sirve pero el texto
+  lo dice con cifras, se usa ese. Los pies terminan con la llamada a la acción de la marca (instrucción).
+- **Coste antes de pulsar (fallo 16).** Acción nueva `cost.estimate` de `ai-generate` (`post.caption`,
+  `campaign.brief`, `campaign.plan`): ejecuta la tarea con un servicio que no genera y devuelve lo que se reservaría,
+  sin cupo ni proveedor. «Redactar con IA» y «Preparar un plan» enseñan «Coste máximo de …» antes de pulsar.
+- **La IA en la biblioteca para el plan** ya no recibe exportaciones ni montajes (fallo 17, de paso).
+- **Pruebas nuevas:** `tests/db/ia-generate.test.ts` (sin perfil: sector, nombre, coste máximo, no cobrar),
+  `tests/db/campanas.test.ts` («plan con detalles a mano»: respuesta realista saneada, sin piezas no cobra, cortada no
+  cobra, la base de datos acepta los campos nuevos), `tests/db/ia-campanas-reparto.test.ts` (texto frente a ritmo),
+  `src/features/campaigns/reelPieces.test.ts` (material, plantilla, titular, 4:5, título corto) y
+  `src/features/campaigns/campanasCalidad.test.tsx` (sector en el diálogo, coste, indicador, «no se ha cobrado»,
+  reels guardados con plantilla y fotos, fecha y hora al programar). El simulador de Supabase de las pruebas responde
+  solo a `cost.estimate` y no lo cuenta como llamada.
+- **Para desplegar en staging** (en este orden): la migración `20270115010000` (antes que lo demás: sin ella, la base de
+  datos rechaza los planes con `title`/`time`/`aspect`/`headline`); las funciones `ai-generate` y `ai-reel-like`; la web.
+- **Sin probar:** nada contra un modelo real (calidad de títulos, horas y titulares, si el modelo real sigue mandando un
+  reparto inservible en `campaign.brief`); los reels preparados al aceptar no se han montado de verdad ni visto en un
+  navegador; el aviso de «diseño por capas» que seguía tras montar a mano un reel vacío es del editor de reels (zona de
+  otra rama) y no se ha tocado.

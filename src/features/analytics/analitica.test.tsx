@@ -6,9 +6,9 @@ import { fireEvent } from '@testing-library/react';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, brandRow, renderApp, seedWorkspace } from '@/test/fixtures';
 
-// Panel de analítica (Fase 5) contra el Supabase simulado: cifras medidas,
-// dato frente a hipótesis, lo que no se puede medir, informes y el botón de
-// IA solo donde existe. Las cifras las impone la base de datos
+// Resultados (antes «Analítica», Fase 5) contra el Supabase simulado: tres cifras
+// medidas con una sola nota al pie, dato frente a hipótesis, lo que no se puede
+// medir, informes y el botón de IA solo donde existe. Las cifras las impone la base de datos
 // (tests/db/analitica-captura.test.ts).
 
 const def = (
@@ -170,9 +170,16 @@ describe('Resultados (Analítica)', () => {
     const reach = within(kpis).getByTestId('kpi-instagram.account.reach');
     expect(reach).toHaveTextContent('4200');
     expect(reach).toHaveTextContent('+50 %');
-    expect(reach).toHaveTextContent('Estimación de Meta');
-    expect(reach).toHaveTextContent('Provisional');
+    // Lo de «estimación» y «provisional» no se repite en cada cifra: va una vez, al pie.
+    expect(kpis).not.toHaveTextContent(/Estimación de Meta|Provisional|sin comparación|sin periodo anterior/);
+    const note = screen.getByTestId('analytics-footnote');
+    expect(note).toHaveTextContent('Cifras de Meta.');
+    expect(note).toHaveTextContent('Las de los últimos días pueden cambiar.');
+    expect(note).toHaveTextContent('Algunas son estimaciones.');
+    expect(note).toHaveTextContent('Los porcentajes comparan con los 28 días anteriores.');
     expect(within(kpis).getByTestId('kpi-instagram.account.followers')).toHaveTextContent('1234');
+    // Los seguidores no tienen periodo anterior: ni flecha ni «sin periodo anterior».
+    expect(within(kpis).getByTestId('kpi-instagram.account.followers')).toHaveTextContent(/^Seguidores1234$/);
 
     const facts = screen.getByTestId('analytics-facts');
     expect(within(facts).getAllByText('Dato').length).toBeGreaterThan(2);
@@ -268,7 +275,7 @@ describe('Resultados (Analítica)', () => {
   });
 });
 
-describe('Analítica de un vistazo', () => {
+describe('Resultados de un vistazo', () => {
   beforeEach(() => {
     vi.spyOn(storageApi, 'signStoragePaths').mockImplementation(
       async (paths) => new Map(paths.map((path) => [path, `https://example.test/${path}`])),
@@ -286,7 +293,7 @@ describe('Analítica de un vistazo', () => {
     );
     const kpis = screen.getByTestId('analytics-kpis');
     expect(within(kpis).getByTestId('kpi-instagram.account.reach')).toHaveTextContent('Personas alcanzadas');
-    expect(within(kpis).getByTestId('kpi-instagram.account.reach')).toHaveTextContent('frente al periodo anterior');
+    expect(within(kpis).getAllByRole('button')).toHaveLength(2);
     expect(within(kpis).getByTestId('kpi-instagram.account.followers')).toHaveTextContent('Seguidores');
     // Lo demás está plegado.
     expect(screen.getByTestId('analytics-more')).not.toHaveAttribute('open');
@@ -306,8 +313,9 @@ describe('Analítica de un vistazo', () => {
     expect(screen.getByTestId('chart-readout')).toHaveTextContent(/^\d\d\/\d\d: 150$/);
     fireEvent.keyDown(area, { key: 'ArrowLeft' });
     expect(screen.getByTestId('chart-readout')).toHaveTextContent(/: 150$/);
-    // Y la misma información como tabla.
-    expect(within(screen.getByTestId('analytics-chart')).getAllByRole('row').length).toBeGreaterThan(20);
+    // La tabla día a día ya no va bajo el gráfico: está en «Más detalle».
+    expect(within(screen.getByTestId('analytics-chart')).queryAllByRole('row')).toHaveLength(0);
+    expect(within(screen.getByTestId('analytics-daily')).getAllByRole('row').length).toBeGreaterThan(20);
   });
 
   it('lo que mejor funcionó enseña la miniatura de la publicación, y un icono si no la tiene', async () => {
@@ -370,8 +378,42 @@ describe('Analítica de un vistazo', () => {
     fake.rpc('analytics_media_summary', () => []);
     renderApp(`${BRAND_BASE}/analitica`);
     expect(await screen.findByTestId('analytics-no-posts')).toHaveTextContent(
-      'Cuando publiques desde la plataforma, verás cuáles funcionan mejor.',
+      'Todavía no has publicado desde aquí en este periodo.',
     );
+  });
+
+  it('con pocas publicaciones salen las que hay (una sola también), con su enlace a Instagram', async () => {
+    seed();
+    renderApp(`${BRAND_BASE}/analitica`);
+    const top = await screen.findByTestId('analytics-top-posts');
+    const items = within(top).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(within(items[0]!).getByRole('link', { name: 'Ver en Instagram' })).toHaveAttribute(
+      'href',
+      'https://instagram.simulado.invalid/p/1/',
+    );
+  });
+
+  it('«Veces que te han visto» no va arriba: está en «Más detalle»', async () => {
+    seed();
+    fake.tables.analytics_metric_definitions!.push(def('instagram.account.views', 'Visualizaciones', { sort: 3 }));
+    fake.tables.account_metrics_daily!.push(
+      ...[-3, -2].map((i) => ({
+        brand_id: BRAND_ID,
+        metric_id: 'instagram.account.views',
+        metric_date: day(i),
+        value: 13,
+        provisional: false,
+      })),
+    );
+    renderApp(`${BRAND_BASE}/analitica`);
+    const kpis = await screen.findByTestId('analytics-kpis');
+    expect(within(kpis).queryByTestId('kpi-instagram.account.views')).toBeNull();
+    expect(kpis).not.toHaveTextContent('Veces que te han visto');
+    const more = screen.getByTestId('analytics-more-figures');
+    expect(more).toHaveTextContent('Veces que te han visto');
+    expect(more).toHaveTextContent('26');
+    expect(screen.getByTestId('analytics-more')).toContainElement(more);
   });
 
   it('si la cuenta hay que volver a conectarla, se avisa arriba', async () => {
