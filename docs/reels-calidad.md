@@ -85,7 +85,18 @@ Lo que aquí quedaba pendiente ya está conectado al editor; detalle en `docs/ed
 4. Aviso «Sin música» junto a «Exportar» (`AudioNotice`); listo para la hoja «Exportar» con «Terminar en Instagram».
 5. La vista previa usa los mínimos de texto del trabajador (`editor/textFit.ts`) y enseña el cierre.
 
-«Hacer un reel como este» (`like/draft.ts`) todavía no escribe `role` ni el cierre (fuera de esta rama).
+«Hacer un reel como este» (`like/draft.ts`) escribe `role` y el cierre desde la rama `f67/pendientes-reels`.
+
+## Tercera vuelta (rama `f67/pendientes-reels`, 23/11/2026): el reel real de staging
+
+| # | Fallo en staging | Qué se hizo |
+| --- | --- | --- |
+| 1 | El selector proponía primero fotos de móvil en la cocina (encimera, cables, zapatillas) | `photoLook` mide en la miniatura la luz y el borde (liso, de color, parejo); `lookScore` suma de -30 a +20 y la resolución no suma con un fondo malo. El selector (`useReelLooks`) ordena con ello |
+| 2 | Zapatillas a la vista bajo el chuletón y las tortitas | Encuadre ceñido al plato con máscara o saliencia (hasta ×1,8 / ×1,5) y detalle dentro de la caja del plato |
+| 3 | Detalle de las tortitas borroso | Ninguna ampliación deja menos de ~1000 px de la foto a lo ancho (`MIN_USEFUL_WIDTH`); sin ×1,25, no hay detalle |
+| 4 | «…(Alicante),» en el cierre | `reelAddress`: sin signos colgando; si es larga, calle y localidad |
+
+Montajes: `rrss-recursos-comparativa/reels-calidad/fotos-con-ritmo-f67.jpg` y `oferta-semana-arreglada.jpg`.
 
 ## Música: fuentes propuestas (para que elija el dueño; no implementado)
 

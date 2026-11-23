@@ -793,8 +793,8 @@ conectarla», como en la importación. Cambios en la importación, mínimos: la 
 - La música en una cuenta de empresa y en una de creador: lo de «Sound Collection» es lo que dice Meta en general, sin
   comprobar con cuentas reales.
 - Leer las últimas publicaciones contra la Graph API real (sin aplicación de Meta): solo contra la simulada.
-- El calendario y la analítica no ven todavía lo publicado a mano (leen `scheduled_publications`): no salen su día ni
-  sus métricas.
+- ~~El calendario y la analítica no ven todavía lo publicado a mano~~: resuelto en la rama `f67/pendientes-reels`
+  (calendario, Inicio y Resultados; migración `20270125010000`, ver `docs/ESTADO.md`).
 
 ### Para llevarlo a staging
 
@@ -842,6 +842,7 @@ repetidas. Resultado del 23/11 con fotos reales de Casa Tomás (las de la carta 
 | --- | --- | --- | --- | --- | --- | --- |
 | Fotos con ritmo (8 fotos) | 13,7 s | 1 en cada uno | 0 | 0 | sí, con logotipo | 0 |
 | Oferta de la semana (4 fotos) | 8,1 s | 1, 1, 1 y 2 (el precio y su condición van juntos en la plantilla, apilados) | 0 | 0 | sí, con logotipo | 0 |
+| Oferta de la semana rehecha (rama f67, 6 fotos) | 10,8 s | 1 en cada uno (precio, condición y llamada en planos distintos; la llamada pasa al cierre) | 0 | 0 | sí, con logotipo | 0 |
 
 El logotipo de la web de Casa Tomás es oscuro y en el cierre (fondo oscurecido) no se vería: para la prueba se usó una
 copia clara. El trabajador no aclara un logotipo oscuro; la marca tiene que subir uno claro (ver «Sin probar»).
@@ -866,5 +867,5 @@ copia clara. El trabajador no aclara un logotipo oscuro; la marca tiene que subi
   no ha cargado, la vista previa usa una parecida (ya se avisa en «Exportar»).
 - Un logotipo oscuro sobre el cierre (no se aclara solo) y un logotipo SVG (no se usa).
 - «Hacer un reel como este» (`like/draft.ts`) sigue sin escribir `role` ni el cierre: en esta rama solo se tocó el orden
-  de su material.
+  de su material. (Resuelto en la rama `f67/pendientes-reels`: papeles y cierre como `buildBrandReel`.)
 - El aviso en la hoja «Exportar» y «Terminar en Instagram» (otra rama).

@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -914,8 +914,74 @@ Tres fallos que salieron al montar y publicar una historia de verdad con la plan
   clic con el temblor de la mano, a 1366 y 402 px, fallaba antes del arreglo) y `plantillas-marca.spec.ts` (375, 402
   y 1366 px). Bancos: caso `tapa` de `tests/layout/marcos.tsx` (con `?logos=uno|dos`) y `plantillas-marca.html`.
 - **Sin probar:** con los logotipos reales de Casa Tomás y contra Supabase (en staging); el doble clic con un ratón y
-  un panel táctil de verdad; las miniaturas de las plantillas (selector y Marca) siguen pintando el primer logotipo,
-  y una pieza creada desde una plantilla guarda su versión 1 con él hasta que se abre en el editor.
+  un panel táctil de verdad; una pieza creada desde una plantilla guarda su versión 1 con el primer logotipo hasta
+  que se abre en el editor (las miniaturas de las plantillas ya usan la regla de contraste: rama f67).
+
+### Pendientes de los reels y lo publicado a mano (rama `f67/pendientes-reels`, 23/11/2026)
+
+Ocho fallos: cuatro de la lista de pendientes y cuatro del reel real de «Fotos con ritmo» montado en staging el 23/11
+(hoja `rrss-recursos-comparativa/reels-calidad/fotos-con-ritmo-staging-antes.jpg`).
+
+- **«Hacer un reel como este» con cierre y papeles** (`reels/like/draft.ts`, `useDraft.ts`). Antes: el borrador salía
+  sin cierre de marca y sus textos sin `role`. Ahora cada texto del guion lleva su papel (titular, rótulo, llamada) y,
+  con perfil, el borrador lleva `outro` como `buildBrandReel` (logotipo con `reelLogoPath`, llamada, usuario,
+  dirección, acento). La llamada final del guion pasa al cierre (también al rellenar su hueco), los textos acaban al
+  entrar el cierre, el borrador espera al perfil y a sus logotipos, y las fotos llevan su punto de interés y su máscara
+  guardados (también al rellenar un hueco desde el editor).
+- **Lo publicado a mano en Calendario, Inicio y Resultados** (`social/manualPublications.ts`, migración
+  `20270125010000_publicadas_a_mano_analitica.sql` con vuelta atrás). Antes: solo se leía `scheduled_publications`.
+  Ahora el calendario pinta «Publicada (a mano)» en el día en que salió (con su enlace) y «Pendiente en Instagram» en el
+  día en que se mandó al móvil; no se mueve, cancela ni publica desde allí (la vista rápida lleva a Instagram y al
+  reel) y no sale en «Por programar». En Inicio cuenta en «N de M publicadas» (pendiente cuenta en M, no en N) y sale
+  en «Lo último publicado» con «a mano», su enlace y sus cifras. El capturador de métricas mide también los reels
+  publicados a mano que reconoce en la cuenta (emparejados, o con el enlace de «Ya lo publiqué» entre las
+  publicaciones leídas de la cuenta): `media_metrics_daily.manual_publication_id`, `analytics_media_summary` con la
+  columna `manual` y el informe mensual con su título. Sin enlace, o con un enlace que aún no se ha leído de la cuenta
+  («Buscar en Instagram»), no hay cifras.
+- **Miniaturas de plantillas con el logotipo que se ve** (`useTemplatePreviews.ts`). Antes: el primero del kit. Ahora
+  la regla del editor (`logoVariantFor` en `editor/logoContrast.ts`, la misma que usa ahora `reelLogoPath`): tono medido
+  y, sin medir, nombre o etiquetas. Vale para el selector de plantillas, «Destacadas» y Marca → Plantillas.
+- **«Oferta de la semana» (reel) con un texto por plano** (`agency/catalogo/reels.ts`). Antes: precio, condición y
+  llamada en el plano del precio. Ahora precio, condición y llamada van cada uno en su plano (4 planos obligatorios y
+  2 opcionales); con el cierre de la marca, la llamada pasa al cierre y su plano lleva el nombre del plato. Hay que
+  volver a cargar el catálogo en las marcas para que la plantilla guardada cambie.
+- **Orden del selector de material** (`photoLook`, `lookScore`, `reelAssetScore`, `editor/useReelLooks.ts`). Antes:
+  primero las fotos grandes de móvil en la cocina (encimera, cables, zapatillas). Ahora se mira la miniatura de cada
+  foto (luz y borde: liso, de color y parejo frente a gris, recargado y desigual) y la resolución no suma con un fondo
+  malo; el peso por píxel solo resta. Medido con 21 miniaturas de cocina, 7 fotos de carta y 2 de la web: cocina de
+  -6 a -16, carta de +8 a +20. El selector ordena una vez al terminar de mirar (2,5 s como mucho) y no se mueve en
+  cuanto se elige algo.
+- **Encuadre ceñido al plato** (trabajador, `photoFraming`). Antes: la foto a pantalla llena centrada en el sujeto
+  (se veían la encimera y unas zapatillas). Ahora, con máscara o saliencia, se acerca hasta que el plato ocupe ~90 %
+  del ancho o ~70 % del alto (como mucho ×1,8 con máscara y ×1,5 con saliencia), y el corte a detalle se queda dentro
+  de la caja del plato.
+- **Detalle sin ampliar de más** (trabajador). Antes: corte a ×1,55 con cualquier foto de 900 px de lado corto.
+  Ahora ninguna ampliación deja menos de ~1000 px de la foto a lo ancho (`MIN_USEFUL_WIDTH`): el detalle se queda en
+  lo que aguanta la resolución y, por debajo de ×1,25, no se hace.
+- **Dirección del cierre** (`reelAddress`). Antes: «…03330 Crevillent (Alicante),». Ahora sin signos colgando y, si
+  es larga, calle con número y localidad («Carrer Santa Maria de la Cabeza, 2 · Crevillent»); el trabajador también
+  quita los signos colgando de los planes ya guardados.
+- **Montajes locales por el camino del editor** (FFmpeg 9, `scripts/reels-desde-editor.ts`, que ahora ordena como el
+  selector y admite `--medidas` y `--plantillas`), en `rrss-recursos-comparativa/reels-calidad/`:
+  `oferta-semana-arreglada.jpg` (6 planos con 1 texto cada uno, cierre con logotipo y la dirección corta) y
+  `fotos-con-ritmo-f67.jpg` (la misma plantilla que el reel de staging: con las miniaturas de cocina en la biblioteca,
+  con las medidas de sus originales, el selector propone primero las 7 fotos de carta y el comedor; las de cocina
+  quedan las últimas, `orden-selector-f67.json`). Sin corte a detalle: las fotos de carta son de 1200 × 900 y en 9:16
+  solo dejan ~500 px de ancho.
+- **Probado:** unitarias (`like/draft.test.ts`, `quality.test.ts`, `logoContrast.test.ts`,
+  `social/manualPublications.test.ts`), componentes (`reelLike.test.tsx` con perfil y logotipo claro,
+  `miniaturasLogotipo.test.tsx`, `ordenSelector.test.tsx`, `calendario.test.tsx`, `inicio.test.tsx`,
+  `analitica.test.tsx`), base de datos (`tests/db/analitica-a-mano.test.ts`: el capturador mide lo emparejado y lo
+  marcado con enlace, no lo pendiente ni lo marcado sin enlace; Resultados y el informe con su título; y la vuelta
+  atrás en `migraciones.test.ts`), trabajador (`reel-quality.test.ts`: encuadre ceñido, límite de resolución y detalle
+  dentro del plato), catálogo (`agency/tests/catalogo.test.ts`: un texto por plano en las dos «Oferta de la semana»).
+- **Sin probar:** el encuadre ceñido y el detalle con las fotos de cocina a resolución completa (en local solo hay
+  sus miniaturas de 300 × 400; el ceñido solo está probado con cifras y con el filtro de FFmpeg generado); medir las
+  miniaturas en un navegador real (CORS de R2 y Supabase con `loadCorsImage`); el capturador contra la Graph API real
+  con un reel publicado a mano; el calendario con lo publicado a mano en un navegador real.
+- **Para llevarlo a staging:** migración `20270125010000_publicadas_a_mano_analitica.sql`; redesplegar el trabajador
+  (`worker-fly.yml`); la aplicación; volver a cargar el catálogo de plantillas en las marcas (`agency/`, en seco
+  primero). `social-insights` no cambia de código (sigue igual: la migración le da la lista nueva de publicaciones).
 
 ## Sin probar contra el servicio real
 
