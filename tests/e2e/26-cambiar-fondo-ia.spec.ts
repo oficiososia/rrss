@@ -42,7 +42,8 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   await page.getByTestId('asset-edit-photo').click();
   const editor = page.getByTestId('photo-edit');
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
-  await editor.getByRole('tab', { name: 'Fondo con IA' }).click();
+  await editor.getByRole('tab', { name: 'Fondo', exact: true }).click();
+  await editor.getByRole('radio', { name: 'Cambiar con IA' }).click();
   const ia = editor.getByTestId('photo-edit-ai-replace_background');
   // Con recorte en el navegador: ofrece proteger el plato (marcado); sin texto: no se puede lanzar; el coste se ve antes.
   await expect(ia.getByText(/No hay recorte del plato/)).toHaveCount(0);
@@ -51,6 +52,8 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   await expect(ia.getByTestId('photo-edit-ai-cost')).toContainText('Coste máximo');
   await ia.getByRole('button', { name: 'mesa de mármol blanco con luz cálida' }).click();
   await ia.getByTestId('photo-edit-ai-run-replace_background').click();
+  // El resultado se enseña antes de aplicarlo (docs/edicion-fotos.md §14): se acepta con «Usar esta».
+  await editor.getByTestId('photo-edit-ai-use').click();
   await expect(editor.getByTestId('photo-edit-result').first()).toContainText('Fondo nuevo · plato-cocina.png');
 
   const ediciones = await sql<{ provenance: Record<string, unknown>; storage_path: string }>(

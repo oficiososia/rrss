@@ -4,13 +4,15 @@ import '@/index.css';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
-// Banco de maquetación de «Editar foto → Fondo con IA»: la aplicación real con el Supabase
+// Banco de maquetación de «Editar foto» (sus tres pestañas y «Fondo → Cambiar con IA»): la aplicación real con el Supabase
 // simulado. La foto ya viene sin fondo (así no hace falta ningún modelo de recorte) y la IA
-// responde al momento con el mismo dibujo. Parámetro: ?sector=Gimnasio
+// responde al momento con el mismo dibujo. Parámetros: ?sector=Gimnasio y ?modo=self (autogestión).
 (globalThis as { __AI_PHOTO_EDIT__?: boolean }).__AI_PHOTO_EDIT__ = true;
 const params = new URLSearchParams(window.location.search);
 seedWorkspace({
   orgRole: 'owner',
+  // ?modo=self: organización en autogestión (sin textos de cupos).
+  workMode: params.get('modo') === 'self' ? 'self' : 'agency',
   brands: [
     {
       id: BRAND_ID,
@@ -73,16 +75,17 @@ fake.tables.jobs = [];
 fake.tables.brand_profiles = [];
 
 // Todas las direcciones firmadas son la misma imagen.
-fake.storage.from = () => ({
-  download: async () => ({ data: null, error: { message: 'Object not found' } }),
-  upload: async () => ({ data: null, error: null }),
-  remove: async () => ({ data: null, error: null }),
-  createSignedUrl: async () => ({ data: { signedUrl: photo }, error: null }),
-  createSignedUrls: (async (paths: string[]) => ({
-    data: paths.map((path) => ({ path, signedUrl: photo, error: null })),
-    error: null,
-  })) as never,
-}) as never;
+fake.storage.from = () =>
+  ({
+    download: async () => ({ data: null, error: { message: 'Object not found' } }),
+    upload: async () => ({ data: null, error: null }),
+    remove: async () => ({ data: null, error: null }),
+    createSignedUrl: async () => ({ data: { signedUrl: photo }, error: null }),
+    createSignedUrls: (async (paths: string[]) => ({
+      data: paths.map((path) => ({ path, signedUrl: photo, error: null })),
+      error: null,
+    })) as never,
+  }) as never;
 
 let attempt = 0;
 fake.fn('ai-media', (body) => {
@@ -93,6 +96,16 @@ fake.fn('ai-media', (body) => {
       body: {
         action,
         edits: [
+          // «Mejorar con IA» lo tiene el servidor, pero la pantalla no lo ofrece (la IA solo crea fondos).
+          ...(['upscale', 'enhance'] as const).map((operation) => ({
+            operation,
+            model: `openai:${operation}`,
+            delivery: 'sync',
+            dataRegion: 'global',
+            euProcessing: false,
+            trainsOnInputs: 'no',
+            untestedAdapter: false,
+          })),
           {
             operation: 'replace_background',
             model: 'openai:gpt-image-2.5-sunburst',

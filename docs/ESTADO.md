@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -14,7 +14,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | --- | --- | --- | --- | --- |
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
-| Editar foto | Pantalla completa, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA | Unitarias, componentes, base de datos, e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
+| Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
 | Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
@@ -1268,7 +1268,7 @@ De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de 
     pero no quedan anotadas).
   - Textos con «cupo» o «plan» que quedan en autogestión porque viven en zonas que no se tocaron en
     esta rama: editor de reels («Cuenta en el cupo de IA…»), «Hacer un reel como este» (su página),
-    «Editar foto» («se descuenta del cupo…»), copiloto, importar publicaciones («Ocupan espacio de
+    copiloto (el de «Editar foto» se quitó en `f51/editar-foto-simple`), importar publicaciones («Ocupan espacio de
     tu plan») y el aviso «Cambiar de plan» del calendario (lleva a una pestaña que en autogestión ya
     no existe y vuelve a General).
   - El criterio de «uso interno» de Plataforma mira las organizaciones de quien abre la pantalla, no
@@ -1351,3 +1351,27 @@ diseñadas con fotos.
 - **Sin probar**: arrastrar archivos de verdad desde el escritorio (solo con eventos simulados y en
   Chromium sin archivo real); la imagen con IA real (solo con `ai-media` simulada); la migración en
   staging; un móvil de verdad.
+
+## «Editar foto» en tres pestañas (rama `f51/editar-foto-simple`, 23/11/2026)
+
+Cambio «"Editar foto" en 3 pestañas» de la propuesta de simplificación aceptada por el dueño
+(`rrss-recursos-comparativa/simplificacion/`, F1, F2, F3, F6 y F7). Solo `src/features/photo-edit/`;
+sin tocar el recorte ni el servidor. Detalle en `docs/edicion-fotos.md` §15.
+
+- **Implementado.** Tres pestañas: **Ajustar** (automático + intensidad; Luz, Contraste, Color y
+  Calidez a la vista; el resto en «Más ajustes»), **Recortar** (Entera, 1:1, 4:5, 9:16, siempre con
+  encuadre inteligente; «Ampliar con IA» debajo) y **Fondo** (Quitar, Desenfocar, Cambiar con IA). Cada
+  acción en un solo sitio: el encuadre sale de Ajustar, «Deshacer cambios» lo hace «Cancelar», la
+  casilla de encuadre centrado desaparece. Ajustar y Recortar se guardan en una sola copia.
+  **«Mejorar con IA» oculto** (`HIDDEN_AI_OPERATIONS`; el código y la tarea del servidor se quedan).
+  Párrafos largos → una línea con «Más información»; el aviso de fuera de la UE y el coste máximo,
+  siempre a la vista antes de gastar. En autogestión el coste ya no habla del cupo. Móvil: pestañas
+  arriba, foto en medio, ajustes en hoja baja (≤ 45 %) que se oculta; sin scroll de página.
+- **Probado.** `npm test` (componentes de `editarFoto.test.tsx` adaptados y 6 casos nuevos),
+  `test:layout` (`editar-foto-pestanas.spec.ts` a 375 y 1366 px; `fotos-ia.spec.ts` por el camino nuevo).
+- **Sin probar.** A mano en un navegador o un móvil reales; la e2e 26 (ajustada a «Fondo → Cambiar con
+  IA» y a «Usar esta») no se ha ejecutado.
+- **Pendiente / para decidir.** De la propuesta quedan fuera «Cancelar» y «Listo» (F5), el formato
+  «libre» (F4) y lo repetido del panel del editor de piezas (P3). «Ampliar con IA» sigue ofreciéndose
+  (en Recortar): si «la IA solo crea fondos» vale también para él, se oculta añadiéndolo a
+  `HIDDEN_AI_OPERATIONS`.
