@@ -105,7 +105,10 @@ export function UploadPanel({
         const duplicate = await findDuplicate(brandId, sha256);
         if (duplicate && onUploaded) {
           // En un selector no se duplica: se elige el que ya estaba.
-          patch(item.id, { status: 'done', message: `Ya estaba en la biblioteca como «${duplicate.file_name}»: elegido.` });
+          patch(item.id, {
+            status: 'done',
+            message: `Ya estaba en la biblioteca como «${duplicate.file_name}»: elegido.`,
+          });
           return onUploaded(duplicate);
         }
         if (duplicate) {
@@ -156,42 +159,42 @@ export function UploadPanel({
   return (
     <div className="space-y-3">
       {!listOnly && (
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        data-testid="library-dropzone"
-        className={cn(
-          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors',
-          dragging ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
-        )}
-      >
-        <UploadCloud className="h-7 w-7 text-muted" aria-hidden />
-        <p className="text-sm font-medium">Arrastra aquí tus archivos</p>
-        <p className="text-xs text-muted">
-          Imágenes, vídeos, audio y documentos, hasta {formatBytes(MAX_FILE_BYTES)} cada uno.
-          {folder ? ` Irán a «${folder}».` : ''}
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()}>
-          Elegir archivos
-        </Button>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ALLOWED_MIME_TYPES.join(',')}
-          className="sr-only"
-          aria-label="Elegir archivos para subir"
-          data-testid="library-file-input"
-          onChange={(e) => {
-            if (e.target.files) void addFiles(e.target.files, folder);
-            e.target.value = '';
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
           }}
-        />
-      </div>
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          data-testid="library-dropzone"
+          className={cn(
+            'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors',
+            dragging ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
+          )}
+        >
+          <UploadCloud className="h-7 w-7 text-muted" aria-hidden />
+          <p className="text-sm font-medium">Arrastra aquí tus archivos</p>
+          <p className="text-xs text-muted">
+            Imágenes, vídeos, audio y documentos, hasta {formatBytes(MAX_FILE_BYTES)} cada uno.
+            {folder ? ` Irán a «${folder}».` : ''}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()}>
+            Elegir archivos
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={ALLOWED_MIME_TYPES.join(',')}
+            className="sr-only"
+            aria-label="Elegir archivos para subir"
+            data-testid="library-file-input"
+            onChange={(e) => {
+              if (e.target.files) void addFiles(e.target.files, folder);
+              e.target.value = '';
+            }}
+          />
+        </div>
       )}
 
       {items.length > 0 && (

@@ -37,7 +37,9 @@ export function useReelSources(brandId: string) {
       unwrap(
         await supabase
           .from('media_assets')
-          .select('id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at, provenance, folder')
+          .select(
+            'id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at, provenance, folder',
+          )
           .eq('brand_id', brandId)
           .in('kind', ['image', 'video', 'audio'])
           .order('created_at', { ascending: false })

@@ -226,19 +226,16 @@ describe('reel con una foto borrada de la biblioteca', () => {
   });
 
   it('también en el borrador automático, con un vídeo y la música', async () => {
-    const draft = reel(
-      [LOCAL, { id: 'c3', type: 'video', path: path('borrado.mp4'), in: 0, out: 2, volume: 0.5 }],
-      {
-        music: {
-          path: path('borrada.m4a'),
-          startAt: 0,
-          volume: 0.3,
-          fadeInSeconds: 0,
-          fadeOutSeconds: 0,
-          license: { confirmed: true },
-        },
+    const draft = reel([LOCAL, { id: 'c3', type: 'video', path: path('borrado.mp4'), in: 0, out: 2, volume: 0.5 }], {
+      music: {
+        path: path('borrada.m4a'),
+        startAt: 0,
+        volume: 0.3,
+        fadeInSeconds: 0,
+        fadeOutSeconds: 0,
+        license: { confirmed: true },
       },
-    );
+    });
     seed(reel([LOCAL]), { draft });
     await open();
     expect(await screen.findByTestId('reel-missing-notice')).toHaveTextContent(
@@ -281,12 +278,26 @@ describe('qué falta y el aviso (puro)', () => {
   it('la portada que era la foto borrada pasa a la sustituta (o se quita si es un vídeo)', () => {
     // La portada es la foto que falta y además un clip: solo se cuenta el clip.
     expect(missingItems(project.plan, (p) => p === BORRADA).map((m) => m.kind)).toEqual(['clip']);
-    const photo = { id: 'n', kind: 'image', storage_path: path('plato.jpg'), file_name: 'plato.jpg', mime_type: 'image/jpeg', duration_ms: null };
+    const photo = {
+      id: 'n',
+      kind: 'image',
+      storage_path: path('plato.jpg'),
+      file_name: 'plato.jpg',
+      mime_type: 'image/jpeg',
+      duration_ms: null,
+    };
     expect(replaceClipAndCover(project, 'c1', photo, template).plan.cover).toEqual({
       type: 'photo',
       path: path('plato.jpg'),
     });
-    const video = { id: 'v', kind: 'video', storage_path: path('cocina.mp4'), file_name: 'cocina.mp4', mime_type: 'video/mp4', duration_ms: 6000 };
+    const video = {
+      id: 'v',
+      kind: 'video',
+      storage_path: path('cocina.mp4'),
+      file_name: 'cocina.mp4',
+      mime_type: 'video/mp4',
+      duration_ms: 6000,
+    };
     expect(replaceClipAndCover(project, 'c1', video, template).plan.cover).toBeUndefined();
   });
 });

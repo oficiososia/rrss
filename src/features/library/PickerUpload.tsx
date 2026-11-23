@@ -116,13 +116,7 @@ export function PickerUpload({ accept, noun = 'fotos', onAdded, aiRatio, childre
           }}
         />
       </div>
-      <UploadPanel
-        organizationId={org.id}
-        brandId={brand.id}
-        incoming={incoming}
-        onUploaded={onAdded}
-        listOnly
-      />
+      <UploadPanel organizationId={org.id} brandId={brand.id} incoming={incoming} onUploaded={onAdded} listOnly />
       {children}
       {dragging && (
         <div

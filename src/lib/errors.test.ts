@@ -68,7 +68,8 @@ describe('translateError', () => {
 });
 
 describe('archivos de la biblioteca: sin rutas ni identificadores', () => {
-  const RUTA = '5bcf11b8-1111-4222-8333-444455556666/0c4d7e2a-aaaa-4bbb-8ccc-dddd00001111/media/1b0334e5-f180-4d14-a642-a8ce24fed92e-fondo-nuevo-chuleton.jpg';
+  const RUTA =
+    '5bcf11b8-1111-4222-8333-444455556666/0c4d7e2a-aaaa-4bbb-8ccc-dddd00001111/media/1b0334e5-f180-4d14-a642-a8ce24fed92e-fondo-nuevo-chuleton.jpg';
 
   it('traduce la foto o el vídeo borrados a una frase con qué hacer', () => {
     const p = (message: string) => translateError({ message, code: '22023' });
@@ -91,11 +92,15 @@ describe('archivos de la biblioteca: sin rutas ni identificadores', () => {
   });
 
   it('de cualquier otro mensaje propio quita rutas e identificadores, y respeta fechas y formatos', () => {
-    const text = translateError({ message: `No se ha podido leer «${RUTA}» (trabajo 1b0334e5-f180-4d14-a642-a8ce24fed92e).` });
+    const text = translateError({
+      message: `No se ha podido leer «${RUTA}» (trabajo 1b0334e5-f180-4d14-a642-a8ce24fed92e).`,
+    });
     expect(text).not.toMatch(/media|5bcf11b8|1b0334e5/);
     expect(text).toMatch(/^No se ha podido leer el archivo/);
     expect(cleanMessage(`Falta ${RUTA}`)).toBe('Falta el archivo');
-    expect(cleanMessage('Programada para el 22/11/2026 en JPEG/PNG.')).toBe('Programada para el 22/11/2026 en JPEG/PNG.');
+    expect(cleanMessage('Programada para el 22/11/2026 en JPEG/PNG.')).toBe(
+      'Programada para el 22/11/2026 en JPEG/PNG.',
+    );
     expect(translateError(new Error(`Archivo ${RUTA} roto`))).toBe('Archivo el archivo roto');
   });
 });

@@ -37,7 +37,10 @@ describe('pieza con fotos borradas de la biblioteca', () => {
   it('la foto y el logotipo borrados pasan a ser marcos vacíos «Poner foto», con aviso arriba', async () => {
     seedPiece({
       layers: [
-        photo('plato', BORRADA, { blur: 20, adjust: { brightness: 10, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 } }),
+        photo('plato', BORRADA, {
+          blur: 20,
+          adjust: { brightness: 10, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 },
+        }),
         photo('arroz', PHOTO_B),
         logo('marca', LOGO_BORRADO),
         text('titulo', 'Chuletón'),
@@ -57,9 +60,12 @@ describe('pieza con fotos borradas de la biblioteca', () => {
     // La que sigue existiendo no cambia.
     expect(layerOf('arroz')).toMatchObject({ source: { kind: 'asset', assetId: PHOTO_B } });
     // Queda en el borrador automático (se puede deshacer, como cualquier cambio).
-    await waitFor(() => expect(draftLayers()?.find((l) => l.id === 'plato')).toMatchObject({ source: { kind: 'empty' } }), {
-      timeout: 6000,
-    });
+    await waitFor(
+      () => expect(draftLayers()?.find((l) => l.id === 'plato')).toMatchObject({ source: { kind: 'empty' } }),
+      {
+        timeout: 6000,
+      },
+    );
   });
 
   it('al poner foto en el hueco, el aviso se va', async () => {
@@ -83,7 +89,9 @@ describe('pieza con fotos borradas de la biblioteca', () => {
       role: { orgRole: 'member', brandRole: 'viewer' },
     });
     renderApp(EDITOR);
-    expect(await screen.findByTestId('editor-missing-assets')).toHaveTextContent('Quien edita la pieza puede sustituirlas');
+    expect(await screen.findByTestId('editor-missing-assets')).toHaveTextContent(
+      'Quien edita la pieza puede sustituirlas',
+    );
     expect(layerOf('plato')).toMatchObject({ source: { kind: 'asset', assetId: BORRADA } });
   });
 });
@@ -92,7 +100,13 @@ describe('marcos vacíos a partir de recursos que faltan (puro)', () => {
   it('convierte solo lo que falta, en todas las páginas', () => {
     const empty = createEmptyDocument({ aspectRatio: '1:1' });
     const layers: Layer[] = [photo('a', BORRADA), photo('b', PHOTO_A), logo('l', LOGO_BORRADO)];
-    const document = { ...empty, pages: [{ id: 'p1', name: '', layers }, { id: 'p2', name: '', layers: [photo('c', BORRADA)] }] };
+    const document = {
+      ...empty,
+      pages: [
+        { id: 'p1', name: '', layers },
+        { id: 'p2', name: '', layers: [photo('c', BORRADA)] },
+      ],
+    };
     const result = emptyMissingAssets(document, new Set([BORRADA, LOGO_BORRADO]));
     expect(result.layerIds).toEqual(['a', 'l', 'c']);
     expect(result.document.pages[0]!.layers.map(isEmptyFrame)).toEqual([true, false, true]);

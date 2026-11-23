@@ -250,74 +250,74 @@ export function MediaPicker({
         aiRatio="9:16"
         onAdded={onAdded}
       >
-      {loading ? (
-        <Skeleton className="mt-3 h-24" />
-      ) : error ? (
-        <ErrorState error={error} />
-      ) : visible.length === 0 ? (
-        <p className="mt-3 text-sm text-muted">
-          {all.length === 0
-            ? 'No hay fotos ni clips todavía. Pulsa «Subir» o suéltalos aquí.'
-            : 'No hay nada con ese nombre o de ese tipo.'}
-        </p>
-      ) : (
-        <>
-          <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4" data-testid="reel-media-picker">
-            {page.map((asset) => {
-              const url = urls.data?.get(previewPath(asset));
-              const order = chosen.indexOf(asset.id);
-              const selected = order >= 0;
-              return (
-                <li key={asset.id}>
-                  <button
-                    type="button"
-                    aria-pressed={selected}
-                    aria-label={`${selected ? 'Quitar' : 'Elegir'} «${asset.file_name}»`}
-                    disabled={!selected && full}
-                    onClick={() => toggle(asset.id)}
-                    className={cn(
-                      'relative block w-full overflow-hidden rounded-lg border bg-subtle text-left disabled:opacity-40',
-                      selected ? 'border-primary ring-2 ring-primary' : 'border-border hover:shadow-pop',
-                    )}
-                    data-testid="reel-media-option"
-                  >
-                    <span className="block aspect-square overflow-hidden">
-                      {asset.kind === 'video' ? (
-                        <VideoFrame url={url} />
-                      ) : url ? (
-                        <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
-                      ) : (
-                        <Skeleton className="h-full w-full rounded-none" />
+        {loading ? (
+          <Skeleton className="mt-3 h-24" />
+        ) : error ? (
+          <ErrorState error={error} />
+        ) : visible.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">
+            {all.length === 0
+              ? 'No hay fotos ni clips todavía. Pulsa «Subir» o suéltalos aquí.'
+              : 'No hay nada con ese nombre o de ese tipo.'}
+          </p>
+        ) : (
+          <>
+            <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4" data-testid="reel-media-picker">
+              {page.map((asset) => {
+                const url = urls.data?.get(previewPath(asset));
+                const order = chosen.indexOf(asset.id);
+                const selected = order >= 0;
+                return (
+                  <li key={asset.id}>
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      aria-label={`${selected ? 'Quitar' : 'Elegir'} «${asset.file_name}»`}
+                      disabled={!selected && full}
+                      onClick={() => toggle(asset.id)}
+                      className={cn(
+                        'relative block w-full overflow-hidden rounded-lg border bg-subtle text-left disabled:opacity-40',
+                        selected ? 'border-primary ring-2 ring-primary' : 'border-border hover:shadow-pop',
                       )}
-                    </span>
-                    {selected && (
-                      <span
-                        className="absolute right-1 top-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 text-xs font-semibold text-primary-fg"
-                        data-testid="reel-media-order"
-                      >
-                        {order + 1}
+                      data-testid="reel-media-option"
+                    >
+                      <span className="block aspect-square overflow-hidden">
+                        {asset.kind === 'video' ? (
+                          <VideoFrame url={url} />
+                        ) : url ? (
+                          <img src={url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                        ) : (
+                          <Skeleton className="h-full w-full rounded-none" />
+                        )}
                       </span>
-                    )}
-                    <span className="block truncate px-2 py-1 text-xs">{asset.file_name}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {visible.length > page.length && (
-            <div className="mt-3 text-center">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShown((n) => n + PAGE)}
-                data-testid="reel-media-more"
-              >
-                Ver más ({visible.length - page.length})
-              </Button>
-            </div>
-          )}
-        </>
-      )}
+                      {selected && (
+                        <span
+                          className="absolute right-1 top-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 text-xs font-semibold text-primary-fg"
+                          data-testid="reel-media-order"
+                        >
+                          {order + 1}
+                        </span>
+                      )}
+                      <span className="block truncate px-2 py-1 text-xs">{asset.file_name}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {visible.length > page.length && (
+              <div className="mt-3 text-center">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShown((n) => n + PAGE)}
+                  data-testid="reel-media-more"
+                >
+                  Ver más ({visible.length - page.length})
+                </Button>
+              </div>
+            )}
+          </>
+        )}
       </PickerUpload>
     </Dialog>
   );

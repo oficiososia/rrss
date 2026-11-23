@@ -104,13 +104,13 @@ import { createClock, useClockValue, type PlayClock } from './clock';
 import {
   fileNameOf,
   missingItems,
-  missingLabel,
   missingSummary,
   planPaths,
   replaceClipAndCover,
   useMissingPaths,
   type MissingItem,
 } from './missing';
+import { MissingNotice, MissingOverlay } from './MissingMedia';
 import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, type BarAction } from './ContextBar';
 import { editorReducer, initEditor, type Selection } from './history';
@@ -1267,21 +1267,7 @@ function Editor({
       {/* ── Avisos de la pieza (pocas líneas; si hay muchos, se desplazan dentro) ── */}
       <div className="max-h-24 shrink-0 space-y-1 overflow-y-auto empty:hidden">
         {missingText && (
-          <div role="alert" data-testid="reel-missing-notice">
-            <Notice tone="warning">
-              {missingText}{' '}
-              {!readOnly && (
-                <button
-                  type="button"
-                  className="font-medium underline"
-                  onClick={() => goToMissing()}
-                  data-testid="reel-missing-go"
-                >
-                  {missing[0]?.kind === 'clip' ? 'Ir a la primera' : 'Ir a ella'}
-                </button>
-              )}
-            </Notice>
-          </div>
+          <MissingNotice text={missingText} first={missing[0]} readOnly={readOnly} onGo={() => goToMissing()} />
         )}
         {item.archived_at && (
           <Notice tone="warning">Está archivado: se puede ver, pero no cambiar hasta recuperarlo.</Notice>
@@ -1877,55 +1863,6 @@ function Editor({
           editorPath={paths.item(item.id)}
         />
       )}
-    </div>
-  );
-}
-
-/**
- * Sobre la vista previa: si en el cabezal hay un elemento cuyo archivo se borró (que se ve negro),
- * lo dice y ofrece «Sustituir» y «Quitar». Si lo que falta es la música, lo mismo en cualquier instante.
- */
-function MissingOverlay({
-  clock,
-  timeline,
-  missing,
-  readOnly,
-  onReplace,
-  onRemove,
-}: {
-  clock: PlayClock;
-  timeline: ReturnType<typeof planTimeline>;
-  missing: MissingItem[];
-  readOnly: boolean;
-  onReplace: (item: MissingItem) => void;
-  onRemove: (item: MissingItem) => void;
-}) {
-  const t = useClockValue(clock);
-  const index = clipIndexAt(timeline, Math.min(t, Math.max(0, timeline.total - 1e-3)));
-  const here =
-    missing.find((m) => m.kind === 'clip' && m.index === index) ?? missing.find((m) => m.kind === 'music') ?? null;
-  if (!here || here.kind === 'cover') return null;
-  const label = here.kind === 'clip' ? missingLabel(here.media) : 'Falta esta música';
-  return (
-    <div
-      className="pointer-events-none absolute inset-x-2 top-2 z-20 flex justify-center"
-      data-testid="reel-preview-missing"
-    >
-      <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-lg bg-surface/95 px-3 py-2 text-sm shadow-pop">
-        <TriangleAlert className="h-4 w-4 shrink-0 text-danger" aria-hidden />
-        <span className="font-medium text-danger">{label}</span>
-        <span className="text-xs text-muted max-sm:hidden">Se ha borrado de la biblioteca.</span>
-        {!readOnly && (
-          <span className="flex gap-1">
-            <Button size="sm" onClick={() => onReplace(here)} data-testid="reel-missing-replace">
-              {here.kind === 'music' ? 'Cambiar' : 'Sustituir'}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onRemove(here)} data-testid="reel-missing-remove">
-              Quitar
-            </Button>
-          </span>
-        )}
-      </div>
     </div>
   );
 }

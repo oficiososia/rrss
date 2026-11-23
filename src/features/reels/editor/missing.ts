@@ -61,14 +61,15 @@ export function missingSummary(items: readonly MissingItem[]): string | null {
     const total = photos + videos;
     const what = parts.join(' y ');
     // El pronombre concuerda con lo que falta: una foto → «Sustitúyela», un vídeo → «Sustitúyelo».
-    const pronoun =
-      total === 1 ? (photos ? 'la' : 'lo') : videos === 0 ? 'las' : 'los';
+    const pronoun = total === 1 ? (photos ? 'la' : 'lo') : videos === 0 ? 'las' : 'los';
     sentences.push(
       `${what} de este reel ${total === 1 ? 'se ha borrado' : 'se han borrado'} de la biblioteca. Sustitúye${pronoun} para poder montarlo.`,
     );
   }
-  if (music) sentences.push('La música de este reel se ha borrado de la biblioteca. Cámbiala o quítala para poder montarlo.');
-  if (cover) sentences.push('La foto de la portada se ha borrado de la biblioteca. Elige otra portada para poder montarlo.');
+  if (music)
+    sentences.push('La música de este reel se ha borrado de la biblioteca. Cámbiala o quítala para poder montarlo.');
+  if (cover)
+    sentences.push('La foto de la portada se ha borrado de la biblioteca. Elige otra portada para poder montarlo.');
   return sentences.join(' ');
 }
 

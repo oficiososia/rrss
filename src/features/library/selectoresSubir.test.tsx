@@ -110,7 +110,10 @@ function fakeAiMedia(newRow: MediaAssetRow) {
       };
     }
     if (action === 'image.estimate') {
-      return { status: 200, body: { action, model: input.model, costMicros: 20_000, size: { width: 768, height: 1344 } } };
+      return {
+        status: 200,
+        body: { action, model: input.model, costMicros: 20_000, size: { width: 768, height: 1344 } },
+      };
     }
     fake.tables.media_assets = [...fake.rows('media_assets'), newRow];
     return {
@@ -227,7 +230,9 @@ describe('selector de material del editor de reels', () => {
     expect(await within(ai).findByTestId('ai-image-estimate')).toHaveTextContent('Coste máximo: 0,02');
     await user.type(within(ai).getByTestId('ai-image-prompt'), 'El equipo en la cocina');
     await user.click(within(ai).getByTestId('ai-image-generate'));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Generar imagen con IA' })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Generar imagen con IA' })).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(optionNames(dialog)[0]).toBe('ia-equipo.png'));
     expect(within(dialog).getByTestId('reel-media-count')).toHaveTextContent('1 elegida');
   });
@@ -257,7 +262,9 @@ describe('«Poner foto» del editor de piezas', () => {
     const ai = await screen.findByRole('dialog', { name: 'Generar imagen con IA' });
     expect(within(ai).getByTestId('ai-image-ratio')).toHaveValue('4:5');
     await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Generar imagen con IA' })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Generar imagen con IA' })).not.toBeInTheDocument(),
+    );
 
     fireEvent.change(within(screen.getByRole('dialog', { name: 'Poner foto' })).getByTestId('picker-upload-input'), {
       target: { files: [new File(['x'], 'subida.jpg', { type: 'image/jpeg' })] },
@@ -272,7 +279,8 @@ describe('«Poner foto» del editor de piezas', () => {
 
 describe('qué es una pieza ya diseñada (puro)', () => {
   it('exportaciones, reels montados y portadas sí; fotos con IA, ediciones y recortes no', () => {
-    const row = (provenance: unknown, folder = '') => ({ provenance, folder }) as Pick<MediaAssetRow, 'provenance' | 'folder'>;
+    const row = (provenance: unknown, folder = '') =>
+      ({ provenance, folder }) as Pick<MediaAssetRow, 'provenance' | 'folder'>;
     expect(isAppDesign(row({ type: 'export' }))).toBe(true);
     expect(isAppDesign(row({ type: 'media_job', kind: 'media.reel.template' }))).toBe(true);
     expect(isAppDesign(row({ role: 'cover' }))).toBe(true);

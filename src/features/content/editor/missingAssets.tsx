@@ -23,7 +23,8 @@ function assetOf(layer: Layer): string | null {
 export function asEmptyFrame(layer: Layer): Layer {
   if (layer.type === 'image') return { ...layer, source: { kind: 'empty' }, frame: true };
   if (layer.type !== 'logo') return layer;
-  const { assetId: _assetId, type: _type, ...base } = layer;
+  const base: Partial<Layer> = { ...layer };
+  delete (base as { assetId?: string }).assetId;
   return layerSchema.parse({ ...base, type: 'image', source: { kind: 'empty' }, frame: true, fit: 'contain' });
 }
 
