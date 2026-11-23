@@ -27,3 +27,4 @@ export function NavBadge({ count, compact = false }: { count: number | undefined
     </span>
   );
 }
+

@@ -287,14 +287,7 @@ export function ContentListPage() {
     <>
       <PageHeader
         title="Contenidos"
-        action={
-          canEdit && (
-            <Button onClick={() => openNew()} data-testid="content-new">
-              <Plus className="h-4 w-4" aria-hidden />
-              Nueva idea
-            </Button>
-          )
-        }
+        // Crear va en «＋ Crear» del menú (una sola puerta); aquí, solo en la pantalla vacía, donde ayuda.
         more={[
           archived
             ? {

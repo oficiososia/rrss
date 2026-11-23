@@ -121,7 +121,7 @@ describe('Editor: guardado automático del borrador', () => {
     await addFromDrawer(user, 'elements', 'add-text');
     // Sin esperar al guardado: salir lo guarda antes.
     await user.click(screen.getByTestId('editor-back'));
-    await screen.findByTestId('content-new', {}, { timeout: 8000 });
+    await screen.findByRole('heading', { name: 'Contenidos' }, { timeout: 8000 });
     expect(screen.queryByText('¿Salir sin guardar?')).not.toBeInTheDocument();
     expect(draftLayers()).toHaveLength(3);
   });

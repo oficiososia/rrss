@@ -1,6 +1,7 @@
 import { DownloadCloud, Pause, Play } from 'lucide-react';
 import { useState } from 'react';
 import { Button, Notice } from '@/components/ui';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { SocialAccountRow } from '@/lib/database.types';
 import { formatDateIn, formatTimeIn } from './zone';
 import { useBrandZone } from './useBrandZone';
@@ -26,6 +27,8 @@ export function ImportPostsPanel({ brandId, account }: { brandId: string; accoun
   const total = useImportedTotal(brandId);
   const driver = useImportDriver(brandId, account.id);
   const [copy, setCopy] = useState(false);
+  // En autogestión no hay planes de pago a la vista: el espacio es el de la biblioteca.
+  const { selfManaged } = useWorkMode();
 
   const row = last.data;
   const open = row && row.status !== 'completed' ? row : null;
@@ -99,8 +102,9 @@ export function ImportPostsPanel({ brandId, account }: { brandId: string; accoun
             data-testid="social-import-copy"
           />
           <span>
-            Copiar también las imágenes a la biblioteca (carpeta «Instagram / Publicadas»). Ocupan espacio de tu plan.
-            Solo debe hacerse con cuentas propias o con permiso de su titular.
+            Copiar también las imágenes a la biblioteca (carpeta «Instagram / Publicadas»).{' '}
+            {selfManaged ? 'Ocupan espacio en la biblioteca.' : 'Ocupan espacio de tu plan.'} Solo debe hacerse con
+            cuentas propias o con permiso de su titular.
           </span>
         </label>
       )}

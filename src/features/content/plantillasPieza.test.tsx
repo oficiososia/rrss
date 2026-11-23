@@ -159,7 +159,7 @@ describe('Nueva idea desde una plantilla', () => {
     seed({ orgRole: 'member', brandRole: 'editor' });
     const saved = saveRpc();
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.type(dialog.getByTestId('create-content-title'), 'Menú de la semana');
     await user.click(dialog.getByTestId('create-content-from-template'));
@@ -212,7 +212,7 @@ describe('Nueva idea desde una plantilla', () => {
       templateRow({ id: 'tpl-i', template_key: 'importada', name: 'Importada' }),
     ]);
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-from-template'));
     const options = await dialog.findAllByTestId('template-option');
@@ -238,7 +238,7 @@ describe('Nueva idea desde una plantilla', () => {
       templateRow({ id: 'tpl-c', template_key: 'carrusel', name: 'Tres pasos', format: 'carousel' }),
     ]);
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     expect(dialog.getByTestId('create-content-blank')).toBeChecked();
     await user.click(dialog.getByTestId('create-content-from-template'));
@@ -267,7 +267,7 @@ describe('Nueva idea desde una plantilla', () => {
   it('sin plantillas lo dice y explica cómo conseguirlas', async () => {
     seed({ orgRole: 'member', brandRole: 'editor' }, []);
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-from-template'));
     const empty = await dialog.findByTestId('template-empty');
@@ -280,7 +280,7 @@ describe('Nueva idea desde una plantilla', () => {
     seed({ orgRole: 'member', brandRole: 'viewer' });
     renderApp(CONTENT);
     await screen.findByRole('heading', { name: 'Contenidos' });
-    expect(screen.queryByTestId('content-new')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
   });
 });
 

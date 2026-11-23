@@ -15,6 +15,7 @@ import {
   png,
   sinErrores,
   sql,
+  irAAjuste,
 } from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
@@ -160,7 +161,7 @@ test('importar un JSON crea otra marca con esos datos; uno inválido se rechaza 
   expect(marcaA2).not.toBe(dato('marcaA'));
   guardarEstado({ marcaA2 });
 
-  await page.getByTestId('nav-marca').click();
+  await irAAjuste(page, 'nav-marca');
   await expect(page.getByText(new RegExp(`Perfil de ${MARCA_A2} · versión 1`))).toBeVisible();
   await expect(page.getByTestId('profile-description')).toHaveValue(DESCRIPCION_V2);
   await page.getByTestId('profile-history').click();
@@ -214,7 +215,7 @@ test('un logotipo subido en el editor y guardado sí se conserva', async ({ brow
   await page.waitForTimeout(1500);
   expect(await logosEnBd('logo-negativo.png')).toEqual({ filas: 1, objetos: 1, cola: 0 });
 
-  await page.getByTestId('nav-marca').click();
+  await irAAjuste(page, 'nav-marca');
   await page.getByRole('tab', { name: 'Identidad visual' }).click();
   await expect(page.getByTestId('logo-item')).toHaveCount(2);
 

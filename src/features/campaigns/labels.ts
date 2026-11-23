@@ -26,7 +26,8 @@ export function campaignsAvailable(brand: Pick<BrandRow, 'ai_mode'>, aiText: boo
   return brand.ai_mode === 'agency' || aiText;
 }
 
+/** Campañas es una vista del Calendario (antes, `/campanas`: esas direcciones redirigen aquí). */
 export function campaignPaths(orgId: string, brandId: string) {
-  const base = `/o/${orgId}/m/${brandId}/campanas`;
+  const base = `/o/${orgId}/m/${brandId}/calendario/campanas`;
   return { list: base, item: (campaignId: string) => `${base}/${campaignId}` };
 }

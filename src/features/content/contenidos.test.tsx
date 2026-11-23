@@ -206,7 +206,7 @@ describe('Lista de contenidos', () => {
     await user.click(screen.getByTestId('content-view-list'));
     expect(within(screen.getByTestId('content-list')).getAllByTestId('content-row')).toHaveLength(1);
     // Solo lectura: no puede crear, ni elegir, ni archivar.
-    expect(screen.queryByTestId('content-new')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
     expect(screen.queryByTestId('content-select')).not.toBeInTheDocument();
     expect(screen.queryByTestId('content-archive')).not.toBeInTheDocument();
   });
@@ -320,7 +320,7 @@ describe('Crear una idea', () => {
   it('elige el formato con una tarjeta y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.type(dialog.getByTestId('create-content-title'), 'Reel del vermut');
     await user.click(dialog.getByTestId('create-content-format-reel'));
@@ -345,7 +345,7 @@ describe('Crear una idea', () => {
   it('sin nombre se llama como el formato y el día, no «Reel nuevo» a secas', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-new'));
+    await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-format-carousel'));
     await user.click(dialog.getByTestId('create-content-submit'));

@@ -10,12 +10,12 @@ import {
   Images,
   LayoutGrid,
   LogOut,
-  Megaphone,
   Monitor,
   Moon,
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
+  Plug,
   Plus,
   Settings,
   ShieldCheck,
@@ -25,11 +25,10 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@/components/ui';
 import { APP_NAME } from '@/config/app';
-import { campaignsAvailable } from '@/features/campaigns/labels';
 import { useUser } from '@/features/auth/AuthProvider';
 import { LegalFooter } from '@/features/legal/LegalFooter';
 import { useBrandsElsewhere, useIsPlatformAdmin, type MyOrganization } from '@/features/orgs/api';
@@ -38,8 +37,10 @@ import type { BrandRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { cn, initials } from '@/lib/utils';
+import { CreateMenu } from './CreateMenu';
 import { MobileNav } from './MobileNav';
 import { NavBadge, type NavItem } from './nav';
+import { isMobilePrimary, isNavItemActive } from './navRules';
 import { useTheme, type ThemeChoice } from './theme';
 import { useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspace, WorkspaceProvider } from './workspace';
@@ -52,10 +53,14 @@ interface AppShellProps {
   children: ReactNode;
 }
 
-function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 0, aiText = false): NavItem[] {
+/**
+ * Las secciones del menú: cinco de uso diario (y «Encargos» con la marca en modo agencia). Lo que se
+ * toca al montar la cuenta (Marca, Equipo, Configuración…) va en el menú de la cuenta; Campañas, dentro
+ * de Calendario; y crear, en el botón «Crear».
+ */
+function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 0): NavItem[] {
   const base = `/o/${org.id}`;
-  const settings: NavItem = { to: `${base}/ajustes`, label: 'Configuración', icon: Settings };
-  if (!brand) return [{ to: base, label: 'Marcas', icon: LayoutGrid, end: true }, settings];
+  if (!brand) return [{ to: base, label: 'Marcas', icon: LayoutGrid, end: true }];
   const b = `${base}/m/${brand.id}`;
   return [
     { to: `${b}/inicio`, label: 'Inicio', icon: Home },
@@ -65,13 +70,22 @@ function navItems(org: MyOrganization, brand: BrandRow | null, unreadRequests = 
       ? [{ to: `${b}/encargos`, label: 'Encargos', icon: ClipboardList, badge: unreadRequests }]
       : []),
     { to: `${b}/calendario`, label: 'Calendario', icon: CalendarDays },
-    // Campañas: con IA de texto conectada o con la marca en modo agencia (docs/03, área «Campañas»).
-    ...(campaignsAvailable(brand, aiText) ? [{ to: `${b}/campanas`, label: 'Campañas', icon: Megaphone }] : []),
-    { to: `${b}/analitica`, label: 'Analítica', icon: BarChart3 },
     { to: `${b}/biblioteca`, label: 'Biblioteca', icon: Images },
-    { to: `${b}/marca`, label: 'Marca', icon: Palette },
-    { to: `${b}/equipo`, label: 'Equipo', icon: Users },
-    settings,
+    { to: `${b}/analitica`, label: 'Resultados', icon: BarChart3 },
+  ];
+}
+
+/** Ajustes de la marca y de la organización: van en el menú de la cuenta. */
+function accountItems(org: MyOrganization, brand: BrandRow | null): NavItem[] {
+  const base = `/o/${org.id}`;
+  return [
+    ...(brand
+      ? [
+          { to: `${base}/m/${brand.id}/marca`, label: 'Marca', icon: Palette },
+          { to: `${base}/m/${brand.id}/equipo`, label: 'Equipo', icon: Users },
+        ]
+      : []),
+    { to: `${base}/ajustes`, label: 'Configuración', icon: Settings },
   ];
 }
 
@@ -184,13 +198,33 @@ const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] =
   { value: 'dark', label: 'Oscuro', icon: Moon },
 ];
 
-export function UserMenu({ compact = false }: { compact?: boolean }) {
+/** `nav-marca`, `nav-configuración`…: el mismo nombre de prueba que tenían en el menú lateral. */
+const itemTestId = (label: string) => `nav-${label.toLowerCase()}`;
+
+/**
+ * Menú de la cuenta (abajo a la izquierda en ordenador, el avatar en móvil): los ajustes que se tocan
+ * al montar la cuenta, la apariencia, «Mi cuenta» y salir. En móvil lleva además las secciones que no
+ * caben en la barra inferior (`sections`).
+ */
+export function UserMenu({
+  compact = false,
+  settings = [],
+  sections = [],
+}: {
+  compact?: boolean;
+  /** Marca, Equipo y Configuración (según la marca y la organización a la vista). */
+  settings?: NavItem[];
+  /** Secciones que no están en la barra inferior del móvil (Resultados, Encargos). */
+  sections?: NavItem[];
+}) {
   const user = useUser();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { choice, setChoice } = useTheme();
   const isPlatformAdmin = useIsPlatformAdmin(user.id).data === true;
   const fullName = typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : '';
   const display = fullName || user.email || 'Cuenta';
+  const unread = sections.reduce((sum, item) => sum + (item.badge ?? 0), 0);
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
@@ -198,18 +232,31 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
     else navigate('/login', { replace: true });
   }
 
+  const linkItem = ({ to, label, icon: Icon, badge, end }: NavItem) => {
+    const active = isNavItemActive({ to, end }, pathname);
+    return (
+      <MenuItem key={to} onSelect={() => navigate(to)} data-testid={itemTestId(label)}>
+        <Icon className="h-4 w-4" aria-hidden />
+        <span className={cn('flex-1', active && 'font-semibold text-primary')}>{label}</span>
+        {active && <span className="sr-only"> (estás aquí)</span>}
+        <NavBadge count={badge} />
+      </MenuItem>
+    );
+  };
+
   return (
     <Menu>
       <MenuTrigger
         data-testid="user-menu"
-        aria-label={`Cuenta de ${display}`}
+        aria-label={`Cuenta de ${display}${unread ? ` (${unread} ${unread === 1 ? 'aviso sin leer' : 'avisos sin leer'})` : ''}`}
         className={cn(
           'flex min-w-0 items-center gap-2.5 rounded-lg text-left text-sm hover:bg-subtle',
           compact ? 'p-1' : 'w-full px-2 py-2',
         )}
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-semibold text-primary">
+        <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-semibold text-primary">
           {initials(display)}
+          <NavBadge count={unread} compact />
         </span>
         {!compact && (
           <span className="min-w-0 flex-1">
@@ -219,6 +266,26 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
         )}
       </MenuTrigger>
       <MenuContent align="end">
+        {sections.length > 0 && (
+          <>
+            {sections.map(linkItem)}
+            <MenuSeparator />
+          </>
+        )}
+        {settings.map(linkItem)}
+        {isPlatformAdmin && (
+          <>
+            <MenuItem onSelect={() => navigate('/plataforma/integraciones')} data-testid="nav-integrations">
+              <Plug className="h-4 w-4" aria-hidden />
+              Integraciones
+            </MenuItem>
+            <MenuItem onSelect={() => navigate('/plataforma')} data-testid="nav-platform">
+              <ShieldCheck className="h-4 w-4" aria-hidden />
+              Plataforma
+            </MenuItem>
+          </>
+        )}
+        {(settings.length > 0 || isPlatformAdmin) && <MenuSeparator />}
         <MenuLabel>Apariencia</MenuLabel>
         {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
           <MenuItem key={value} onSelect={() => setChoice(value)} data-testid={`theme-${value}`}>
@@ -232,12 +299,6 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
           <UserRound className="h-4 w-4" aria-hidden />
           Mi cuenta y privacidad
         </MenuItem>
-        {isPlatformAdmin && (
-          <MenuItem onSelect={() => navigate('/plataforma')} data-testid="nav-platform">
-            <ShieldCheck className="h-4 w-4" aria-hidden />
-            Plataforma
-          </MenuItem>
-        )}
         <MenuItem onSelect={() => void signOut()} data-testid="sign-out">
           <LogOut className="h-4 w-4" aria-hidden />
           Cerrar sesión
@@ -279,7 +340,10 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
   const unread = useUnreadRequestNotifications(brand?.id, brand?.ai_mode === 'agency');
   const aiText = useTextTask('campaign.plan');
   const { working, collapsed, toggle } = useWorkspace();
-  const items = navItems(org, brand, unread.data?.length ?? 0, aiText);
+  const items = navItems(org, brand, unread.data?.length ?? 0);
+  const settings = accountItems(org, brand);
+  // En móvil, lo que no cabe en la barra inferior va al menú de la cuenta (el avatar).
+  const mobileExtra = items.filter((item) => !isMobilePrimary(item));
   return (
     <div
       className={cn(
@@ -314,6 +378,7 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
           <SidebarToggle collapsed={collapsed} onToggle={toggle} />
         </div>
         {!collapsed && <BrandSwitcher orgs={orgs} org={org} brands={brands} brand={brand} />}
+        <CreateMenu brand={brand} aiText={aiText} placement={collapsed ? 'sidebar-compact' : 'sidebar'} />
         <nav aria-label="Principal" className="w-full flex-1 space-y-1 overflow-y-auto">
           {items.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
@@ -341,18 +406,18 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-border pt-3">
-          <UserMenu compact={collapsed} />
+        <div className="w-full border-t border-border pt-3">
+          <UserMenu compact={collapsed} settings={settings} />
         </div>
       </aside>
 
       <div className={cn('min-w-0', working && 'flex h-dvh min-h-0 flex-col')}>
-        {/* Móvil y tablet (sin menú lateral): cabecera con el mismo selector único */}
+        {/* Móvil y tablet (sin menú lateral): cabecera con el mismo selector único y el avatar */}
         <header className="sticky top-0 z-30 flex shrink-0 items-center gap-2 border-b border-border bg-surface/95 px-3 py-2 backdrop-blur lg:hidden">
           <div className="min-w-0 flex-1">
             <BrandSwitcher orgs={orgs} org={org} brands={brands} brand={brand} />
           </div>
-          <UserMenu compact />
+          <UserMenu compact settings={settings} sections={mobileExtra} />
         </header>
 
         {working ? (
@@ -370,8 +435,11 @@ function Shell({ orgs, org, brands, brand, children }: AppShellProps) {
           </main>
         )}
 
-        {/* Móvil y tablet: 4 secciones fijas y «Más» con el resto */}
-        <MobileNav items={items} brandName={brand?.name} />
+        {/* Móvil y tablet: Inicio, Contenidos, «＋», Calendario y Biblioteca */}
+        <MobileNav
+          items={items.filter(isMobilePrimary)}
+          create={<CreateMenu brand={brand} aiText={aiText} placement="mobile" />}
+        />
       </div>
     </div>
   );
