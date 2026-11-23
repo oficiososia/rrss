@@ -156,6 +156,39 @@ seedWorkspace({
 fake.rpc('brand_reel_font_info', () => []);
 fake.rpc('save_reel_draft', () => '2026-11-22T12:00:00Z');
 fake.rpc('discard_reel_draft', () => null);
+// «Terminar en Instagram»: guardar el pie como versión, aprobar por debajo (autogestión) y quedar pendiente.
+fake.rpc('save_content_version', (args) => {
+  const version = Number(args.p_expected_version) + 1;
+  const row = { ...fake.tables.content_versions![0]!, id: `v-${version}`, version, data: args.p_data };
+  fake.tables.content_versions = [...fake.tables.content_versions!, row];
+  fake.tables.content_items![0] = { ...fake.tables.content_items![0]!, current_version: version };
+  return row;
+});
+fake.rpc('set_content_status', (args) => {
+  const row = { ...fake.tables.content_items![0]!, status: args.p_status };
+  fake.tables.content_items![0] = row;
+  return row;
+});
+fake.rpc('start_manual_publication', (args) => {
+  const row = {
+    id: 'manual-1',
+    brand_id: BRAND_ID,
+    organization_id: ORG_ID,
+    content_id: 'reel-1',
+    content_version: 1,
+    media_asset_id: args.p_media_asset_id,
+    caption: args.p_caption,
+    status: 'pending',
+    handed_off_at: new Date().toISOString(),
+    published_at: null,
+    match_source: null,
+    imported_media_id: null,
+    external_id: null,
+    external_url: null,
+  };
+  fake.tables.manual_publications = [row];
+  return row;
+});
 // «Exportar»: el montaje se encarga y queda en cola (aquí no hay trabajador que lo monte).
 fake.rpc('request_media_job', (args) => {
   const job = {
@@ -215,6 +248,7 @@ fake.tables.social_accounts = rendered
     ]
   : [];
 fake.tables.scheduled_publications = [];
+fake.tables.manual_publications = [];
 fake.tables.reel_drafts = [];
 fake.tables.brand_fonts = [];
 fake.tables.brand_reel_templates = [];

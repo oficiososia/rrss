@@ -78,7 +78,7 @@ import {
   statusChangedMessage,
   type StatusAction,
 } from '@/features/content/status';
-import { assetKeys, uploadAsset, useSignedUrls } from '@/features/library/api';
+import { assetKeys, uploadAsset, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
 import { useWorkMode } from '@/features/orgs/workMode';
 import { useFeature } from '@/features/platform/integrations/useFeature';
@@ -124,7 +124,16 @@ import { previewWarnings } from './compose';
 import { barKind, ContextBar, contextActions, panelTitle, type BarAction } from './ContextBar';
 import { ExportSheet, type PreviousRender } from './ExportSheet';
 import { exportState, renderOfPlan, selfApprovalSteps, shouldRenderOnExport } from './exportFlow';
-import { EMPTY_COPY, parseHashtags, PublishedLine, PublishPanel, type PublishInput } from './PublishPanel';
+import { FinishInInstagram, ManualPublicationLine } from './FinishInInstagram';
+import { useFindPublished, useManualMutations, useManualPublication } from './manualApi';
+import {
+  CopyFields,
+  EMPTY_COPY,
+  parseHashtags,
+  PublishedLine,
+  PublishPanel,
+  type PublishInput,
+} from './PublishPanel';
 import { editorReducer, initEditor, type Selection } from './history';
 import { Inspector, type Apply, type BrandFontOption } from './Inspector';
 import {
@@ -349,8 +358,11 @@ function Editor({
   /** Selector de fotos y clips: para añadir o para sustituir un elemento. */
   const [media, setMedia] = useState<{ mode: 'add' } | { mode: 'replace'; id: string } | null>(null);
   const [musicOpen, setMusicOpen] = useState(false);
-  /** Hoja «Exportar»: abierta, con la portada desplegada (para arreglarla) o en «Publicar o programar». */
-  const [exportOpen, setExportOpen] = useState<false | 'open' | 'cover' | 'publish'>(false);
+  /**
+   * Hoja «Exportar»: abierta, con la portada desplegada (para arreglarla), en «Publicar o programar» o en
+   * «Terminar en Instagram».
+   */
+  const [exportOpen, setExportOpen] = useState<false | 'open' | 'cover' | 'publish' | 'instagram'>(false);
   /** «Publicar ahora» con la cuenta elegida en la hoja (el diálogo que publica y enseña cómo va). */
   const [publishNow, setPublishNow] = useState<{ accountId: string } | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -478,7 +490,13 @@ function Editor({
     !project.guide;
   const request = useRequestReel(brand.id);
   const navigate = useNavigate();
-  const accounts = useSocialAccounts(brand.id, exportOpen !== false);
+  // «Terminar en Instagram»: la entrega para publicar a mano (pendiente o publicada).
+  const manual = useManualPublication(brand.id, item.id);
+  const manualMutations = useManualMutations(brand.id, item.id);
+  const manualPending = manual.data?.status === 'pending' ? manual.data : null;
+  const manualPublished = manual.data?.status === 'published' ? manual.data : null;
+  // Las cuentas hacen falta en la hoja y, con algo pendiente o marcado sin enlace, para buscarlo en Instagram.
+  const accounts = useSocialAccounts(brand.id, exportOpen !== false || Boolean(manual.data));
   const publication = useContentPublication(brand.id, item.id);
   const savePublication = useSavePublication(brand.id);
   const captionTask = useTextTask('post.caption');
@@ -1017,33 +1035,45 @@ function Editor({
    * programa o la publica ya con el vídeo de este montaje. En modo agencia el estado lo decide quien revisa: lo
    * que no está aprobado queda en el calendario en espera.
    */
+  /**
+   * Lo que va antes de publicar (aquí o a mano en Instagram): guarda lo que se ve como versión si hace falta
+   * (el pie va en ella) y, en autogestión, la aprueba por debajo. Devuelve la versión y el estado, o null si
+   * no se pudo guardar.
+   */
+  async function prepareForPublish(): Promise<{ version: number; status: ContentStatus } | null> {
+    let version = expectedVersion;
+    let status = item.status;
+    if (dirty || version === 0) {
+      const saved = await save('Para publicar', false);
+      if (saved === null) return null;
+      version = saved;
+      // Una versión nueva vuelve a borrador una idea o una pieza aprobada (save_content_version).
+      if (status === 'idea' || status === 'approved') status = 'draft';
+    }
+    if (selfManaged) {
+      for (const to of selfApprovalSteps(status)) {
+        await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion: version });
+        status = to;
+      }
+    }
+    await Promise.all(
+      [
+        socialKeys.contentItem(brand.id, item.id),
+        socialKeys.contentPublication(brand.id, item.id),
+        socialKeys.candidates(brand.id),
+        socialKeys.media(brand.id),
+      ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+    );
+    return { version, status };
+  }
+
   async function submitPublish(input: PublishInput) {
     if (!planRender) return;
     setPublishing(true);
     try {
-      let version = expectedVersion;
-      let status = item.status;
-      if (dirty || version === 0) {
-        const saved = await save('Para publicar', false);
-        if (saved === null) return;
-        version = saved;
-        // Una versión nueva vuelve a borrador una idea o una pieza aprobada (save_content_version).
-        if (status === 'idea' || status === 'approved') status = 'draft';
-      }
-      if (selfManaged) {
-        for (const to of selfApprovalSteps(status)) {
-          await mutations.setStatus.mutateAsync({ contentId: item.id, status: to, expectedVersion: version });
-          status = to;
-        }
-      }
-      await Promise.all(
-        [
-          socialKeys.contentItem(brand.id, item.id),
-          socialKeys.contentPublication(brand.id, item.id),
-          socialKeys.candidates(brand.id),
-          socialKeys.media(brand.id),
-        ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
-      );
+      const ready = await prepareForPublish();
+      if (!ready) return;
+      const { version, status } = ready;
       if (input.mode === 'now') {
         setExportOpen(false);
         setPublishNow({ accountId: input.accountId });
@@ -1091,6 +1121,30 @@ function Editor({
     setExportOpen('publish');
   }
 
+  /** «Terminar en Instagram»: el mismo pie que «Publicar o programar». */
+  function openFinish() {
+    if (!project.copy && suggestedCopy && !readOnly) apply((p) => ({ ...p, copy: suggestedCopy }));
+    setExportOpen('instagram');
+  }
+
+  /**
+   * El vídeo y el pie ya van al móvil: se deja la pieza lista (versión y aprobación, como al publicar) y
+   * queda «Pendiente de publicar en Instagram».
+   */
+  async function sentToInstagram(caption: string): Promise<boolean> {
+    if (!planRender) return false;
+    try {
+      const ready = await prepareForPublish();
+      if (!ready) return false;
+      await manualMutations.start.mutateAsync({ assetId: planRender, caption });
+      notify.info('Pendiente de publicar en Instagram. Cuando lo publiques, márcalo aquí.');
+      return true;
+    } catch (error) {
+      notify.error(translateError(error));
+      return false;
+    }
+  }
+
   const previousRenders: PreviousRender[] = (jobs.data ?? []).map((job) => {
     const view = describeJob(job);
     return {
@@ -1112,6 +1166,23 @@ function Editor({
         : undefined;
   const published = publication.data?.status === 'published' ? publication.data : null;
   const scheduled = publication.data && publication.data.status !== 'published' ? publication.data : null;
+  /** Publicada, por la API o a mano en Instagram. */
+  const anyPublished = Boolean(published || manualPublished);
+  // «Terminar en Instagram»: en modo agencia, como «Publicar ahora», solo aprobada y sin cambios.
+  const finishHint =
+    publishHint ??
+    (scheduled
+      ? 'Ya está en el calendario: cancela esa publicación antes de terminarla a mano.'
+      : !selfManaged && (item.status !== 'approved' || dirty)
+        ? 'Para terminarla en Instagram tiene que estar aprobada, sin cambios después.'
+        : undefined);
+  const findPublished = useFindPublished(brand.id, item.id, manual.data, accounts.data, canEdit && !readOnly);
+  const finishAsset = useAssetsByIds(brand.id, exportOpen === 'instagram' && planRender ? [planRender] : []);
+  const finishVideo = finishAsset.data?.find((a) => a.id === planRender) ?? null;
+  const hasInstagramAccount =
+    accounts.data === undefined
+      ? undefined
+      : accounts.data.some((a) => a.network === 'instagram' && a.status === 'active');
   // En modo agencia, «Publicar ahora» solo con la pieza aprobada y sin cambios (lo demás queda en espera).
   const nowBlocked =
     !selfManaged && (item.status !== 'approved' || dirty)
@@ -1318,15 +1389,20 @@ function Editor({
           {item.title}
         </h1>
         {/* En modo agencia, el estado de la pieza (en autogestión no hay aprobación a la vista). */}
-        {!selfManaged && !published && (
+        {!selfManaged && !anyPublished && (
           <Badge tone={STATUS_TONE[item.status]} className="shrink-0 max-sm:hidden">
             <span data-testid="reel-status">{STATUS_LABEL[item.status]}</span>
           </Badge>
         )}
         {item.archived_at && <Badge tone="warning">Archivado</Badge>}
-        {published && (
+        {anyPublished && (
           <Badge tone="success" className="shrink-0">
             <span data-testid="reel-published-badge">Publicada</span>
+          </Badge>
+        )}
+        {manualPending && (
+          <Badge tone="warning" className="shrink-0 max-sm:hidden">
+            <span data-testid="reel-manual-badge">Pendiente en Instagram</span>
           </Badge>
         )}
         {autosaveText && (
@@ -1891,7 +1967,13 @@ function Editor({
       <ExportSheet
         open={exportOpen !== false}
         onOpenChange={(open) => setExportOpen(open ? 'open' : false)}
-        title={exportOpen === 'publish' ? 'Publicar o programar' : 'Exportar'}
+        title={
+          exportOpen === 'publish'
+            ? 'Publicar o programar'
+            : exportOpen === 'instagram'
+              ? 'Terminar en Instagram'
+              : 'Exportar'
+        }
         key={exportOpen === 'cover' ? 'cover' : 'sheet'}
         coverOpen={exportOpen === 'cover'}
         brandId={brand.id}
@@ -1909,7 +1991,7 @@ function Editor({
         libraryPathOf={(assetId) => `/o/${org.id}/m/${brand.id}/biblioteca?recurso=${assetId}`}
         warnings={warnings}
         publish={
-          published
+          anyPublished
             ? {
                 label: 'Publicar otra vez',
                 detail: 'Saldrá repetido en Instagram: se hace una copia del reel.',
@@ -1920,15 +2002,71 @@ function Editor({
               }
             : {
                 detail: scheduled ? `Programada para el ${formatDateTime(scheduled.scheduled_at)}.` : undefined,
-                disabled: Boolean(publishHint),
-                hint: publishHint,
+                disabled: Boolean(publishHint) || Boolean(manualPending),
+                hint:
+                  publishHint ??
+                  (manualPending
+                    ? 'Está pendiente de publicar en Instagram: márcalo como publicado o cancélalo antes.'
+                    : undefined),
                 busy: false,
                 onPublish: openPublish,
               }
         }
-        published={published ? <PublishedLine publication={published} /> : undefined}
+        finish={
+          anyPublished
+            ? undefined
+            : {
+                disabled: Boolean(finishHint),
+                hint: finishHint,
+                detail: manualPending ? 'Pendiente de publicar: puedes volver a mandarlo al móvil.' : undefined,
+                onFinish: openFinish,
+              }
+        }
+        published={
+          published ? (
+            <PublishedLine publication={published} />
+          ) : manual.data ? (
+            <ManualPublicationLine
+              row={manual.data}
+              canEdit={canEdit && !readOnly}
+              find={{ ...findPublished, run: () => void findPublished.run() }}
+              busy={manualMutations.confirm.isPending || manualMutations.cancel.isPending}
+              onConfirm={async (url) => {
+                await manualMutations.confirm.mutateAsync({ id: manual.data!.id, url });
+                notify.success('Marcada como publicada.');
+              }}
+              onCancel={() =>
+                void manualMutations.cancel
+                  .mutateAsync(manual.data!.id)
+                  .then(() => notify.success('Ya no está pendiente de publicar.'))
+                  .catch((error: unknown) => notify.error(translateError(error)))
+              }
+            />
+          ) : undefined
+        }
         publishView={
-          exportOpen === 'publish' && planRender ? (
+          exportOpen === 'instagram' && planRender ? (
+            <FinishInInstagram
+              video={finishVideo ? { storagePath: finishVideo.storage_path } : null}
+              copy={project.copy ?? EMPTY_COPY}
+              copyFields={
+                <CopyFields
+                  brandId={brand.id}
+                  network={item.network}
+                  format={item.format}
+                  copy={project.copy ?? EMPTY_COPY}
+                  onCopy={(copy) => apply((p) => ({ ...p, copy }), 'copy')}
+                  readOnly={readOnly}
+                  captionAi={captionTask && brand.ai_mode !== 'agency'}
+                />
+              }
+              approval={approval}
+              blocked={finishHint}
+              pending={Boolean(manualPending)}
+              hasAccount={hasInstagramAccount}
+              onSent={sentToInstagram}
+            />
+          ) : exportOpen === 'publish' && planRender ? (
             <PublishPanel
               brandId={brand.id}
               network={item.network}

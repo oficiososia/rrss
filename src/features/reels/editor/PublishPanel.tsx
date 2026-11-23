@@ -73,8 +73,6 @@ export function PublishPanel(props: PublishPanelProps) {
   const [when, setWhen] = useState(() =>
     pending ? toLocalInput(new Date(pending.scheduled_at), zone) : toLocalInput(defaultScheduleDate(null), zone),
   );
-  const [tagsText, setTagsText] = useState(() => props.copy.hashtags.map((t) => `#${t}`).join(' '));
-  const [aiOpen, setAiOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const live = (props.accounts ?? []).filter((a) => a.network === props.network && a.status === 'active');
@@ -83,7 +81,6 @@ export function PublishPanel(props: PublishPanelProps) {
   const noAccount = props.accounts !== undefined && live.length === 0;
   const blocker = props.blocked ?? (noAccount ? 'No hay ninguna cuenta conectada.' : undefined);
   const nowBlocker = mode === 'now' ? props.nowBlocked : undefined;
-  const length = [...props.copy.caption].length;
 
   const submit = () => {
     setError(null);
@@ -108,66 +105,15 @@ export function PublishPanel(props: PublishPanelProps) {
       )}
 
       {/* Texto de la publicación: lo mismo que en las publicaciones (pie y hashtags). */}
-      <fieldset className="space-y-3" disabled={props.readOnly}>
-        <div className="flex items-center justify-between gap-2">
-          <legend className="text-sm font-medium">Texto</legend>
-          {props.captionAi && !props.readOnly && (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => setAiOpen(true)} data-testid="ai-caption-open">
-                Redactar con IA
-              </Button>
-              <GenerateCaptionDialog
-                brandId={props.brandId}
-                network={props.network}
-                format={props.format}
-                open={aiOpen}
-                onOpenChange={setAiOpen}
-                currentCopy={{
-                  caption: props.copy.caption,
-                  hashtags: props.copy.hashtags,
-                  mentions: [],
-                  altText: '',
-                  callToAction: { label: '', url: '' },
-                }}
-                onApply={(copy) => {
-                  const hashtags = parseHashtags(copy.hashtags.join(' '));
-                  setTagsText(hashtags.map((t) => `#${t}`).join(' '));
-                  props.onCopy({
-                    caption: [...copy.caption].slice(0, REEL_CAPTION_MAX).join(''),
-                    hashtags,
-                    aiGenerated: true,
-                  });
-                }}
-              />
-            </>
-          )}
-        </div>
-        <Field label="Pie" hint={`${length} de ${REEL_CAPTION_MAX} caracteres.`}>
-          {(fieldProps) => (
-            <Textarea
-              {...fieldProps}
-              rows={4}
-              maxLength={REEL_CAPTION_MAX}
-              value={props.copy.caption}
-              placeholder="Qué se ve, por qué venir y cuándo."
-              onChange={(e) => props.onCopy({ ...props.copy, caption: e.target.value, aiGenerated: undefined })}
-              data-testid="reel-caption"
-            />
-          )}
-        </Field>
-        <Field label="Hashtags" hint="Separados por espacios. Se añaden al final del pie si no están ya.">
-          {(fieldProps) => (
-            <Input
-              {...fieldProps}
-              value={tagsText}
-              placeholder="#crevillent #arroz"
-              onChange={(e) => setTagsText(e.target.value)}
-              onBlur={() => props.onCopy({ ...props.copy, hashtags: parseHashtags(tagsText) })}
-              data-testid="reel-hashtags"
-            />
-          )}
-        </Field>
-      </fieldset>
+      <CopyFields
+        brandId={props.brandId}
+        network={props.network}
+        format={props.format}
+        copy={props.copy}
+        onCopy={props.onCopy}
+        readOnly={props.readOnly}
+        captionAi={props.captionAi}
+      />
 
       {props.approval}
 
@@ -273,6 +219,86 @@ export function PublishPanel(props: PublishPanelProps) {
         )}
       </Button>
     </div>
+  );
+}
+
+export interface CopyFieldsProps {
+  brandId: string;
+  network: string;
+  format: string;
+  copy: ReelCopy;
+  onCopy: (copy: ReelCopy) => void;
+  readOnly: boolean;
+  /** ¿Se ofrece «Redactar con IA»? (tarea configurada y la marca no está en modo agencia). */
+  captionAi: boolean;
+}
+
+/** El pie y los hashtags del reel (con «Redactar con IA»): en «Publicar o programar» y en «Terminar en Instagram». */
+export function CopyFields(props: CopyFieldsProps) {
+  const [tagsText, setTagsText] = useState(() => props.copy.hashtags.map((t) => `#${t}`).join(' '));
+  const [aiOpen, setAiOpen] = useState(false);
+  const length = [...props.copy.caption].length;
+  return (
+    <fieldset className="space-y-3" disabled={props.readOnly}>
+      <div className="flex items-center justify-between gap-2">
+        <legend className="text-sm font-medium">Texto</legend>
+        {props.captionAi && !props.readOnly && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setAiOpen(true)} data-testid="ai-caption-open">
+              Redactar con IA
+            </Button>
+            <GenerateCaptionDialog
+              brandId={props.brandId}
+              network={props.network}
+              format={props.format}
+              open={aiOpen}
+              onOpenChange={setAiOpen}
+              currentCopy={{
+                caption: props.copy.caption,
+                hashtags: props.copy.hashtags,
+                mentions: [],
+                altText: '',
+                callToAction: { label: '', url: '' },
+              }}
+              onApply={(copy) => {
+                const hashtags = parseHashtags(copy.hashtags.join(' '));
+                setTagsText(hashtags.map((t) => `#${t}`).join(' '));
+                props.onCopy({
+                  caption: [...copy.caption].slice(0, REEL_CAPTION_MAX).join(''),
+                  hashtags,
+                  aiGenerated: true,
+                });
+              }}
+            />
+          </>
+        )}
+      </div>
+      <Field label="Pie" hint={`${length} de ${REEL_CAPTION_MAX} caracteres.`}>
+        {(fieldProps) => (
+          <Textarea
+            {...fieldProps}
+            rows={4}
+            maxLength={REEL_CAPTION_MAX}
+            value={props.copy.caption}
+            placeholder="Qué se ve, por qué venir y cuándo."
+            onChange={(e) => props.onCopy({ ...props.copy, caption: e.target.value, aiGenerated: undefined })}
+            data-testid="reel-caption"
+          />
+        )}
+      </Field>
+      <Field label="Hashtags" hint="Separados por espacios. Se añaden al final del pie si no están ya.">
+        {(fieldProps) => (
+          <Input
+            {...fieldProps}
+            value={tagsText}
+            placeholder="#crevillent #arroz"
+            onChange={(e) => setTagsText(e.target.value)}
+            onBlur={() => props.onCopy({ ...props.copy, hashtags: parseHashtags(tagsText) })}
+            data-testid="reel-hashtags"
+          />
+        )}
+      </Field>
+    </fieldset>
   );
 }
 
