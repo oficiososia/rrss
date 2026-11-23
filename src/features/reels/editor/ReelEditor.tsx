@@ -192,6 +192,7 @@ import { AUTOSAVE_LABEL, useAutosave } from './useAutosave';
 import { useBeats } from './useBeats';
 import { useQueryClient } from '@tanstack/react-query';
 import { fillGuideShot } from '../like/draft';
+import { cachedLooks } from './useReelLooks';
 import { GuidePanel } from '../like/GuidePanel';
 import { useReelLikeDraft } from '../like/useDraft';
 import { useReelReference } from '../like/api';
@@ -953,6 +954,7 @@ function Editor({
           buildBrandReel(chosen.template, assets, style, {
             kit,
             library: sources.data ?? [],
+            looks: cachedLooks(assets),
             ...(font ? { font: { path: font.path, family: font.family } } : {}),
           }),
         select: { kind: 'clip', id: 'c1' },
@@ -1006,6 +1008,7 @@ function Editor({
         const built = buildBrandReel(chosen.template, assets, style, {
           kit,
           library: sources.data ?? [],
+          looks: cachedLooks(assets),
           ...(font ? { font: { path: font.path, family: font.family } } : {}),
         });
         return {

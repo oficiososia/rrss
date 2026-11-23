@@ -2,13 +2,16 @@
 // estilos por papel, puntos de interés y máscaras guardados, cierre con la marca,
 // textos que no se pisan y aviso «Sin música».
 import { describe, expect, it } from 'vitest';
-import { emptyProfile } from '@/features/brand/profile';
+import { emptyProfile, parseProfile } from '@/features/brand/profile';
 import { finalizeProject } from './editor/project';
 import {
   brandOutro,
   brandReelKit,
   contrastRatio,
+  lookScore,
+  photoLook,
   rankReelAssets,
+  reelAddress,
   reelAssetScore,
   reelAudioNotice,
   roleTextStyle,
@@ -17,6 +20,7 @@ import {
   strongestFirst,
   subjectMasks,
   uniqueAssets,
+  type PhotoLook,
   type RankableAsset,
 } from './quality';
 import { buildReelFromTemplate, validateReelTemplate } from './reelTemplate';
@@ -242,5 +246,94 @@ describe('cada plano cuenta algo y el ritmo sale de la plantilla', () => {
     const plain = buildReelFromTemplate(parsed.template, [asset('a'), asset('b'), asset('c')], style);
     expect(plain.plan.texts).toHaveLength(1);
     expect(plain.plan.clips[1]).toMatchObject({ seconds: 1.4 });
+  });
+});
+
+// F67 (reel de staging del 23/11): el selector subía primero fotos de móvil en la cocina (encimera
+// de acero, cables, zapatillas) por ser grandes, y el cierre decía «…(Alicante),».
+describe('orden del selector: la luz y el fondo cuentan más que el tamaño', () => {
+  const W = 96;
+  const H = 128;
+  /** Una foto sintética: plato en el centro sobre un fondo liso de color o sobre una «encimera» gris con cosas. */
+  function pixels(kind: 'carta' | 'cocina'): Uint8ClampedArray {
+    const data = new Uint8ClampedArray(W * H * 4);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const plate = (x - W / 2) ** 2 + (y - H / 2) ** 2 < (W * 0.3) ** 2;
+        let rgb: [number, number, number];
+        if (plate) rgb = [150, 60, 40];
+        else if (kind === 'carta') rgb = [214, 176, 120];
+        else {
+          // Acero: gris con brillos, sombras y objetos.
+          const v = 90 + rnd() * 120 + ((x * 7 + y * 3) % 23 < 4 ? 60 : 0);
+          rgb = [v, v, v + 4];
+        }
+        data.set([...rgb, 255], i);
+      }
+    }
+    return data;
+  }
+
+  it('mide la luz y el fondo de una miniatura: liso y de color frente a gris y desigual', () => {
+    const carta = photoLook(pixels('carta'), W, H)!;
+    const cocina = photoLook(pixels('cocina'), W, H)!;
+    expect(carta.plainBackground).toBeGreaterThan(0.5);
+    expect(carta.backgroundColor).toBeGreaterThan(0.15);
+    expect(cocina.plainBackground).toBeLessThan(0.45);
+    expect(cocina.backgroundColor).toBeLessThan(0.1);
+    expect(cocina.unevenness).toBeGreaterThan(carta.unevenness);
+    expect(lookScore(carta)).toBeGreaterThan(10);
+    expect(lookScore(cocina)).toBeLessThan(-5);
+    expect(photoLook(new Uint8ClampedArray(4), 1, 1)).toBeNull();
+  });
+
+  it('con las cifras medidas en fotos reales (23/11), las de carta van antes que las de móvil en la cocina, aunque sean más pequeñas', () => {
+    // Valores de `photoLook` medidos en las miniaturas de fotos reales de un restaurante.
+    const looks = new Map<string, PhotoLook>([
+      ['chuleton-cocina', { brightness: 0.45, clipped: 0.01, plainBackground: 0.2, backgroundColor: 0.05, unevenness: 0.21 }],
+      ['mejillones-cocina', { brightness: 0.42, clipped: 0.03, plainBackground: 0.36, backgroundColor: 0.04, unevenness: 0.19 }],
+      ['tortitas-cocina', { brightness: 0.46, clipped: 0.01, plainBackground: 0.26, backgroundColor: 0.04, unevenness: 0.19 }],
+      ['tortitas-carta', { brightness: 0.56, clipped: 0, plainBackground: 0.54, backgroundColor: 0.25, unevenness: 0.14 }],
+      ['jamon-carta', { brightness: 0.49, clipped: 0, plainBackground: 0.55, backgroundColor: 0.25, unevenness: 0.19 }],
+      ['pulpo-web', { brightness: 0.53, clipped: 0.05, plainBackground: 0.39, backgroundColor: 0.21, unevenness: 0.25 }],
+    ]);
+    const phone = { width: 3024, height: 4032, bytes: 2_900_000, mime_type: 'image/jpeg' };
+    const menu = { width: 1080, height: 1350, bytes: 180_000, mime_type: 'image/webp' };
+    const library = [
+      asset('chuleton-cocina', phone),
+      asset('mejillones-cocina', phone),
+      asset('tortitas-cocina', phone),
+      asset('tortitas-carta', menu),
+      asset('jamon-carta', menu),
+      asset('pulpo-web', { width: 1600, height: 1067, bytes: 300_000 }),
+    ];
+    const ranked = rankReelAssets(library, looks).map((a) => a.id);
+    expect(ranked.slice(0, 2).sort()).toEqual(['jamon-carta', 'tortitas-carta']);
+    expect(ranked.indexOf('pulpo-web')).toBeLessThan(ranked.indexOf('mejillones-cocina'));
+    expect(ranked.slice(-3).sort()).toEqual(['chuleton-cocina', 'mejillones-cocina', 'tortitas-cocina']);
+    // Solo por su tamaño, una foto de fondo recargado no suma (antes, +18 por la resolución).
+    expect(reelAssetScore(library[0]!, looks.get('chuleton-cocina'))).toBeLessThan(reelAssetScore(library[0]!));
+    // Sin mirar las miniaturas, el orden es el de los datos, como antes.
+    expect(rankReelAssets(library)[0]!.id).toMatch(/cocina/);
+    // La que abre el reel también la elige la luz y el fondo.
+    expect(strongestFirst([library[0]!, library[3]!], looks)[0]!.id).toBe('tortitas-carta');
+  });
+});
+
+describe('dirección del cierre', () => {
+  it('sin signos colgando y, si es larga, solo calle y localidad', () => {
+    expect(reelAddress('Carrer Santa Maria de la Cabeza, 2, 03330 Crevillent (Alicante),')).toBe(
+      'Carrer Santa Maria de la Cabeza, 2 · Crevillent',
+    );
+    expect(reelAddress(' Calle Mayor 1 ,, Pueblo. ')).toBe('Calle Mayor 1, Pueblo');
+    expect(reelAddress('Avenida de la Constitución número 145, bajo izquierda, 28001 Ciudad')).toBe(
+      'Avenida de la Constitución número 145 · Ciudad',
+    );
+    expect(reelAddress(',, ')).toBeNull();
+    const profile = parseProfile({ business: { locations: ['Carrer Santa Maria de la Cabeza, 2, 03330 Crevillent (Alicante),'] } });
+    expect(brandReelKit(profile).address).toBe('Carrer Santa Maria de la Cabeza, 2 · Crevillent');
   });
 });

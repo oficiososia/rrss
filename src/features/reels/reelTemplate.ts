@@ -31,6 +31,7 @@ import {
   withBrandOutro,
   type BrandColors,
   type BrandReelKit,
+  type PhotoLooks,
   type RankableAsset,
 } from './quality';
 import {
@@ -598,6 +599,8 @@ export interface BrandReelInput {
   /** La biblioteca de la marca (o la parte que se tenga): de ella salen los puntos y las máscaras guardados. */
   library?: readonly RankableAsset[];
   font?: { path: string; family: string };
+  /** Luz y fondo medidos de las fotos (`useReelLooks`), para elegir la que abre. */
+  looks?: PhotoLooks;
 }
 
 /**
@@ -608,9 +611,10 @@ export interface BrandReelInput {
 export function orderForTemplate<T extends SourceAsset & RankableAsset>(
   template: ReelTemplate,
   chosen: readonly T[],
+  looks?: PhotoLooks,
 ): T[] {
   const assets = uniqueAssets(chosen);
-  return orderForSlots(slotsFor(template, assets.length), strongestFirst(assets));
+  return orderForSlots(slotsFor(template, assets.length), strongestFirst(assets, looks));
 }
 
 /**
@@ -627,7 +631,7 @@ export function buildBrandReel<T extends SourceAsset & RankableAsset>(
   brand: BrandReelInput = {},
 ): ReelProject {
   const library = brand.library ?? [];
-  const ordered = orderForTemplate(template, chosen);
+  const ordered = orderForTemplate(template, chosen, brand.looks);
   const options: BuildReelOptions = {
     ...(brand.font ? { font: brand.font } : {}),
     ...(brand.kit ? { colors: brand.kit.colors } : {}),

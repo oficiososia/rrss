@@ -143,6 +143,101 @@ export function roleTextStyle(
   }
 }
 
+// ───────────────────────────── Aspecto de una foto ─────────────────────────────
+
+/**
+ * Lo que se ve de una foto en pequeño (su miniatura): la luz y cómo es el fondo. Una foto de móvil
+ * en la cocina (encimera de acero, cables, zapatillas a la vista) tiene un fondo gris, desigual y
+ * lleno de cosas; una foto de carta, un fondo liso, de un color y bien iluminado. Con esto el orden
+ * no premia una foto solo por ser grande (docs/reels-calidad.md, F67).
+ */
+export interface PhotoLook {
+  /** Luz media (0 negro, 1 blanco). */
+  brightness: number;
+  /** Parte de la foto casi negra o quemada (0-1). */
+  clipped: number;
+  /** Parte del borde que es del mismo color que el fondo (0-1): alta en un fondo liso. */
+  plainBackground: number;
+  /** Color del borde (saturación media, 0 gris … 1 color vivo): una encimera de acero es gris. */
+  backgroundColor: number;
+  /** Cuánto cambia la luz en el borde (desviación típica): 0 liso … 0,5 muy desigual. */
+  unevenness: number;
+}
+
+/** Columnas y filas del borde (lo que rodea al plato): el 20 % de cada lado y el 15 % de arriba y abajo. */
+const inRing = (x: number, y: number, w: number, h: number) =>
+  x < w * 0.2 || x >= w * 0.8 || y < h * 0.15 || y >= h * 0.85;
+
+/**
+ * Aspecto de una foto a partir de sus píxeles RGBA (una copia pequeña, de 48 a 160 px de lado: la
+ * miniatura basta). Null si no hay píxeles.
+ */
+export function photoLook(data: ArrayLike<number>, width: number, height: number): PhotoLook | null {
+  if (width < 8 || height < 8 || data.length < width * height * 4) return null;
+  const n = width * height;
+  let light = 0;
+  let clipped = 0;
+  const ring: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = data[i * 4]!;
+    const g = data[i * 4 + 1]!;
+    const b = data[i * 4 + 2]!;
+    const l = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    light += l;
+    if (l < 0.06 || l > 0.97) clipped += 1;
+    if (inRing(i % width, Math.floor(i / width), width, height)) ring.push(i);
+  }
+  const channel = (k: number) => {
+    const values = ring.map((i) => data[i * 4 + k]!).sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)]!;
+  };
+  const median = [channel(0), channel(1), channel(2)];
+  let near = 0;
+  let saturation = 0;
+  let sum = 0;
+  let squares = 0;
+  for (const i of ring) {
+    const r = data[i * 4]!;
+    const g = data[i * 4 + 1]!;
+    const b = data[i * 4 + 2]!;
+    if (Math.abs(r - median[0]!) + Math.abs(g - median[1]!) + Math.abs(b - median[2]!) < 45) near += 1;
+    saturation += (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+    const l = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    sum += l;
+    squares += l * l;
+  }
+  const mean = sum / ring.length;
+  return {
+    brightness: light / n,
+    clipped: clipped / n,
+    plainBackground: near / ring.length,
+    backgroundColor: saturation / ring.length,
+    unevenness: Math.sqrt(Math.max(0, squares / ring.length - mean * mean)),
+  };
+}
+
+/**
+ * Puntos (de -30 a +20) por la luz y el fondo, para `reelAssetScore`. Medido con fotos reales de un
+ * restaurante (23/11/2026): las de móvil en la cocina dan un fondo gris (color < 0,1), poco liso
+ * (< 0,45) y desigual (> 0,2); las de carta, un fondo de color (> 0,18), liso (> 0,5) y parejo.
+ */
+export function lookScore(look: PhotoLook): number {
+  let score = 0;
+  // Luz: ni oscura ni quemada.
+  if (look.brightness < 0.2) score -= 12;
+  else if (look.brightness < 0.3) score -= 5;
+  else if (look.brightness <= 0.75) score += 2;
+  else if (look.brightness > 0.85) score -= 4;
+  if (look.clipped > 0.25) score -= 6;
+  // Fondo liso suma; lleno de cosas resta.
+  score += look.plainBackground >= 0.5 ? 8 : look.plainBackground >= 0.3 ? 0 : -6;
+  // Un fondo de color (mantel, madera, pared) frente al gris apagado de una encimera o un almacén.
+  score += look.backgroundColor >= 0.15 ? 6 : look.backgroundColor >= 0.1 ? 0 : -8;
+  // Luz pareja en el borde frente a brillos y sombras de la cocina.
+  score += look.unevenness < 0.15 ? 4 : look.unevenness <= 0.24 ? 0 : -4;
+  return Math.max(-30, Math.min(20, score));
+}
+
 // ───────────────────────────── Material ─────────────────────────────
 
 /** Lo que hace falta de un recurso de la biblioteca para juzgar si sirve para un reel. */
@@ -167,34 +262,43 @@ const WEAK_FOLDERS = ['recortes', 'ediciones', 'reels', 'portadas', 'capturas', 
 const lower = (s: string | null | undefined) => (s ?? '').toLocaleLowerCase('es');
 
 /**
- * Nota de 0 a 100 de lo bien que quedará un recurso en un reel 9:16, sin
- * descargarlo: resolución (el lado corto frente a los 1080 px del reel),
- * detalle (bytes por píxel de una foto comprimida: una foto movida o muy
- * oscura pesa poco), proporción (vertical mejor que apaisada) y procedencia
- * (un PNG sin fondo, una captura o un recorte ya hecho no son tomas).
+ * Nota de 0 a 100 de lo bien que quedará un recurso en un reel 9:16: resolución
+ * (el lado corto frente a los 1080 px del reel), detalle (bytes por píxel de una
+ * JPEG: una foto movida o muy oscura pesa poco), proporción (vertical mejor que
+ * apaisada), procedencia (un PNG sin fondo, una captura o un recorte ya hecho no
+ * son tomas) y, si se ha mirado su miniatura (`look`, `photoLook`), la luz y el
+ * fondo: una foto de móvil en la cocina, con la encimera y las cosas a la vista,
+ * queda detrás de una foto limpia de carta aunque sea más grande. Lo que solo es
+ * bueno por su tamaño no suma: con un fondo malo, la resolución no da puntos.
  */
-export function reelAssetScore(asset: RankableAsset): number {
+export function reelAssetScore(asset: RankableAsset, look?: PhotoLook | null): number {
   let score = 50;
   const name = lower(asset.file_name);
   const folder = lower(asset.folder);
+  const seen = asset.kind !== 'video' && look ? lookScore(look) : 0;
   if (asset.kind === 'video') score += 8;
   if (asset.width && asset.height) {
     const short = Math.min(asset.width, asset.height);
-    score += short >= 1080 ? 18 : short >= 720 ? 8 : short >= 480 ? -6 : -25;
+    const resolution = short >= 1080 ? 8 : short >= 720 ? 3 : short >= 480 ? -8 : -25;
+    score += seen < 0 ? Math.min(resolution, 0) : resolution;
     const ratio = asset.width / asset.height;
-    score += ratio <= 0.8 ? 8 : ratio <= 1.05 ? 3 : ratio <= 1.5 ? -2 : -8;
-    if (asset.kind !== 'video' && asset.bytes && /jpe?g|webp|heic/.test(lower(asset.mime_type))) {
+    score += ratio <= 0.8 ? 6 : ratio <= 1.05 ? 2 : ratio <= 1.5 ? -3 : -8;
+    // Solo resta: una foto recargada pesa más y no por eso es mejor (WebP comprime distinto: no cuenta).
+    if (asset.kind !== 'video' && asset.bytes && /jpe?g|heic/.test(lower(asset.mime_type))) {
       const bpp = asset.bytes / (asset.width * asset.height);
-      // Una foto nítida y con luz suele pasar de 0,2 bytes por píxel; una movida u oscura se queda en 0,05.
-      score += bpp >= 0.25 ? 10 : bpp >= 0.12 ? 4 : bpp >= 0.06 ? -4 : -12;
+      score += bpp < 0.05 ? -12 : bpp < 0.08 ? -4 : 0;
     }
   }
+  score += seen;
   // Un PNG sin fondo o un recorte ya hecho no son una toma: casi nunca deben abrir ni llenar un plano.
   if (/sin fondo|cutout|recorte/.test(name)) score -= 60;
   if (/captura|screenshot|whatsapp|img-\d{8}-wa/.test(name)) score -= 20;
   if (WEAK_FOLDERS.some((w) => folder.includes(w))) score -= 15;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
+
+/** Aspecto medido de cada recurso (id → `photoLook`), si se tiene. */
+export type PhotoLooks = ReadonlyMap<string, PhotoLook | null>;
 
 /** Sin repetir: el primero de cada archivo (por ruta), en el mismo orden. */
 export function uniqueAssets<T extends { storage_path: string }>(assets: readonly T[]): T[] {
@@ -211,10 +315,13 @@ export function uniqueAssets<T extends { storage_path: string }>(assets: readonl
  * lo más reciente primero si trae `created_at`). Es lo que deberían proponer los
  * selectores de material por defecto.
  */
-export function rankReelAssets<T extends RankableAsset & { created_at?: string }>(assets: readonly T[]): T[] {
+export function rankReelAssets<T extends RankableAsset & { created_at?: string }>(
+  assets: readonly T[],
+  looks?: PhotoLooks,
+): T[] {
   return uniqueAssets(assets)
     .filter((a) => a.kind === 'image' || a.kind === 'video')
-    .map((asset, index) => ({ asset, index, score: reelAssetScore(asset) }))
+    .map((asset, index) => ({ asset, index, score: reelAssetScore(asset, looks?.get(asset.id)) }))
     .sort(
       (a, b) =>
         b.score - a.score || (b.asset.created_at ?? '').localeCompare(a.asset.created_at ?? '') || a.index - b.index,
@@ -226,11 +333,12 @@ export function rankReelAssets<T extends RankableAsset & { created_at?: string }
  * El plano más fuerte para abrir el reel (gancho): el de más nota de los
  * elegidos. Devuelve el orden con ese primero; el resto, como venía.
  */
-export function strongestFirst<T extends RankableAsset>(assets: readonly T[]): T[] {
+export function strongestFirst<T extends RankableAsset>(assets: readonly T[], looks?: PhotoLooks): T[] {
   if (assets.length < 2) return [...assets];
+  const score = (asset: T) => reelAssetScore(asset, looks?.get(asset.id));
   let best = 0;
   assets.forEach((asset, index) => {
-    if (reelAssetScore(asset) > reelAssetScore(assets[best]!) + 5) best = index;
+    if (score(asset) > score(assets[best]!) + 5) best = index;
   });
   return best === 0 ? [...assets] : [assets[best]!, ...assets.filter((_, i) => i !== best)];
 }
@@ -412,6 +520,46 @@ export function reelLogoPath(
   return byId.get(best)!.storage_path;
 }
 
+/** Más largo que esto, la dirección del cierre se queda en calle y localidad. */
+export const REEL_ADDRESS_MAX = 42;
+
+/**
+ * La dirección para el cierre del reel, limpia: sin espacios ni signos colgando («…(Alicante),»),
+ * sin comas repetidas y, si es larga, solo la calle (con su número) y la localidad, sin código
+ * postal ni provincia entre paréntesis: «Calle Mayor, 2 · Pueblo». Null si no queda nada.
+ */
+export function reelAddress(raw: string): string | null {
+  const tidy = raw
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(,\s*)+/g, ', ')
+    .replace(/^[\s,.;:·\-–—]+|[\s,.;:·\-–—]+$/g, '')
+    .trim();
+  if (!tidy) return null;
+  if (tidy.length <= REEL_ADDRESS_MAX) return tidy;
+  const parts = tidy
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return tidy.slice(0, REEL_ADDRESS_MAX).replace(/[\s,.;:]+$/, '');
+  // La calle y, si la siguiente parte es su número («2», «nº 2», «s/n»), con él.
+  let street = parts[0]!;
+  let rest = parts.slice(1);
+  if (/^(n[º°o.]?\s*)?\d+[a-z]?$|^s\/n$/i.test(rest[0] ?? '')) {
+    street = `${street}, ${rest[0]}`;
+    rest = rest.slice(1);
+  }
+  // La localidad: la parte con el código postal (sin él), o la primera que quede; sin «(Provincia)».
+  const withZip = rest.find((p) => /\b\d{4,5}\b/.test(p));
+  const town = (withZip ?? rest[0] ?? '')
+    .replace(/\b\d{4,5}\b/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const short = town ? `${street} · ${town}` : street;
+  return short.length <= 120 ? short : short.slice(0, 120);
+}
+
 /** Lo que el reel toma del perfil de la marca: colores, logotipo, usuario, dirección y llamada. */
 export function brandReelKit(profile: BrandProfileData, logoPath?: string | null): BrandReelKit {
   const colors = profile.visual.colors.filter((c) => HEX.test(c.hex));
@@ -421,10 +569,7 @@ export function brandReelKit(profile: BrandProfileData, logoPath?: string | null
   const instagram = profile.channels.find((c) => /instagram/i.test(c.platform) && c.handle.trim());
   const anyHandle = instagram ?? profile.channels.find((c) => c.handle.trim());
   const handle = anyHandle ? `@${anyHandle.handle.trim().replace(/^@+/, '')}`.slice(0, 60) : undefined;
-  const address = profile.business.locations
-    .find((l) => l.trim())
-    ?.trim()
-    .slice(0, 120);
+  const address = reelAddress(profile.business.locations.find((l) => l.trim()) ?? '') ?? undefined;
   const cta = profile.voice.callsToAction.find((c) => c.trim() && c.trim().length <= 60)?.trim();
   return {
     colors: { ...(accent ? { accent } : {}), ...(dark ? { dark } : {}) },
