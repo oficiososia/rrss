@@ -1,10 +1,11 @@
 // Lo que un plan del copiloto pide al editor (planHost.ts): que llame a lo que ya
 // existe con lo justo —`ai-media` para el precio y el fondo, la biblioteca para
-// las fotos y la cadena de recorte para quitar el fondo— y que no repita un
-// recorte que ya está en la biblioteca. Todo lo de fuera está simulado.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// las fotos y la cadena de recorte para quitar el fondo—, que no repita un
+// recorte que ya está en la biblioteca y que mida el tono del fondo generado
+// (o diga que no puede). Todo lo de fuera está simulado.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MediaAssetRow } from '@/lib/database.types';
-import { createCopilotPlanHost } from './planHost';
+import { createCopilotPlanHost, readImageTone, TONE_TIMEOUT_MS } from './planHost';
 
 const mocks = vi.hoisted(() => ({
   invokeAiMedia: vi.fn(),
@@ -178,5 +179,127 @@ describe('lo que el editor ofrece a un plan del copiloto', () => {
     mocks.runQuickEdit.mockRejectedValue(aborted);
     controller.abort();
     await expect(host.cutout({ id: id(1), name: 'x' }, controller.signal)).rejects.toBe(aborted);
+  });
+});
+
+describe('el tono del fondo recién generado se mide en el navegador', () => {
+  /** Lo último que se ha intentado cargar, y cómo acaba la carga: bien, con error o nunca. */
+  const loads: { url: string; crossOrigin: string | null }[] = [];
+  let outcome: 'load' | 'error' | 'never' = 'load';
+  class FakeImage {
+    crossOrigin: string | null = null;
+    decoding = '';
+    naturalWidth = 1024;
+    naturalHeight = 1280;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(url: string) {
+      loads.push({ url, crossOrigin: this.crossOrigin });
+      if (outcome !== 'never') queueMicrotask(() => (outcome === 'load' ? this.onload?.() : this.onerror?.()));
+    }
+  }
+  /** El `canvas` 2D de mentira: devuelve píxeles del color que se le diga (de arriba abajo). */
+  function fakeCanvas(color: (y: number, height: number) => [number, number, number]) {
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
+      drawImage,
+      getImageData: (_x: number, _y: number, width: number, height: number) => {
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) data.set([...color(y, height), 255], (y * width + x) * 4);
+        }
+        return { data };
+      },
+    })) as never);
+    return { drawImage };
+  }
+
+  beforeEach(() => {
+    loads.length = 0;
+    outcome = 'load';
+    vi.stubGlobal('Image', FakeImage);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('carga la imagen con CORS, la dibuja reducida y devuelve su tono medio y por zonas', async () => {
+    // Un fondo claro arriba y oscuro abajo.
+    const { drawImage } = fakeCanvas((y, height) => (y < height / 2 ? [240, 230, 210] : [20, 18, 16]));
+    const tone = (await readImageTone('https://archivos.test/fondo.png'))!;
+    expect(loads).toEqual([{ url: 'https://archivos.test/fondo.png', crossOrigin: 'anonymous' }]);
+    // Reducida a 64 px de lado mayor (1024 × 1280 → 51 × 64): medir es barato.
+    expect(drawImage.mock.calls[0]!.slice(1)).toEqual([0, 0, 51, 64]);
+    expect(tone.grid).toMatchObject({ columns: 8, rows: 8, aspect: 1024 / 1280 });
+    expect(tone.grid.cells[0]!).toBeGreaterThan(0.7);
+    expect(tone.grid.cells[63]!).toBeLessThan(0.02);
+    expect(tone.mean).toMatch(/^#([0-9A-F]{2})\1\1$/);
+  });
+
+  it('si no se puede leer, devuelve null y no rompe nada: la carga falla, no hay lienzo 2D, o el navegador no deja leer los píxeles', async () => {
+    outcome = 'error';
+    expect(await readImageTone('https://archivos.test/fondo.png')).toBeNull();
+    outcome = 'load';
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    expect(await readImageTone('https://archivos.test/fondo.png')).toBeNull();
+    // Imagen de otro origen sin CORS: el lienzo queda «manchado» y leerlo lanza un error de seguridad.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
+      drawImage: vi.fn(),
+      getImageData: () => {
+        throw new DOMException('The canvas has been tainted by cross-origin data.', 'SecurityError');
+      },
+    })) as never);
+    expect(await readImageTone('https://archivos.test/fondo.png')).toBeNull();
+    // Ya cancelado: ni se intenta.
+    const controller = new AbortController();
+    controller.abort();
+    loads.length = 0;
+    expect(await readImageTone('https://archivos.test/fondo.png', controller.signal)).toBeNull();
+    expect(loads).toEqual([]);
+  });
+
+  it('si la imagen no termina de cargar, deja de esperar (por tiempo o al cancelar) y devuelve null', async () => {
+    outcome = 'never';
+    vi.useFakeTimers();
+    const slow = readImageTone('https://archivos.test/fondo.png');
+    let settled = false;
+    void slow.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(TONE_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await slow).toBeNull();
+    const controller = new AbortController();
+    const cancelled = readImageTone('https://archivos.test/fondo.png', controller.signal);
+    controller.abort();
+    expect(await cancelled).toBeNull();
+  });
+
+  it('el editor mide el fondo que acaba de generar sin volver a preguntar dónde está; y si algo falla, null', async () => {
+    fakeCanvas(() => [240, 230, 210]);
+    const { host } = makeHost();
+    const signal = new AbortController().signal;
+    const generated = row(9, 'IA · fondo.png', { origin: 'generated', width: 1024, height: 1280 });
+    mocks.generateImageAndWait.mockResolvedValue(generated);
+    const background = await host.generateBackground('Madera clara.', '4:5', signal);
+    const tone = await host.measureTone!(background, signal);
+    expect(tone!.grid.cells.every((cell) => cell > 0.7)).toBe(true);
+    expect(mocks.signedUrlFor).toHaveBeenCalledWith(generated.storage_path);
+    expect(mocks.fetchAsset).not.toHaveBeenCalled();
+    expect(loads.at(-1)).toEqual({ url: 'https://archivos.test/foto.jpg', crossOrigin: 'anonymous' });
+    // Otra imagen de la biblioteca: se pregunta por ella.
+    mocks.fetchAsset.mockResolvedValue(row(3, 'salón.jpg'));
+    expect(await host.measureTone!({ id: id(3), name: 'salón.jpg' }, signal)).not.toBeNull();
+    expect(mocks.fetchAsset).toHaveBeenCalledWith(BRAND, id(3));
+    // Sin la imagen, sin dirección firmada o con un fallo de la biblioteca: null, nunca una excepción.
+    mocks.fetchAsset.mockResolvedValue(null);
+    expect(await host.measureTone!({ id: id(4), name: 'x' }, signal)).toBeNull();
+    mocks.signedUrlFor.mockResolvedValue(undefined);
+    expect(await host.measureTone!(background, signal)).toBeNull();
+    mocks.signedUrlFor.mockRejectedValue(new Error('sin red'));
+    expect(await host.measureTone!(background, signal)).toBeNull();
   });
 });

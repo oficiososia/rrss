@@ -564,16 +564,41 @@ describe('órdenes que montan una pieza: se evalúa el plan, sin ejecutar nada',
     const nothing = evaluateResponse(menu, body(good.map((operation) => (operation.op === 'find_photos' ? { ...operation, query: 'platos de marisco gallego' } : operation))));
     expect(nothing.ok).toBe(true);
     const missing = planProblemsFor({ ...menu, plan: { ...menu.plan!, library: 'vacia' } }, evaluateResponse(menu, body(good)).operations);
-    expect(missing).toEqual(['Se esperaban entre 1 y 3 fotos de la biblioteca y el plan colocaría 0.']);
+    // Sin fotos tampoco hay recortes: faltan también pasos.
+    expect(missing).toEqual(['Se esperaban entre 1 y 3 fotos de la biblioteca y el plan colocaría 0.', 'Se esperaban entre 5 y 7 pasos y el plan tiene 4.']);
     // Sin fotos esperadas (biblioteca vacía), el caso sin fotos sí cuadra, y con fotos no.
     const empty = plan('plan-sin-fotos');
     expect((await perfect('plan-sin-fotos')).evaluation.problems).toEqual([]);
     expect(planProblemsFor({ ...empty, plan: { ...empty.plan!, library: 'hosteleria' } }, (await perfect('plan-sin-fotos')).evaluation.operations)).toEqual([
       'Se esperaban 0 fotos de la biblioteca y el plan colocaría 3.',
+      // Las tres irían recortadas (van sobre el fondo creado con IA): tres pasos más.
+      'Se esperaban 4 pasos y el plan tiene 7.',
     ]);
     // Pasos fuera de lo esperado.
     const steps = planProblemsFor({ ...menu, plan: { ...menu.plan!, steps: 4 } }, evaluateResponse(menu, body(good)).operations);
     expect(steps).toEqual(['Se esperaban 4 pasos y el plan tiene 7.']);
+    // Sobre el fondo creado con IA las fotos van recortadas aunque la respuesta diga `cutout: false`
+    // (lo que mandó el modelo en la prueba real del 23/11/2026): los recortes cuentan igual como pasos.
+    const uncut = good.map((operation) => (operation.op === 'place_photos' ? { ...operation, cutout: false } : operation));
+    expect(evaluateResponse(menu, body(uncut))).toMatchObject({ ok: true, problems: [] });
+    expect(planProblemsFor({ ...menu, plan: { ...menu.plan!, steps: 4 } }, evaluateResponse(menu, body(uncut)).operations)).toEqual([
+      'Se esperaban 4 pasos y el plan tiene 7.',
+    ]);
+    expect(planProblemsFor({ ...menu, plan: { ...menu.plan!, cutout: false } }, evaluateResponse(menu, body(uncut)).operations)).toEqual([
+      'Se esperaba que las fotos fuesen enteras y el plan las recorta.',
+    ]);
+    // Sin fondo de imagen (lienzo liso) manda la respuesta: el mismo caso, sin recorte, tiene un paso menos por foto.
+    const paella = plan('plan-genera-plato');
+    const placing = (cutout: boolean) => [
+      { op: 'find_photos', query: 'paella', count: 1 },
+      { op: 'place_photos', layout: 'center', cutout, on: false },
+      { op: 'add_text', text: 'Paella de domingo', style: 'title' },
+    ];
+    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 3, cutout: false } }, evaluateResponse(paella, body(placing(false), 'No genero comida.')).operations)).toEqual([]);
+    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, steps: 4, cutout: true } }, evaluateResponse(paella, body(placing(true), 'No genero comida.')).operations)).toEqual([]);
+    expect(planProblemsFor({ ...paella, plan: { ...paella.plan!, cutout: true } }, evaluateResponse(paella, body(placing(false), 'No genero comida.')).operations)).toEqual([
+      'Se esperaba que las fotos fuesen recortadas (van sobre un fondo de imagen) y el plan las coloca enteras.',
+    ]);
     // Un plan con más pasos que el tope del editor no se podría ejecutar.
     const texts = Array.from({ length: 8 }, () => ({ op: 'add_text', text: 'Menú de otoño', style: 'body' }));
     const huge = planProblemsFor(menu, evaluateResponse(menu, body([...good, ...texts])).operations);

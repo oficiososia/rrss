@@ -437,6 +437,14 @@ export function planProblemsFor(benchCase: BenchCase, operations: CopilotOperati
   }
   const steps = planStepCount(plan, photos.length);
   if (!inCount(expected.steps, steps)) problems.push(`Se esperaban ${showCount(expected.steps)} pasos y el plan tiene ${steps}.`);
+  // Sobre un fondo de imagen las fotos van recortadas aunque la respuesta no lo pida: lo fija el editor.
+  if (expected.cutout !== undefined && plan.placement && plan.placement.cutout !== expected.cutout) {
+    problems.push(
+      expected.cutout
+        ? 'Se esperaba que las fotos fuesen recortadas (van sobre un fondo de imagen) y el plan las coloca enteras.'
+        : 'Se esperaba que las fotos fuesen enteras y el plan las recorta.',
+    );
+  }
 
   // 4. Lo que quedaría en el documento: fondo (el generado, si lo hay), una capa por foto de la biblioteca y los textos.
   const background = plan.background?.mode === 'ai' ? BENCH_GENERATED_BACKGROUND : null;

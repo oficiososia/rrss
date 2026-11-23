@@ -12,6 +12,7 @@ import { runQuickEdit } from '@/features/photo-edit/quickEdit';
 import type { MediaAssetRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import type { CopilotAssetInfo } from './apply';
+import { measureTone, type MeasuredTone } from './legibility';
 import { isCutout, isPlainCutoutOf, matchLibraryPhotos, type CopilotPlanHost, type LibraryPhoto, type PlanEnvironment } from './plan';
 
 type AssetLike = Pick<MediaAssetRow, 'id' | 'file_name' | 'width' | 'height'> &
@@ -28,6 +29,58 @@ const toPhoto = (row: AssetLike): LibraryPhoto => ({
 });
 const toInfo = (row: AssetLike): CopilotAssetInfo => ({ id: row.id, name: row.file_name, width: row.width, height: row.height });
 
+/** Lado mayor del lienzo reducido en el que se mide el tono de una imagen: de sobra para una rejilla de 8 × 8. */
+const TONE_SAMPLE_SIDE = 64;
+/** Lo que se espera, como mucho, a que cargue la imagen que se va a medir. */
+export const TONE_TIMEOUT_MS = 8000;
+
+/**
+ * Carga una imagen (con CORS, como el lienzo del editor) y mide su tono medio y
+ * por zonas dibujándola reducida en un `canvas`. `null` si no se puede: sin
+ * `canvas` 2D, la imagen no carga a tiempo, o el navegador no deja leer sus
+ * píxeles (otro origen sin CORS: el lienzo queda «manchado»). No es un fallo
+ * del plan: quien llama pone a los textos un respaldo que se lee igual.
+ */
+export function readImageTone(url: string, signal?: AbortSignal, timeoutMs = TONE_TIMEOUT_MS): Promise<MeasuredTone | null> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined' || typeof document === 'undefined' || signal?.aborted) return resolve(null);
+    const image = new Image();
+    // Se deja de esperar a la imagen pasado un tiempo o si el plan se cancela.
+    function settle(tone: MeasuredTone | null) {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', give);
+      image.onload = null;
+      image.onerror = null;
+      resolve(tone);
+    }
+    function give() {
+      settle(null);
+    }
+    const timer = setTimeout(give, timeoutMs);
+    signal?.addEventListener('abort', give, { once: true });
+    image.crossOrigin = 'anonymous';
+    image.decoding = 'async';
+    image.onerror = give;
+    image.onload = () => {
+      try {
+        const scale = Math.min(1, TONE_SAMPLE_SIDE / Math.max(image.naturalWidth, image.naturalHeight, 1));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context || !image.naturalWidth || !image.naturalHeight) return settle(null);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const measured = measureTone(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        // La rejilla habla de la imagen entera: su proporción es la real, no la del lienzo reducido.
+        settle(measured ? { ...measured, grid: { ...measured.grid, aspect: image.naturalWidth / image.naturalHeight } } : null);
+      } catch {
+        settle(null);
+      }
+    };
+    image.src = url;
+  });
+}
+
 export interface PlanHostOptions {
   brandId: string;
   /** ¿Puede esta persona generar imágenes con IA en esta marca? Si no, por qué. */
@@ -39,6 +92,8 @@ export interface PlanHostOptions {
 }
 
 export function createCopilotPlanHost({ brandId, imageAi, saveEdit, onLibraryChange }: PlanHostOptions): CopilotPlanHost {
+  /** Dónde está guardado lo que se acaba de generar: para medirlo sin volver a preguntar a la base de datos. */
+  const generatedPaths = new Map<string, string>();
   return {
     imageAi,
     canCutout: canRemoveBackground(),
@@ -53,8 +108,19 @@ export function createCopilotPlanHost({ brandId, imageAi, saveEdit, onLibraryCha
     },
     generateBackground: async (prompt, ratio, signal) => {
       const asset = await generateImageAndWait(brandId, { prompt, aspectRatio: ratio }, { signal });
+      if (asset.storage_path) generatedPaths.set(asset.id, asset.storage_path);
       onLibraryChange?.();
       return toInfo(asset);
+    },
+    // El tono del fondo recién generado (medio y por zonas), para que los textos se lean encima. Leer no gasta.
+    measureTone: async (image, signal) => {
+      try {
+        const path = generatedPaths.get(image.id) ?? (await fetchAsset(brandId, image.id))?.storage_path;
+        const url = path ? await signedUrlFor(path) : undefined;
+        return url ? await readImageTone(url, signal) : null;
+      } catch {
+        return null;
+      }
     },
     searchLibrary: async (query, count) =>
       matchLibraryPhotos((await fetchRecentImages(brandId)).map(toPhoto), query, count).map(

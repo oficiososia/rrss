@@ -1,5 +1,6 @@
 import { CheckCircle2, ImagePlus, Loader2, Mic, MicOff, SendHorizontal, X, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { legalPath } from '@/features/legal/legal';
@@ -38,6 +39,7 @@ import {
   planAnswer,
   planNeedsConfirmation,
   planOperations,
+  setPlanCutout,
   type CopilotPlanHost,
   type PlanStepStatus,
 } from './plan';
@@ -144,6 +146,9 @@ function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 const namesOf = (assets: readonly CopilotAssetInfo[]) => assets.map((asset) => `«${asset.name}»`).join(', ');
+
+/** Lo que un plan ha medido (o no ha podido medir) del fondo que acaba de generar, para que los textos se lean encima. */
+type MeasuredImages = Pick<CopilotApplyContext, 'imageTones' | 'imageZones' | 'unmeasuredImages'>;
 
 export interface VoiceCopilotProps {
   orgId: string;
@@ -256,13 +261,16 @@ export function VoiceCopilot({
   };
 
   /** Con qué se aplican las operaciones: la marca, la página activa, lo elegido y los recursos conocidos. */
-  const applyContext = (assets: ReadonlyMap<string, CopilotAssetInfo>): CopilotApplyContext => {
+  const applyContext = (assets: ReadonlyMap<string, CopilotAssetInfo>, measured: MeasuredImages = {}): CopilotApplyContext => {
     const current = latest.current;
     return {
       brand: current.brand,
       assets,
       logoIds: current.logoIds,
-      imageTones: current.imageTones,
+      // Los tonos que ya tiene el editor y, encima, lo que un plan acaba de medir (el fondo recién generado).
+      imageTones: measured.imageTones ? new Map([...(current.imageTones ?? []), ...measured.imageTones]) : current.imageTones,
+      ...(measured.imageZones ? { imageZones: measured.imageZones } : {}),
+      ...(measured.unmeasuredImages ? { unmeasuredImages: measured.unmeasuredImages } : {}),
       pageIndex: current.pageIndex,
       selectedIds: current.selectedIds,
       pageLimits: current.pageLimits,
@@ -282,6 +290,8 @@ export function VoiceCopilot({
     chosen: CopilotAssetInfo[],
     /** Recursos que trae un plan (el fondo generado, las fotos): para sus nombres y medidas. */
     planAssets: readonly CopilotAssetInfo[] = [],
+    /** Tono del fondo que ha generado un plan (o que no se ha podido medir). */
+    measured: MeasuredImages = {},
   ) {
     const changes: string[] = [];
     const skipped: string[] = [];
@@ -308,7 +318,7 @@ export function VoiceCopilot({
 
     const current = latest.current;
     const assets = knownAssets([...chosen, ...(photo ? [photo] : []), ...planAssets]);
-    const result = applyCopilotOperations(current.document, operations, applyContext(assets));
+    const result = applyCopilotOperations(current.document, operations, applyContext(assets, measured));
     if (!result.ok) {
       update(order.id, {
         status: 'failed',
@@ -394,6 +404,8 @@ export function VoiceCopilot({
       imageAi: host.imageAi,
       palette: now.brand.palette,
       canCutout: host.canCutout,
+      // Con una foto de fondo ya puesta, las fotos del plan van recortadas por defecto (plan.ts).
+      backgroundImage: backgroundImageOf(pageView(now.document, now.pageIndex)) !== null,
     });
     // Sin fondo que crear ni fotos que colocar no hay nada que confirmar: es una orden normal.
     if (!planNeedsConfirmation(plan)) {
@@ -507,6 +519,12 @@ export function VoiceCopilot({
       created.push(`el fondo «${background.name}»`);
       setStep('background', 'done');
     }
+    // El tono del fondo nuevo (medio y por zonas) se mide mientras se recortan las fotos: leer no gasta.
+    // Sin medida (el navegador no deja leer la imagen, tarda o falla) no se adivina: se dice y los textos llevan contorno.
+    const generated = background;
+    const tone = Promise.resolve()
+      .then(() => (generated && host.measureTone ? host.measureTone(generated, controller.signal) : null))
+      .catch(() => null);
 
     // 2. Quitar el fondo a las fotos (gratis). Si una no se puede, se coloca tal cual y se dice.
     let photos = [...(planRef.current?.photos ?? pending.photos)];
@@ -540,7 +558,20 @@ export function VoiceCopilot({
     if (plan.placement && photos.length === 0) planNotes.push('No hay fotos que colocar: ese paso se ha saltado.');
     const planAssets = [...(background ? [background] : []), ...photos];
     const assets = knownAssets([...pending.chosen, ...planAssets]);
-    const composed = composePlan(plan, { background, photos }, latest.current.document, applyContext(assets));
+    let measured: MeasuredImages = {};
+    if (generated) {
+      let found: Awaited<typeof tone> = null;
+      setStep('background', 'done', 'Mirando si el fondo es claro u oscuro, para que los textos se lean encima…');
+      try {
+        found = await untilAborted(tone, controller.signal);
+      } catch {
+        return cancelled();
+      }
+      measured = found
+        ? { imageTones: new Map([[generated.id, found.mean]]), imageZones: new Map([[generated.id, found.grid]]) }
+        : { unmeasuredImages: new Set([generated.id]) };
+    }
+    const composed = composePlan(plan, { background, photos }, latest.current.document, applyContext(assets, measured));
     clearPlan();
     await execute(
       order,
@@ -548,6 +579,7 @@ export function VoiceCopilot({
       [...pending.notes, ...plan.notes, ...planNotes, ...composed.notes, ...inLibrary()],
       pending.chosen,
       planAssets,
+      measured,
     );
   }
 
@@ -690,22 +722,37 @@ export function VoiceCopilot({
   const engine = resolveVoiceEngine(available, preferred);
   const engines = VOICE_ENGINES.filter((option) => voiceEngineAvailable(option, available));
 
-  // Antes del primer dictado con cada motor se avisa de adónde va el audio; sin avisar no se escucha.
+  // Antes del primer dictado con cada motor se avisa de adónde va el audio. El
+  // aviso sale al pulsar el micrófono por primera vez, no al abrir el copiloto:
+  // para escribir órdenes no hace falta. Sin aceptarlo no se escucha nada.
   const [seen, setSeen] = useState<Record<VoiceEngine, boolean>>(() => ({
     browser: voiceNoticeHidden('browser'),
     transcriber: voiceNoticeHidden('transcriber'),
   }));
   const [dontShowAgain, setDontShowAgain] = useState(false);
-  const noticeDone = engine === null || seen[engine];
+  /** Se ha pulsado el micrófono sin haber leído aún el aviso de ese motor. */
+  const [asking, setAsking] = useState(false);
+  const dictation = engine === 'transcriber' ? recorded : browser;
 
-  // El dictado del navegador escucha de seguido: empieza al abrir (leído el aviso)
-  // y para al cerrar. Con el transcriptor, cada orden es una pulsación.
-  const { start: startBrowser, stop: stopBrowser } = browser;
-  useEffect(() => {
-    if (engine !== 'browser' || !noticeDone) return;
-    startBrowser();
-    return () => stopBrowser();
-  }, [engine, noticeDone, startBrowser, stopBrowser]);
+  // Al cerrar el copiloto se deja de escuchar.
+  const { stop: stopBrowser } = browser;
+  useEffect(() => () => stopBrowser(), [stopBrowser]);
+
+  /** El micrófono: parar si escucha; si no, el aviso la primera vez y, después, dictar. */
+  function pressMic() {
+    if (!engine) return;
+    if (dictation.listening) dictation.stop();
+    else if (!seen[engine]) setAsking(true);
+    else dictation.start();
+  }
+
+  function acceptNotice() {
+    if (!engine) return;
+    if (dontShowAgain) hideVoiceNotice(engine);
+    setSeen((current) => ({ ...current, [engine]: true }));
+    setAsking(false);
+    dictation.start();
+  }
 
   function chooseEngine(next: VoiceEngine) {
     browser.stop();
@@ -713,6 +760,7 @@ export function VoiceCopilot({
     writeVoiceEngine(next);
     setPreferred(next);
     setDontShowAgain(false);
+    setAsking(false);
   }
 
   function submitTyped(event: FormEvent) {
@@ -722,8 +770,9 @@ export function VoiceCopilot({
     setTyped('');
   }
 
+  // La última orden, a la vista; las anteriores, plegadas (el panel es estrecho y no debe tapar el lienzo).
   const lastOrders = useMemo(() => orders.slice(-6).reverse(), [orders]);
-  const dictation = engine === 'transcriber' ? recorded : browser;
+  const [latestOrder, ...olderOrders] = lastOrders;
 
   function closePicker(asset: CopilotAssetInfo | null) {
     setPickerOpen(false);
@@ -745,61 +794,70 @@ export function VoiceCopilot({
   // Al cerrar el copiloto, lo que esté en marcha deja de esperarse.
   useEffect(() => () => planAbort.current?.abort(), []);
 
-  return (
+  const renderOrder = (order: Order) => (
+    <li
+      key={order.id}
+      className="rounded-lg bg-subtle px-2.5 py-2 text-sm"
+      data-testid="copilot-order"
+      data-status={order.status}
+      data-source={order.local ? 'local' : 'ai'}
+    >
+      <p className="flex flex-wrap items-start gap-x-2 gap-y-0.5">
+        {order.status === 'sending' || order.status === 'pending' || order.status === 'running' ? (
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
+        ) : order.status === 'applied' ? (
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+        ) : null}
+        <span className="min-w-0 flex-1 basis-40 break-words">«{order.transcript}»</span>
+        {order.local && (
+          <span
+            className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
+            title="Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo"
+          >
+            <Zap className="h-3 w-3" aria-hidden />
+            Sin IA
+          </span>
+        )}
+        <span className="shrink-0 text-xs text-muted">{STATUS_LABEL[order.status]}</span>
+      </p>
+      {order.changes && order.changes.length > 0 && (
+        <ul className="mt-1 list-disc pl-5 text-xs" data-testid="copilot-changes">
+          {order.changes.map((change, index) => (
+            <li key={index}>{change}</li>
+          ))}
+        </ul>
+      )}
+      {order.notes && order.notes.length > 0 && (
+        <ul className="mt-1 space-y-0.5 pl-5 text-xs text-muted" data-testid="copilot-notes">
+          {order.notes.map((note, index) => (
+            <li key={index}>{note}</li>
+          ))}
+        </ul>
+      )}
+      {order.error !== undefined && (
+        <div className="mt-2">
+          <AiErrorNotice error={order.error} />
+        </div>
+      )}
+    </li>
+  );
+
+  // Panel estrecho y acoplado: columna junto al lienzo en escritorio, hoja baja en
+  // móvil (lo coloca el editor: `data-copilot-dock`). Su contenido hace scroll por
+  // dentro; la página, nunca, y el lienzo sigue a la vista.
+  const panel = (
     <section
-      className="w-full basis-full space-y-3 rounded-xl border border-border bg-surface p-3"
+      className="flex max-h-full min-h-0 w-full flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-surface p-2.5"
       aria-label="Copiloto del editor"
       data-testid="copilot-panel"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">{noticeDone ? 'Copiloto' : 'Antes de dictar'}</h2>
-        {noticeDone && engine === 'browser' && (
-          <Button
-            size="sm"
-            variant={browser.listening ? 'primary' : 'secondary'}
-            aria-pressed={browser.listening}
-            onClick={browser.listening ? browser.stop : browser.start}
-            data-testid="copilot-mic"
-          >
-            {browser.listening ? <MicOff className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
-            {browser.listening ? 'Parar' : 'Seguir dictando'}
-          </Button>
-        )}
-        {noticeDone && engine === 'transcriber' && (
-          <>
-            <Button
-              size="sm"
-              variant={recorded.listening ? 'primary' : 'secondary'}
-              aria-pressed={recorded.listening}
-              disabled={recorded.busy}
-              onClick={recorded.listening ? recorded.stop : recorded.start}
-              data-testid="copilot-mic"
-            >
-              {recorded.listening ? <MicOff className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
-              {recorded.busy ? 'Transcribiendo…' : recorded.listening ? 'Parar y enviar' : 'Pulsar para hablar'}
-            </Button>
-            <MicLevel level={recorded.level} active={recorded.listening} />
-          </>
-        )}
-        {noticeDone && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              pickingFor.current = 'copilot';
-              setPickerOpen(true);
-            }}
-            data-testid="copilot-pick-photo"
-          >
-            <ImagePlus className="h-4 w-4" aria-hidden />
-            Elegir foto
-          </Button>
-        )}
+      <div className="flex items-center gap-2">
+        <h2 className="text-sm font-semibold">Copiloto</h2>
         {engines.length > 1 && (
-          <label className="flex items-center gap-1 text-xs text-muted">
+          <label className="flex min-w-0 items-center gap-1 text-xs text-muted">
             Voz
             <select
-              className="h-8 rounded-md border border-border bg-surface px-1 text-xs"
+              className="h-8 min-w-0 rounded-md border border-border bg-surface px-1 text-xs"
               value={engine ?? ''}
               title={engine ? voiceEngineHint(engine) : undefined}
               onChange={(event) => chooseEngine(event.target.value as VoiceEngine)}
@@ -813,23 +871,10 @@ export function VoiceCopilot({
             </select>
           </label>
         )}
-        {noticeDone && (
-          <span className="text-xs text-muted" data-testid="copilot-voice-status">
-            {engine === null
-              ? 'Este navegador no puede dictar: escribe la orden.'
-              : engine === 'transcriber'
-                ? recorded.listening
-                  ? 'Grabando. Al callarte se envía.'
-                  : 'Pulsa para hablar o escribe la orden.'
-                : browser.listening
-                  ? 'Escuchando. Cada frase es una orden; se deshace con Ctrl+Z.'
-                  : 'En pausa. También puedes escribir la orden.'}
-          </span>
-        )}
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto"
+          className="ml-auto shrink-0"
           aria-label="Cerrar el copiloto"
           onClick={onClose}
           data-testid="copilot-close"
@@ -838,16 +883,53 @@ export function VoiceCopilot({
         </Button>
       </div>
 
-      {/* Aviso previo al dictado: una franja compacta, para no quitarle sitio al lienzo. */}
-      {!noticeDone && engine && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md bg-subtle px-2.5 py-1.5 text-xs">
-          <p className="min-w-0 flex-1 basis-64" data-testid="copilot-voice-notice">
+      <div className="flex flex-wrap items-center gap-2">
+        {engine && (
+          <Button
+            size="sm"
+            variant={dictation.listening ? 'primary' : 'secondary'}
+            aria-pressed={dictation.listening}
+            disabled={engine === 'transcriber' && recorded.busy}
+            onClick={pressMic}
+            data-testid="copilot-mic"
+          >
+            {dictation.listening ? <MicOff className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
+            {engine === 'transcriber'
+              ? recorded.busy
+                ? 'Transcribiendo…'
+                : recorded.listening
+                  ? 'Parar y enviar'
+                  : 'Pulsar para hablar'
+              : browser.listening
+                ? 'Parar'
+                : 'Dictar'}
+          </Button>
+        )}
+        {engine === 'transcriber' && recorded.listening && <MicLevel level={recorded.level} active />}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            pickingFor.current = 'copilot';
+            setPickerOpen(true);
+          }}
+          data-testid="copilot-pick-photo"
+        >
+          <ImagePlus className="h-4 w-4" aria-hidden />
+          Elegir foto
+        </Button>
+      </div>
+
+      {/* Aviso previo al dictado: solo al pulsar el micrófono por primera vez. Para escribir no hace falta. */}
+      {asking && engine && (
+        <div className="space-y-1.5 rounded-md bg-subtle px-2.5 py-2 text-xs" role="group" aria-label="Antes de dictar">
+          <p data-testid="copilot-voice-notice">
             {voiceNoticeText(engine)}{' '}
             <Link to={legalPath('privacy')} target="_blank" className="text-primary underline">
               Política de privacidad
             </Link>
           </p>
-          <label className="flex shrink-0 items-center gap-1.5">
+          <label className="flex items-center gap-1.5">
             <input
               type="checkbox"
               className="h-4 w-4"
@@ -857,20 +939,29 @@ export function VoiceCopilot({
             />
             No volver a mostrar
           </label>
-          <Button
-            size="sm"
-            className="shrink-0"
-            onClick={() => {
-              if (dontShowAgain) hideVoiceNotice(engine);
-              setSeen((current) => ({ ...current, [engine]: true }));
-            }}
-            data-testid="copilot-voice-notice-ok"
-          >
-            <Mic className="h-4 w-4" aria-hidden />
-            Entendido, dictar
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={acceptNotice} data-testid="copilot-voice-notice-ok">
+              <Mic className="h-4 w-4" aria-hidden />
+              Entendido, dictar
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setAsking(false)} data-testid="copilot-voice-notice-cancel">
+              Ahora no
+            </Button>
+          </div>
         </div>
       )}
+
+      <p className="text-xs text-muted" data-testid="copilot-voice-status">
+        {engine === null
+          ? 'Este navegador no puede dictar: escribe la orden.'
+          : engine === 'transcriber'
+            ? recorded.listening
+              ? 'Grabando. Al callarte se envía.'
+              : 'Escribe la orden o pulsa para hablar.'
+            : browser.listening
+              ? 'Escuchando. Cada frase es una orden; se deshace con Ctrl+Z.'
+              : 'Escribe la orden o pulsa «Dictar».'}
+      </p>
 
       {/* Órdenes por teclado: mismo camino que las dictadas. Sirve sin micrófono. */}
       <form className="flex items-center gap-2" onSubmit={submitTyped} data-testid="copilot-text-form">
@@ -883,13 +974,21 @@ export function VoiceCopilot({
           value={typed}
           maxLength={2000}
           autoComplete="off"
-          placeholder={`Escribe una orden: «${LOCAL_COMMAND_EXAMPLES[0] ?? 'deshaz'}», «pon el título arriba»…`}
+          placeholder={`«${LOCAL_COMMAND_EXAMPLES[0] ?? 'deshaz'}», «pon el título arriba»…`}
           onChange={(event) => setTyped(event.target.value)}
           data-testid="copilot-text-input"
         />
-        <Button size="sm" type="submit" disabled={!typed.trim()} data-testid="copilot-text-send">
+        <Button
+          size="sm"
+          type="submit"
+          className="shrink-0"
+          disabled={!typed.trim()}
+          aria-label="Enviar la orden"
+          title="Enviar (Intro)"
+          data-testid="copilot-text-send"
+        >
           <SendHorizontal className="h-4 w-4" aria-hidden />
-          Enviar
+          <span className="sr-only">Enviar</span>
         </Button>
       </form>
 
@@ -910,15 +1009,14 @@ export function VoiceCopilot({
         </ul>
       )}
 
-      {noticeDone && engine && (
-        <p className="min-h-[1.25rem] text-sm italic text-muted" aria-live="polite" data-testid="copilot-interim">
+      {engine && (
+        <p className="text-sm italic text-muted empty:hidden" aria-live="polite" data-testid="copilot-interim">
           {dictation.interim}
         </p>
       )}
-      {noticeDone && engine === 'transcriber' && recorded.aiError ? (
+      {engine === 'transcriber' && recorded.aiError ? (
         <AiErrorNotice error={recorded.aiError} />
       ) : (
-        noticeDone &&
         dictation.error && (
           <p role="alert" className="text-sm text-danger" data-testid="copilot-speech-error">
             {dictation.error}
@@ -938,59 +1036,28 @@ export function VoiceCopilot({
           onRemovePhoto={(id) =>
             changePlan((plan) => (plan.phase === 'ready' ? { ...plan, photos: plan.photos.filter((p) => p.id !== id) } : plan))
           }
+          onCutoutChange={(cutout) =>
+            changePlan((plan) => (plan.phase === 'ready' ? { ...plan, plan: setPlanCutout(plan.plan, cutout) } : plan))
+          }
         />
       )}
 
-      {lastOrders.length > 0 && (
-        <ol className="max-h-48 space-y-2 overflow-y-auto" aria-label="Órdenes" data-testid="copilot-orders">
-          {lastOrders.map((order) => (
-            <li
-              key={order.id}
-              className="rounded-lg bg-subtle px-3 py-2 text-sm"
-              data-testid="copilot-order"
-              data-status={order.status}
-              data-source={order.local ? 'local' : 'ai'}
-            >
-              <p className="flex items-start gap-2">
-                {order.status === 'sending' || order.status === 'pending' || order.status === 'running' ? (
-                  <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                ) : order.status === 'applied' ? (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
-                ) : null}
-                <span className="min-w-0 flex-1">«{order.transcript}»</span>
-                {order.local && (
-                  <span
-                    className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted"
-                    title="Orden resuelta en tu navegador: no ha llamado a la IA ni ha gastado cupo"
-                  >
-                    <Zap className="h-3 w-3" aria-hidden />
-                    Sin IA
-                  </span>
-                )}
-                <span className="shrink-0 text-xs text-muted">{STATUS_LABEL[order.status]}</span>
-              </p>
-              {order.changes && order.changes.length > 0 && (
-                <ul className="mt-1 list-disc pl-6 text-xs" data-testid="copilot-changes">
-                  {order.changes.map((change, index) => (
-                    <li key={index}>{change}</li>
-                  ))}
-                </ul>
-              )}
-              {order.notes && order.notes.length > 0 && (
-                <ul className="mt-1 space-y-0.5 pl-6 text-xs text-muted" data-testid="copilot-notes">
-                  {order.notes.map((note, index) => (
-                    <li key={index}>{note}</li>
-                  ))}
-                </ul>
-              )}
-              {order.error !== undefined && (
-                <div className="mt-2">
-                  <AiErrorNotice error={order.error} />
-                </div>
-              )}
-            </li>
-          ))}
-        </ol>
+      {latestOrder && (
+        <div className="space-y-2" data-testid="copilot-orders">
+          <ol className="space-y-2" aria-label="Última orden">
+            {renderOrder(latestOrder)}
+          </ol>
+          {olderOrders.length > 0 && (
+            <details className="text-xs" data-testid="copilot-history">
+              <summary className="cursor-pointer select-none text-muted">
+                Órdenes anteriores ({olderOrders.length})
+              </summary>
+              <ol className="mt-2 space-y-2" aria-label="Órdenes anteriores">
+                {olderOrders.map(renderOrder)}
+              </ol>
+            </details>
+          )}
+        </div>
       )}
 
       <ImagePickerDialog
@@ -1008,4 +1075,8 @@ export function VoiceCopilot({
       />
     </section>
   );
+
+  // El editor deja un hueco junto al lienzo para el panel; sin él (pruebas), se pinta donde esté.
+  const dock = typeof window === 'undefined' ? null : window.document.querySelector('[data-copilot-dock]');
+  return dock ? createPortal(panel, dock) : panel;
 }

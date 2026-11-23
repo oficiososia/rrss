@@ -382,6 +382,13 @@ export interface PlanExpectation {
   photos: ExpectedCount;
   /** Pasos del plan (el fondo, cada búsqueda, cada recorte, colocar y cada texto). */
   steps: ExpectedCount;
+  /**
+   * ¿Acaban las fotos recortadas? Sobre un fondo creado con IA, SIEMPRE (lo fija
+   * el editor aunque la respuesta diga `cutout: false`: la IA solo crea el fondo
+   * y los platos son fotos reales recortadas). Sin imagen de fondo manda la
+   * respuesta: ahí no se indica y no se comprueba.
+   */
+  cutout?: boolean;
 }
 
 /** Operación esperada: `op` y los campos clave. Lo que no se nombra no se compara. */
@@ -886,6 +893,8 @@ export const MULTI_CASES: BenchCase[] = group('multi', [
 
 // Órdenes que MONTAN una pieza: fondo creado con IA (solo el fondo), fotos reales de la
 // biblioteca colocadas encima y el titular. Las llamadas pueden venir en cualquier orden.
+// Con fondo creado con IA las fotos van recortadas diga lo que diga la respuesta en `cutout`
+// (por eso se admite cualquiera de los dos valores): cada foto cuenta un paso de recorte.
 const EITHER = { anyOf: [false, true] };
 const CANVAS_RATIO = { anyOf: [null, '4:5'] };
 const SOME = { between: [1, 6] as [number, number] };
@@ -902,7 +911,8 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'place_photos', layout: 'center', cutout: EITHER, on: EITHER },
       { op: 'add_text', text: 'Menú de otoño', style: 'title' },
     ],
-    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [4, 7] },
+    // 1 fondo + 1 búsqueda + de 1 a 3 recortes + colocar + 1 texto.
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [5, 7], cutout: true },
   },
   {
     id: 'plan-postres-fila',
@@ -916,7 +926,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Postres de la casa', style: 'title', position: TOP },
     ],
     // 1 fondo + 1 búsqueda + 3 recortes + colocar + 1 texto.
-    plan: { library: 'hosteleria', background: true, photos: 3, steps: 7 },
+    plan: { library: 'hosteleria', background: true, photos: 3, steps: 7, cutout: true },
   },
   {
     id: 'plan-gimnasio-abanico',
@@ -929,7 +939,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'place_photos', layout: 'fan', cutout: EITHER, on: true },
       { op: 'add_text', text: 'Nueva colección', style: 'title' },
     ],
-    plan: { library: 'gimnasio', background: true, photos: [1, 3], steps: [4, 7] },
+    plan: { library: 'gimnasio', background: true, photos: [1, 3], steps: [5, 7], cutout: true },
   },
   {
     id: 'plan-novedades-rejilla',
@@ -941,7 +951,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'find_photos', query: { includes: 'novedad', example: 'novedades' }, count: SOME },
       { op: 'place_photos', layout: 'grid', cutout: EITHER, on: EITHER },
     ],
-    plan: { library: 'generica', background: true, photos: [1, 2], steps: [3, 5] },
+    plan: { library: 'generica', background: true, photos: [1, 2], steps: [4, 5], cutout: true },
   },
   {
     id: 'plan-titubeo-otono-fila',
@@ -953,7 +963,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'find_photos', query: { includes: 'plato', example: 'platos' }, count: SOME },
       { op: 'place_photos', layout: 'row', cutout: EITHER, on: EITHER },
     ],
-    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [3, 6] },
+    plan: { library: 'hosteleria', background: true, photos: [1, 3], steps: [4, 6], cutout: true },
   },
   {
     id: 'plan-sin-fotos',
@@ -967,7 +977,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'add_text', text: 'Menú del día', style: 'title' },
     ],
     // La biblioteca no tiene fotos: no se coloca ninguna (el editor pide elegirlas) y no hay recortes.
-    plan: { library: 'vacia', background: true, photos: 0, steps: 4 },
+    plan: { library: 'vacia', background: true, photos: 0, steps: 4, cutout: true },
   },
   {
     id: 'plan-genera-plato',
@@ -981,6 +991,7 @@ export const PLAN_CASES: BenchCase[] = group('plan', [
       { op: 'place_photos', layout: 'center', cutout: EITHER, on: EITHER },
       { op: 'add_text', text: 'Paella de domingo', style: 'title' },
     ],
+    // Sin fondo de imagen (lienzo liso), el recorte es el que diga la respuesta: no se comprueba.
     plan: { library: 'hosteleria', background: false, photos: 1, steps: [3, 4] },
   },
 ]);

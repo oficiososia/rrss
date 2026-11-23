@@ -55,40 +55,56 @@ describe('aviso previo al dictado', () => {
     window.localStorage.clear();
   });
 
-  it('antes de nada explica adónde va el audio y no escucha hasta que se acepta', async () => {
+  it('al abrir no hay aviso ni se escucha: el aviso sale al pulsar el micrófono por primera vez', async () => {
     renderCopilot();
+    // Para escribir no hace falta: ni aviso ni micrófono abierto.
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
+    expect(screen.getByTestId('copilot-text-input')).toBeInTheDocument();
+    expect(starts).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     const notice = screen.getByTestId('copilot-voice-notice');
     expect(notice).toHaveTextContent('servicio de voz de tu navegador');
     expect(notice).toHaveTextContent('Google');
     expect(notice).toHaveTextContent('Microsoft');
     expect(screen.getByRole('link', { name: 'Política de privacidad' })).toHaveAttribute('href', '/legal/privacidad');
     expect(starts).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('copilot-mic')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
     expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
-    expect(screen.getByTestId('copilot-mic')).toBeInTheDocument();
     expect(starts).toHaveBeenCalledTimes(1);
     // Sin «No volver a mostrar», la próxima vez se avisa otra vez.
     expect(window.localStorage.getItem(VOICE_NOTICE_KEY)).toBeNull();
   });
 
-  it('con «No volver a mostrar» no vuelve a salir y se empieza a escuchar directamente', async () => {
+  it('«Ahora no» cierra el aviso sin escuchar; se puede seguir escribiendo', async () => {
     renderCopilot();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
+    await userEvent.click(screen.getByTestId('copilot-voice-notice-cancel'));
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
+    expect(starts).not.toHaveBeenCalled();
+    expect(screen.getByTestId('copilot-text-input')).toBeInTheDocument();
+  });
+
+  it('con «No volver a mostrar» no vuelve a salir', async () => {
+    renderCopilot();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     await userEvent.click(screen.getByTestId('copilot-voice-notice-hide'));
     await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
     expect(window.localStorage.getItem(VOICE_NOTICE_KEY)).toBe('true');
     expect(starts).toHaveBeenCalledTimes(1);
   });
 
-  it('si ya se pidió no volver a mostrarlo, entra escuchando', () => {
+  it('si ya se pidió no volver a mostrarlo, el micrófono dicta sin aviso (y solo al pulsarlo)', async () => {
     window.localStorage.setItem(VOICE_NOTICE_KEY, 'true');
     renderCopilot();
+    expect(starts).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
     expect(starts).toHaveBeenCalledTimes(1);
   });
 
-  it('se puede cerrar el copiloto sin aceptar y sin que se haya escuchado nada', async () => {
+  it('se puede cerrar el copiloto sin haber escuchado nada', async () => {
     const onClose = renderCopilot();
     await userEvent.click(screen.getByTestId('copilot-close'));
     expect(onClose).toHaveBeenCalled();
