@@ -95,6 +95,7 @@ import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { imageFilesOf, type DraggedAsset } from './editor/assetDrag';
 import { assetIdsOf } from './editor/canvas/nodes';
 import { MissingAssetsNotice, useMissingAssetFrames } from './editor/missingAssets';
+import { LogoContrastNotice, useLogoContrast } from './editor/useLogoContrast';
 import type { CanvasDrop, CanvasViewProps, SafeZoneOverlay } from './editor/canvas/types';
 import { canPaste, clipboardIds, copyLayers, pasteLayers } from './editor/clipboard';
 import { discardDraft, fetchDraft, useDraftAutosave, type LoadedDraft } from './editor/drafts';
@@ -458,7 +459,16 @@ function Editor({
     }),
     [profile, brandFontFamilies],
   );
-  const logoIds = profile?.visual.logoAssetIds ?? [];
+  const logoIds = useMemo(() => profile?.visual.logoAssetIds ?? [], [profile]);
+  // Logotipo que se vea sobre su fondo (editor/useLogoContrast.tsx): la variante del kit que contrasta.
+  const logoContrast = useLogoContrast({
+    brandId: brand.id,
+    document: state.document,
+    logoIds,
+    profileReady: profileRow.isSuccess,
+    readOnly,
+    dispatch,
+  });
 
   // ── Imágenes del documento: recurso → dirección firmada ──
   const assetIdsKey = assetIdsOf(state.document).join(',');
@@ -1853,6 +1863,7 @@ function Editor({
         </div>
       )}
       <MissingAssetsNotice count={missingAssets} readOnly={readOnly} />
+      {!readOnly && <LogoContrastNotice faint={logoContrast.faint} />}
       {item.archived_at && (
         <Notice tone="warning">Está archivada: se puede ver, pero no cambiar hasta recuperarla.</Notice>
       )}
@@ -2228,7 +2239,9 @@ function Editor({
           onOpenChange={setPublishNowOpen}
           contentId={contentId}
           exportVersion={
-            (item.format === 'post' || item.format === 'carousel' || item.format === 'story') && !dirty ? exportApprovedVersion : undefined
+            (item.format === 'post' || item.format === 'carousel' || item.format === 'story') && !dirty
+              ? exportApprovedVersion
+              : undefined
           }
         />
       )}
@@ -2271,6 +2284,7 @@ function Editor({
           canDelete={canEdit}
           hasDesign={allLayers(state.document).length > 0}
           onApply={(document, template, changes) => {
+            logoContrast.adopt(document);
             dispatch({ type: 'replace', document });
             toast.success(
               changes.length > 0
