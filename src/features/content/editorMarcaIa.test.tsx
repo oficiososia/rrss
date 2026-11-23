@@ -2,14 +2,24 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
+import { openShareSheet } from '@/test/moreMenu';
+import type { UserEvent } from '@testing-library/user-event';
 import { createEmptyDocument, type ContentDocument } from './document';
 import type { CanvasViewProps } from './editor/canvas/types';
 
 // El editor con las piezas de otros bloques ya conectadas: el verificador de
-// marca (pestaña «Marca») y la IA de texto (redactar y comprobar el tono).
+// marca («Revisión de marca», en «Compartir») y la IA de texto (redactar y
+// comprobar el tono), también en «Compartir».
 
 vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
-  default: (props: CanvasViewProps) => <div data-testid="canvas-stub" data-layers={props.document.layers.length} />,
+  default: (props: CanvasViewProps) => (
+    <div
+      data-testid="canvas-stub"
+      data-layers={props.document.layers.length}
+      data-selected={props.selectedIds.join(',')}
+      data-editing={props.editingTextId ?? ''}
+    />
+  ),
 }));
 
 const EDITOR = `${BRAND_BASE}/contenidos/content-1`;
@@ -108,37 +118,43 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** Abre «Compartir» y despliega la revisión de marca. */
+async function openBrandCheck(user: UserEvent) {
+  const sheet = await openShareSheet(user);
+  await user.click(sheet.getByText('Revisión de marca'));
+  return sheet;
+}
+
 describe('Editor: comprobación de marca', () => {
-  it('la pestaña Marca da el veredicto y un hallazgo del pie lleva a su campo con el fragmento elegido', async () => {
+  it('la revisión de marca da el veredicto y un hallazgo del pie lleva a su campo con el fragmento elegido', async () => {
     const { user } = await openEditor(documentWith('Un menú barato y rico'));
-    await user.click(screen.getByRole('tab', { name: 'Marca' }));
-    const finding = await screen.findByTestId('brandcheck-finding-FORBIDDEN_PHRASE');
-    expect(screen.getByTestId('brandcheck-verdict')).toHaveAttribute('data-verdict', 'fail');
+    const sheet = await openBrandCheck(user);
+    const finding = await sheet.findByTestId('brandcheck-finding-FORBIDDEN_PHRASE');
+    expect(sheet.getByTestId('brandcheck-verdict')).toHaveAttribute('data-verdict', 'fail');
 
     await user.click(finding);
-    expect(screen.getByRole('tab', { name: 'Publicación' })).toHaveAttribute('aria-selected', 'true');
-    const caption = screen.getByTestId('copy-caption') as HTMLTextAreaElement;
+    const caption = sheet.getByTestId('copy-caption') as HTMLTextAreaElement;
     await waitFor(() => expect(caption).toHaveFocus());
     expect(caption.value.slice(caption.selectionStart, caption.selectionEnd)).toBe('barato');
   });
 
-  it('un hallazgo de una capa de texto la elige y lleva a su texto', async () => {
+  it('un hallazgo de una capa de texto cierra la hoja, la elige y abre su texto sobre el lienzo', async () => {
     const { user } = await openEditor(documentWith('Un menú rico', '#F4F4F4'));
-    await user.click(screen.getByRole('tab', { name: 'Marca' }));
-    await user.click(await screen.findByTestId('brandcheck-finding-CONTRAST_TOO_LOW'));
-    expect(screen.getByRole('tab', { name: 'Diseño' })).toHaveAttribute('aria-selected', 'true');
-    await waitFor(() => expect(screen.getByDisplayValue('Titular de otoño')).toHaveFocus());
+    const sheet = await openBrandCheck(user);
+    await user.click(await sheet.findByTestId('brandcheck-finding-CONTRAST_TOO_LOW'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Compartir' })).not.toBeInTheDocument());
+    expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-selected', 'titular');
+    expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-editing', 'titular');
   });
 });
 
 describe('Editor: IA de texto', () => {
   it('sin IA configurada en el entorno no enseña redactar ni comprobar el tono', async () => {
     const { user } = await openEditor(documentWith('Un menú rico'));
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
-    expect(screen.queryByRole('button', { name: /Redactar con IA/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: 'Marca' }));
-    await screen.findByTestId('brandcheck-verdict');
-    expect(screen.queryByTestId('ai-brand-check')).not.toBeInTheDocument();
+    const sheet = await openBrandCheck(user);
+    expect(sheet.queryByRole('button', { name: /Redactar con IA/ })).not.toBeInTheDocument();
+    await sheet.findByTestId('brandcheck-verdict');
+    expect(sheet.queryByTestId('ai-brand-check')).not.toBeInTheDocument();
   });
 
   it('redactar con IA aplica la variante elegida como un paso que se deshace', async () => {
@@ -156,9 +172,9 @@ describe('Editor: IA de texto', () => {
       },
     }));
     const { user } = await openEditor(documentWith('Texto de antes'));
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
+    await openShareSheet(user);
     await user.click(screen.getByRole('button', { name: /Redactar con IA/ }));
-    const dialog = await screen.findByRole('dialog');
+    const dialog = (await screen.findAllByRole('dialog')).find((d) => within(d).queryByLabelText(/Encargo/))!;
     await user.type(within(dialog).getByLabelText(/Encargo/), 'Menú de otoño');
     await user.click(within(dialog).getByRole('button', { name: /^Generar$/ }));
     await user.click(await within(dialog).findByRole('button', { name: 'Usar esta' }));
@@ -168,11 +184,15 @@ describe('Editor: IA de texto', () => {
     expect(screen.getByTestId('copy-alt')).toHaveValue('Plato de temporada');
     expect(screen.getByTestId('editor-dirty')).toBeInTheDocument();
     // El texto aplicado lleva la marca de contenido generado con IA (RGPD / Reglamento de IA).
-    expect(screen.getByTestId('editor-ai-label')).toHaveAttribute('title', expect.stringContaining('texto'));
+    expect(screen.getByTestId('editor-ai-label')).toHaveTextContent(/texto/);
 
+    // Deshacer (desde la cabecera, con la hoja cerrada) devuelve el texto de antes.
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Compartir' })).not.toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Deshacer' }));
-    expect(screen.getByTestId('copy-caption')).toHaveValue('Texto de antes');
-    expect(screen.queryByTestId('editor-ai-label')).not.toBeInTheDocument();
+    const sheet = await openShareSheet(user);
+    expect(sheet.getByTestId('copy-caption')).toHaveValue('Texto de antes');
+    expect(sheet.queryByTestId('editor-ai-label')).not.toBeInTheDocument();
   });
 
   it('con IA, la pestaña Marca ofrece comprobar el tono del texto que se publicaría', async () => {
@@ -190,8 +210,8 @@ describe('Editor: IA de texto', () => {
       },
     }));
     const { user } = await openEditor(documentWith('Un menú barato'));
-    await user.click(screen.getByRole('tab', { name: 'Marca' }));
-    await user.click(await screen.findByTestId('ai-brand-check-run'));
+    const sheet = await openBrandCheck(user);
+    await user.click(await sheet.findByTestId('ai-brand-check-run'));
     expect(await screen.findByTestId('ai-criterion-banned_topics')).toHaveTextContent('No cumple');
     const calls = fake.callsTo('ai-generate', 'function');
     expect(calls[calls.length - 1]!.payload).toMatchObject({

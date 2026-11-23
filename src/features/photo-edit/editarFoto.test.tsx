@@ -26,7 +26,12 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
   default: (props: CanvasViewProps) => {
     const photo = props.document.layers.find((layer) => layer.type === 'image');
     const source = photo?.type === 'image' && photo.source.kind === 'asset' ? photo.source.assetId : '';
-    return <div data-testid="canvas-stub" data-layers={props.document.layers.length} data-source={source} />;
+    return (
+      <div data-testid="canvas-stub" data-layers={props.document.layers.length} data-source={source}>
+        {props.toolbar}
+        {props.footerStart}
+      </div>
+    );
   },
 }));
 
@@ -726,9 +731,9 @@ describe('Editar foto desde el editor', () => {
     });
     const app = renderApp(`${BRAND_BASE}/contenidos/content-1`);
     await screen.findByTestId('editor-title');
-    await app.user.click(screen.getByRole('tab', { name: /Capas/ }));
+    // Se elige la foto (desde «Capas»): sus acciones están en la barra flotante y en su «⋯».
+    await app.user.click(await screen.findByTestId('editor-layers'));
     await app.user.click(await screen.findByTestId('layer-item'));
-    await app.user.click(screen.getByRole('tab', { name: 'Diseño' }));
     return { ...app, original };
   }
 
@@ -738,9 +743,12 @@ describe('Editar foto desde el editor', () => {
     const { user, original } = await openEditor();
     expect(layerSource()).toBe(ORIGINAL);
     // Sin ediciones previas no hay a qué volver.
-    expect(screen.queryByTestId('layer-restore-original')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('bar-more'));
+    await screen.findByRole('menu');
+    expect(screen.queryByTestId('menu-restore-original')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
 
-    await user.click(await screen.findByTestId('layer-edit-photo'));
+    await user.click(await screen.findByTestId('bar-edit-photo'));
     const dialog = within(await screen.findByTestId('photo-edit'));
     await dialog.findByTestId('photo-edit-preview');
     // No es una ventana emergente: es una pantalla propia, sin diálogo.
@@ -763,16 +771,20 @@ describe('Editar foto desde el editor', () => {
     await user.click(screen.getByTestId('redo'));
     expect(layerSource()).toBe(EDITED);
 
-    // «Volver a la original» desde la propia capa (también se puede deshacer).
-    await user.click(await screen.findByTestId('layer-restore-original'));
+    // «Volver a la original» desde el «⋯» de la foto (también se puede deshacer).
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-restore-original'));
     expect(layerSource()).toBe(ORIGINAL);
-    expect(screen.queryByTestId('layer-restore-original')).not.toBeInTheDocument();
+    await user.click(screen.getByTestId('bar-more'));
+    await screen.findByRole('menu');
+    expect(screen.queryByTestId('menu-restore-original')).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
     await user.click(screen.getByTestId('undo'));
     expect(layerSource()).toBe(EDITED);
     expect(fake.rows('media_assets').find((r) => r.id === ORIGINAL)).toEqual(original);
   });
 
-  it('la acción rápida «Modo retrato» del panel abre «Editar foto» en ese modo y se aplica a la capa (se deshace con Ctrl+Z)', async () => {
+  it('«Modo retrato» (en «Editar foto», que abre la barra de la foto) se aplica a la capa (se deshace con Ctrl+Z)', async () => {
     const cutout = pixels(120, 90, 0);
     for (let y = 30; y < 60; y += 1) for (let x = 40; x < 80; x += 1) cutout.data[(y * 120 + x) * 4 + 3] = 255;
     vi.spyOn(cutoutEngine, 'removeBackgroundInBrowser').mockResolvedValue({
@@ -784,12 +796,14 @@ describe('Editar foto desde el editor', () => {
       fromCache: true,
     });
     const { user } = await openEditor();
-    // El botón ya no hace un archivo a ciegas: abre la pantalla con el modo elegido.
-    expect(screen.queryByTestId('photo-blur-background')).not.toBeInTheDocument();
-    await user.click(await screen.findByTestId('photo-portrait'));
+    // El panel ya no repite el modo retrato: está en «Editar foto → Fondo».
+    expect(screen.queryByTestId('photo-portrait')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('bar-edit-photo'));
     const dialog = within(await screen.findByTestId('photo-edit'));
+    await user.click(dialog.getByRole('tab', { name: 'Fondo' }));
     await user.click(await dialog.findByTestId('photo-edit-cutout-run'));
     await dialog.findByTestId('photo-edit-backgrounds');
+    await user.click(dialog.getByTestId('photo-edit-portrait-toggle'));
     expect(dialog.getByTestId('photo-edit-portrait-toggle')).toHaveAttribute('aria-pressed', 'true');
     expect(dialog.getByTestId('photo-edit-save')).toHaveTextContent('Aplicar a la capa');
     await user.click(dialog.getByTestId('photo-edit-save'));
@@ -805,7 +819,7 @@ describe('Editar foto desde el editor', () => {
 
   it('Ctrl+Z en la pantalla de edición no toca el diseño de debajo; Esc vuelve sin guardar nada', async () => {
     const { user } = await openEditor();
-    await user.click(await screen.findByTestId('layer-edit-photo'));
+    await user.click(await screen.findByTestId('bar-edit-photo'));
     const dialog = within(await screen.findByTestId('photo-edit'));
     await dialog.findByTestId('photo-edit-preview');
     await user.keyboard('{Control>}z{/Control}');
@@ -818,7 +832,7 @@ describe('Editar foto desde el editor', () => {
 
   it('volver con cambios sin guardar pregunta antes de descartarlos', async () => {
     const { user } = await openEditor();
-    await user.click(await screen.findByTestId('layer-edit-photo'));
+    await user.click(await screen.findByTestId('bar-edit-photo'));
     const dialog = within(await screen.findByTestId('photo-edit'));
     await dialog.findByTestId('photo-edit-preview');
     await user.click(dialog.getByTestId('photo-edit-auto'));

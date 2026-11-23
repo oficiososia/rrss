@@ -3,9 +3,7 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
-  CopyPlus,
   Crop,
-  Eraser,
   Group,
   ImagePlus,
   Minus,
@@ -13,7 +11,6 @@ import {
   Plus,
   Replace,
   SlidersHorizontal,
-  Trash2,
   Ungroup,
   Unlock,
   type LucideIcon,
@@ -25,12 +22,15 @@ import { HEX_COLOR, isEmptyFrame, type Layer, type ShapeLayer, type TextLayer } 
 import type { EditorAction, LayerPatch } from './history';
 import { FALLBACK_FONTS, layerLabel } from './layers';
 
-// Barra de acciones del elemento elegido. Flota sobre el lienzo, junto a lo que
-// se ha tocado (la coloca el lienzo, `KonvaCanvas`), y ofrece solo lo propio de
-// ese elemento: para una foto, sustituirla, editarla, recortarla o quitarle el
-// fondo; para un texto, tipografía, tamaño, color y alineación; para una forma,
-// su color. Duplicar y borrar, siempre; lo demás, en «⋯». Es la misma en el
-// móvil, con botones de 40 px para el dedo.
+// Barra de acciones del elemento elegido: el ÚNICO sitio de las acciones del
+// elemento (como en Canva). Flota sobre el lienzo, junto a lo que se ha tocado
+// y sin tapar los textos (la coloca el lienzo, `KonvaCanvas`), y enseña solo lo
+// propio de ese elemento: para una foto, sustituirla, editarla y recortarla;
+// para un texto, tipografía, tamaño, color y alineación; para una forma, su
+// color. Todo lo demás (duplicar, borrar, orden, alinear, bloquear, copiar,
+// pegar, quitar el fondo, los ajustes finos) está en su «⋯» (`selectionMenu.ts`),
+// que es también el menú del botón derecho. Es la misma en el móvil, con
+// botones de 40 px para el dedo.
 
 export interface ToolbarBrandStyle {
   palette: { hex: string; name: string }[];
@@ -47,7 +47,6 @@ export interface SelectionToolbarProps {
   /** Abre «Editar foto» con la foto elegida; sin ella (foto no editable), no hay botón. */
   onEditPhoto?: () => void;
   onCropPhoto?: () => void;
-  onRemoveBackground?: () => void;
   /** Escribir en el texto elegido, sobre el lienzo. */
   onEditText: (id: string) => void;
   /** Lo que no cabe en la barra (ver `selectionMenu.ts`). */
@@ -63,7 +62,6 @@ function Tool({
   icon: Icon,
   label,
   showLabel = false,
-  wideOnly = false,
   danger = false,
   testId,
   onClick,
@@ -75,8 +73,6 @@ function Tool({
   label: string;
   /** El texto se ve en pantallas anchas (en las estrechas queda solo el icono); con `always`, siempre. */
   showLabel?: boolean | 'always';
-  /** En pantallas estrechas no cabe: se esconde (la acción sigue en «⋯» o en el panel «Diseño»). */
-  wideOnly?: boolean;
   danger?: boolean;
   testId: string;
   onClick: () => void;
@@ -91,7 +87,6 @@ function Tool({
         danger && 'text-danger',
         !showLabel && 'w-9 px-0 max-lg:w-10',
         showLabel === true && 'max-sm:w-10 max-sm:px-0',
-        wideOnly && 'max-sm:hidden',
       )}
       aria-label={label}
       title={title ?? label}
@@ -214,7 +209,7 @@ function TextTools({
       <select
         aria-label="Tipografía"
         title="Tipografía"
-        // En el móvil no cabe: la tipografía se cambia en el panel «Diseño» («⋯ → Todas las opciones»).
+        // En el móvil no cabe: la tipografía se cambia en «⋯ → Ajustes…».
         className="h-9 max-w-[8.5rem] shrink-0 rounded-md border border-border bg-surface px-1.5 text-sm text-fg max-lg:h-10 max-sm:hidden"
         value={layer.fontFamily}
         onChange={(event) => update({ fontFamily: event.target.value })}
@@ -308,7 +303,6 @@ export function SelectionToolbar({
   onPickPhoto,
   onEditPhoto,
   onCropPhoto,
-  onRemoveBackground,
   onEditText,
   menu,
 }: SelectionToolbarProps) {
@@ -374,10 +368,7 @@ export function SelectionToolbar({
         {onEditPhoto && (
           <Tool icon={SlidersHorizontal} label="Editar foto" showLabel testId="bar-edit-photo" onClick={onEditPhoto} />
         )}
-        {onCropPhoto && <Tool icon={Crop} label="Recortar" testId="bar-crop" onClick={onCropPhoto} />}
-        {onRemoveBackground && (
-          <Tool icon={Eraser} label="Quitar fondo" testId="bar-cutout" onClick={onRemoveBackground} />
-        )}
+        {onCropPhoto && <Tool icon={Crop} label="Recortar" showLabel testId="bar-crop" onClick={onCropPhoto} />}
       </>
     );
   } else if (single.type === 'text') {
@@ -397,36 +388,14 @@ export function SelectionToolbar({
   return (
     <div
       role="toolbar"
-      // «rápidas»: el panel «Diseño» tiene su propia barra «Acciones de …» y no deben llamarse igual.
-      aria-label={`Acciones rápidas de ${name}`}
+      aria-label={`Acciones de ${name}`}
       className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-border bg-surface p-1 shadow-pop [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       // Un clic en la barra no es un clic en el margen del lienzo (que quitaría la selección).
       onPointerDown={(event) => event.stopPropagation()}
       data-testid="selection-toolbar"
     >
       {tools}
-      {tools && !allLocked && <Divider />}
-      {!allLocked && (
-        <>
-          <Tool
-            icon={CopyPlus}
-            label="Duplicar"
-            title="Duplicar (Ctrl+D)"
-            // Con un texto elegido la barra va llena: en el móvil, duplicar queda en «⋯».
-            wideOnly={single?.type === 'text'}
-            testId="bar-duplicate"
-            onClick={() => dispatch({ type: 'duplicateSelection' })}
-          />
-          <Tool
-            icon={Trash2}
-            label="Borrar"
-            title="Borrar (Supr)"
-            danger
-            testId="bar-delete"
-            onClick={() => dispatch({ type: 'removeSelection' })}
-          />
-        </>
-      )}
+      {tools && <Divider />}
       <MoreMenu items={menu} label="Más acciones" testId="bar-more" size="sm" />
     </div>
   );

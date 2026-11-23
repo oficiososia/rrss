@@ -1,3 +1,5 @@
+import { screen } from '@testing-library/react';
+import type { UserEvent } from '@testing-library/user-event';
 import type { ContentItemRow, ContentStatus, ContentVersionRow, MediaAssetRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace, type Workspace } from '@/test/fixtures';
@@ -242,4 +244,19 @@ export function seedPiece(options: SeedOptions = {}): ContentDocument {
 export function draftLayers(): Layer[] | null {
   const row = fake.rows('content_drafts').find((draft) => draft.content_id === 'content-1');
   return row ? (row.data as ContentDocument).pages[0]!.layers : null;
+}
+
+/** Abre un cajón del editor (si no está ya abierto) y pulsa uno de sus botones: `add-text`, `add-rectangle`… */
+export async function addFromDrawer(
+  user: UserEvent,
+  drawer: 'elements' | 'photos' | 'uploads' | 'brand',
+  testId: string,
+): Promise<void> {
+  if (!screen.queryByTestId(`drawer-panel-${drawer}`)) await user.click(screen.getByTestId(`drawer-${drawer}`));
+  await user.click(await screen.findByTestId(testId));
+}
+
+/** Abre el panel de capas (botón «Capas» junto al zoom). */
+export async function openLayers(user: UserEvent): Promise<void> {
+  if (!screen.queryByTestId('side-panel-layers')) await user.click(screen.getByTestId('editor-layers'));
 }

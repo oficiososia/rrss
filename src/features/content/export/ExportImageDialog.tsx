@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice } from '@/components/ui';
 import { assetKeys, uploadAsset } from '@/features/library/api';
 import { cleanMessage, translateError } from '@/lib/errors';
+import { readLocal, writeLocal } from '@/lib/localStore';
 import { formatBytes } from '@/lib/utils';
 import { pageView, type ContentDocument } from '../document';
 import type { ImageLookup } from '../editor/canvas/nodes';
@@ -58,6 +59,13 @@ const STEP_LABEL: Record<Exclude<Step, 'idle' | 'done'>, string> = {
   uploading: 'Guardando en la biblioteca…',
 };
 
+/**
+ * ¿Guardar también en la biblioteca (carpeta «Exportaciones»)? Por omisión, no: descargar es descargar,
+ * y las exportaciones no deben llenar los selectores de fotos. Lo que la persona elige se recuerda
+ * siempre igual en este navegador.
+ */
+export const EXPORT_TO_LIBRARY_KEY = 'rrss.exportar.biblioteca';
+
 export function ExportImageDialog(props: ExportImageDialogProps) {
   const { document, title, contentId, orgId, brandId, version, dirty } = props;
   const queryClient = useQueryClient();
@@ -71,7 +79,13 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
   const [pixelRatio, setPixelRatio] = useState(1);
   const [customName, setCustomName] = useState<string | null>(null);
   const [download, setDownload] = useState(true);
-  const [toLibrary, setToLibrary] = useState(props.canSaveToLibrary);
+  const [toLibrary, setToLibraryState] = useState(
+    () => props.canSaveToLibrary && readLocal<boolean>(EXPORT_TO_LIBRARY_KEY, false) === true,
+  );
+  const setToLibrary = (next: boolean) => {
+    setToLibraryState(next);
+    writeLocal(EXPORT_TO_LIBRARY_KEY, next);
+  };
   const [saveFirst, setSaveFirst] = useState(true);
   const [step, setStep] = useState<Step>('idle');
   const [progress, setProgress] = useState(0);
@@ -366,7 +380,7 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
               onChange={(e) => setToLibrary(e.target.checked)}
               data-testid="export-library"
             />
-            Guardarla en la biblioteca de la marca
+            Guardarla también en la biblioteca (carpeta «Exportaciones»)
           </label>
           {!props.canSaveToLibrary && (
             <p className="text-xs text-muted">Con tu rol no puedes añadir recursos a la biblioteca.</p>

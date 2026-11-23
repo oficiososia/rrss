@@ -84,30 +84,34 @@ describe('Editor: marcos de foto', () => {
     expect(screen.getByTestId('bar-replace-photo')).toBeInTheDocument();
   });
 
-  it('el panel «Diseño» de un hueco vacío explica qué es y tiene su «Poner foto»', async () => {
+  it('un hueco vacío elegido tiene su «Poner foto» en la barra; sus ajustes explican qué es', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-foto'));
-    // El clic ya abre el selector: se cierra para ver el panel.
+    // El clic ya abre el selector: se cierra para ver la barra.
     await user.keyboard('{Escape}');
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-more-options'));
     const panel = within(screen.getByTestId('empty-frame-panel'));
     expect(panel.getByText(/Es un hueco para una foto/)).toBeInTheDocument();
     expect(panel.getByText(/no sale en la imagen/)).toBeInTheDocument();
-    await user.click(panel.getByTestId('frame-place-photo'));
+    await user.click(screen.getByTestId('bar-place-photo'));
     expect(await screen.findByRole('dialog', { name: 'Poner foto' })).toBeInTheDocument();
   });
 
-  it('«Imagen» con un hueco vacío en la página mete la foto en el hueco, no a lienzo completo encima', async () => {
+  it('una foto del cajón «Fotos» con un hueco vacío en la página va al hueco, no a lienzo completo encima', async () => {
     const { user } = await openEditor();
-    await user.click(screen.getByTestId('add-image'));
-    await pick(user, 'arroz.jpg', 'Añadir imagen');
+    await user.click(screen.getByTestId('drawer-photos'));
+    const items = await within(await screen.findByTestId('editor-photos')).findAllByTestId('photo-panel-item');
+    await user.click(items.find((item) => item.getAttribute('title') === 'arroz.jpg')!);
     expect(canvas().document.layers).toHaveLength(2);
     expect((layerOf('foto') as ImageLayer).source).toEqual({ kind: 'asset', assetId: PHOTO_B });
   });
 
-  it('sin huecos, «Imagen» añade la foto con su proporción y sin tapar el diseño', async () => {
+  it('sin huecos, una foto del cajón se añade con su proporción y sin tapar el diseño', async () => {
     const { user } = await openEditor({ layers: [text('titulo', 'Nombre del plato')] });
-    await user.click(screen.getByTestId('add-image'));
-    await pick(user, 'chuleton.jpg', 'Añadir imagen');
+    await user.click(screen.getByTestId('drawer-photos'));
+    const items = await within(await screen.findByTestId('editor-photos')).findAllByTestId('photo-panel-item');
+    await user.click(items.find((item) => item.getAttribute('title') === 'chuleton.jpg')!);
     const added = canvas().document.layers.at(-1) as ImageLayer;
     expect(added.type).toBe('image');
     // 1200 × 800 → 3:2, como mucho el 70 % del lienzo (1080 × 1350) y centrada.
@@ -117,9 +121,9 @@ describe('Editor: marcos de foto', () => {
     expect(added.y).toBeGreaterThan(0);
   });
 
-  it('las fotos de la marca están a mano en «Diseño»: tocar una rellena el hueco, sin diálogo', async () => {
+  it('las fotos de la marca están a mano en el cajón «Fotos»: tocar una rellena el hueco, sin diálogo', async () => {
     const { user } = await openEditor();
-    // Sin nada elegido: el lienzo y, debajo, las fotos de la marca.
+    await user.click(screen.getByTestId('drawer-photos'));
     const photos = within(await screen.findByTestId('editor-photos'));
     expect(photos.getByText(/Toca una foto para ponerla en el diseño/)).toBeInTheDocument();
     const items = await photos.findAllByTestId('photo-panel-item');
@@ -127,15 +131,16 @@ describe('Editor: marcos de foto', () => {
     await user.click(items.find((item) => item.getAttribute('title') === 'arroz.jpg')!);
     expect((layerOf('foto') as ImageLayer).source).toEqual({ kind: 'asset', assetId: PHOTO_B });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    // Con la foto ya puesta (y elegida), el panel es el de la foto: las fotos de la marca ya no hacen falta ahí.
+    // En una pantalla estrecha la hoja del cajón se cierra para ver cómo ha quedado.
     expect(screen.queryByTestId('editor-photos')).not.toBeInTheDocument();
   });
 
   it('con un hueco concreto elegido, la foto que se toca va a ese hueco y no al primero', async () => {
     const { user } = await openEditor({ layers: [frame('antes'), frame('despues', { y: 700 })] });
     act(() => canvas().onSelect('despues'));
+    await user.click(screen.getByTestId('drawer-photos'));
     const photos = within(await screen.findByTestId('editor-photos'));
-    expect(photos.getByText('Toca una foto para ponerla en este hueco.')).toBeInTheDocument();
+    expect(photos.getByText('Toca una foto para ponerla en el hueco elegido.')).toBeInTheDocument();
     await user.click((await photos.findAllByTestId('photo-panel-item'))[0]!);
     expect((layerOf('despues') as ImageLayer).source.kind).toBe('asset');
     expect((layerOf('antes') as ImageLayer).source).toEqual({ kind: 'empty' });

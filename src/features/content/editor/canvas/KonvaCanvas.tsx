@@ -3,9 +3,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent }
 import { hasAssetDrag, hasFileDrag, imageFilesOf, readAssetDrag } from '../assetDrag';
 import { frameAt } from '../frames';
 import { fitScale } from '../geometry';
-import { boundsOf, placeToolbar } from '../toolbarPlacement';
+import { boundsOf, placeToolbar, TEXT_WEIGHT, type ToolbarObstacle } from '../toolbarPlacement';
 import { FrameAdjustOverlay } from './FrameAdjustOverlay';
 import { describeDocument } from './nodes';
+import { cn } from '@/lib/utils';
 import { Scene } from './scene';
 import { TextEditOverlay } from './TextEditOverlay';
 import type { CanvasViewProps } from './types';
@@ -51,6 +52,8 @@ export default function KonvaCanvas({
   toolbar,
   onContextMenu,
   onDrop,
+  footerStart,
+  footerEnd,
 }: CanvasViewProps) {
   const areaRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -231,6 +234,13 @@ export default function KonvaCanvas({
     const ids = new Set(selectedIds);
     return boundsOf(document.layers.filter((layer) => ids.has(layer.id) && layer.visible));
   }, [document.layers, selectedIds]);
+  // Los textos que no están elegidos: la barra busca sitio sin taparlos (el titular de una plantilla…).
+  const textBounds = useMemo(() => {
+    const ids = new Set(selectedIds);
+    return document.layers
+      .filter((layer) => layer.type === 'text' && layer.visible && !ids.has(layer.id))
+      .map((layer) => boundsOf([layer])!);
+  }, [document.layers, selectedIds]);
 
   const positionBar = () => {
     const bar = barRef.current;
@@ -248,10 +258,18 @@ export default function KonvaCanvas({
       right: Math.min(areaBox.width, dx + selectionBounds.right * scale),
       bottom: Math.min(areaBox.height, dy + selectionBounds.bottom * scale),
     };
+    const obstacles: ToolbarObstacle[] = textBounds.map((box) => ({
+      left: dx + box.left * scale,
+      top: dy + box.top * scale,
+      right: dx + box.right * scale,
+      bottom: dy + box.bottom * scale,
+      weight: TEXT_WEIGHT,
+    }));
     const place = placeToolbar(
       target,
       { width: bar.offsetWidth, height: bar.offsetHeight },
       { width: areaBox.width, height: areaBox.height },
+      obstacles,
     );
     bar.style.left = `${place.left}px`;
     bar.style.top = `${place.top}px`;
@@ -278,7 +296,7 @@ export default function KonvaCanvas({
     };
     // `positionBar` lee las medidas del momento.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showBar, selectionBounds, scale]);
+  }, [showBar, selectionBounds, textBounds, scale]);
 
   // ── Soltar una foto de la biblioteca o archivos del dispositivo ──
   const accepts = (event: DragEvent) =>
@@ -328,7 +346,9 @@ export default function KonvaCanvas({
       <div ref={areaRef} className="relative min-h-0 flex-1">
         <div
           ref={frameRef}
-          className="absolute inset-0 flex overflow-auto"
+          // En pantallas anchas queda una franja libre encima del documento: ahí va la barra de lo elegido
+          // cuando el elemento llega arriba del todo (una foto a sangre), sin tapar nada.
+          className="absolute inset-x-0 bottom-0 top-0 flex overflow-auto lg:top-14"
           // El margen alrededor del documento también quita la selección.
           onPointerDown={(event) => event.target === event.currentTarget && callbacks.current.onSelect(null)}
           onDragOver={onDragOver}
@@ -403,45 +423,54 @@ export default function KonvaCanvas({
           </div>
         )}
       </div>
-      <div
-        className="flex shrink-0 items-center justify-center gap-1 pt-1"
-        role="group"
-        aria-label="Zoom del lienzo"
-        data-testid="zoom-controls"
-      >
-        <button
-          type="button"
-          className={zoomButton}
-          aria-label="Alejar"
-          title="Alejar"
-          disabled={!zoomed}
-          onClick={() => setZoom(clampZoom(zoom / ZOOM_STEP))}
-          data-testid="zoom-out"
+      {/* Fila de abajo: lo que pone el editor a los lados (capas, zonas seguras, copiloto) y el zoom en medio.
+          En pantallas estrechas el zoom va con dos dedos: solo sale «ajustar» si se ha acercado. */}
+      <div className="flex shrink-0 items-center gap-1 pt-1" data-testid="canvas-footer">
+        <div className="flex min-w-0 flex-1 items-center gap-1">{footerStart}</div>
+        <div
+          className="flex shrink-0 items-center justify-center gap-1"
+          role="group"
+          aria-label="Zoom del lienzo"
+          data-testid="zoom-controls"
         >
-          <Minus className="h-4 w-4" aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="flex h-8 min-w-[4.5rem] items-center justify-center gap-1 rounded-md px-2 text-xs text-muted hover:bg-surface hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-          aria-label={zoomed ? 'Ajustar el lienzo a la ventana' : 'El lienzo se ve entero'}
-          title="Ajustar el lienzo a la ventana. La rueda del ratón acerca y aleja; con Espacio pulsado, arrastrar mueve la vista."
-          onClick={() => setZoom(1)}
-          data-testid="zoom-fit"
-        >
-          <Maximize className="h-3.5 w-3.5" aria-hidden />
-          <span data-testid="zoom-value">{percent} %</span>
-        </button>
-        <button
-          type="button"
-          className={zoomButton}
-          aria-label="Acercar"
-          title="Acercar"
-          disabled={zoom >= MAX_ZOOM}
-          onClick={() => setZoom(clampZoom(zoom * ZOOM_STEP))}
-          data-testid="zoom-in"
-        >
-          <Plus className="h-4 w-4" aria-hidden />
-        </button>
+          <button
+            type="button"
+            className={cn(zoomButton, 'max-lg:hidden')}
+            aria-label="Alejar"
+            title="Alejar"
+            disabled={!zoomed}
+            onClick={() => setZoom(clampZoom(zoom / ZOOM_STEP))}
+            data-testid="zoom-out"
+          >
+            <Minus className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'flex h-8 min-w-[4.5rem] items-center justify-center gap-1 rounded-md px-2 text-xs text-muted hover:bg-surface hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+              !zoomed && 'max-lg:hidden',
+            )}
+            aria-label={zoomed ? 'Ajustar el lienzo a la ventana' : 'El lienzo se ve entero'}
+            title="Ajustar el lienzo a la ventana. La rueda del ratón acerca y aleja; con Espacio pulsado, arrastrar mueve la vista."
+            onClick={() => setZoom(1)}
+            data-testid="zoom-fit"
+          >
+            <Maximize className="h-3.5 w-3.5" aria-hidden />
+            <span data-testid="zoom-value">{percent} %</span>
+          </button>
+          <button
+            type="button"
+            className={cn(zoomButton, 'max-lg:hidden')}
+            aria-label="Acercar"
+            title="Acercar"
+            disabled={zoom >= MAX_ZOOM}
+            onClick={() => setZoom(clampZoom(zoom * ZOOM_STEP))}
+            data-testid="zoom-in"
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1">{footerEnd}</div>
       </div>
     </div>
   );

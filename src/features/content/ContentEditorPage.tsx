@@ -1,34 +1,23 @@
 import {
   Archive,
   ArchiveRestore,
-  CalendarPlus,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
-  Circle,
   CloudOff,
-  Download,
   History,
-  Image as ImageIcon,
+  Layers,
   LayoutTemplate,
   Mic,
   NotebookPen,
   PencilLine,
   Redo2,
-  ScanEye,
-  Save,
-  Send,
-  SendHorizontal,
+  Ruler,
   SearchX,
+  SendHorizontal,
   Share2,
-  Sparkles,
-  Square,
-  Stamp,
   ShieldAlert,
-  Type,
   Undo2,
 } from 'lucide-react';
-import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   lazy,
@@ -50,36 +39,21 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  MenuContent,
-  MenuItem,
-  MenuSeparator,
   Notice,
   MoreMenu,
   Spinner,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
   type MoreAction,
   type MoreMenuItem,
 } from '@/components/ui';
 import { aiVoiceCopilotEnabled } from '@/config/app';
 import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
-import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
 import { useImageAgencyBlock } from '@/features/ai/imageApi';
 import { nearestImageRatio } from '@/features/ai/useAiImage';
-import {
-  canEditPhoto,
-  canEditWithAi,
-  useAiEditOptions,
-  useOriginalAsset,
-  useSaveEdit,
-} from '@/features/photo-edit/api';
+import { canEditPhoto, useOriginalAsset, useSaveEdit } from '@/features/photo-edit/api';
 import { canRemoveBackground, describeRemovalError } from '@/features/photo-edit/cutout/remover';
 import { runQuickEdit } from '@/features/photo-edit/quickEdit';
 import { PhotoEditScreen } from '@/features/photo-edit/PhotoEditScreen';
-import type { PhotoToolsContext } from './editor/panels/PhotoPanel';
 import { AskAgencyButton, ContentRequestOrigin } from '@/features/requests/ContentRequestPanel';
 import { useActiveProfile } from '@/features/brand/api';
 import { orderFontOptions } from '@/features/brand/fonts';
@@ -89,6 +63,8 @@ import type { FindingTarget } from '@/features/brandcheck/types';
 import { parseProfile } from '@/features/brand/profile';
 import { assetKeys, previewPath, uploadAsset, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { useBrand, useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
+import type { MediaAssetRow } from '@/lib/database.types';
 import type { ContentStatus } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import {
@@ -114,7 +90,7 @@ import {
   type ContentDocument,
   type DocumentIssue,
 } from './document';
-import { ImagePickerDialog, LogoPickerDialog } from './editor/AssetPickerDialog';
+import { ImagePickerDialog } from './editor/AssetPickerDialog';
 import { BRAND_CHECK_PANEL } from './editor/brandCheckSlot';
 import { imageFilesOf, type DraggedAsset } from './editor/assetDrag';
 import { assetIdsOf } from './editor/canvas/nodes';
@@ -124,10 +100,7 @@ import { canPaste, clipboardIds, copyLayers, pasteLayers } from './editor/clipbo
 import { discardDraft, fetchDraft, useDraftAutosave, type LoadedDraft } from './editor/drafts';
 import { emptyFramesOf, frameToFill, newPhotoLayer, replacePhotoPatch } from './editor/frames';
 import { activeLayers, activePageIndex, editorReducer, initEditor, type EditorAction } from './editor/history';
-import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
-import { MultiSelectionPanel } from './editor/panels/ArrangeControls';
-import { BrandPhotos } from './editor/panels/BrandPhotos';
 import { CropDialog } from './editor/panels/CropDialog';
 import { PointMenu } from './editor/PointMenu';
 import { selectionMenuItems } from './editor/selectionMenu';
@@ -137,7 +110,18 @@ import { LayersPanel } from './editor/panels/LayersPanel';
 import { PageStrip } from './editor/panels/PageStrip';
 import { PropertiesPanel, type BrandStyle } from './editor/panels/PropertiesPanel';
 import { PieceSettingsDialog } from './editor/PieceSettingsDialog';
-import { NetworkPreviewDialog } from './editor/preview/NetworkPreviewDialog';
+import { NetworkPreview } from './editor/preview/NetworkPreview';
+import {
+  BrandDrawer,
+  EditorPanel,
+  EditorRail,
+  ElementsDrawer,
+  PhotosDrawer,
+  UploadsDrawer,
+} from './editor/rail/EditorRail';
+import { DRAWER_TITLE, type DrawerId } from './editor/rail/drawers';
+import { ShareSheet, type ShareAction } from './editor/share/ShareSheet';
+import { useWideScreen } from './editor/useWideScreen';
 import { SaveVersionDialog } from './editor/SaveVersionDialog';
 import { imageUrlOf, mainImageLayer, useImagePalette } from './editor/useImagePalette';
 import { VersionsDialog } from './editor/VersionsDialog';
@@ -152,16 +136,10 @@ import { exportForPublishing } from './export/exportForPublishing';
 import { contentPaths, networkLabel, targetLabel } from './labels';
 import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
 import { safeZoneFor } from './safeZones';
-import {
-  editorPrimaryAction,
-  STATUS_LABEL,
-  STATUS_TONE,
-  statusActions,
-  statusChangedMessage,
-  type StatusAction,
-} from './status';
+import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage, type StatusAction } from './status';
 import { useFeature, useTextTask } from '@/features/platform/integrations/useFeature';
 import { useWorkspaceMode } from '@/layout/workspace';
+import type { StickerKind } from './editor/canvas/stickers';
 import { cn } from '@/lib/utils';
 
 // El lienzo (y Konva con él) se descarga aparte, solo al abrir el editor.
@@ -187,7 +165,7 @@ function startingDocument(spec: NetworkFormatSpec | undefined): ContentDocument 
 /** Cambios de estado que hacen avanzar la pieza (el resto la devuelven atrás). */
 const FORWARD_STATUSES = new Set<ContentStatus>(['in_review', 'approved']);
 
-/** Campo del panel «Publicación» al que lleva cada parte del texto señalada por el verificador. */
+/** Campo de la hoja «Compartir» al que lleva cada parte del texto señalada por el verificador. */
 const COPY_FIELD: Partial<Record<FindingTarget['part'], string>> = {
   caption: 'copy-caption',
   hashtags: 'copy-hashtags',
@@ -322,7 +300,20 @@ function Editor({
   /** Lo último todavía no está guardado en ningún sitio (ni como versión ni como borrador). */
   const unsaved = dirty && autosave.status !== 'saved';
 
-  const [panel, setPanel] = useState('layer');
+  /** Cajón abierto a la izquierda del lienzo (en el móvil, hoja baja), o ninguno. */
+  const [drawer, setDrawer] = useState<Exclude<DrawerId, 'templates'> | null>(null);
+  /**
+   * Panel a la derecha (en el móvil, hoja baja): los ajustes de lo elegido (se va al soltarlo), las
+   * capas o el tamaño y el fondo del lienzo. Solo se abre a petición: no hay panel fijo.
+   */
+  const [side, setSide] = useState<'layers' | 'canvas' | null>(null);
+  /** Capa cuyos ajustes están abiertos («⋯ → Ajustes…»): el panel se va en cuanto deja de ser lo elegido. */
+  const [settingsFor, setSettingsFor] = useState<string | null>(null);
+  const wide = useWideScreen();
+  /** Hoja «Compartir»: el único camino para sacar la pieza. */
+  const [shareOpen, setShareOpen] = useState(false);
+  /** Lo subido (o creado con IA) desde el cajón «Subidas» en esta sesión, lo último primero. */
+  const [uploadedIds, setUploadedIds] = useState<string[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveIssues, setSaveIssues] = useState<DocumentIssue[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -332,17 +323,14 @@ function Editor({
   }, [searchParams, setSearchParams]);
   const [publishNowOpen, setPublishNowOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [imagePicker, setImagePicker] = useState(false);
-  const [logoPicker, setLogoPicker] = useState(false);
-  const [imageAi, setImageAi] = useState(false);
   const [photoEditing, setPhotoEditing] = useState(false);
   const [photoEditTab, setPhotoEditTab] = useState<'enhance' | 'ai' | 'portrait'>('enhance');
   const [templateOpen, setTemplateOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
-  /** En pantallas estrechas, los paneles son una hoja inferior que se abre con las pestañas. */
-  const [sheetOpen, setSheetOpen] = useState(false);
   // Un borrador empezado sobre una versión anterior: otra persona guardó después. Se dice igual que un conflicto.
-  const [conflict, setConflict] = useState(() => Boolean(resumed && resumed.baseVersion !== initial.item.current_version));
+  const [conflict, setConflict] = useState(() =>
+    Boolean(resumed && resumed.baseVersion !== initial.item.current_version),
+  );
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [pendingRestore, setPendingRestore] = useState<LoadedVersion | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
@@ -350,12 +338,9 @@ function Editor({
   /** Texto que se está escribiendo directamente sobre el lienzo. */
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [showSafeZone, setShowSafeZone] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLElement>(null);
-  const textRef = useRef<HTMLTextAreaElement>(null);
-  const [focusText, setFocusText] = useState(0);
   /** Campo del texto de la publicación que hay que enfocar (al pulsar un hallazgo del verificador). */
   const [focusCopy, setFocusCopy] = useState<{ field: string; range?: FindingTarget['range']; n: number } | null>(null);
   // Con la marca en modo agencia no se redacta con el servicio de IA: se pide a la agencia.
@@ -364,6 +349,8 @@ function Editor({
   const brandCheckTask = useTextTask('brand.check');
   const copilotTask = useTextTask('editor.copilot');
   const captionAi = captionTask && brand.ai_mode !== 'agency';
+  // Autogestión: sin paso de aprobación a la vista (ver «Compartir»). Agencia: el flujo de siempre.
+  const { selfManaged } = useWorkMode();
   const brandCheckAi = brandCheckTask && brand.ai_mode !== 'agency';
   // La imagen con IA es otro servicio, independiente del texto: depende solo de su interruptor.
   const aiImageOn = useFeature('aiImage');
@@ -400,6 +387,28 @@ function Editor({
     stateRef.current = editorReducer(stateRef.current, action);
     dispatch(action);
     return stateRef.current;
+  };
+
+  const openDrawer = (id: DrawerId) => {
+    if (id === 'templates') {
+      setTemplateOpen(true);
+      return;
+    }
+    setDrawer((open) => (open === id ? null : id));
+    if (!wide) {
+      setSide(null);
+      setSettingsFor(null);
+    }
+  };
+  const openSide = (panel: 'layers' | 'canvas') => {
+    setSide((open) => (open === panel ? null : panel));
+    setSettingsFor(null);
+    if (!wide) setDrawer(null);
+  };
+  const openSettings = (layerId: string) => {
+    setSettingsFor(layerId);
+    setSide(null);
+    if (!wide) setDrawer(null);
   };
 
   // Página activa: la que se ve en el lienzo y la que cambian las órdenes de capas.
@@ -447,7 +456,13 @@ function Editor({
   const assetIds = useMemo(() => (assetIdsKey ? assetIdsKey.split(',') : []), [assetIdsKey]);
   const assets = useAssetsByIds(brand.id, assetIds);
   // Fotos y logotipos borrados de la biblioteca: pasan a ser marcos vacíos «Poner foto» (editor/missingAssets.tsx).
-  const missingAssets = useMissingAssetFrames({ document: state.document, assetIds, found: assets.data, readOnly, dispatch });
+  const missingAssets = useMissingAssetFrames({
+    document: state.document,
+    assetIds,
+    found: assets.data,
+    readOnly,
+    dispatch,
+  });
   const storagePaths = useMemo(() => (assets.data ?? []).map((a) => a.storage_path).sort(), [assets.data]);
   const signed = useSignedUrls(storagePaths);
   const images = useMemo(() => {
@@ -487,41 +502,12 @@ function Editor({
     return row && canEditPhoto(row) ? { layerId: selected.id, row, url: images.get(row.id) } : null;
   }, [selected, assets.data, images]);
 
-  // Ediciones de foto de la capa elegida que crean una foto nueva (quitar el fondo…) y, si el
-  // servidor tiene IA para ello, «Cambiar el fondo con IA». Sin IA configurada, ese botón no sale.
   // «Volver a la original»: la foto de la que sale la de la capa, si es una edición y la original sigue en la biblioteca.
   const originalQuery = useOriginalAsset(brand.id, editablePhoto?.row ?? null);
   const originalPhoto = useMemo(() => {
     if (!editablePhoto) return null;
     return originalQuery.data ? { layerId: editablePhoto.layerId, assetId: originalQuery.data.id } : null;
   }, [editablePhoto, originalQuery.data]);
-  const aiPhotoOptions = useAiEditOptions(brand.id, Boolean(editablePhoto) && canEditWithAi(editablePhoto!.row));
-  const aiBackgroundAvailable = Boolean(
-    aiPhotoOptions.data?.some((choice) => choice.operation === 'replace_background'),
-  );
-  const photoTools: PhotoToolsContext | undefined = editablePhoto
-    ? {
-        row: editablePhoto.row,
-        url: editablePhoto.url,
-        onUseResult: (row, fit) =>
-          dispatch({
-            type: 'update',
-            id: editablePhoto.layerId,
-            patch: { source: { kind: 'asset', assetId: row.id }, fit },
-          }),
-        onPortrait: () => {
-          setPhotoEditTab('portrait');
-          setPhotoEditing(true);
-        },
-        onAiBackground:
-          aiBackgroundAvailable && editablePhoto.url
-            ? () => {
-                setPhotoEditTab('ai');
-                setPhotoEditing(true);
-              }
-            : undefined,
-      }
-    : undefined;
 
   // «Quita el fondo» dicho al copiloto: lo mismo que el botón del panel de la foto.
   useEffect(() => {
@@ -531,8 +517,14 @@ function Editor({
     const notice = toast.loading('Quitando el fondo…');
     runQuickEdit({ asset: row, url, edit: { kind: 'cutout' }, save: (input) => saveEdit.mutateAsync(input) }).then(
       (result) => {
-        dispatch({ type: 'update', id: layerId, patch: { source: { kind: 'asset', assetId: result.id }, fit: 'contain' } });
-        toast.success('Fondo quitado. La foto original sigue en la biblioteca y se deshace con Ctrl+Z.', { id: notice });
+        dispatch({
+          type: 'update',
+          id: layerId,
+          patch: { source: { kind: 'asset', assetId: result.id }, fit: 'contain' },
+        });
+        toast.success('Fondo quitado. La foto original sigue en la biblioteca y se deshace con Ctrl+Z.', {
+          id: notice,
+        });
       },
       (error: unknown) => toast.error(describeRemovalError(error) || translateError(error), { id: notice }),
     );
@@ -571,18 +563,11 @@ function Editor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // El foco se pone en el siguiente fotograma: si a la vez cambia la pestaña, su
-  // contenido se monta después de este efecto.
-  useEffect(() => {
-    if (!focusText) return;
-    const frame = requestAnimationFrame(() => textRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [focusText]);
-
+  // El foco se pone en el siguiente fotograma: el campo está en la hoja «Compartir», que se pinta en un portal.
   useEffect(() => {
     if (!focusCopy) return;
     const frame = requestAnimationFrame(() => {
-      const field = rootRef.current?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      const field = window.document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
         `[data-testid="${focusCopy.field}"]`,
       );
       if (!field) return;
@@ -602,43 +587,36 @@ function Editor({
     return tone && paletteAssetId ? new Map([[paletteAssetId, tone]]) : undefined;
   }, [palette, paletteAssetId]);
 
-  /** Al pulsar un hallazgo del verificador: elegir la capa o llevar al campo señalado. */
+  /** Al pulsar un hallazgo del verificador: elegir la capa (se cierra la hoja para verla) o llevar al campo señalado. */
   function selectTarget(target: FindingTarget) {
     if (target.part === 'textLayer' && target.layerId) {
-      dispatch({ type: 'select', id: target.layerId, exact: true });
-      setPanel('layer');
-      setFocusText((n) => n + 1);
+      setShareOpen(false);
+      onEditText(target.layerId);
       return;
     }
     if (target.part === 'image' && paletteLayer) {
+      setShareOpen(false);
       dispatch({ type: 'select', id: paletteLayer.id });
-      setPanel('layer');
       return;
     }
     const field = COPY_FIELD[target.part];
-    if (field) {
-      setPanel('copy');
-      setFocusCopy((prev) => ({ field, range: target.range, n: (prev?.n ?? 0) + 1 }));
-    }
+    if (field) setFocusCopy((prev) => ({ field, range: target.range, n: (prev?.n ?? 0) + 1 }));
   }
 
   // ── Lienzo (el envoltorio guarda estas funciones en una referencia: no hace falta memorizarlas) ──
-  /** Quita la selección y enseña las opciones del documento (proporción, fondo) en el panel «Diseño». */
+  /** Quita la selección (y, con ella, sus ajustes). */
   const deselect = () => {
     dispatch({ type: 'select', id: null });
-    setPanel('layer');
   };
   const onSelect: CanvasViewProps['onSelect'] = (id, options) =>
     id === null ? deselect() : dispatch({ type: 'select', id, toggle: options?.toggle });
   const onSelectMany: CanvasViewProps['onSelectMany'] = (ids, additive) =>
     dispatch({ type: 'selectMany', ids, additive });
   const onChange: CanvasViewProps['onChange'] = (changes) => dispatch({ type: 'updateMany', changes });
-  /** Doble clic o Intro en un texto: se escribe encima del lienzo. Sin permiso de edición, se enseña su campo. */
+  /** Doble clic o Intro en un texto: se escribe encima del lienzo (sin permiso de edición, solo se elige). */
   const onEditText = (id: string) => {
     dispatch({ type: 'select', id, exact: true });
-    setPanel('layer');
-    if (readOnly) setFocusText((n) => n + 1);
-    else setEditingTextId(id);
+    if (!readOnly) setEditingTextId(id);
   };
   const onTextCommit: CanvasViewProps['onTextCommit'] = (id, text) => {
     setEditingTextId(null);
@@ -658,7 +636,10 @@ function Editor({
    * punto, al marco vacío elegido o al primero vacío de la página; si no hay marcos, es una capa nueva
    * (a lienzo completo solo si la página está vacía: encima de un diseño entra más pequeña, sin taparlo).
    */
-  function placePhoto(asset: DraggedAsset, target: { frameId?: string | null; at?: { x: number; y: number } | null } = {}) {
+  function placePhoto(
+    asset: DraggedAsset,
+    target: { frameId?: string | null; at?: { x: number; y: number } | null } = {},
+  ) {
     const current = stateRef.current;
     const pageLayers = activeLayers(current);
     const frame = target.frameId
@@ -669,7 +650,6 @@ function Editor({
     if (frame?.type === 'image') {
       run({ type: 'update', id: frame.id, patch: replacePhotoPatch(asset.id) });
       run({ type: 'select', id: frame.id, exact: true });
-      setPanel('layer');
       return;
     }
     if (pageLayers.length >= MAX_LAYERS) {
@@ -685,11 +665,13 @@ function Editor({
           ? newImageLayer(size, everything, asset)
           : newPhotoLayer(size, everything, asset, target.at ?? undefined),
     });
-    setPanel('layer');
   }
 
   /** Sube fotos del dispositivo a la biblioteca de la marca y las pone en el diseño (soltar o pegar). */
-  async function uploadAndPlace(files: File[], target: { frameId?: string | null; at?: { x: number; y: number } | null } = {}) {
+  async function uploadAndPlace(
+    files: File[],
+    target: { frameId?: string | null; at?: { x: number; y: number } | null } = {},
+  ) {
     if (files.length === 0) return;
     const notice = toast.loading(
       files.length === 1 ? 'Subiendo la foto a la biblioteca…' : `Subiendo ${files.length} fotos a la biblioteca…`,
@@ -732,7 +714,7 @@ function Editor({
     }
     run({ type: 'select', id, exact: true });
     if (layer.fit !== 'cover') {
-      toast.message('Para moverla dentro del marco, pon su encaje en «Llenar» (panel Diseño).');
+      toast.message('Para moverla dentro del marco, pon su encaje en «Llenar» (⋯ → Ajustes…).');
       return;
     }
     // Toda la sesión de encuadre es un solo paso de deshacer.
@@ -788,6 +770,59 @@ function Editor({
     document.addEventListener('paste', listener);
     return () => document.removeEventListener('paste', listener);
   }, []);
+
+  // ── Guardar, restaurar y estados ──
+  function handleConflictOr(error: unknown) {
+    if (isVersionConflict(error)) {
+      setConflict(true);
+      toast.error('Otra persona guardó una versión más reciente. Tus cambios siguen aquí.');
+    } else {
+      toast.error(translateError(error));
+    }
+  }
+
+  /**
+   * Guarda una versión nueva. Devuelve su número, o null si no se ha podido guardar (ya se ha avisado).
+   * Con `showIssues`, si el diseño no se puede guardar se abre el diálogo de guardar con los motivos.
+   */
+  function save(
+    note: string,
+    expected = expectedVersion,
+    showIssues = false,
+    document = state.document,
+  ): Promise<number | null> {
+    setSaveIssues([]);
+    return mutations.saveVersion.mutateAsync({ contentId, document, note, expectedVersion: expected }).then(
+      (row) => {
+        setBaseline(JSON.stringify(document));
+        setExpectedVersion(row.version);
+        setConflict(false);
+        setSaveOpen(false);
+        toast.success(`Versión ${row.version} guardada`);
+        return row.version;
+      },
+      (error: unknown) => {
+        if (error instanceof DocumentError) {
+          setSaveIssues(error.issues.length ? error.issues : [{ path: '', message: error.message }]);
+          if (showIssues) setSaveOpen(true);
+          return null;
+        }
+        setSaveOpen(false);
+        handleConflictOr(error);
+        return null;
+      },
+    );
+  }
+
+  /** «Guardar versión» (botón o Ctrl+S): guarda al momento, sin preguntar nada. La nota, opcional, está en «⋯». */
+  function saveNow() {
+    if (mutations.saveVersion.isPending) return;
+    if (JSON.stringify(stateRef.current.document) === baseline && expectedVersion > 0) {
+      toast.message('No hay cambios que guardar.');
+      return;
+    }
+    void save('', undefined, true, stateRef.current.document);
+  }
 
   // ── Teclado: deshacer, rehacer, guardar y, con una capa elegida, mover, borrar y soltar ──
   // Se escucha en el documento y no solo en el editor: tras cerrar un diálogo (elegir o editar una foto)
@@ -885,59 +920,6 @@ function Editor({
     return () => document.removeEventListener('keydown', listener);
   }, []);
 
-  // ── Guardar, restaurar y estados ──
-  function handleConflictOr(error: unknown) {
-    if (isVersionConflict(error)) {
-      setConflict(true);
-      toast.error('Otra persona guardó una versión más reciente. Tus cambios siguen aquí.');
-    } else {
-      toast.error(translateError(error));
-    }
-  }
-
-  /**
-   * Guarda una versión nueva. Devuelve su número, o null si no se ha podido guardar (ya se ha avisado).
-   * Con `showIssues`, si el diseño no se puede guardar se abre el diálogo de guardar con los motivos.
-   */
-  function save(
-    note: string,
-    expected = expectedVersion,
-    showIssues = false,
-    document = state.document,
-  ): Promise<number | null> {
-    setSaveIssues([]);
-    return mutations.saveVersion.mutateAsync({ contentId, document, note, expectedVersion: expected }).then(
-      (row) => {
-        setBaseline(JSON.stringify(document));
-        setExpectedVersion(row.version);
-        setConflict(false);
-        setSaveOpen(false);
-        toast.success(`Versión ${row.version} guardada`);
-        return row.version;
-      },
-      (error: unknown) => {
-        if (error instanceof DocumentError) {
-          setSaveIssues(error.issues.length ? error.issues : [{ path: '', message: error.message }]);
-          if (showIssues) setSaveOpen(true);
-          return null;
-        }
-        setSaveOpen(false);
-        handleConflictOr(error);
-        return null;
-      },
-    );
-  }
-
-  /** «Guardar versión» (botón o Ctrl+S): guarda al momento, sin preguntar nada. La nota, opcional, está en «⋯». */
-  function saveNow() {
-    if (mutations.saveVersion.isPending) return;
-    if (JSON.stringify(stateRef.current.document) === baseline && expectedVersion > 0) {
-      toast.message('No hay cambios que guardar.');
-      return;
-    }
-    void save('', undefined, true, stateRef.current.document);
-  }
-
   /** Tras un conflicto: guardar lo mío encima de la última versión (la otra sigue en el historial). */
   async function saveOverLatest() {
     try {
@@ -1026,26 +1008,51 @@ function Editor({
   }
 
   /**
-   * Antes de publicar o programar desde el editor: deja la pieza guardada y aprobada. Solo se llama
-   * cuando la persona puede aprobar; lo dice el propio botón («Aprobar y publicar ahora…»).
+   * Antes de publicar o programar desde el editor: deja la pieza guardada y aprobada, con los estados
+   * que exige la base de datos (set_content_status: se aprueba un borrador o algo en revisión; una idea
+   * pasa antes a borrador). Solo se llama cuando la persona puede aprobar. En modo agencia lo dice el
+   * propio botón («Aprobar y publicar ahora»); en autogestión no hay paso de aprobación a la vista.
    */
   async function approveForPublishing(): Promise<boolean> {
+    const before = expectedVersion;
     const version = await ensureVersion();
     if (version === null) return false;
-    // Guardar una versión nueva retira la aprobación: se aprueba la que se va a publicar.
-    if (item.status === 'approved' && !dirty) return true;
+    // Guardar una versión nueva retira la aprobación (y saca de «idea»): se aprueba la que se va a publicar.
+    const saved = version !== before;
+    if (item.status === 'approved' && !saved) return true;
+    if (item.status === 'idea' && !saved) {
+      const draft = await changeStatus('draft', version, true);
+      if (!draft) return false;
+    }
     const row = await changeStatus('approved', version, true);
     return row?.status === 'approved';
   }
 
   async function openPublishNow() {
+    setShareOpen(false);
     if (needsApproval && !(await approveForPublishing())) return;
     setPublishNowOpen(true);
   }
 
   async function openSchedule() {
+    setShareOpen(false);
     if (needsApproval && !(await approveForPublishing())) return;
     setScheduleOpen(true);
+  }
+
+  /** «Copiar el texto»: el pie con sus hashtags, tal como se publicaría. */
+  async function copyText() {
+    const text = publishedText(state.document.copy.caption, state.document.copy.hashtags).trim();
+    if (!text) {
+      toast.message('Todavía no hay texto de la publicación que copiar.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Texto copiado: pégalo donde lo vayas a publicar.');
+    } catch {
+      toast.error('El navegador no ha dejado copiar. Selecciona el texto en el campo y cópialo a mano.');
+    }
   }
 
   function toggleArchive() {
@@ -1139,7 +1146,6 @@ function Editor({
       }
       const assetId = layer.source.assetId;
       run({ type: 'select', id: layerId, exact: true });
-      setPanel('layer');
       if (flow === 'replace') {
         setReplaceLayerId(layerId);
         return null;
@@ -1163,10 +1169,91 @@ function Editor({
 
   const canvas = state.document.canvas;
   const full = layers.length >= MAX_LAYERS;
+  const fullNote = `Has llegado al máximo de ${MAX_LAYERS} capas${state.document.pages.length > 1 ? ' en esta página' : ''}.`;
   /** Huecos de foto todavía vacíos (de todas las páginas): no salen en la imagen. */
   const emptyFrames = useMemo(() => emptyFramesOf(state.document), [state.document]);
+  /** Ir al primer hueco vacío (desde la cabecera o desde «Compartir»). */
+  const goToEmptyFrame = () => {
+    const first = emptyFrames[0];
+    if (!first) return;
+    setShareOpen(false);
+    run({ type: 'selectPage', index: first.page });
+    run({ type: 'select', id: first.layer.id, exact: true });
+  };
+
+  // ── Añadir (cajones) ──
+  const addText = (kind: 'heading' | 'body', fontFamily = brandStyle.fonts[0]) => {
+    if (full) return void toast.error(fullNote);
+    const layer = newTextLayer(canvas, everyLayer, { fontFamily, color: brandStyle.palette[0]?.hex });
+    dispatch({
+      type: 'add',
+      layer:
+        kind === 'heading'
+          ? {
+              ...layer,
+              text: 'Titular',
+              fontSize: Math.round(layer.fontSize * 1.6),
+              height: Math.round(layer.height * 1.6),
+              fontWeight: 700,
+            }
+          : layer,
+    });
+    if (!wide) setDrawer(null);
+  };
+  const addShape = (shape: 'rectangle' | 'ellipse' | StickerKind) => {
+    if (full) return void toast.error(fullNote);
+    dispatch({ type: 'add', layer: newShapeLayer(canvas, everyLayer, shape, brandStyle.palette[1]?.hex) });
+    if (!wide) setDrawer(null);
+  };
+  const addLogo = (asset: MediaAssetRow) => {
+    if (full) return void toast.error(fullNote);
+    dispatch({
+      type: 'add',
+      layer: newLogoLayer(canvas, everyLayer, {
+        id: asset.id,
+        name: asset.file_name,
+        width: asset.width,
+        height: asset.height,
+      }),
+    });
+    if (!wide) setDrawer(null);
+  };
+  /** Una foto del cajón: al hueco elegido, al primero vacío o como capa nueva. En el móvil, la hoja se cierra para verla. */
+  const pickPhoto = (asset: MediaAssetRow) => {
+    placePhoto({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height });
+    if (!wide) setDrawer(null);
+  };
+  /** Un color de la marca: a lo elegido (texto, forma) o, sin nada elegido, al fondo del lienzo. */
+  const colorTarget =
+    selected?.type === 'text'
+      ? 'al texto elegido'
+      : selected?.type === 'shape'
+        ? 'a la forma elegida'
+        : selected
+          ? 'al fondo (elige un texto o una forma para darle color)'
+          : 'al fondo del lienzo';
+  const applyBrandColor = (hex: string) => {
+    if (selected?.type === 'text') dispatch({ type: 'update', id: selected.id, patch: { color: hex } });
+    else if (selected?.type === 'shape') {
+      dispatch({
+        type: 'update',
+        id: selected.id,
+        patch:
+          selected.fill === null && selected.stroke ? { stroke: { ...selected.stroke, color: hex } } : { fill: hex },
+      });
+    } else dispatch({ type: 'setBackground', color: hex });
+  };
 
   // ── Barra de acciones sobre lo elegido y menú del botón derecho (la misma lista para los dos) ──
+  /** «⋯ → Quitar el fondo»: lo mismo que pide el copiloto (se hace cuando la foto está lista). */
+  function removeBackground() {
+    if (!editablePhoto) return;
+    pendingCutout.current = editablePhoto.layerId;
+    setCutoutRequest((n) => n + 1);
+  }
+  // Las acciones del menú leen el estado al día (`stateRef`, `pendingCutout`) solo cuando se pulsan: es un
+  // manejador de eventos, no algo que se lea al pintar.
+  // eslint-disable-next-line react-hooks/refs
   const selectionMenu = selectionMenuItems({
     layers: selectedLayers,
     pageLayers: layers,
@@ -1177,10 +1264,19 @@ function Editor({
     },
     onPaste: () => void pasteClipboard(),
     onFramePhoto: startFraming,
-    onMoreOptions: () => {
-      setPanel('layer');
-      setSheetOpen(true);
-    },
+    onRemoveBackground: !readOnly && editablePhoto?.url && canRemoveBackground() ? removeBackground : undefined,
+    onRestoreOriginal:
+      !readOnly && originalPhoto
+        ? () => {
+            dispatch({
+              type: 'update',
+              id: originalPhoto.layerId,
+              patch: { source: { kind: 'asset', assetId: originalPhoto.assetId } },
+            });
+            toast.success('La capa vuelve a la foto original. Se deshace con Ctrl+Z.');
+          }
+        : undefined,
+    onMoreOptions: () => selected && openSettings(selected.id),
   });
   const selectedPhotoUrl =
     selected?.type === 'image' && selected.source.kind === 'asset' ? images.get(selected.source.assetId) : undefined;
@@ -1200,14 +1296,6 @@ function Editor({
             : undefined
         }
         onCropPhoto={selected && selectedPhotoUrl ? () => setCropLayerId(selected.id) : undefined}
-        onRemoveBackground={
-          editablePhoto?.url && canRemoveBackground()
-            ? () => {
-                pendingCutout.current = editablePhoto.layerId;
-                setCutoutRequest((n) => n + 1);
-              }
-            : undefined
-        }
         onEditText={onEditText}
         menu={selectionMenu}
       />
@@ -1229,15 +1317,46 @@ function Editor({
   const videoOnly = spec !== undefined && !spec.media.includes('image');
   const canSchedule = publishingOn && canEdit && !item.archived_at && item.status === 'approved';
   // Publicar y programar se ofrecen también antes de aprobar a quien puede aprobar: el mismo botón
-  // guarda la versión, la aprueba y sigue. Con cambios después de aprobar pasa lo mismo.
+  // guarda la versión, la aprueba y sigue. Con cambios después de aprobar pasa lo mismo. En
+  // autogestión eso es lo normal y no se dice; en modo agencia el botón lo dice («Aprobar y…»).
   const publishable = publishingOn && canEdit && !item.archived_at;
   const needsApproval = item.status !== 'approved' || dirty;
-  const canApproveNow = canApprove && (item.status === 'draft' || item.status === 'in_review' || dirty || item.status === 'approved');
+  const canApproveNow =
+    canApprove &&
+    (item.status === 'draft' ||
+      item.status === 'in_review' ||
+      dirty ||
+      item.status === 'approved' ||
+      (selfManaged && item.status === 'idea'));
   const offerPublishNow =
     publishable && PUBLISHABLE_TARGETS.has(`${item.network}:${item.format}`) && (!needsApproval || canApproveNow);
   const offerSchedule = publishable && (!needsApproval || canApproveNow);
-  // El botón principal de la cabecera solo cambia el estado (o recupera): publicar y programar van en «Publicar o compartir».
-  const primary = editorPrimaryAction(item, actions, { edit: canEdit, publishNow: false, schedule: false });
+  const sharing = busyStatus !== null || mutations.saveVersion.isPending;
+  const sayApprove = !selfManaged && needsApproval;
+  const publishNowAction: ShareAction | null = offerPublishNow
+    ? {
+        label: sayApprove ? 'Aprobar y publicar ahora' : 'Publicar ahora',
+        onClick: () => void openPublishNow(),
+        disabled: sharing,
+        title: sayApprove
+          ? 'Guarda la versión, la aprueba y pide confirmación antes de publicar'
+          : 'Pide confirmación antes de publicar',
+      }
+    : null;
+  const scheduleAction: ShareAction | null = offerSchedule
+    ? {
+        label: sayApprove ? 'Aprobar y programar…' : 'Programar…',
+        onClick: () => void openSchedule(),
+        disabled: sharing,
+        title: sayApprove ? 'Guarda la versión, la aprueba y abre el calendario' : 'Elegir el día y la hora',
+      }
+    : null;
+  const shareBlockedNote =
+    publishable && !offerSchedule
+      ? selfManaged
+        ? 'Con tu rol no se puede publicar ni programar en esta marca: pídeselo a quien la gestiona.'
+        : 'Para programarla o publicarla, antes tiene que aprobarla alguien con permiso.'
+      : null;
 
   /** Por qué no se puede cambiar de estado ahora (o undefined si se puede). Con cambios sin versión, se guardan antes. */
   const statusBlocked = (action: StatusAction) =>
@@ -1245,68 +1364,48 @@ function Editor({
       ? 'El diseño está vacío'
       : undefined;
 
-  const primaryButton = (() => {
-    if (!primary) return null;
-    switch (primary.kind) {
-      case 'restore':
-        return (
-          <Button size="sm" onClick={toggleArchive} loading={mutations.archive.isPending} data-testid="editor-archive">
-            <ArchiveRestore className="h-4 w-4" aria-hidden />
-            <span className="max-sm:sr-only">Recuperar</span>
-          </Button>
-        );
-      case 'publishNow':
-      case 'schedule':
-        return null;
-      case 'status': {
-        const { action } = primary;
-        const blocked = statusBlocked(action);
-        return (
-          <Button
-            // Con la pieza sin aprobar, lo principal es avanzar su estado; «Publicar o compartir» va al lado, en secundario.
-            size="sm"
-            disabled={Boolean(blocked) || busyStatus !== null || mutations.saveVersion.isPending}
-            loading={busyStatus === action.to}
-            title={blocked ?? (dirty ? 'Guarda los cambios como versión y sigue' : undefined)}
-            onClick={() => void advance(action)}
-            data-testid={`status-${action.to}`}
-          >
-            {action.to === 'approved' ? (
-              <CheckCircle2 className="h-4 w-4" aria-hidden />
-            ) : (
-              <SendHorizontal className="h-4 w-4" aria-hidden />
-            )}
-            <span className="max-sm:sr-only">{action.label}</span>
-          </Button>
-        );
-      }
-    }
-  })();
+  // Modo agencia: el estado de la pieza y sus cambios (enviar a revisión, aprobar, devolver), dentro de
+  // «Compartir». En autogestión no hay paso de aprobación a la vista.
+  const review =
+    !selfManaged && !item.archived_at ? (
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-lg bg-subtle px-3 py-2 text-sm"
+        data-testid="share-review"
+      >
+        <span className="text-muted">Estado:</span>
+        <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
+        <span className="flex-1" aria-hidden />
+        {actions.map((action) => {
+          const blocked = statusBlocked(action);
+          const forward = FORWARD_STATUSES.has(action.to);
+          return (
+            <Button
+              key={action.to}
+              size="sm"
+              variant={forward ? 'secondary' : 'ghost'}
+              disabled={Boolean(blocked) || busyStatus !== null || mutations.saveVersion.isPending}
+              loading={busyStatus === action.to}
+              title={blocked ?? (dirty ? 'Guarda los cambios como versión y sigue' : undefined)}
+              onClick={() => void advance(action)}
+              data-testid={`status-${action.to}`}
+            >
+              {forward ? <SendHorizontal className="h-4 w-4" aria-hidden /> : <Undo2 className="h-4 w-4" aria-hidden />}
+              {action.label}
+            </Button>
+          );
+        })}
+      </div>
+    ) : null;
 
-  // Lo que no es la acción principal, en «⋯», por grupos: ver, avanzar, ajustar y, al final, lo que deshace.
-  const primaryStatus = primary?.kind === 'status' ? primary.action.to : null;
-  const forward = actions.filter((a) => a.to !== primaryStatus && FORWARD_STATUSES.has(a.to));
-  const backward = actions.filter((a) => a.to !== primaryStatus && !FORWARD_STATUSES.has(a.to));
-  const statusItem = (action: StatusAction): MoreAction => {
-    const blocked = statusBlocked(action);
-    return {
-      id: `status-${action.to}`,
-      label: action.label,
-      icon: FORWARD_STATUSES.has(action.to) ? SendHorizontal : Undo2,
-      onSelect: () => void advance(action),
-      disabled: Boolean(blocked) || busyStatus !== null,
-      hint: blocked,
-      testId: `status-${action.to}`,
-    };
-  };
   const when = <T,>(condition: boolean, item: T): T[] => (condition ? [item] : []);
+  // «⋯» de la cabecera: lo de la pieza que no es sacarla (eso es «Compartir») ni añadir (los cajones).
   const moreActions: MoreMenuItem[] = [
     ...when<MoreAction>(!readOnly, {
       id: 'save-note',
       label: 'Guardar versión con una nota…',
       icon: NotebookPen,
       onSelect: () => setSaveOpen(true),
-      hint: 'Qué has cambiado, para quien revise después',
+      hint: 'Los cambios se guardan solos; esto deja una versión con nombre en el historial',
       testId: 'editor-save-note',
     }),
     {
@@ -1314,10 +1413,9 @@ function Editor({
       label: 'Historial',
       icon: History,
       onSelect: () => setHistoryOpen(true),
+      hint: expectedVersion > 0 ? `Ahora, versión ${expectedVersion}` : 'Sin versiones todavía',
       testId: 'editor-history',
     },
-    null,
-    ...forward.map(statusItem),
     null,
     ...when<MoreAction>(canEdit && !item.archived_at, {
       id: 'settings',
@@ -1328,12 +1426,15 @@ function Editor({
       testId: 'editor-settings',
     }),
     ...when<MoreAction>(!readOnly, {
-      id: 'template',
-      label: 'Desde una plantilla',
-      icon: LayoutTemplate,
-      onSelect: () => setTemplateOpen(true),
-      hint: 'Sustituir el diseño por una plantilla de la marca',
-      testId: 'editor-from-template',
+      id: 'canvas',
+      label: 'Tamaño y fondo',
+      icon: Ruler,
+      onSelect: () => {
+        deselect();
+        openSide('canvas');
+      },
+      hint: 'Proporción del lienzo y color de fondo',
+      testId: 'editor-canvas-settings',
     }),
     ...when<MoreAction>(!readOnly, {
       id: 'save-template',
@@ -1345,7 +1446,6 @@ function Editor({
       testId: 'editor-save-template',
     }),
     null,
-    ...backward.map(statusItem),
     ...when<MoreAction>(canEdit && !item.archived_at, {
       id: 'archive',
       label: 'Archivar',
@@ -1390,56 +1490,103 @@ function Editor({
     );
   }
 
+  const copilotOn = !readOnly && voiceCopilot;
+  // La fila del zoom: capas y zonas seguras a la izquierda, el copiloto a la derecha.
+  const footerStart = (
+    <>
+      <Button
+        variant={side === 'layers' ? 'primary' : 'ghost'}
+        size="sm"
+        className="h-8 px-2"
+        aria-pressed={side === 'layers'}
+        onClick={() => openSide('layers')}
+        title="Capas de la página"
+        data-testid="editor-layers"
+      >
+        <Layers className="h-4 w-4" aria-hidden />
+        <span className="max-sm:sr-only">Capas ({layers.length})</span>
+      </Button>
+      {safeZone && (
+        <Button
+          variant={showSafeZone ? 'primary' : 'ghost'}
+          size="sm"
+          className="h-8 px-2"
+          aria-pressed={showSafeZone}
+          onClick={() => setShowSafeZone((on) => !on)}
+          title="Lo que puede tapar la interfaz de la red"
+          data-testid="safe-zone-toggle"
+        >
+          <ShieldAlert className="h-4 w-4" aria-hidden />
+          <span className="max-sm:sr-only">Zonas seguras</span>
+        </Button>
+      )}
+    </>
+  );
+  const footerEnd = copilotOn ? (
+    <Button
+      variant={copilotOpen ? 'primary' : 'secondary'}
+      size="icon"
+      className="h-10 w-10 rounded-full shadow-pop"
+      aria-pressed={copilotOpen}
+      aria-label="Copiloto"
+      onClick={() => setCopilotOpen((open) => !open)}
+      data-testid="copilot-open"
+      title="Copiloto: dicta o escribe lo que quieres cambiar (textos, fotos, capas, páginas…)"
+    >
+      <Mic className="h-4 w-4" aria-hidden />
+    </Button>
+  ) : null;
+
   return (
-    <div ref={rootRef} className="flex min-h-0 flex-1 flex-col gap-2" data-testid="editor-root">
-      {/* Cabecera en una línea: dónde estoy, estado y versión; a la derecha, guardar, la acción principal y «⋯» */}
-      <header className="flex shrink-0 items-center gap-2" data-testid="editor-header">
+    <div
+      ref={rootRef}
+      className={cn(
+        'flex min-h-0 flex-1 flex-col gap-2',
+        // Móvil: a pantalla completa, por encima de la cabecera y de la barra de la app.
+        'max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:bg-bg max-lg:px-2 max-lg:pt-2',
+      )}
+      data-testid="editor-root"
+    >
+      {/* Cabecera: volver, nombre, guardado (automático), deshacer y rehacer, «⋯» y «Compartir». */}
+      <header className="flex shrink-0 items-center gap-1.5" data-testid="editor-header">
         <Link
           to={paths.list}
           onClick={leave}
-          className="inline-flex shrink-0 items-center gap-0.5 text-sm text-muted hover:text-fg"
+          className="inline-flex h-9 shrink-0 items-center gap-0.5 rounded-md px-1 text-sm text-muted hover:text-fg"
           data-testid="editor-back"
           aria-label="Volver a Contenidos"
         >
           <ChevronLeft className="h-4 w-4" aria-hidden />
           <span className="max-md:sr-only">Contenidos</span>
         </Link>
-        <h1 className="min-w-0 shrink truncate text-base font-semibold" data-testid="editor-title">
+        <h1
+          className="min-w-0 shrink truncate text-base font-semibold"
+          data-testid="editor-title"
+          title={targetLabel(item.network, item.format)}
+        >
           {item.title}
         </h1>
+        <span data-testid="editor-version" className="sr-only">
+          {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin versiones todavía'}
+        </span>
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-muted">
-          <span className="hidden md:inline">{targetLabel(item.network, item.format)}</span>
-          <Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
           {item.archived_at && <Badge tone="warning">Archivada</Badge>}
-          {aiLabel && (
-            <span
-              title={describeAiReasons(aiReasons) || 'Lleva contenido generado con IA.'}
-              data-testid="editor-ai-label"
-              className="hidden sm:inline"
-            >
-              <Badge tone="primary">Generado con IA</Badge>
-            </span>
-          )}
           <span className="hidden lg:inline">
             <ContentRequestOrigin item={item} />
-          </span>
-          <span data-testid="editor-version" className="hidden sm:inline">
-            {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin versiones todavía'}
           </span>
           {/* Qué pasa con lo último que se ha hecho: se guarda solo. */}
           {!readOnly &&
             (dirty ? (
               <span
                 role="status"
-                // En el móvil va lo primero y solo con el icono: es lo que no debe quedar recortado.
                 className={cn(
-                  'flex shrink-0 items-center gap-1 max-sm:order-first',
+                  'flex shrink-0 items-center gap-1',
                   autosave.status === 'error' && 'font-medium text-warning',
                 )}
                 title={
                   autosave.status === 'error'
-                    ? 'No se ha podido guardar el borrador. Comprueba la conexión; «Guardar versión» también lo intenta.'
-                    : 'Tus cambios se guardan solos como borrador. «Guardar versión» los deja en el historial: es lo que se aprueba y se publica.'
+                    ? 'No se ha podido guardar. Comprueba la conexión.'
+                    : 'Tus cambios se guardan solos.'
                 }
                 data-testid="editor-dirty"
                 data-state={autosave.status}
@@ -1464,18 +1611,17 @@ function Editor({
                   </>
                 ) : (
                   <>
-                    <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-current motion-reduce:animate-none" aria-hidden />
+                    <span
+                      className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-current motion-reduce:animate-none"
+                      aria-hidden
+                    />
                     <span className="max-sm:sr-only">Guardando…</span>
                   </>
                 )}
               </span>
             ) : (
               expectedVersion > 0 && (
-                <span
-                  role="status"
-                  className="flex shrink-0 items-center gap-1 max-sm:order-first"
-                  data-testid="editor-saved"
-                >
+                <span role="status" className="flex shrink-0 items-center gap-1" data-testid="editor-saved">
                   <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   <span className="max-sm:sr-only">Guardado</span>
                 </span>
@@ -1486,96 +1632,66 @@ function Editor({
               type="button"
               className="hidden shrink-0 rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary md:inline"
               title="Un hueco de foto vacío no sale en la imagen. Pulsa para ir a él."
-              onClick={() => {
-                dispatch({ type: 'select', id: emptyFrames[0]!.layer.id, exact: true });
-                setPanel('layer');
-              }}
+              onClick={goToEmptyFrame}
               data-testid="editor-empty-frames"
             >
               {emptyFrames.length === 1 ? 'Falta 1 foto' : `Faltan ${emptyFrames.length} fotos`}
             </button>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5" data-testid="page-actions">
+        <div className="flex shrink-0 items-center gap-1" data-testid="page-actions">
           {!readOnly && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                aria-label="Deshacer"
+                title="Deshacer (Ctrl+Z)"
+                disabled={state.past.length === 0}
+                onClick={() => dispatch({ type: 'undo' })}
+                data-testid="undo"
+              >
+                <Undo2 className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9"
+                aria-label="Rehacer"
+                title="Rehacer (Ctrl+Mayús+Z)"
+                disabled={state.future.length === 0}
+                onClick={() => dispatch({ type: 'redo' })}
+                data-testid="redo"
+              >
+                <Redo2 className="h-4 w-4" aria-hidden />
+              </Button>
+            </>
+          )}
+          <MoreMenu items={moreActions} label="Más acciones de la pieza" testId="editor-more" size="sm" />
+          {item.archived_at && canEdit && (
             <Button
               variant="secondary"
               size="sm"
-              className="h-8 px-2.5"
-              onClick={saveNow}
-              loading={mutations.saveVersion.isPending}
-              disabled={!dirty && expectedVersion > 0}
-              title={
-                !dirty && expectedVersion > 0
-                  ? 'No hay cambios que guardar'
-                  : 'Guarda una versión en el historial (Ctrl+S). Es lo que se aprueba y se publica.'
-              }
-              data-testid="editor-save"
+              onClick={toggleArchive}
+              loading={mutations.archive.isPending}
+              data-testid="editor-archive"
             >
-              <Save className="h-4 w-4" aria-hidden />
-              <span className="max-sm:sr-only">Guardar versión</span>
+              <ArchiveRestore className="h-4 w-4" aria-hidden />
+              <span className="max-sm:sr-only">Recuperar</span>
             </Button>
           )}
-          {primaryButton}
-          {/* Lo que se hace al terminar, en un solo sitio: ver cómo queda, descargarla, programarla o publicarla. */}
-          <Dropdown.Root modal={false}>
-            <Dropdown.Trigger asChild>
-              <Button
-                variant={primaryButton ? 'secondary' : 'primary'}
-                size="sm"
-                className="h-8 px-2.5"
-                data-testid="editor-share"
-                title="Vista previa, descargar, programar y publicar"
-              >
-                <Share2 className="h-4 w-4" aria-hidden />
-                <span className="max-md:sr-only">Publicar o compartir</span>
-                <ChevronDown className="h-3.5 w-3.5 max-md:hidden" aria-hidden />
-              </Button>
-            </Dropdown.Trigger>
-            <MenuContent align="end">
-              <MenuItem onSelect={() => setPreviewOpen(true)} data-testid="editor-preview">
-                <ScanEye className="h-4 w-4 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1">Ver cómo quedará</span>
-              </MenuItem>
-              <MenuItem onSelect={() => setExportOpen(true)} data-testid="editor-export">
-                <Download className="h-4 w-4 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1">Descargar la imagen</span>
-              </MenuItem>
-              {(offerSchedule || offerPublishNow) && <MenuSeparator />}
-              {offerSchedule && (
-                <MenuItem
-                  onSelect={() => void openSchedule()}
-                  disabled={busyStatus !== null || mutations.saveVersion.isPending}
-                  title={needsApproval ? 'Guarda la versión, la aprueba y abre el calendario' : undefined}
-                  data-testid="editor-schedule"
-                >
-                  <CalendarPlus className="h-4 w-4 shrink-0" aria-hidden />
-                  <span className="min-w-0 flex-1">{needsApproval ? 'Aprobar y programar…' : 'Programar…'}</span>
-                </MenuItem>
-              )}
-              {offerPublishNow && (
-                <MenuItem
-                  onSelect={() => void openPublishNow()}
-                  disabled={busyStatus !== null || mutations.saveVersion.isPending}
-                  title={
-                    needsApproval
-                      ? 'Guarda la versión, la aprueba y pide confirmación antes de publicar'
-                      : 'Pide confirmación antes de publicar'
-                  }
-                  data-testid="editor-publish-now"
-                >
-                  <Send className="h-4 w-4 shrink-0" aria-hidden />
-                  <span className="min-w-0 flex-1">{needsApproval ? 'Aprobar y publicar ahora…' : 'Publicar ahora…'}</span>
-                </MenuItem>
-              )}
-              {publishable && !offerSchedule && (
-                <p className="max-w-[16rem] px-2.5 py-1.5 text-xs text-muted" data-testid="editor-share-note">
-                  Para programarla o publicarla, antes tiene que aprobarla alguien con permiso.
-                </p>
-              )}
-            </MenuContent>
-          </Dropdown.Root>
-          <MoreMenu items={moreActions} label="Más acciones de la pieza" testId="editor-more" size="sm" />
+          {/* El único camino para sacar la pieza: vista previa, texto, descargar, publicar, programar y copiar. */}
+          <Button
+            size="sm"
+            className="h-9 px-3"
+            onClick={() => setShareOpen(true)}
+            data-testid="editor-share"
+            title="Vista previa, texto de la publicación, descargar, publicar y programar"
+          >
+            <Share2 className="h-4 w-4" aria-hidden />
+            Compartir
+          </Button>
         </div>
       </header>
 
@@ -1612,171 +1728,11 @@ function Editor({
       {!canEdit && (
         <Notice>
           {canApprove
-            ? 'Puedes revisarla y cambiar su estado, pero no editarla.'
+            ? 'Puedes revisarla y cambiar su estado (en «Compartir»), pero no editarla.'
             : `Solo lectura: con tu rol (${role === 'viewer' ? 'solo lectura' : role}) no se puede editar.`}
         </Notice>
       )}
-      {videoOnly && (
-        <Notice>
-          Es un formato de vídeo. Aquí se prepara la imagen (portada o fotograma); el vídeo llegará más adelante.
-        </Notice>
-      )}
-
-      {/* Barra de herramientas */}
-      {!readOnly && (
-        <div
-          className="flex shrink-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0"
-          role="toolbar"
-          aria-label="Herramientas del editor"
-        >
-          <span className="mr-1 text-xs font-medium text-muted">Añadir</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 px-2.5"
-            disabled={full}
-            onClick={() =>
-              dispatch({
-                type: 'add',
-                layer: newTextLayer(canvas, everyLayer, {
-                  fontFamily: brandStyle.fonts[0],
-                  color: brandStyle.palette[0]?.hex,
-                }),
-              })
-            }
-            data-testid="add-text"
-          >
-            <Type className="h-4 w-4" aria-hidden />
-            Texto
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 px-2.5"
-            disabled={full}
-            onClick={() => setImagePicker(true)}
-            data-testid="add-image"
-          >
-            <ImageIcon className="h-4 w-4" aria-hidden />
-            Imagen
-          </Button>
-          {aiImage && (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-8 px-2.5"
-              disabled={full}
-              onClick={() => setImageAi(true)}
-              data-testid="add-image-ai"
-              title="Generar una imagen con IA"
-            >
-              <Sparkles className="h-4 w-4" aria-hidden />
-              Con IA
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 px-2.5"
-            disabled={full}
-            onClick={() => setLogoPicker(true)}
-            data-testid="add-logo"
-          >
-            <Stamp className="h-4 w-4" aria-hidden />
-            Logotipo
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 px-2.5"
-            disabled={full}
-            onClick={() =>
-              dispatch({
-                type: 'add',
-                layer: newShapeLayer(canvas, everyLayer, 'rectangle', brandStyle.palette[1]?.hex),
-              })
-            }
-            data-testid="add-rectangle"
-          >
-            <Square className="h-4 w-4" aria-hidden />
-            Rectángulo
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="h-8 px-2.5"
-            disabled={full}
-            onClick={() =>
-              dispatch({
-                type: 'add',
-                layer: newShapeLayer(canvas, everyLayer, 'ellipse', brandStyle.palette[1]?.hex),
-              })
-            }
-            data-testid="add-ellipse"
-          >
-            <Circle className="h-4 w-4" aria-hidden />
-            Elipse
-          </Button>
-          <AddStickerSelect
-            disabled={full}
-            onAdd={(shape) =>
-              dispatch({
-                type: 'add',
-                layer: newShapeLayer(canvas, everyLayer, shape, brandStyle.palette[1]?.hex),
-              })
-            }
-          />
-          {voiceCopilot && (
-            <Button
-              variant={copilotOpen ? 'primary' : 'secondary'}
-              size="sm"
-              className="h-8 px-2.5"
-              aria-pressed={copilotOpen}
-              onClick={() => setCopilotOpen((open) => !open)}
-              data-testid="copilot-open"
-              title="Dicta o escribe lo que quieres cambiar: textos, fotos, capas, páginas…"
-            >
-              <Mic className="h-4 w-4" aria-hidden />
-              Copiloto
-            </Button>
-          )}
-          <span className="mx-1 h-6 w-px bg-border" aria-hidden />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            aria-label="Deshacer"
-            title="Deshacer (Ctrl+Z)"
-            disabled={state.past.length === 0}
-            onClick={() => dispatch({ type: 'undo' })}
-            data-testid="undo"
-          >
-            <Undo2 className="h-4 w-4" aria-hidden />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            aria-label="Rehacer"
-            title="Rehacer (Ctrl+Mayús+Z)"
-            disabled={state.future.length === 0}
-            onClick={() => dispatch({ type: 'redo' })}
-            data-testid="redo"
-          >
-            <Redo2 className="h-4 w-4" aria-hidden />
-          </Button>
-          {full && (
-            <span className="text-xs text-muted">
-              Has llegado al máximo de {MAX_LAYERS} capas{state.document.pages.length > 1 ? ' en esta página' : ''}.
-            </span>
-          )}
-        </div>
-      )}
-      {!readOnly && imageAgencyBlocked && (
-        <p className="shrink-0 text-xs text-muted" data-testid="image-ai-agency-note">
-          En modo agencia, la imagen con IA la usa solo el personal de la agencia: pide la imagen desde «Encargos».
-        </p>
-      )}
+      {videoOnly && <Notice>Formato de vídeo: aquí se prepara la imagen de portada.</Notice>}
       {!readOnly && voiceCopilot && copilotOpen && (
         <Suspense fallback={<Spinner label="Preparando el copiloto…" />}>
           <VoiceCopilot
@@ -1806,51 +1762,92 @@ function Editor({
             onApply={(document, touched, index) => {
               // Una orden = un paso de deshacer (y la página en la que deja).
               run({ type: 'replace', document, select: touched, pageId: document.pages[index]?.id });
-              setPanel('layer');
             }}
             onClose={() => setCopilotOpen(false)}
           />
         </Suspense>
       )}
 
-      <div
-        className={cn(
-          'flex min-h-0 flex-1 flex-col gap-2 lg:grid lg:gap-3',
-          // Con el copiloto abierto, su panel va en una columna estrecha junto al lienzo (que sigue a la vista).
-          !readOnly && voiceCopilot && copilotOpen
-            ? 'lg:grid-cols-[17rem_minmax(0,1fr)_21rem]'
-            : 'lg:grid-cols-[minmax(0,1fr)_21rem]',
+      {/* Cuerpo: riel de cajones | cajón abierto | copiloto | lienzo | panel a petición. En el móvil, en
+          columna: el lienzo arriba, las hojas debajo y la barra de cajones abajo del todo. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
+        {!readOnly && <EditorRail active={drawer} onToggle={openDrawer} className="max-lg:order-last max-lg:-mx-2" />}
+        {!readOnly && drawer && (
+          <EditorPanel
+            title={DRAWER_TITLE[drawer]}
+            testId={`drawer-panel-${drawer}`}
+            onClose={() => setDrawer(null)}
+            closeLabel="Cerrar el cajón"
+          >
+            {drawer === 'elements' && (
+              <ElementsDrawer
+                full={full}
+                fullNote={fullNote}
+                onAddText={(kind) => addText(kind)}
+                onAddShape={addShape}
+              />
+            )}
+            {drawer === 'photos' && (
+              <PhotosDrawer
+                hint={
+                  selected && isEmptyFrame(selected)
+                    ? 'Toca una foto para ponerla en el hueco elegido.'
+                    : 'Toca una foto para ponerla en el diseño, o arrástrala al lienzo o a un hueco.'
+                }
+                onPick={pickPhoto}
+              />
+            )}
+            {drawer === 'uploads' && (
+              <UploadsDrawer
+                brandId={brand.id}
+                uploadedIds={uploadedIds}
+                aiRatio={aiImage ? canvas.aspectRatio : undefined}
+                onAdded={(asset) => {
+                  setUploadedIds((ids) => [asset.id, ...ids.filter((id) => id !== asset.id)]);
+                  pickPhoto(asset);
+                }}
+                onPick={pickPhoto}
+              />
+            )}
+            {drawer === 'brand' && (
+              <BrandDrawer
+                brandId={brand.id}
+                logoIds={logoIds}
+                profilePath={`${brandBase}/marca`}
+                palette={brandStyle.palette}
+                fonts={brandStyle.fonts}
+                colorTarget={colorTarget}
+                full={full}
+                onAddLogo={addLogo}
+                onColor={applyBrandColor}
+                onFont={(font) => addText('body', font)}
+              />
+            )}
+          </EditorPanel>
         )}
-      >
+        {/* Hueco del copiloto (se pinta aquí por un portal): columna junto al lienzo en escritorio, hoja baja en móvil. */}
+        <div
+          data-copilot-dock
+          className="min-h-0 empty:hidden max-lg:max-h-[30vh] max-lg:shrink-0 lg:w-[17rem] lg:shrink-0"
+        />
+
         <section
           ref={canvasRef}
           tabIndex={0}
           // Un clic en el margen del lienzo (fuera del documento) quita la selección.
           onPointerDown={(event) => event.target === event.currentTarget && deselect()}
           aria-label="Lienzo. Con capas elegidas, usa las flechas para moverlas y Supr para borrarlas; con un texto elegido, Intro para escribir en él; con una foto, Intro para encuadrarla o, si es un hueco vacío, para ponerle la foto."
-          className="flex min-h-0 flex-1 flex-col rounded-xl bg-subtle p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+          className="flex min-h-0 flex-1 flex-col rounded-xl bg-subtle p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary max-lg:order-first"
         >
-          {safeZone && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted" data-testid="safe-zone-bar">
-              <Button
-                variant={showSafeZone ? 'primary' : 'secondary'}
-                size="sm"
-                aria-pressed={showSafeZone}
-                onClick={() => setShowSafeZone((on) => !on)}
-                data-testid="safe-zone-toggle"
-              >
-                <ShieldAlert className="h-4 w-4" aria-hidden />
-                Zonas seguras
-              </Button>
-              {showSafeZone && (
-                <span data-testid="safe-zone-note">
-                  {safeZone.unsafe.length > 0 && safeZone.safe.top === 0 && safeZone.safe.bottom >= state.document.canvas.height
-                    ? `En rojo, lo que se recorta en la rejilla del perfil de ${networkLabel(item.network)}.`
-                    : `En rojo, lo que puede tapar la interfaz de ${networkLabel(item.network)}.`}
-                  {safeZone.provenance === 'unverified' ? ' Orientativo: la red no publica la cifra.' : ''}
-                </span>
-              )}
-            </div>
+          {safeZone && showSafeZone && (
+            <p className="mb-2 text-xs text-muted" data-testid="safe-zone-note">
+              {safeZone.unsafe.length > 0 &&
+              safeZone.safe.top === 0 &&
+              safeZone.safe.bottom >= state.document.canvas.height
+                ? `En rojo, lo que se recorta en la rejilla del perfil de ${networkLabel(item.network)}.`
+                : `En rojo, lo que puede tapar la interfaz de ${networkLabel(item.network)}.`}
+              {safeZone.provenance === 'unverified' ? ' Orientativo: la red no publica la cifra.' : ''}
+            </p>
           )}
           <div
             className="relative min-h-0 flex-1"
@@ -1888,6 +1885,8 @@ function Editor({
                   }}
                   onDrop={onDropOnCanvas}
                   safeZone={safeZoneOverlay}
+                  footerStart={footerStart}
+                  footerEnd={footerEnd}
                   label={
                     state.document.pages.length > 1
                       ? `Diseño de ${item.title}, página ${pageIndex + 1} de ${state.document.pages.length}, ${layers.length} capas`
@@ -1908,211 +1907,140 @@ function Editor({
             />
           )}
         </section>
-        {/* Hueco del copiloto (se pinta aquí por un portal): columna izquierda en escritorio, hoja baja en móvil. */}
-        <div data-copilot-dock className="min-h-0 empty:hidden max-lg:max-h-[30vh] max-lg:shrink-0 lg:order-first" />
 
-        <aside
-          className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-surface px-3 pt-1 lg:shrink lg:px-4"
-          aria-label="Paneles del editor"
-          data-testid="editor-panels"
-          data-open={sheetOpen}
-        >
-          <Tabs value={panel} onValueChange={setPanel} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex items-center gap-1">
-              <div className="min-w-0 flex-1">
-                <TabsList label="Paneles del editor">
-                  <TabsTrigger
-                    value="layer"
-                    className="px-2.5 max-lg:min-h-[2.75rem]"
-                    onClick={() => setSheetOpen(true)}
-                  >
-                    Diseño
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="layers"
-                    className="px-2.5 max-lg:min-h-[2.75rem]"
-                    onClick={() => setSheetOpen(true)}
-                  >
-                    Capas ({layers.length})
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="copy"
-                    className="px-2.5 max-lg:min-h-[2.75rem]"
-                    onClick={() => setSheetOpen(true)}
-                  >
-                    Publicación
-                  </TabsTrigger>
-                  {BrandCheck && (
-                    <TabsTrigger
-                      value="brand"
-                      className="px-2.5 max-lg:min-h-[2.75rem]"
-                      onClick={() => setSheetOpen(true)}
-                    >
-                      Marca
-                    </TabsTrigger>
-                  )}
-                </TabsList>
-              </div>
-              {sheetOpen && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 lg:hidden"
-                  aria-label="Ocultar el panel"
-                  title="Ocultar el panel"
-                  onClick={() => setSheetOpen(false)}
-                  data-testid="editor-panels-close"
-                >
-                  <ChevronDown className="h-4 w-4" aria-hidden />
-                </Button>
-              )}
-            </div>
-            {/* Solo este bloque se desplaza: en pantallas estrechas es la hoja abierta (40 % del alto), en anchas, la columna entera. */}
-            <div
-              className={cn(
-                'relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3',
-                sheetOpen ? 'max-h-[40dvh] lg:max-h-none' : 'hidden lg:block',
-              )}
-              data-testid="editor-panel-scroll"
-            >
-              <TabsContent value="layer" className="space-y-4 pt-3">
-                {selectedLayers.length > 1 ? (
-                  readOnly ? (
-                    <p className="text-sm text-muted">{selectedLayers.length} capas elegidas.</p>
-                  ) : (
-                    <MultiSelectionPanel layers={selectedLayers} dispatch={dispatch} />
-                  )
-                ) : (
-                  <>
-                    <PropertiesPanel
-                      layer={selected}
-                      canvas={canvas}
-                      readOnly={readOnly}
-                      dispatch={dispatch}
-                      brandStyle={brandStyle}
-                      allowedRatios={allowed?.ratios ?? null}
-                      textRef={textRef}
-                      onEditPhoto={
-                        editablePhoto?.url
-                          ? () => {
-                              setPhotoEditTab('enhance');
-                              setPhotoEditing(true);
-                            }
-                          : undefined
-                      }
-                      photoTools={photoTools}
-                      onPickPhoto={readOnly ? undefined : setReplaceLayerId}
-                      onRestoreOriginal={
-                        originalPhoto
-                          ? () => {
-                              dispatch({
-                                type: 'update',
-                                id: originalPhoto.layerId,
-                                patch: { source: { kind: 'asset', assetId: originalPhoto.assetId } },
-                              });
-                              toast.success('La capa vuelve a la foto original. Se deshace con Ctrl+Z.');
-                            }
-                          : undefined
-                      }
-                    />
-                    {/* Sin nada elegido, o con un hueco vacío elegido, las fotos de la marca están ahí mismo. */}
-                    {!readOnly && (selected === null || isEmptyFrame(selected)) && (
-                      <BrandPhotos
-                        hint={
-                          selected
-                            ? 'Toca una foto para ponerla en este hueco.'
-                            : 'Toca una foto para ponerla en el diseño, o arrástrala al lienzo o a un hueco.'
-                        }
-                        onPick={(asset) => {
-                          placePhoto(
-                            { id: asset.id, name: asset.file_name, width: asset.width, height: asset.height },
-                            selected ? { frameId: selected.id } : {},
-                          );
-                          // En el móvil la hoja tapa medio lienzo: se cierra para ver cómo ha quedado.
-                          setSheetOpen(false);
-                        }}
-                      />
-                    )}
-                  </>
-                )}
-              </TabsContent>
-              <TabsContent value="layers" className="pt-4">
-                <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
-              </TabsContent>
-              <TabsContent value="copy" className="space-y-4 pt-4">
-                <AskAgencyButton item={item} />
-                {captionAi && !readOnly && (
-                  <GenerateCaptionDialog
-                    brandId={brand.id}
-                    network={item.network}
-                    format={item.format}
-                    currentCopy={state.document.copy}
-                    // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
-                    onApply={(copy) => {
-                      // Marca de contenido generado con IA (ver content/aiLabel.ts).
-                      dispatch({ type: 'setCopy', patch: { ...copy, aiGenerated: true } });
-                      toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
-                    }}
-                  />
-                )}
-                <CopyPanel
-                  copy={state.document.copy}
-                  spec={spec}
-                  networkName={networkLabel(item.network)}
-                  readOnly={readOnly}
-                  dispatch={dispatch}
-                />
-              </TabsContent>
-              {BrandCheck && (
-                <TabsContent value="brand" className="pt-4">
-                  <Suspense fallback={<Spinner label="Cargando el verificador…" />}>
-                    <BrandCheck
-                      document={state.document}
-                      network={item.network}
-                      format={item.format}
-                      brandId={brand.id}
-                      imagePalette={palette.status === 'ready' ? palette.palette : undefined}
-                      onSelectTarget={selectTarget}
-                    />
-                  </Suspense>
-                  {palette.status === 'unavailable' && (
-                    <div className="mt-3" data-testid="brandcheck-palette-unavailable">
-                      <Notice tone="warning">
-                        No se han podido leer los colores de la imagen (el navegador no lo permite para este archivo):
-                        la comparación con la paleta de la marca se omite.
-                      </Notice>
-                    </div>
-                  )}
-                  {brandCheckAi && (
-                    <div className="mt-6 space-y-2 border-t border-border pt-4">
-                      <h2 className="text-base font-semibold">Tono con IA</h2>
-                      <p className="text-xs text-muted">
-                        Revisa el tono y los temas vetados del texto de la publicación. Ayuda a revisar; no aprueba.
-                      </p>
-                      <AiBrandCheck
-                        brandId={brand.id}
-                        text={publishedText(state.document.copy.caption, state.document.copy.hashtags)}
-                      />
-                    </div>
-                  )}
-                </TabsContent>
-              )}
-            </div>
-          </Tabs>
-        </aside>
+        {side === 'layers' && (
+          <EditorPanel
+            title="Capas"
+            testId="side-panel-layers"
+            onClose={() => setSide(null)}
+            closeLabel="Cerrar las capas"
+            closeTestId="side-close"
+          >
+            <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
+          </EditorPanel>
+        )}
+        {side === 'canvas' && !readOnly && (
+          <EditorPanel
+            title="Tamaño y fondo"
+            testId="side-panel-canvas"
+            onClose={() => setSide(null)}
+            closeTestId="side-close"
+          >
+            <PropertiesPanel
+              layer={null}
+              canvas={canvas}
+              readOnly={readOnly}
+              dispatch={dispatch}
+              brandStyle={brandStyle}
+              allowedRatios={allowed?.ratios ?? null}
+            />
+          </EditorPanel>
+        )}
+        {/* Los ajustes de lo elegido se van al soltarlo (o al elegir varias cosas: entonces manda el «⋯»). */}
+        {settingsFor !== null && selected?.id === settingsFor && selectedLayers.length === 1 && !readOnly && (
+          <EditorPanel
+            title="Ajustes"
+            testId="side-panel-settings"
+            onClose={() => setSettingsFor(null)}
+            closeLabel="Cerrar los ajustes"
+            closeTestId="side-close"
+            wide
+          >
+            <PropertiesPanel
+              layer={selected}
+              canvas={canvas}
+              readOnly={readOnly}
+              dispatch={dispatch}
+              brandStyle={brandStyle}
+              allowedRatios={allowed?.ratios ?? null}
+            />
+          </EditorPanel>
+        )}
       </div>
 
-      {previewOpen && (
-        <NetworkPreviewDialog
-          open
-          onOpenChange={setPreviewOpen}
-          document={state.document}
-          images={images}
-          spec={spec}
-          targetName={targetLabel(item.network, item.format)}
-          accountName={brand.name}
-        />
-      )}
+      <ShareSheet
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        preview={
+          shareOpen ? (
+            <NetworkPreview document={state.document} images={images} spec={spec} accountName={brand.name} compact />
+          ) : null
+        }
+        text={
+          <div className="space-y-3">
+            <AskAgencyButton item={item} />
+            {captionAi && !readOnly && (
+              <GenerateCaptionDialog
+                brandId={brand.id}
+                network={item.network}
+                format={item.format}
+                currentCopy={state.document.copy}
+                // Un solo paso de deshacer: el texto anterior vuelve con Ctrl+Z.
+                onApply={(copy) => {
+                  // Marca de contenido generado con IA (ver content/aiLabel.ts).
+                  dispatch({ type: 'setCopy', patch: { ...copy, aiGenerated: true } });
+                  toast.success('Texto aplicado. Puedes deshacerlo con Ctrl+Z.');
+                }}
+              />
+            )}
+            <CopyPanel
+              copy={state.document.copy}
+              spec={spec}
+              networkName={networkLabel(item.network)}
+              readOnly={readOnly}
+              dispatch={dispatch}
+            />
+          </div>
+        }
+        brandCheck={
+          BrandCheck ? (
+            <>
+              <Suspense fallback={<Spinner label="Cargando el verificador…" />}>
+                <BrandCheck
+                  document={state.document}
+                  network={item.network}
+                  format={item.format}
+                  brandId={brand.id}
+                  imagePalette={palette.status === 'ready' ? palette.palette : undefined}
+                  onSelectTarget={selectTarget}
+                />
+              </Suspense>
+              {palette.status === 'unavailable' && (
+                <div className="mt-3" data-testid="brandcheck-palette-unavailable">
+                  <Notice tone="warning">
+                    No se han podido leer los colores de la imagen (el navegador no lo permite para este archivo): la
+                    comparación con la paleta de la marca se omite.
+                  </Notice>
+                </div>
+              )}
+              {brandCheckAi && (
+                <div className="mt-4 space-y-2 border-t border-border pt-3">
+                  <h3 className="text-sm font-semibold">Tono con IA</h3>
+                  <p className="text-xs text-muted">
+                    Revisa el tono y los temas vetados del texto de la publicación. Ayuda a revisar; no aprueba.
+                  </p>
+                  <AiBrandCheck
+                    brandId={brand.id}
+                    text={publishedText(state.document.copy.caption, state.document.copy.hashtags)}
+                  />
+                </div>
+              )}
+            </>
+          ) : null
+        }
+        review={review}
+        aiNote={aiLabel ? describeAiReasons(aiReasons) || 'lleva contenido generado con IA.' : null}
+        missingPhotos={emptyFrames.length}
+        onGoToMissing={goToEmptyFrame}
+        publishNow={publishNowAction}
+        schedule={scheduleAction}
+        blockedNote={shareBlockedNote}
+        onDownload={() => {
+          setShareOpen(false);
+          setExportOpen(true);
+        }}
+        onCopyText={() => void copyText()}
+      />
       {settingsOpen && (
         <PieceSettingsDialog
           open
@@ -2217,24 +2145,11 @@ function Editor({
           network={item.network}
           format={item.format}
           document={state.document}
-          onSaved={(name) => toast.success(`Plantilla «${name}» guardada. La verás en «Desde una plantilla».`)}
+          onSaved={(name) => toast.success(`Plantilla «${name}» guardada. La verás en el cajón «Plantillas».`)}
         />
       )}
       {!readOnly && (
         <>
-          <ImagePickerDialog
-            brandId={brand.id}
-            libraryPath={`${brandBase}/biblioteca`}
-            uploadTo={{ organizationId: org.id }}
-            aiRatio={aiImage ? canvas.aspectRatio : undefined}
-            open={imagePicker}
-            onOpenChange={setImagePicker}
-            onPick={(asset) => {
-              setImagePicker(false);
-              // Con un hueco de foto vacío en la página, la foto va al hueco; si no, es una capa nueva.
-              placePhoto({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height });
-            }}
-          />
           {/* Poner la foto de un marco o sustituir la de una capa (barra flotante, clic en el hueco, copiloto):
               la caja y los efectos se quedan; lo que era de la foto anterior (recorte, encuadre) se quita. */}
           <ImagePickerDialog
@@ -2281,20 +2196,6 @@ function Editor({
             label="Acciones de lo elegido"
             onClose={() => setPointMenu(null)}
           />
-          {aiImage && (
-            <GenerateImageDialog
-              brandId={brand.id}
-              open={imageAi}
-              onOpenChange={setImageAi}
-              canvasRatio={canvas.aspectRatio}
-              // Una capa más: se deshace con Ctrl+Z como cualquier otra; la imagen queda en la biblioteca.
-              onGenerated={(image) => {
-                setImageAi(false);
-                placePhoto(image);
-                toast.success('Imagen generada y añadida al diseño. Está también en la biblioteca.');
-              }}
-            />
-          )}
           {photoEditing && editablePhoto && (
             <PhotoEditScreen
               initialTab={photoEditTab === 'portrait' ? 'background' : photoEditTab}
@@ -2319,25 +2220,6 @@ function Editor({
               }}
             />
           )}
-          <LogoPickerDialog
-            brandId={brand.id}
-            logoIds={logoIds}
-            profilePath={`${brandBase}/marca`}
-            open={logoPicker}
-            onOpenChange={setLogoPicker}
-            onPick={(asset) => {
-              setLogoPicker(false);
-              dispatch({
-                type: 'add',
-                layer: newLogoLayer(canvas, everyLayer, {
-                  id: asset.id,
-                  name: asset.file_name,
-                  width: asset.width,
-                  height: asset.height,
-                }),
-              });
-            }}
-          />
         </>
       )}
       <ConfirmDialog

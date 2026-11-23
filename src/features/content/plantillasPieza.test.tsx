@@ -368,10 +368,10 @@ describe('Empezar desde una plantilla en el editor', () => {
 
     seed({ orgRole: 'member', brandRole: 'viewer' }, []);
     fake.tables.content_items = [idea()];
-    const viewer = renderApp(`${CONTENT}/content-1`);
+    renderApp(`${CONTENT}/content-1`);
     await screen.findByTestId('editor-title');
-    await openMoreMenu(viewer.user, 'editor-more');
-    expect(screen.queryByTestId('editor-from-template')).not.toBeInTheDocument();
+    // Sin permiso de edición no hay riel de cajones (ni, con él, «Plantillas»).
+    expect(screen.queryByTestId('drawer-templates')).not.toBeInTheDocument();
   });
 });
 

@@ -18,7 +18,7 @@ import type { CanvasViewProps } from './editor/canvas/types';
 import { settingsChanges } from './editor/pieceSettings';
 import { captionPreview, previewFrameOf, showsCaption } from './editor/preview/frames';
 import { getFormatSpec } from './networks';
-import { chooseEditorAction } from '@/test/moreMenu';
+import { chooseEditorAction, openShareSheet } from '@/test/moreMenu';
 
 // Selección múltiple, texto sobre el lienzo, zonas seguras, vista previa y
 // nombre y red. El lienzo de Konva se sustituye por un doble: cada capa es un
@@ -53,6 +53,9 @@ vi.mock('@/features/content/editor/canvas/KonvaCanvas', () => ({
           onClick={() => props.onTextCommit(props.editingTextId!, 'Escrito en el lienzo')}
         />
       )}
+      {props.toolbar}
+      {props.footerStart}
+      {props.footerEnd}
     </div>
   ),
 }));
@@ -172,18 +175,18 @@ beforeEach(() => {
 });
 
 describe('Editor: varias capas', () => {
-  it('Mayúsculas añade capas; el panel las alinea, las mueve con las flechas y las borra juntas', async () => {
+  it('Mayúsculas añade capas; su «⋯» las alinea, las flechas las mueven y Supr las borra juntas', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
     await user.keyboard('{Shift>}');
     await user.click(screen.getByTestId('stub-b'));
     await user.keyboard('{/Shift}');
     expect(stub()).toHaveAttribute('data-selected', 'a,b');
-    expect(screen.getByTestId('multi-selection-panel')).toHaveTextContent('2 capas elegidas');
-    // Con dos no se puede repartir.
-    expect(screen.getByTestId('distribute-horizontal')).toBeDisabled();
-
-    await user.click(screen.getByTestId('align-left'));
+    expect(screen.getByRole('toolbar', { name: 'Acciones de 2 capas' })).toBeInTheDocument();
+    await user.click(screen.getByTestId('bar-more'));
+    // Con dos no se puede repartir: no se ofrece.
+    expect(screen.queryByTestId('menu-distribute-horizontal')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('menu-align-left'));
     expect(screen.getByTestId('stub-b')).toHaveAttribute('data-x', '100');
 
     screen.getByTestId('stub-a').focus();
@@ -202,13 +205,13 @@ describe('Editor: varias capas', () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-marquee'));
     expect(stub()).toHaveAttribute('data-selected', 'a,b');
-    await user.click(screen.getByTestId('group'));
+    await user.click(screen.getByTestId('bar-group'));
     await user.click(screen.getByTestId('stub-c'));
     expect(stub()).toHaveAttribute('data-selected', 'c');
     await user.click(screen.getByTestId('stub-b'));
     expect(stub()).toHaveAttribute('data-selected', 'a,b');
 
-    await user.click(screen.getByRole('tab', { name: /Capas/ }));
+    await user.click(screen.getByTestId('editor-layers'));
     expect(screen.getAllByTestId('layer-group')).toHaveLength(2);
     // Desde el panel se elige una sola capa del grupo; con Ctrl se suma otra.
     const items = within(screen.getByTestId('layers-list')).getAllByTestId('layer-item');
@@ -233,7 +236,8 @@ describe('Editor: varias capas', () => {
     await user.click(screen.getByTestId('stub-b'));
     await user.click(screen.getByTestId('stub-c'));
     await user.keyboard('{/Shift}');
-    await user.click(screen.getByTestId('distribute-horizontal'));
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-distribute-horizontal'));
     expect(screen.getByTestId('stub-b')).toHaveAttribute('data-x', '450');
   });
 });
@@ -246,7 +250,6 @@ describe('Editor: escribir el texto sobre el lienzo', () => {
     await user.click(screen.getByTestId('stub-commit'));
     expect(stub()).toHaveAttribute('data-editing', '');
     expect(screen.getByTestId('stub-t')).toHaveTextContent('Escrito en el lienzo');
-    expect(screen.getByTestId('layer-text')).toHaveValue('Escrito en el lienzo');
     await user.click(screen.getByTestId('undo'));
     expect(screen.getByTestId('stub-t')).toHaveTextContent('Hola');
   });
@@ -324,9 +327,10 @@ describe('Editor: zonas seguras', () => {
     await user.click(screen.getByTestId('safe-zone-toggle'));
     expect(stub()).toHaveAttribute('data-safe-zone', '4');
     expect(screen.getByTestId('safe-zone-note')).toHaveTextContent(/Orientativo/);
-    // El verificador avisa del texto en la franja de abajo.
-    await user.click(screen.getByRole('tab', { name: 'Marca' }));
-    expect(await screen.findByTestId('brandcheck-finding-TEXT_IN_UNSAFE_ZONE')).toBeInTheDocument();
+    // El verificador («Revisión de marca», en «Compartir») avisa del texto en la franja de abajo.
+    const sheet = await openShareSheet(user);
+    await user.click(sheet.getByText('Revisión de marca'));
+    expect(await sheet.findByTestId('brandcheck-finding-TEXT_IN_UNSAFE_ZONE')).toBeInTheDocument();
   });
 
   it('una publicación cuadrada enseña la rejilla del perfil (dos franjas laterales, orientativas)', async () => {
@@ -343,23 +347,22 @@ describe('Editor: zonas seguras', () => {
   });
 });
 
-describe('Editor: vista previa por red', () => {
+describe('Editor: vista previa por red (dentro de «Compartir»)', () => {
   it('enseña la pieza en el muro con el pie cortado en «ver más» y dice que es aproximada', async () => {
     const caption = 'a'.repeat(200);
     const { user } = await openEditor({ caption });
-    await chooseEditorAction(user, 'editor-preview');
-    const preview = await screen.findByTestId('network-preview');
+    const sheet = await openShareSheet(user);
+    const preview = await sheet.findByTestId('network-preview');
     expect(preview).toHaveAttribute('data-frame', 'feed');
     expect(await within(preview).findByRole('img')).toHaveAttribute('src', 'blob:vista-previa');
     expect(within(preview).getByTestId('preview-caption')).toHaveTextContent(`Casa Demo ${'a'.repeat(125)}… más`);
-    expect(screen.getByRole('dialog')).toHaveTextContent(/Aproximada/);
-    expect(preview).toHaveTextContent(/aproximado/);
+    expect(sheet.getByTestId('share-preview')).toHaveTextContent(/aproximado/);
   });
 
   it('una historia va a pantalla completa y sin pie', async () => {
     const { user } = await openEditor({ format: 'story', ratio: '9:16', caption: 'Pie' });
-    await chooseEditorAction(user, 'editor-preview');
-    const preview = await screen.findByTestId('network-preview');
+    const sheet = await openShareSheet(user);
+    const preview = await sheet.findByTestId('network-preview');
     expect(preview).toHaveAttribute('data-frame', 'vertical');
     expect(within(preview).queryByTestId('preview-caption')).not.toBeInTheDocument();
   });
@@ -418,31 +421,32 @@ describe('Editor: nombre, red y formato', () => {
 });
 
 describe('Editor: quitar la selección', () => {
-  it('Escape, aunque el foco esté fuera del lienzo, y un clic en el margen del lienzo vuelven a las opciones del documento', async () => {
+  it('Escape (aunque el foco esté fuera del lienzo) y un clic en el margen del lienzo la quitan, y sus ajustes se van con ella', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
     expect(stub()).toHaveAttribute('data-selected', 'a');
-    expect(screen.queryByRole('combobox', { name: 'Proporción' })).toBeNull();
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-more-options'));
+    expect(screen.getByTestId('side-panel-settings')).toBeInTheDocument();
 
     // Sin foco en ningún campo (p. ej. tras pulsar en un texto del panel).
     (document.activeElement as HTMLElement | null)?.blur();
     await user.keyboard('{Escape}');
     expect(stub()).toHaveAttribute('data-selected', '');
-    expect(await screen.findByRole('combobox', { name: 'Proporción' })).toBeInTheDocument();
+    expect(screen.queryByTestId('side-panel-settings')).not.toBeInTheDocument();
 
-    // Desde otra pestaña, un clic en el margen del lienzo también quita la selección y enseña «Diseño».
+    // Un clic en el margen del lienzo también quita la selección.
     await user.click(screen.getByTestId('stub-b'));
-    await user.click(screen.getByRole('tab', { name: /Capas/ }));
     fireEvent.pointerDown(screen.getByLabelText(/^Lienzo\./));
     expect(stub()).toHaveAttribute('data-selected', '');
-    expect(await screen.findByRole('combobox', { name: 'Proporción' })).toBeInTheDocument();
   });
 
   it('Escape dentro de un campo de texto no quita la selección', async () => {
     const { user } = await openEditor();
     await user.click(screen.getByTestId('stub-a'));
-    await user.click(screen.getByRole('tab', { name: 'Publicación' }));
-    await user.click(await screen.findByLabelText(/Pie de foto|Texto de la publicación|Pie/));
+    await user.click(screen.getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-more-options'));
+    await user.click(await screen.findByLabelText('Opacidad (%)'));
     await user.keyboard('{Escape}');
     expect(stub()).toHaveAttribute('data-selected', 'a');
   });

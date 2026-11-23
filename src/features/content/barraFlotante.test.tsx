@@ -6,7 +6,14 @@ import { fake } from '@/test/fakeSupabase';
 import { renderApp } from '@/test/fixtures';
 import type { ImageLayer, ShapeLayer, TextLayer } from './document';
 import { clearClipboard } from './editor/clipboard';
-import { boundsOf, placeToolbar, ROTATE_HANDLE_ROOM, TOOLBAR_GAP, TOOLBAR_MARGIN } from './editor/toolbarPlacement';
+import {
+  boundsOf,
+  placeToolbar,
+  ROTATE_HANDLE_ROOM,
+  TEXT_WEIGHT,
+  TOOLBAR_GAP,
+  TOOLBAR_MARGIN,
+} from './editor/toolbarPlacement';
 import { assetRow, canvas, EDITOR, frame, PHOTO_A, photo, seedPiece, shape, text } from './editorTestKit';
 
 // Barra de acciones del elemento elegido (flota sobre el lienzo, también en el
@@ -45,33 +52,31 @@ beforeEach(() => {
 });
 
 describe('Barra de acciones sobre el elemento elegido', () => {
-  it('sin nada elegido no hay barra; al elegir una foto ofrece sustituir, editar, recortar, quitar fondo, duplicar, borrar y «⋯»', async () => {
+  it('sin nada elegido no hay barra; al elegir una foto ofrece sustituir, editar y recortar; lo demás (duplicar, borrar, quitar el fondo…), solo en «⋯»', async () => {
     vi.spyOn(remover, 'canRemoveBackground').mockReturnValue(true);
     const { user } = await openEditor({ layers: [photo('foto'), text('titulo', 'Hola')] });
     expect(screen.queryByTestId('selection-toolbar')).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId('stub-foto'));
-    expect(screen.getByRole('toolbar', { name: 'Acciones rápidas de foto.jpg' })).toBeInTheDocument();
+    expect(screen.getByRole('toolbar', { name: 'Acciones de foto.jpg' })).toBeInTheDocument();
     // Las que necesitan la foto ya cargada aparecen en cuanto llega su dirección.
     await waitFor(() => expect(bar().getByTestId('bar-edit-photo')).toBeInTheDocument());
     const names = bar()
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'));
-    expect(names).toEqual([
-      'Sustituir',
-      'Editar foto',
-      'Recortar',
-      'Quitar fondo',
-      'Duplicar',
-      'Borrar',
-      'Más acciones',
-    ]);
+    expect(names).toEqual(['Sustituir', 'Editar foto', 'Recortar', 'Más acciones']);
+    // Cada acción en un solo sitio: ni duplicar ni borrar en la barra, ni un panel fijo que los repita.
+    expect(screen.queryByTestId('editor-panels')).not.toBeInTheDocument();
 
-    await user.click(bar().getByTestId('bar-duplicate'));
+    await user.click(bar().getByTestId('bar-more'));
+    const menu = within(await screen.findByRole('menu'));
+    expect(menu.getByTestId('menu-remove-background')).toBeInTheDocument();
+    await user.click(menu.getByTestId('menu-duplicate'));
     expect(ids()).toHaveLength(3);
     // La copia queda elegida: la barra sigue ahí, ahora para ella.
     expect(screen.getByTestId('canvas-stub').getAttribute('data-selected')).not.toBe('foto');
-    await user.click(bar().getByTestId('bar-delete'));
+    await user.click(bar().getByTestId('bar-more'));
+    await user.click(await screen.findByTestId('menu-delete'));
     expect(ids()).toEqual(['foto', 'titulo']);
     expect(screen.queryByTestId('selection-toolbar')).not.toBeInTheDocument();
   });
@@ -146,14 +151,14 @@ describe('Barra de acciones sobre el elemento elegido', () => {
     expect(layerOf<TextLayer>('titulo').text).toBe('Nombre del menú o del plato');
   });
 
-  it('con una forma: su color, duplicar y borrar', async () => {
+  it('con una forma: su color y «⋯»', async () => {
     const { user } = await openEditor({ layers: [shape('caja', { fill: '#E5E7EB' })] });
     await user.click(screen.getByTestId('stub-caja'));
     expect(bar().getByTestId('bar-color')).toHaveAccessibleName('Color');
     const names = bar()
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'));
-    expect(names).toEqual(['Color', 'Duplicar', 'Borrar', 'Más acciones']);
+    expect(names).toEqual(['Color', 'Más acciones']);
     // El selector libre del sistema cambia el relleno.
     const free = screen.getByTestId('selection-toolbar').querySelector('input[type="color"]') as HTMLInputElement;
     fireEvent.change(free, { target: { value: '#ff0000' } });
@@ -168,7 +173,7 @@ describe('Barra de acciones sobre el elemento elegido', () => {
     await user.keyboard('{Shift>}');
     await user.click(screen.getByTestId('stub-b'));
     await user.keyboard('{/Shift}');
-    expect(screen.getByRole('toolbar', { name: 'Acciones rápidas de 2 capas' })).toBeInTheDocument();
+    expect(screen.getByRole('toolbar', { name: 'Acciones de 2 capas' })).toBeInTheDocument();
 
     await user.click(bar().getByTestId('bar-group'));
     expect(layerOf<ShapeLayer>('a').groupId).toBeTruthy();
@@ -184,8 +189,8 @@ describe('Barra de acciones sobre el elemento elegido', () => {
     await user.click(await screen.findByTestId('menu-lock'));
     expect(layerOf<ShapeLayer>('a').locked).toBe(true);
     expect(layerOf<ShapeLayer>('b').locked).toBe(true);
-    // Bloqueadas: ni duplicar ni borrar a mano; solo desbloquear (y «⋯»).
-    expect(bar().queryByTestId('bar-delete')).not.toBeInTheDocument();
+    // Bloqueadas: solo desbloquear (y «⋯», donde borrar no se puede).
+    expect(bar().getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Desbloquear', 'Más acciones']);
     await user.click(bar().getByTestId('bar-unlock'));
     expect(layerOf<ShapeLayer>('a').locked).toBe(false);
   });
@@ -232,7 +237,33 @@ describe('Dónde se coloca la barra', () => {
 
   it('solo si el elemento llena el lienzo queda encima de él, pegada arriba', () => {
     const place = placeToolbar({ left: 0, top: 0, right: 800, bottom: 600 }, bar, area);
-    expect(place).toMatchObject({ side: 'overlap', top: TOOLBAR_MARGIN });
+    expect(place).toMatchObject({ side: 'edge', top: TOOLBAR_MARGIN });
+  });
+
+  it('no tapa los textos: con un titular justo debajo de la foto elegida, se va a un lado', () => {
+    // Una foto arriba (como «Oferta de la semana») y el titular debajo: debajo de la foto pisaría el titular.
+    const photo = { left: 250, top: 0, right: 550, bottom: 360 };
+    const title = { left: 270, top: 380, right: 530, bottom: 470, weight: TEXT_WEIGHT };
+    const place = placeToolbar(photo, bar, { width: 1000, height: 600 }, [title]);
+    expect(place.side).toBe('beside');
+    expect(place.left).toBeGreaterThanOrEqual(550);
+    // Sin sitio a los lados: pegada al borde de abajo, donde no hay ni foto ni texto.
+    const narrow = placeToolbar(photo, bar, { width: 800, height: 600 }, [title]);
+    expect(narrow).toMatchObject({ side: 'edge', top: 600 - bar.height - TOOLBAR_MARGIN });
+    // Y si abajo también hay texto, encima de la foto antes que encima de un texto.
+    const footer = { left: 0, top: 540, right: 800, bottom: 600, weight: TEXT_WEIGHT };
+    expect(placeToolbar(photo, bar, { width: 800, height: 600 }, [title, footer])).toMatchObject({
+      side: 'edge',
+      top: TOOLBAR_MARGIN,
+    });
+  });
+
+  it('pegada al borde, elige el de abajo si arriba hay un texto', () => {
+    const photo = { left: 0, top: 0, right: 800, bottom: 600 };
+    const title = { left: 100, top: 10, right: 700, bottom: 80, weight: TEXT_WEIGHT };
+    const place = placeToolbar(photo, bar, area, [title]);
+    expect(place.side).toBe('edge');
+    expect(place.top).toBe(area.height - bar.height - TOOLBAR_MARGIN);
   });
 
   it('la caja de varias capas (o de una girada) es la que las contiene enteras', () => {
@@ -315,7 +346,9 @@ describe('Lo habitual de un editor', () => {
     const { user } = await openEditor({ layers: [text('titulo', 'Hola')] });
     await user.click(screen.getByTestId('stub-titulo'));
     await user.keyboard('{Control>}c{/Control}');
-    fireEvent.paste(screen.getByTestId('layer-text'));
+    // Escribiendo en el texto, sobre el lienzo.
+    await user.dblClick(screen.getByTestId('stub-titulo'));
+    fireEvent.paste(await screen.findByTestId('canvas-text-editor'));
     expect(canvas().document.layers).toHaveLength(1);
   });
 

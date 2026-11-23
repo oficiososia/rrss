@@ -4,6 +4,7 @@ import type { ContentItemRow, ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument, type Layer } from './document';
+import { addFromDrawer } from './editorTestKit';
 import type { CanvasViewProps } from './editor/canvas/types';
 import * as libraryApi from '@/features/library/api';
 import { chooseEditorAction } from '@/test/moreMenu';
@@ -127,7 +128,7 @@ describe('Editor de carruseles: páginas', () => {
     expect(canvasLayers()).toEqual(['b']);
     expect(screen.getByTestId('canvas-stub')).toHaveAttribute('data-label', expect.stringMatching(/página 2 de 3/));
     // Una capa nueva va a la página activa.
-    await user.click(screen.getByTestId('add-rectangle'));
+    await addFromDrawer(user, 'elements', 'add-rectangle');
     expect(canvasLayers()).toHaveLength(2);
     await user.click(thumbs()[0]!);
     expect(canvasLayers()).toEqual(['a']);
@@ -210,9 +211,9 @@ describe('Editor de carruseles: páginas', () => {
     expect(screen.getByTestId('page-add')).toBeDisabled();
   });
 
-  it('vista previa de carrusel con flechas, como en Instagram', async () => {
+  it('vista previa de carrusel con flechas, como en Instagram (en «Compartir»)', async () => {
     const { user } = await openEditor();
-    await chooseEditorAction(user, 'editor-preview');
+    await user.click(screen.getByTestId('editor-share'));
     const preview = await screen.findByTestId('network-preview');
     await waitFor(() => expect(renderDocument).toHaveBeenCalledTimes(3));
     expect(within(preview).getByTestId('preview-counter')).toHaveTextContent('1/3');
@@ -230,13 +231,16 @@ describe('Editor de carruseles: páginas', () => {
     const { user } = await openEditor();
     await chooseEditorAction(user, 'editor-export');
     expect(await screen.findByTestId('export-pages-notice')).toHaveTextContent('3 páginas');
+    await user.click(screen.getByTestId('export-library'));
     expect(screen.queryByTestId('export-format-png')).not.toBeInTheDocument();
     await user.click(screen.getByTestId('export-download'));
     await user.click(screen.getByTestId('export-confirm'));
     await screen.findByTestId('export-done');
-    expect(renderDocument).toHaveBeenCalledTimes(3);
+    // La vista previa de «Compartir» dibuja a media resolución: aquí cuenta solo la exportación.
+    const exported = renderDocument.mock.calls.filter((call) => (call[2] as { pixelRatio?: number }).pixelRatio !== 0.5);
+    expect(exported).toHaveLength(3);
     // Cada llamada recibe la página que toca, en orden.
-    const drawn = renderDocument.mock.calls.map((call) => (call as unknown as [{ layers: Layer[] }])[0].layers[0]!.id);
+    const drawn = exported.map((call) => (call as unknown as [{ layers: Layer[] }])[0].layers[0]!.id);
     expect(drawn).toEqual(['a', 'b', 'c']);
     const inserts = mocks.uploadAsset.mock.calls.map(
       (c) => c[0] as { file: File; provenance: { page: number; page_count: number; format: string } },

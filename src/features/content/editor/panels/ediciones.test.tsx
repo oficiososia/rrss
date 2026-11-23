@@ -60,36 +60,55 @@ function renderPanel(layer: Layer, dispatch: (action: EditorAction) => void) {
         dispatch={dispatch}
         brandStyle={brandStyle}
         allowedRatios={null}
-        textRef={{ current: null }}
       />
     </QueryClientProvider>,
   );
 }
 
 describe('ediciones sencillas en el panel', () => {
-  it('mover el deslizador de brillo cambia los ajustes de la capa', () => {
+  it('un filtro rápido cambia los ajustes de la capa', () => {
     const dispatch = vi.fn();
     renderPanel(image, dispatch);
-    fireEvent.change(screen.getByTestId('photo-brightness'), { target: { value: '30' } });
+    fireEvent.click(screen.getByTestId('photo-filter-warm'));
     expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'update', id: 'foto', patch: { adjust: expect.objectContaining({ brightness: 30 }) } }),
+      expect.objectContaining({
+        type: 'update',
+        id: 'foto',
+        patch: { adjust: expect.objectContaining({ filter: 'warm' }) },
+      }),
     );
   });
 
-  it('girar 90° y voltear cambian la capa', () => {
-    const dispatch = vi.fn();
-    renderPanel(image, dispatch);
-    fireEvent.click(screen.getByTestId('photo-turn'));
-    fireEvent.click(screen.getByTestId('photo-flip-x'));
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({ turn: 90 }) }));
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ patch: expect.objectContaining({ flipX: true }) }));
+  it('luz y color, girar, recortar y el fondo están en «Editar foto» y en la barra: aquí no se repiten', () => {
+    renderPanel(image, vi.fn());
+    for (const id of [
+      'photo-brightness',
+      'photo-turn',
+      'photo-crop',
+      'photo-cutout',
+      'photo-ai-background',
+      'layer-edit-photo',
+    ]) {
+      expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+    }
   });
 
-  it('sin recortador compatible o sin IA, no salen «Quitar el fondo» ni «Fondo con IA»', () => {
-    renderPanel(image, vi.fn());
-    expect(screen.queryByTestId('photo-ai-background')).not.toBeInTheDocument();
-    // Sin la foto de la biblioteca a mano tampoco se ofrece quitar el fondo.
-    expect(screen.queryByTestId('photo-cutout')).not.toBeInTheDocument();
+  it('una pieza de antes con luz y color o giro en la capa se puede limpiar', () => {
+    const dispatch = vi.fn();
+    renderPanel(
+      {
+        ...image,
+        adjust: { brightness: 20, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 },
+        turn: 90,
+      } as Layer,
+      dispatch,
+    );
+    fireEvent.click(screen.getByTestId('photo-adjust-reset'));
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ patch: { adjust: undefined } }));
+    fireEvent.click(screen.getByTestId('photo-geometry-reset'));
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: expect.objectContaining({ turn: undefined }) }),
+    );
   });
 
   it('activar el contorno y la sombra de un texto', () => {
@@ -100,7 +119,9 @@ describe('ediciones sencillas en el panel', () => {
       expect.objectContaining({ patch: { outline: expect.objectContaining({ width: expect.any(Number) }) } }),
     );
     fireEvent.click(within(screen.getByTestId('text-effects')).getByLabelText('Sombra'));
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ patch: { shadow: expect.objectContaining({ blur: 24 }) } }));
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ patch: { shadow: expect.objectContaining({ blur: 24 }) } }),
+    );
   });
 });
 
@@ -117,7 +138,11 @@ describe('deshacer ediciones y páginas', () => {
   it('una edición se deshace y solo toca la capa de su página', () => {
     let state = initEditor(document);
     state = editorReducer(state, { type: 'selectPage', pageId: 'p2' });
-    state = editorReducer(state, { type: 'update', id: 'foto2', patch: { adjust: { brightness: 20, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 }, turn: 90 } });
+    state = editorReducer(state, {
+      type: 'update',
+      id: 'foto2',
+      patch: { adjust: { brightness: 20, contrast: 0, saturation: 0, temperature: 0, sharpness: 0 }, turn: 90 },
+    });
     expect(state.document.pages[1]!.layers[0]).toMatchObject({ turn: 90, adjust: { brightness: 20 } });
     expect(state.document.pages[0]!.layers[0]).not.toHaveProperty('turn');
     state = editorReducer(state, { type: 'selectPage', pageId: 'p1' });
@@ -135,7 +160,13 @@ describe('deshacer ediciones y páginas', () => {
       shadow: undefined,
     });
     for (const key of ['adjust', 'crop', 'straighten', 'shadow']) expect(layer).not.toHaveProperty(key);
-    expect(contentDocumentSchema.safeParse({ schemaVersion: DOCUMENT_SCHEMA_VERSION, canvas, pages: [{ id: 'p1', layers: [layer] }] }).success).toBe(true);
+    expect(
+      contentDocumentSchema.safeParse({
+        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        canvas,
+        pages: [{ id: 'p1', layers: [layer] }],
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -169,6 +200,8 @@ describe('lo que dibujan el lienzo y la exportación sale de la misma descripci�
     expect(star).toMatchObject({ kind: 'sticker', shape: 'star', fill: '#FF0000' });
     const line = describeLayer({ ...base, shape: 'line' } as unknown as Layer, new Map());
     expect(line).toMatchObject({ kind: 'sticker', shape: 'line', fill: null, stroke: { color: '#FF0000', width: 20 } });
-    expect(describeLayer({ ...base, shape: 'rectangle' } as unknown as Layer, new Map())).toMatchObject({ kind: 'rect' });
+    expect(describeLayer({ ...base, shape: 'rectangle' } as unknown as Layer, new Map())).toMatchObject({
+      kind: 'rect',
+    });
   });
 });
