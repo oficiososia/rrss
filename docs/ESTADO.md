@@ -975,6 +975,8 @@ Ocho fallos: cuatro de la lista de pendientes y cuatro del reel real de «Fotos 
   marcado con enlace, no lo pendiente ni lo marcado sin enlace; Resultados y el informe con su título; y la vuelta
   atrás en `migraciones.test.ts`), trabajador (`reel-quality.test.ts`: encuadre ceñido, límite de resolución y detalle
   dentro del plato), catálogo (`agency/tests/catalogo.test.ts`: un texto por plano en las dos «Oferta de la semana»).
+- **Resultado en local (24/11/2026):** `typecheck` y `lint` sin errores; `npm test` 2277 pasan; `test:db` 1308 pasan y 2
+  omitidas; `build` bien; `worker/` 192 pasan; `agency/` 134 pasan; `test:layout` 188 pasan y 2 omitidas.
 - **Sin probar:** el encuadre ceñido y el detalle con las fotos de cocina a resolución completa (en local solo hay
   sus miniaturas de 300 × 400; el ceñido solo está probado con cifras y con el filtro de FFmpeg generado); medir las
   miniaturas en un navegador real (CORS de R2 y Supabase con `loadCorsImage`); el capturador contra la Graph API real
