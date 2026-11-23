@@ -222,11 +222,12 @@ describe('encargar el montaje (plan v2)', () => {
   it('rechaza archivos y tipografías de otra marca, campos de más y música sin licencia', async () => {
     const input = (plan: Row) => ({ template: { id: 'fundido-suave' }, plan });
     const clips = planV2().clips as Row[];
+    // Archivo de otra marca: el mensaje genérico, sin la ruta (20270107010000).
     await rejected(
       editor,
       marcaA,
       input(planV2({ clips: [{ ...clips[1], path: clipB }] })),
-      /no es un recurso de esta marca/,
+      /^Pieza 1: el archivo no es un recurso de esta marca$/,
     );
     await rejected(
       editor,
@@ -558,5 +559,104 @@ describe('borrador automático del reel (20261228010000)', () => {
     await denied(db, editor, c.sql, c.params, /archivado/);
     await db.query(`delete from public.content_items where id = $1`, [otra]);
     expect(await db.query(`select 1 from public.reel_drafts where content_id = $1`, [otra])).toEqual([]);
+  });
+});
+
+describe('fotos y vídeos borrados de la biblioteca (20270107010000)', () => {
+  const input = (plan: Row) => ({ template: { id: 'fundido-suave' }, plan });
+  const borrada = () => `${orgA}/${marcaA}/media/borrada-${++n}.jpg`;
+
+  it('una foto o un vídeo de la marca que ya no existe se dice así, con su número y sin la ruta', async () => {
+    const clips = planV2().clips as Row[];
+    const foto = borrada();
+    await rejected(
+      editor,
+      marcaA,
+      input(planV2({ clips: [clips[0], { ...clips[0], id: 'c3', path: foto }] })),
+      /^La foto 2 ya no está en la biblioteca$/,
+    );
+    await rejected(
+      editor,
+      marcaA,
+      input(planV2({ clips: [{ ...clips[1], path: `${orgA}/${marcaA}/media/borrado.mp4` }] })),
+      /^El vídeo 1 ya no está en la biblioteca$/,
+    );
+    const music = { ...(planV2().music as Row), path: `${orgA}/${marcaA}/media/borrada.m4a` };
+    await rejected(editor, marcaA, input(planV2({ music })), /^La música ya no está en la biblioteca$/);
+    await rejected(
+      editor,
+      marcaA,
+      input(planV2({ cover: { type: 'photo', path: foto } })),
+      /^La foto de la portada ya no está en la biblioteca$/,
+    );
+  });
+
+  it('una ruta de otra marca o mal formada no dice si existe ni enseña la ruta', async () => {
+    const clips = planV2().clips as Row[];
+    // De otra organización (exista o no): el mensaje genérico.
+    for (const path of [clipB, `${orgB}/${marcaB}/media/no-existe.mp4`, `${orgA}/${marcaA2}/media/x.mp4`]) {
+      await rejected(
+        editor,
+        marcaA,
+        input(planV2({ clips: [{ ...clips[1], path }] })),
+        /^Pieza 1: el archivo no es un recurso de esta marca$/,
+      );
+    }
+    // De la marca pero de otro tipo (un clip donde va una foto): existe, así que tampoco es «borrada».
+    await rejected(
+      editor,
+      marcaA,
+      input(planV2({ clips: [{ ...clips[0], path: clipA }] })),
+      /^Pieza 1: el archivo no es un recurso de esta marca$/,
+    );
+    await rejected(
+      editor,
+      marcaA,
+      input(planV2({ clips: [{ ...clips[0], path: `${orgA}/${marcaA}/../x.jpg` }] })),
+      /^Pieza 1: la ruta del archivo no es válida$/,
+    );
+  });
+
+  it('asset_usage encuentra los reels por la ruta del archivo, también en el borrador', async () => {
+    const usos = (user: TestUser) =>
+      as<{ asset_id: string; content_id: string }>(
+        db,
+        user,
+        `select asset_id::text, content_id::text from public.asset_usage($1)`,
+        [marcaA],
+      );
+    // Un archivo cuya ruta NO lleva su id (como los que genera el servidor).
+    const ruta = `${orgA}/${marcaA}/media/generada-${++n}.jpg`;
+    await as(
+      db,
+      ana,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'image', $3, 'generada.jpg', 'image/jpeg', 1)`,
+      [marcaA, orgA, ruta],
+    );
+    const [row] = await db.query<{ id: string }>(`select id::text from public.media_assets where storage_path = $1`, [ruta]);
+    const clips = planV2().clips as Row[];
+    const conVersion = await piece(editor, orgA, marcaA, 'reel');
+    await saveVersion(editor, conVersion, project(planV2({ clips: [{ ...clips[0], path: ruta }] })));
+    const soloBorrador = await piece(editor, orgA, marcaA, 'reel');
+    const { sql, params } = rpcStatement('save_reel_draft', {
+      p_content_id: soloBorrador,
+      p_data: project(planV2({ clips: [{ ...clips[0], path: ruta }] })),
+      p_base_version: 0,
+    });
+    await as(db, editor, sql, params);
+    const mias = (await usos(editor)).filter((u) => u.asset_id === row!.id).map((u) => u.content_id).sort();
+    expect(mias).toEqual([conVersion, soloBorrador].sort());
+    // Con versión y borrador a la vez, la pieza sale una sola vez.
+    const both = rpcStatement('save_reel_draft', {
+      p_content_id: conVersion,
+      p_data: project(planV2({ clips: [{ ...clips[0], path: ruta }] })),
+      p_base_version: 1,
+    });
+    await as(db, editor, both.sql, both.params);
+    expect((await usos(editor)).filter((u) => u.asset_id === row!.id)).toHaveLength(2);
+    // Otra organización no ve nada.
+    expect(await as(db, berta, `select * from public.asset_usage($1)`, [marcaA])).toEqual([]);
+    await db.query(`delete from public.content_items where id = any($1::uuid[])`, [[conVersion, soloBorrador]]);
   });
 });

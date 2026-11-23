@@ -17,7 +17,16 @@ export const reelKeys = {
 
 export type ReelSourceAsset = Pick<
   MediaAssetRow,
-  'id' | 'kind' | 'storage_path' | 'thumb_path' | 'file_name' | 'mime_type' | 'duration_ms' | 'created_at'
+  | 'id'
+  | 'kind'
+  | 'storage_path'
+  | 'thumb_path'
+  | 'file_name'
+  | 'mime_type'
+  | 'duration_ms'
+  | 'created_at'
+  | 'provenance'
+  | 'folder'
 >;
 
 /** Fotos, clips y audios de la marca con los que se puede montar un reel (los 300 más recientes). */
@@ -28,7 +37,9 @@ export function useReelSources(brandId: string) {
       unwrap(
         await supabase
           .from('media_assets')
-          .select('id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at')
+          .select(
+            'id, kind, storage_path, thumb_path, file_name, mime_type, duration_ms, created_at, provenance, folder',
+          )
           .eq('brand_id', brandId)
           .in('kind', ['image', 'video', 'audio'])
           .order('created_at', { ascending: false })

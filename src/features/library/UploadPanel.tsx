@@ -6,6 +6,7 @@ import { ALLOWED_MIME_TYPES, MAX_FILE_BYTES } from '@/config/app';
 import { translateError } from '@/lib/errors';
 import { sha256Hex, validateFile } from '@/lib/files';
 import { cn, formatBytes } from '@/lib/utils';
+import type { MediaAssetRow } from '@/lib/database.types';
 import { assetKeys, findDuplicate, uploadAsset } from './api';
 
 type Status = 'queued' | 'hashing' | 'duplicate' | 'uploading' | 'done' | 'error' | 'skipped';
@@ -46,9 +47,23 @@ interface UploadPanelProps {
   /** Carpeta a la que van los archivos que se elijan con el botón o se suelten aquí. */
   folder?: string;
   incoming?: IncomingFiles | null;
+  /**
+   * En un selector (editor de reels o de piezas): se llama con cada archivo ya subido para elegirlo en el
+   * acto. Un archivo idéntico a otro de la biblioteca no se sube otra vez: se elige el que ya estaba.
+   */
+  onUploaded?: (asset: MediaAssetRow) => void;
+  /** Sin el recuadro de «Arrastra aquí»: solo la lista con el progreso (quien lo usa pone el botón y el soltar). */
+  listOnly?: boolean;
 }
 
-export function UploadPanel({ organizationId, brandId, folder = '', incoming }: UploadPanelProps) {
+export function UploadPanel({
+  organizationId,
+  brandId,
+  folder = '',
+  incoming,
+  onUploaded,
+  listOnly = false,
+}: UploadPanelProps) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -62,7 +77,7 @@ export function UploadPanel({ organizationId, brandId, folder = '', incoming }: 
     async (item: Item, sha256: string) => {
       patch(item.id, { status: 'uploading', message: undefined, progress: 0 });
       try {
-        await uploadAsset({
+        const row = await uploadAsset({
           organizationId,
           brandId,
           file: item.file,
@@ -71,12 +86,13 @@ export function UploadPanel({ organizationId, brandId, folder = '', incoming }: 
           onProgress: (progress) => patch(item.id, { progress }),
         });
         patch(item.id, { status: 'done' });
+        onUploaded?.(row);
         await queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
       } catch (error) {
         patch(item.id, { status: 'error', message: translateError(error) });
       }
     },
-    [organizationId, brandId, patch, queryClient],
+    [organizationId, brandId, patch, queryClient, onUploaded],
   );
 
   const process = useCallback(
@@ -87,6 +103,14 @@ export function UploadPanel({ organizationId, brandId, folder = '', incoming }: 
       try {
         const sha256 = await sha256Hex(item.file);
         const duplicate = await findDuplicate(brandId, sha256);
+        if (duplicate && onUploaded) {
+          // En un selector no se duplica: se elige el que ya estaba.
+          patch(item.id, {
+            status: 'done',
+            message: `Ya estaba en la biblioteca como «${duplicate.file_name}»: elegido.`,
+          });
+          return onUploaded(duplicate);
+        }
         if (duplicate) {
           return patch(item.id, { status: 'duplicate', sha256, message: `Es idéntico a «${duplicate.file_name}».` });
         }
@@ -95,7 +119,7 @@ export function UploadPanel({ organizationId, brandId, folder = '', incoming }: 
         patch(item.id, { status: 'error', message: translateError(error) });
       }
     },
-    [brandId, patch, upload],
+    [brandId, patch, upload, onUploaded],
   );
 
   const addFiles = useCallback(
@@ -134,42 +158,44 @@ export function UploadPanel({ organizationId, brandId, folder = '', incoming }: 
 
   return (
     <div className="space-y-3">
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        data-testid="library-dropzone"
-        className={cn(
-          'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors',
-          dragging ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
-        )}
-      >
-        <UploadCloud className="h-7 w-7 text-muted" aria-hidden />
-        <p className="text-sm font-medium">Arrastra aquí tus archivos</p>
-        <p className="text-xs text-muted">
-          Imágenes, vídeos, audio y documentos, hasta {formatBytes(MAX_FILE_BYTES)} cada uno.
-          {folder ? ` Irán a «${folder}».` : ''}
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()}>
-          Elegir archivos
-        </Button>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ALLOWED_MIME_TYPES.join(',')}
-          className="sr-only"
-          aria-label="Elegir archivos para subir"
-          data-testid="library-file-input"
-          onChange={(e) => {
-            if (e.target.files) void addFiles(e.target.files, folder);
-            e.target.value = '';
+      {!listOnly && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
           }}
-        />
-      </div>
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          data-testid="library-dropzone"
+          className={cn(
+            'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors',
+            dragging ? 'border-primary bg-primary-soft' : 'border-border bg-surface',
+          )}
+        >
+          <UploadCloud className="h-7 w-7 text-muted" aria-hidden />
+          <p className="text-sm font-medium">Arrastra aquí tus archivos</p>
+          <p className="text-xs text-muted">
+            Imágenes, vídeos, audio y documentos, hasta {formatBytes(MAX_FILE_BYTES)} cada uno.
+            {folder ? ` Irán a «${folder}».` : ''}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => inputRef.current?.click()}>
+            Elegir archivos
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={ALLOWED_MIME_TYPES.join(',')}
+            className="sr-only"
+            aria-label="Elegir archivos para subir"
+            data-testid="library-file-input"
+            onChange={(e) => {
+              if (e.target.files) void addFiles(e.target.files, folder);
+              e.target.value = '';
+            }}
+          />
+        </div>
+      )}
 
       {items.length > 0 && (
         <div className="rounded-xl border border-border bg-surface" data-testid="library-upload-list">

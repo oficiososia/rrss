@@ -50,17 +50,90 @@ function isOwnMessage(message: string): boolean {
   return /[áéíóúñ¿¡«»]/i.test(message) || /^(No |Solo |Hace falta|La |Has |Hay |Indica |Esta )/.test(message);
 }
 
+// ── Archivos de la biblioteca: nunca se enseñan rutas ni identificadores ──
+
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+/**
+ * Una ruta de almacenamiento (`<org>/<marca>/media/x.jpg`): empieza por un identificador o
+ * pasa por una de las carpetas del almacén. Fechas («22/11/2026») o «JPEG/PNG» no lo son.
+ */
+const STORAGE_PATH =
+  /(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/|[\w.-]+\/(?:media|reels|drive|thumbs|fonts|exports)\/)[^\s»"',;]*/gi;
+
+const MEDIA_MESSAGES: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [
+    /^La foto (\d+) ya no está en la biblioteca\.?$/,
+    (m) => `La foto ${m[1]} del reel ya no está en la biblioteca. Sustitúyela en el editor y vuelve a montarlo.`,
+  ],
+  [
+    /^El vídeo (\d+) ya no está en la biblioteca\.?$/,
+    (m) => `El vídeo ${m[1]} del reel ya no está en la biblioteca. Sustitúyelo en el editor y vuelve a montarlo.`,
+  ],
+  [
+    /^La música ya no está en la biblioteca\.?$/,
+    () => 'La música del reel ya no está en la biblioteca. Cámbiala o quítala y vuelve a montarlo.',
+  ],
+  [
+    /^La foto de la portada ya no está en la biblioteca\.?$/,
+    () => 'La foto de la portada ya no está en la biblioteca. Elige otra portada y vuelve a montarlo.',
+  ],
+  // Servidores anteriores a 20270107010000: el mensaje traía la ruta y no distinguía si se había borrado.
+  [
+    /^Pieza (\d+): «[^»]*» no es un recurso de esta marca/,
+    (m) =>
+      `El elemento ${m[1]} del reel ya no está en la biblioteca de la marca. Sustitúyelo en el editor y vuelve a montarlo.`,
+  ],
+  [
+    /^Pieza (\d+): el archivo no es un recurso de esta marca/,
+    (m) => `El elemento ${m[1]} del reel no es de la biblioteca de esta marca. Sustitúyelo por uno de la biblioteca.`,
+  ],
+  [
+    /^Música: (?:«[^»]*»|el archivo) no es un recurso de esta marca/,
+    () => 'La música del reel ya no está en la biblioteca de la marca. Cámbiala o quítala y vuelve a montarlo.',
+  ],
+  [
+    /^Portada: (?:«[^»]*»|el archivo) no es un recurso de esta marca/,
+    () => 'La foto de la portada ya no está en la biblioteca de la marca. Elige otra portada.',
+  ],
+  [
+    /^Foto: (?:«[^»]*»|el archivo) no es un recurso de esta marca/,
+    () => 'Esa foto ya no está en la biblioteca de la marca. Elige otra.',
+  ],
+];
+
+/**
+ * Mensaje que se puede enseñar: los errores conocidos de archivos (borrados de la
+ * biblioteca, de otra marca) se traducen a una frase con qué hacer, y de cualquier
+ * otro se quitan las rutas de almacenamiento y los identificadores.
+ */
+export function cleanMessage(message: string): string {
+  const trimmed = message.trim();
+  for (const [pattern, text] of MEDIA_MESSAGES) {
+    const match = trimmed.match(pattern);
+    if (match) return text(match);
+  }
+  return trimmed
+    .replace(/«[^»]*(?:\/|[0-9a-f]{8}-[0-9a-f]{4}-)[^»]*»/gi, 'el archivo')
+    .replace(STORAGE_PATH, 'el archivo')
+    .replace(UUID, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,:;])/g, '$1')
+    .trim();
+}
+
 export function translateError(error: unknown): string {
-  if (typeof error === 'string') return error || GENERIC;
+  if (typeof error === 'string') return error ? cleanMessage(error) : GENERIC;
   const message = field(error, 'message');
   const code = field(error, 'code');
   const status = field(error, 'status') || field(error, 'statusCode');
 
+  // Archivos borrados o de otra marca (algunos no llevan tildes: se miran antes).
+  if (message && MEDIA_MESSAGES.some(([pattern]) => pattern.test(message.trim()))) return cleanMessage(message);
   // Mensajes de nuestras funciones: ya están en español y son los más precisos.
-  if (message && isOwnMessage(message)) return message;
+  if (message && isOwnMessage(message)) return cleanMessage(message);
   // Errores que lanza la propia aplicación (validaciones): `Error` a secas, sin
   // código. Los de Supabase y los de red son subclases con otro nombre.
-  if (error instanceof Error && error.name === 'Error' && !code && !status && message) return message;
+  if (error instanceof Error && error.name === 'Error' && !code && !status && message) return cleanMessage(message);
 
   if (code === '42501' || status === '403' || /row-level security|permission denied/i.test(message))
     return NO_PERMISSION;

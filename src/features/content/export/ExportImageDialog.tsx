@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice } from '@/components/ui';
 import { assetKeys, uploadAsset } from '@/features/library/api';
-import { translateError } from '@/lib/errors';
+import { cleanMessage, translateError } from '@/lib/errors';
 import { formatBytes } from '@/lib/utils';
 import { pageView, type ContentDocument } from '../document';
 import type { ImageLookup } from '../editor/canvas/nodes';
@@ -199,7 +199,8 @@ export function ExportImageDialog(props: ExportImageDialogProps) {
     }
   }
 
-  const message = error instanceof ExportError ? error.message : error;
+  // Sin rutas ni identificadores, aunque el nombre de una capa los lleve.
+  const message = error instanceof ExportError ? cleanMessage(error.message) : error;
 
   return (
     <Dialog

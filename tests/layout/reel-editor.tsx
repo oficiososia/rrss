@@ -11,10 +11,12 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures
 // que en el navegador se ven las miniaturas, se reproduce la vista previa y se
 // dibuja la onda de la música.
 // Parámetros: ?clips=12 (elementos del reel) · ?musica=1 · ?vacio=1 (reel nuevo)
+//   · ?borrada=1 (la foto del primer elemento se ha borrado de la biblioteca)
 const params = new URLSearchParams(window.location.search);
 const count = Math.max(1, Math.min(30, Number(params.get('clips') ?? '12')));
 const withMusic = params.get('musica') === '1';
 const empty = params.get('vacio') === '1';
+const deleted = params.get('borrada') === '1';
 
 const path = (name: string) => `${ORG_ID}/${BRAND_ID}/media/${name}`;
 const COLORS = ['#8B3A1E', '#1F4E5F', '#6B4E9B', '#2E6B3A', '#A0522D', '#3B3B6D'];
@@ -152,7 +154,7 @@ fake.tables.media_assets = [
       : asset(`foto-${i + 1}`, 'image', `foto-${i + 1}.jpg`, 'image/jpeg'),
   ),
   asset('audio-1', 'audio', 'musica.wav', 'audio/wav'),
-];
+].filter((row) => !(deleted && row.id === 'foto-1'));
 fake.tables.jobs = [];
 fake.tables.reel_drafts = [];
 fake.tables.brand_fonts = [];
