@@ -1,10 +1,20 @@
 // Hoja «Exportar» del editor de reels: el único sitio donde se saca el vídeo,
 // como el «Exportar» de CapCut. Al abrirla, el editor monta el vídeo si hace
 // falta (guardando antes la versión); aquí se ve cómo va y, cuando está listo,
-// se descarga, se abre en la biblioteca o se publica o programa. También
+// se descarga, se abre en la biblioteca, se publica o programa, o se termina en
+// Instagram para ponerle música (§12). También
 // están la portada, los vídeos anteriores y los avisos de la vista previa, en
 // una línea. En móvil el diálogo ya es una hoja que sube desde abajo.
-import { CalendarClock, ChevronLeft, ChevronRight, Download, FolderOpen, Loader2, TriangleAlert } from 'lucide-react';
+import {
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FolderOpen,
+  Loader2,
+  Music,
+  TriangleAlert,
+} from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, Dialog, ErrorState, Skeleton } from '@/components/ui';
@@ -54,6 +64,16 @@ export interface ExportSheetProps {
     hint?: string;
     busy: boolean;
     onPublish: () => void;
+  };
+  /**
+   * «Terminar en Instagram (para poner música)»: mandar el vídeo y su pie al móvil y publicarlo allí
+   * (docs/editor-reels.md §12). Sin esto (ya publicada) no se ofrece.
+   */
+  finish?: {
+    disabled: boolean;
+    hint?: string;
+    detail?: string;
+    onFinish: () => void;
   };
   /** En modo agencia: el estado de la pieza y su siguiente paso (enviar a revisión, aprobar…). */
   approval?: ReactNode;
@@ -206,6 +226,32 @@ export function ExportSheet(props: ExportSheetProps) {
                 />
               </button>
             </li>
+            {props.finish && (
+              <li>
+                <button
+                  type="button"
+                  onClick={props.finish.onFinish}
+                  disabled={!ready || viewing !== null || props.finish.disabled}
+                  title={props.finish.hint}
+                  className={rowClass(ready && viewing === null && !props.finish.disabled)}
+                  data-testid="reel-export-instagram"
+                >
+                  <Row
+                    icon={<Music className="h-5 w-5" aria-hidden />}
+                    title="Terminar en Instagram (para poner música)"
+                    detail={
+                      !ready
+                        ? 'Cuando el vídeo esté listo.'
+                        : viewing !== null
+                          ? 'Se manda el vídeo de ahora, no uno anterior.'
+                          : (props.finish.hint ??
+                            props.finish.detail ??
+                            'Manda el vídeo y el pie al móvil y ponle la música en Instagram.')
+                    }
+                  />
+                </button>
+              </li>
+            )}
           </ul>
 
           {props.approval}
