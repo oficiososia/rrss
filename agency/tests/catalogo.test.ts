@@ -272,6 +272,37 @@ describe('catálogo: todas las plantillas de los cuatro juegos', () => {
     }
   }
 
+  it('«Oferta de la semana»: un solo texto en cada plano (el precio, la condición y la llamada, cada uno en el suyo)', () => {
+    for (const [setId, key] of [
+      ['restaurante', 'rest-oferta-semana'],
+      ['gimnasio', 'gim-oferta-semana'],
+    ] as const) {
+      const template = buildCatalog(setId, themeFromProfile(null)).reels.templates.find((t) => t.key === key)!.document;
+      const style = STYLES[template.style.id];
+      const byText = new Map(template.texts.map((t) => [t.id, t]));
+      // En la plantilla: cada texto en un plano distinto y solo en el suyo.
+      expect(new Set(template.texts.map((t) => t.from)).size, key).toBe(template.texts.length);
+      expect(template.texts.every((t) => (t.to ?? t.from) === t.from), key).toBe(true);
+      expect(byText.get('precio')!.from).not.toBe(byText.get('condiciones')!.from);
+      expect(byText.get('cierre')!.from).not.toBe(byText.get('precio')!.from);
+      const needs = reelTemplateNeeds(template);
+      for (const count of [needs.min, needs.max]) {
+        const assets = Array.from({ length: count }, (_, i) => asset(i + 1, 'image'));
+        const ready = finalizeProject(buildReelFromTemplate(template, assets, style));
+        const { starts, durations } = planTimeline(ready.plan.clips, style);
+        // En el vídeo: nunca dos textos a la vez, y ninguno pasa de un plano a otro.
+        const texts = [...ready.plan.texts].sort((a, b) => a.start - b.start);
+        texts.slice(1).forEach((text, i) => expect(text.start, `${key} con ${count}`).toBeGreaterThanOrEqual(texts[i]!.end - 0.01));
+        for (const text of texts) {
+          const plane = starts.findIndex((s, i) => text.start >= s - 0.01 && text.start < s + durations[i]!);
+          expect(text.end, `${key}/${text.text}`).toBeLessThanOrEqual(starts[plane]! + durations[plane]! + 0.01);
+        }
+        // Con todo el material salen los cuatro: gancho, precio, condición y llamada.
+        if (count === needs.max) expect(texts.map((t) => t.text)).toHaveLength(4);
+      }
+    }
+  });
+
   it('los estilos de partida son los del trabajador', () => {
     expect(reelStyleIds()).toEqual(['corte-ritmico', 'fundido-suave', 'pase-lateral']);
   });
