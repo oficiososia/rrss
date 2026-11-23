@@ -553,6 +553,7 @@ export async function prepareCampaignReels(
     hints,
     library: unwrap(library) as CampaignMaterial[],
     ...(font ? { font } : {}),
+    aiGenerated: campaign.origin === 'ai',
   });
 
   const result = { ...empty, withoutMaterial: withoutMaterial.length };

@@ -1,6 +1,6 @@
 import { isAiMade, isAppDesign, isCutout } from '@/features/library/filters';
 import type { MediaAssetRow } from '@/lib/database.types';
-import type { ReelProject } from '@/features/reels/editor/project';
+import { REEL_CAPTION_MAX, REEL_HASHTAGS_MAX, type ReelProject } from '@/features/reels/editor/project';
 import {
   buildReelFromTemplate,
   reelTemplateNeeds,
@@ -28,6 +28,7 @@ import { wordsOf } from './templateHints';
 //     ni recortes sin fondo), primero los que sugiere el plan y después los que
 //     más se parecen al tema de la pieza; sin repetir dentro de un reel y, si
 //     hay de sobra, tampoco entre reels de la misma campaña;
+//   * pie: el del plan, con sus hashtags (el reel se publica con él);
 //   * textos: el titular del plan sustituye al texto de gancho o de título de la
 //     plantilla, y los textos de muestra que describen planos concretos («La
 //     zona de clases») se quitan, porque no casan con fotos elegidas por tema.
@@ -163,6 +164,8 @@ export interface CampaignReelsInput {
   library: readonly CampaignMaterial[];
   styles?: readonly ReelTemplateSummary[];
   font?: { path: string; family: string };
+  /** El pie lo redactó la IA (plan de la IA, no de la agencia): se marca como tal. */
+  aiGenerated?: boolean;
 }
 
 /**
@@ -197,9 +200,18 @@ export function buildCampaignReels(input: CampaignReelsInput): { reels: Campaign
     }
     for (const asset of material) used.set(asset.id, (used.get(asset.id) ?? 0) + 1);
     if (brandTemplate) templateUses.set(brandTemplate.id, (templateUses.get(brandTemplate.id) ?? 0) + 1);
-    const project = buildReelFromTemplate(templateForPiece(template, piece), material, style, {
+    const built = buildReelFromTemplate(templateForPiece(template, piece), material, style, {
       ...(input.font ? { font: input.font } : {}),
     });
+    // El pie y los hashtags del plan, para publicar el reel con ellos (antes salía sin pie).
+    const project: ReelProject = {
+      ...built,
+      copy: {
+        caption: [...piece.caption].slice(0, REEL_CAPTION_MAX).join(''),
+        hashtags: piece.hashtags.filter((tag) => /^[\p{L}\p{N}_]{1,100}$/u.test(tag)).slice(0, REEL_HASHTAGS_MAX),
+        ...(input.aiGenerated ? { aiGenerated: true } : {}),
+      },
+    };
     reels.push({
       pieceIndex: index,
       project,

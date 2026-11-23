@@ -243,7 +243,9 @@ describe('texto de una publicación con variantes', () => {
 
 // ── Salida estructurada en el servicio ───────────────────────────────────
 
-describe('salida estructurada: lo que no cumple el esquema no se entrega, pero sí se cobra', () => {
+// Desde el 23/11/2026 (prueba de calidad, fallo 2) lo inservible no se cobra a la organización: se cierra
+// con ai_waive_generation y el coste real del proveedor queda aparte (`waived_cost_micros`). Una negativa sí.
+describe('salida estructurada: lo que no cumple el esquema no se entrega ni se cobra', () => {
   const request = { brandProfile: PROFILE, brief: 'Carta de otoño', network: INSTAGRAM, variants: 2 };
 
   it('JSON que no cumple el esquema', async () => {
@@ -252,12 +254,14 @@ describe('salida estructurada: lo que no cumple el esquema no se entrega, pero s
     expect(error).toMatchObject({ code: 'invalid_output', retryable: true });
     expect(error.details).toMatchObject({ problems: ['$.variants[0].hashtags: falta'] });
 
+    expect(error.details).toMatchObject({ charged: false });
+
     const [row] = await generations(t.org);
-    expect(row).toMatchObject({ id: error.generationId, status: 'succeeded' });
-    expect(Number(row!.cost_micros)).toBeGreaterThan(0);
+    expect(row).toMatchObject({ id: error.generationId, status: 'failed', cost_micros: null, error_code: 'invalid_output' });
+    expect(Number(row!.waived_cost_micros)).toBeGreaterThan(0);
     expect(row!.output).toMatchObject({ invalid_output: ['$.variants[0].hashtags: falta'] });
     expect(row!.output).not.toHaveProperty('json');
-    expect(await committed(t.org)).toBe(Number(row!.cost_micros));
+    expect(await committed(t.org)).toBe(0);
   });
 
   it('respuesta que no es JSON, o cortada por longitud', async () => {

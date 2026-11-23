@@ -191,7 +191,7 @@ describe('aceptar un plan con reels', () => {
         c.payload as {
           p_content_id: string;
           p_expected_version: number;
-          p_data: { kind: string; template: { id: string }; plan: { clips: { path: string }[]; texts: { text: string }[] } };
+          p_data: { kind: string; copy?: unknown; template: { id: string }; plan: { clips: { path: string }[]; texts: { text: string }[] } };
         },
     );
     expect(saved.map((s) => s.p_content_id)).toEqual(['c-0', 'c-2']);
@@ -208,6 +208,8 @@ describe('aceptar un plan con reels', () => {
     expect(saved[0]!.p_data.plan.clips[0]!.path).toMatch(/\/0\.jpg$/);
     expect(saved[1]!.p_data.plan.clips[0]!.path).toMatch(/\/1\.jpg$/);
     expect(saved[0]!.p_data.plan.texts.map((t) => t.text)).toContain('Arroz meloso');
+    // Y el pie del plan, para publicarlo con él.
+    expect(saved[0]!.p_data).toMatchObject({ copy: { caption: 'Reserva.', hashtags: [], aiGenerated: true } });
   });
 
   it('al programar se propone el día y la hora del plan', async () => {
