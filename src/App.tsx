@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Settings2 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Card, EmptyState } from '@/components/ui';
 import { APP_NAME } from '@/config/app';
@@ -95,6 +95,7 @@ export function preloadScreenFor(pathname: string): void {
     if (section === 'contenidos' && detail) void ContentEditorPage.preload();
     else if (section === 'encargos' && detail) void RequestDetailPage.preload();
     else if (section === 'campanas' && detail) void CampaignDetailPage.preload();
+    else if (section === 'calendario' && detail === '/campanas') void CampaignListPage.preload();
     else void BRAND_SECTIONS[section]?.preload();
     return;
   }
@@ -135,6 +136,17 @@ function MissingConfig() {
 
 function NotFound() {
   return <Navigate to="/" replace />;
+}
+
+/**
+ * Campañas vive ahora dentro de Calendario (`calendario/campanas`). Los enlaces guardados de antes
+ * (`/campanas` y `/campanas/:id`) llevan al mismo sitio, con su `?…` y su `#…`.
+ */
+function CampaignsMoved() {
+  const { orgId = '', brandId = '', campaignId } = useParams();
+  const { search, hash } = useLocation();
+  const target = `/o/${orgId}/m/${brandId}/calendario/campanas${campaignId ? `/${campaignId}` : ''}`;
+  return <Navigate to={`${target}${search}${hash}`} replace />;
 }
 
 function ThemedToaster() {
@@ -222,9 +234,12 @@ export function App() {
                             }
                           />
                           <Route path="calendario" element={<CalendarPage />} />
-                          {/* Sin IA de texto y fuera del modo agencia, la lista vuelve al inicio. */}
-                          <Route path="campanas" element={<CampaignListPage />} />
-                          <Route path="campanas/:campaignId" element={<CampaignDetailPage />} />
+                          {/* Campañas es una vista del Calendario. Sin IA de texto y fuera del modo agencia, vuelve al calendario. */}
+                          <Route path="calendario/campanas" element={<CampaignListPage />} />
+                          <Route path="calendario/campanas/:campaignId" element={<CampaignDetailPage />} />
+                          {/* Direcciones de antes: siguen funcionando. */}
+                          <Route path="campanas" element={<CampaignsMoved />} />
+                          <Route path="campanas/:campaignId" element={<CampaignsMoved />} />
                           <Route path="analitica" element={<AnalyticsPage />} />
                           <Route path="biblioteca" element={<LibraryPage />} />
                           {/* Sin trabajador de medios desplegado, la pantalla vuelve a la biblioteca. */}

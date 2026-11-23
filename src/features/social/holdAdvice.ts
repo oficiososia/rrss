@@ -1,4 +1,5 @@
 import type { PublicationHoldReason, SocialAccountRow } from '@/lib/database.types';
+import { HOLD_REASON_TEXT } from './calendar';
 
 // Por qué está detenida una publicación, en una frase, y qué botón lo arregla.
 // La explicación larga sigue en HOLD_REASON_TEXT (calendar.ts) y se enseña
@@ -80,4 +81,20 @@ export function holdAdvice(reason: PublicationHoldReason, account: Account | nul
 /** «1 publicación detenida» / «3 publicaciones detenidas». */
 export function heldCountText(n: number): string {
   return n === 1 ? '1 publicación detenida' : `${n} publicaciones detenidas`;
+}
+
+/**
+ * En autogestión («Lo llevamos nosotros») no hay planes de pago a la vista: la publicación detenida
+ * por el plan se explica sin hablar de planes ni ofrecer «Cambiar de plan». Lo demás, igual.
+ */
+export function selfManagedAdvice(advice: HoldAdvice, selfManaged: boolean): HoldAdvice {
+  if (!selfManaged || advice.fix !== 'change_plan') return advice;
+  return { short: 'La publicación en redes no está activa en esta organización', fix: 'none', label: '' };
+}
+
+/** La explicación larga (HOLD_REASON_TEXT), sin hablar de planes en autogestión. */
+export function holdReasonText(reason: PublicationHoldReason, selfManaged: boolean): string {
+  if (selfManaged && reason === 'plan_no_publishing')
+    return 'La publicación en redes no está activa en esta organización: lo programado está detenido. En cuanto se active, se programa solo otra vez.';
+  return HOLD_REASON_TEXT[reason];
 }

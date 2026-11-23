@@ -5,11 +5,20 @@ import { cn } from '@/lib/utils';
 export const Menu = Dropdown.Root;
 export const MenuTrigger = Dropdown.Trigger;
 
-export function MenuContent({ children, align = 'start' }: { children: ReactNode; align?: 'start' | 'end' }) {
+export function MenuContent({
+  children,
+  align = 'start',
+  side = 'bottom',
+}: {
+  children: ReactNode;
+  align?: 'start' | 'center' | 'end';
+  side?: 'top' | 'right' | 'bottom' | 'left';
+}) {
   return (
     <Dropdown.Portal>
       <Dropdown.Content
         align={align}
+        side={side}
         sideOffset={6}
         className="z-50 max-h-[70dvh] min-w-[14rem] max-w-[90vw] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-pop"
       >

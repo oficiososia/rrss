@@ -108,10 +108,11 @@ describe('la sección Campañas', () => {
     vi.unstubAllEnvs();
   });
 
-  it('sin IA de texto y fuera del modo agencia no aparece, y la ruta vuelve al inicio', async () => {
+  it('sin IA de texto y fuera del modo agencia no aparece, y la ruta vuelve al calendario', async () => {
     seed();
     renderApp(`${BRAND_BASE}/campanas`);
-    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/inicio`));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/calendario`));
+    expect(screen.queryByTestId('calendar-tabs')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Campañas/ })).not.toBeInTheDocument();
   });
 
@@ -263,7 +264,9 @@ describe('la sección Campañas', () => {
     const cards = await screen.findAllByTestId('campaign-row');
     expect(cards).toHaveLength(2);
     expect(cards[0]).toHaveTextContent('Plan por revisar');
-    expect(cards[0]).toHaveAttribute('href', `${BRAND_BASE}/campanas/camp-1`);
+    expect(cards[0]).toHaveAttribute('href', `${BRAND_BASE}/calendario/campanas/camp-1`);
+    // Es una vista del Calendario: sus pestañas, con Campañas marcada.
+    expect(screen.getByTestId('calendar-tab-campaigns')).toHaveAttribute('aria-current', 'page');
     await waitFor(() => expect(within(cards[0]!).getByTestId('campaign-row-count')).toHaveTextContent('2 piezas'));
     expect(within(cards[0]!).getAllByTestId('campaign-piece-thumb')).toHaveLength(2);
     expect(within(cards[1]!).getByTestId('campaign-row-count')).toHaveTextContent('Sin plan todavía');
