@@ -676,8 +676,9 @@ ampliar: **`replace_background`** («Cambiar el fondo con IA») y **`enhance`**
 esas ediciones. Salen en el diálogo solo si el servidor tiene un modelo activo
 y permitido para ellas (misma regla que «Ampliar»).
 
-- **Dónde:** pestaña **«Fondo con IA»** de «Editar foto» (el mismo diálogo se
-  abre desde la ficha de la biblioteca y desde el editor de piezas).
+- **Dónde:** **«Fondo → Cambiar con IA»** de «Editar foto» (antes, pestaña
+  «Fondo con IA»; «Mejorar con IA» ya no se ofrece: §15). El mismo diálogo se
+  abre desde la ficha de la biblioteca y desde el editor de piezas.
 - **Cómo se usa:** un campo de texto («¿qué fondo quieres?», hasta 500
   caracteres) y sugerencias a un clic: mesa de mármol blanco con luz cálida,
   mantel de lino beige, mesa de madera rústica, pizarra oscura
@@ -1061,3 +1062,84 @@ salvo el aviso a la IA (`supabase/functions/`).
   servidor se comprueban con dobles. La frase «suele tardar» es orientativa.
 - El aviso de «Animar con IA» (`ANIMATE_GUARD` en `ai-media/handler.ts`) sigue hablando de comida:
   pertenece a la biblioteca, que se tocó en otra rama.
+
+## 15. «Editar foto» en tres pestañas (rama `f51/editar-foto-simple`, 23/11/2026)
+
+Sale de la propuesta de simplificación aceptada por el dueño
+(`rrss-recursos-comparativa/simplificacion/`, cambios F1, F2, F3, F6 y F7). Todo en
+`src/features/photo-edit/PhotoEditScreen.tsx`; no cambia ni el recorte (`cutout/`) ni las
+funciones del servidor.
+
+### Antes y ahora
+
+| Antes (4 pestañas, más «Ampliar» si había IA) | Ahora (3 pestañas) |
+| --- | --- |
+| **Mejorar**: automático, 3 intensidades, 9 deslizadores, «Encuadre», «Deshacer cambios» (15 controles a la vista) | **Ajustar**: «Mejorar automáticamente», 3 intensidades, Luz, Contraste, Color y Calidez, y «Más ajustes» plegado con Nitidez, Sombras, Luces, Claridad y Viveza (9 a la vista) |
+| **Recortes**: casilla «Encuadre inteligente», 1:1, 4:5 y 9:16 | **Recortar**: Entera, 1:1, 4:5 y 9:16, siempre con encuadre inteligente; «Ampliar con IA» debajo si el servidor puede |
+| **Fondo**: quitar el fondo; después colores, imagen, sombra, sin fondo, «Modo retrato» y retoque | **Fondo** → **Quitar** (quitar el fondo en el navegador o con IA; colores, imagen, sombra, sin fondo, retoque) |
+| (el «Modo retrato» era un botón dentro de Fondo) | **Fondo** → **Desenfocar** (modo retrato con sus controles y el retoque) |
+| **Fondo con IA**: cambiar el fondo y «Mejorar con IA» | **Fondo** → **Cambiar con IA** (igual que antes: Antes/Después, Usar esta, Probar otra vez) |
+| **Ampliar** (pestaña propia) | En **Recortar** |
+
+Cada acción está en un solo sitio:
+
+- El **encuadre** solo está en Recortar (antes también en Mejorar). Ajustar y Recortar comparten
+  lo hecho (`LookState` en la pantalla): se puede ajustar la luz, ir a Recortar, elegir 4:5 y
+  guardar **una** copia con los dos pasos (`adjust` + `crop`), como hacía antes el bloque
+  «Encuadre» de Mejorar.
+- **«Deshacer cambios»** de Mejorar se quita: lo hace «Cancelar» de la barra de arriba.
+- La casilla **«Encuadre inteligente (si no, centrado)»** se quita: siempre inteligente
+  (`smart: true` en la procedencia, como hasta ahora por defecto).
+- **«Mejorar con IA» no se ofrece** (decisión del dueño: choca con la regla de que la IA solo
+  crea fondos). Está en `HIDDEN_AI_OPERATIONS`; su código en la pantalla (rama `enhance` de
+  `AiAction`, montada en Ajustar) y su tarea en `ai-media` se conservan. Para recuperarlo basta
+  con quitarlo de esa lista. La mejora automática sin IA se queda.
+- Los nombres de antes siguen valiendo para abrir la pantalla (`initialTab`): `ai` abre
+  «Fondo → Cambiar con IA», `upscale` abre «Recortar» y «Modo retrato» del editor abre
+  «Fondo → Desenfocar». No hubo que tocar el editor de piezas ni la biblioteca.
+
+### Textos
+
+- Los párrafos fijos pasan a **una línea con «Más información»** desplegable (`MoreInfo`, un
+  `<details>`): privacidad del recorte («Gratis. No usa IA.»), calidad básica, cómo se encuadra
+  y cómo se protege lo principal al cambiar el fondo («Usa IA (OpenAI) solo para el fondo: lo
+  principal de tu foto se vuelve a pegar tal cual.»). Las insignias «Con IA» y «Proveedor sin
+  probar todavía» pasan a esa línea y a su «Más información».
+- **Siguen a la vista antes de gastar:** «Se procesa fuera de la UE o en región desconocida» y
+  el coste máximo (y el aviso de que no hay recorte, si la IA puede tocar lo principal).
+- **Autogestión** (`organizations.work_mode = 'self'`, `useWorkMode()`): el coste dice solo
+  «Coste máximo: 0,20 €.», sin «se descuenta del cupo de IA de la organización». En modo
+  agencia el texto queda como estaba.
+
+### Móvil
+
+Pestañas arriba (debajo de la barra de Volver / Cancelar / Guardar), la foto en medio con todo
+el alto que queda, y los ajustes en una **hoja baja** de hasta el 45 % del alto, con su propio
+desplazamiento. El botón de la flecha oculta la hoja para ver la foto entera; tocar una pestaña
+la vuelve a abrir. Sin scroll de página. En pantallas anchas (≥ 1024 px), la foto a la
+izquierda y una columna de 24 rem con las pestañas encima de los ajustes.
+
+### Pruebas
+
+- Componentes (`editarFoto.test.tsx`): las de siempre, adaptadas a las pestañas nuevas, y un
+  bloque nuevo: tres pestañas; «Mejorar con IA» no sale aunque el servidor lo tenga; cuatro
+  deslizadores a la vista y cinco en «Más ajustes»; ajustar + recortar en una sola copia;
+  autogestión sin «cupo» y con el aviso de la UE; agencia con «cupo»; «Cambiar con IA» sin
+  botón principal; «Desenfocar» con una foto ya sin fondo lo explica y no deja guardar.
+- Maquetación (`tests/layout/editar-foto-pestanas.spec.ts`, Chromium real a 375 × 812 y
+  1366 × 768): en las tres pestañas, sin scroll de página ni de la pantalla, nada se sale por
+  la derecha, la foto ocupa más del 30 % del alto, en el móvil pestañas → foto → hoja (≤ 45 %)
+  y la hoja se oculta y vuelve; coste y aviso de la UE a la vista sin «cupo».
+  `tests/layout/fotos-ia.spec.ts` entra ahora por «Fondo → Cambiar con IA».
+- E2E 26 ajustado a «Fondo → Cambiar con IA» y a «Usar esta» (que faltaba desde §14).
+  **No se ha ejecutado** la e2e en esta rama.
+
+### Pendiente y límites
+
+- **No probado a mano** en un móvil ni en un navegador real fuera de Playwright.
+- De la propuesta quedan fuera: «Cancelar» y «Listo» en vez de «Volver» y «Aplicar a la capa»
+  (F5), el formato «libre» en Recortar (F4; necesita tiradores de recorte) y quitar lo
+  repetido del panel del editor de piezas (P3, otra zona).
+- «Ampliar con IA» sigue ofreciéndose (en Recortar). Es IA sobre la foto entera: si se aplica
+  al pie de la letra «la IA solo crea fondos», también habría que ocultarlo (añadir `upscale`
+  a `HIDDEN_AI_OPERATIONS`). Lo decide el dueño.
