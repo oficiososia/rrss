@@ -1,14 +1,16 @@
 import { CalendarRange, Images, Plus, Sparkles, type LucideIcon } from 'lucide-react';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '@/components/ui';
 import { reelLikeEnabled } from '@/config/app';
 import { campaignPaths, campaignsAvailable } from '@/features/campaigns/labels';
 import { FORMAT_CARDS } from '@/features/content/lista/formats';
 import { makeBrandContext, useOrg } from '@/features/orgs/context';
-import { useReelLikeOptions } from '@/features/reels/like/api';
 import type { BrandRow } from '@/lib/database.types';
 import { cn } from '@/lib/utils';
+
+// «Hacer un reel como este» se pregunta desde un trozo aparte: el módulo de reels no entra en el arranque.
+const ReelLikeProbe = lazy(() => import('./ReelLikeProbe'));
 
 // La ventana «Nueva idea» (con sus plantillas) se descarga al pedirla: el menú está en todas las pantallas.
 const CreateContentDialog = lazy(() =>
@@ -29,14 +31,19 @@ interface CreateEntry {
  * Lo que se puede crear en una marca, según los permisos de cada persona. Sin nada que crear
  * (solo lectura), el botón no sale.
  */
-function useCreateEntries(brand: BrandRow | null, aiText: boolean, openDialog: (format: string) => void) {
+function useCreateEntries(
+  brand: BrandRow | null,
+  aiText: boolean,
+  reelLikeAvailable: boolean,
+  openDialog: (format: string) => void,
+) {
   const { org, brandRoles } = useOrg();
   const navigate = useNavigate();
   const ctx = brand ? makeBrandContext(org, brand, brandRoles.get(brand.id)) : null;
   const canEdit = ctx?.can('edit') ?? false;
-  // «Hacer un reel como este» solo sale si el servidor puede hacerlo para esta marca.
-  const like = useReelLikeOptions(brand?.id ?? '', Boolean(brand) && reelLikeEnabled() && canEdit);
-  if (!brand || !ctx) return [];
+  // «Hacer un reel como este» solo sale si el servidor puede hacerlo para esta marca (ver ReelLikeProbe).
+  const askReelLike = Boolean(brand) && reelLikeEnabled() && canEdit;
+  if (!brand || !ctx) return { entries: [] as CreateEntry[], askReelLike };
   const base = `/o/${org.id}/m/${brand.id}`;
   const agency = brand.ai_mode === 'agency';
   // Con la IA hace falta poder crear contenido; a la agencia lo pide quien puede comentar (como un encargo).
@@ -47,7 +54,7 @@ function useCreateEntries(brand: BrandRow | null, aiText: boolean, openDialog: (
     for (const card of FORMAT_CARDS) {
       entries.push({ id: card.format, label: card.label, icon: card.icon, onSelect: () => openDialog(card.format) });
     }
-    if (like.data?.available) {
+    if (reelLikeAvailable) {
       entries.push({
         id: 'reel-like',
         label: 'Hacer un reel como este',
@@ -65,7 +72,7 @@ function useCreateEntries(brand: BrandRow | null, aiText: boolean, openDialog: (
       onSelect: () => navigate(`${campaignPaths(org.id, brand.id).list}?nuevo=1`),
     });
   }
-  return entries;
+  return { entries, askReelLike };
 }
 
 /**
@@ -83,7 +90,16 @@ export function CreateMenu({
 }) {
   const { org } = useOrg();
   const [creating, setCreating] = useState<string | null>(null);
-  const entries = useCreateEntries(brand, aiText, setCreating);
+  // Respuesta de ReelLikeProbe, con la marca a la que corresponde (al cambiar de marca no vale la anterior).
+  const [reelLike, setReelLike] = useState<{ brandId: string; available: boolean } | null>(null);
+  const onReelLike = useCallback((brandId: string, available: boolean) => setReelLike({ brandId, available }), []);
+  const reelLikeAvailable = Boolean(brand && reelLike?.brandId === brand.id && reelLike.available);
+  const { entries, askReelLike } = useCreateEntries(brand, aiText, reelLikeAvailable, setCreating);
+  const probe = askReelLike && brand && (
+    <Suspense fallback={null}>
+      <ReelLikeProbe brandId={brand.id} onChange={onReelLike} />
+    </Suspense>
+  );
   if (!brand || entries.length === 0) return null;
   const formats = entries.filter((e) => FORMAT_CARDS.some((c) => c.format === e.id));
   const others = entries.filter((e) => !formats.includes(e));
@@ -138,8 +154,14 @@ export function CreateMenu({
     </>
   );
   return placement === 'mobile' ? (
-    <div className="flex min-w-0 flex-1 items-center justify-center">{menu}</div>
+    <div className="flex min-w-0 flex-1 items-center justify-center">
+      {menu}
+      {probe}
+    </div>
   ) : (
-    menu
+    <>
+      {menu}
+      {probe}
+    </>
   );
 }

@@ -2,10 +2,11 @@ import { ScrollText } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Button, Spinner } from '@/components/ui';
+import { Button } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
 import { LEGAL_VERSIONS, legalPath } from '@/features/legal/legal';
+import { ShellSkeleton } from '@/layout/Skeletons';
 import { supabase } from '@/lib/supabase';
 import { translateError } from '@/lib/errors';
 import { acceptedCurrent, useAcceptLegal, useLegalAcceptances } from './api';
@@ -42,7 +43,8 @@ export function LegalGate() {
   if (location.pathname === '/cuenta') return <Outlet />;
   // Uso interno de la agencia: quien administra la plataforma no se bloquea.
   if (platformAdmin.data === true) return <Outlet />;
-  if (acceptances.isPending || platformAdmin.isPending) return <Spinner className="min-h-dvh" />;
+  // Mientras se comprueba, el armazón con siluetas (lo mismo que se ve antes y después), no «Cargando…».
+  if (acceptances.isPending || platformAdmin.isPending) return <ShellSkeleton />;
   if (acceptances.isError || acceptedCurrent(acceptances.data)) return <Outlet />;
 
   const rows = acceptances.data;

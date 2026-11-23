@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AuditLogRow,
   BrandMemberRow,
@@ -38,8 +38,12 @@ export const keys = {
   org: (orgId: string) => ['org', orgId] as const,
 };
 
-export function useMyOrganizations(userId: string) {
-  return useQuery({
+// Las consultas del arranque (organizaciones, administración de la plataforma, marcas y permisos por
+// marca) se definen como `queryOptions` para que `prefetchStartup` (./startup.ts) las lance todas a la
+// vez en cuanto se sabe la sesión, con la misma clave y la misma función que los hooks.
+
+export function myOrganizationsQuery(userId: string) {
+  return queryOptions({
     queryKey: keys.orgs(userId),
     queryFn: async (): Promise<MyOrganization[]> => {
       const [orgs, memberships] = await Promise.all([
@@ -55,13 +59,21 @@ export function useMyOrganizations(userId: string) {
   });
 }
 
-export function useIsPlatformAdmin(userId: string) {
-  return useQuery({
+export function useMyOrganizations(userId: string) {
+  return useQuery(myOrganizationsQuery(userId));
+}
+
+export function platformAdminQuery(userId: string) {
+  return queryOptions({
     queryKey: keys.platformAdmin(userId),
     queryFn: async () =>
       unwrap(await supabase.from('platform_admins').select('user_id').eq('user_id', userId)).length > 0,
     staleTime: 5 * 60_000,
   });
+}
+
+export function useIsPlatformAdmin(userId: string) {
+  return useQuery(platformAdminQuery(userId));
 }
 
 export function useCreateOrganization(userId: string) {
@@ -115,12 +127,16 @@ export function useOrgMembers(orgId: string) {
   });
 }
 
-export function useBrands(orgId: string) {
-  return useQuery({
+export function brandsQuery(orgId: string) {
+  return queryOptions({
     queryKey: keys.brands(orgId),
     queryFn: async (): Promise<BrandRow[]> =>
       unwrap(await supabase.from('brands').select('*').eq('organization_id', orgId).order('name')),
   });
+}
+
+export function useBrands(orgId: string) {
+  return useQuery(brandsQuery(orgId));
 }
 
 /**
@@ -143,8 +159,8 @@ export function useBrandsElsewhere(orgIds: string[]) {
   });
 }
 
-export function useMyBrandRoles(orgId: string, userId: string) {
-  return useQuery({
+export function myBrandRolesQuery(orgId: string, userId: string) {
+  return queryOptions({
     queryKey: keys.myBrandRoles(orgId, userId),
     queryFn: async (): Promise<Map<string, BrandRole>> => {
       const rows = unwrap(
@@ -157,6 +173,10 @@ export function useMyBrandRoles(orgId: string, userId: string) {
       return new Map(rows.map((r) => [r.brand_id, r.role]));
     },
   });
+}
+
+export function useMyBrandRoles(orgId: string, userId: string) {
+  return useQuery(myBrandRolesQuery(orgId, userId));
 }
 
 export function useSetMemberRole(orgId: string) {
