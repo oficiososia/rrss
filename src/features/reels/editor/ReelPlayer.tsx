@@ -13,7 +13,7 @@
 //    deja colocado en su punto de entrada antes del corte) y se sueltan los lejanos.
 //  * Las fotos se reducen al cargarlas (hasta 1600 px de alto): dibujar 12 megapíxeles
 //    en cada fotograma es lo que más pesa.
-import { Pause, Play, ScanLine, SkipBack } from 'lucide-react';
+import { Pause, Play } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui';
 import type { ReelTemplateSummary } from '../templates';
@@ -69,8 +69,10 @@ export interface ReelPlayerProps {
   onTextSize: (id: string, sizeRatio: number, key: string) => void;
   onTextChange: (id: string, text: string, key: string) => void;
   onGestureEnd: () => void;
-  /** Botones a la derecha del transporte (deshacer y rehacer). */
+  /** Botones a la derecha del transporte (si hacen falta). */
   extra?: ReactNode;
+  /** Enseña las zonas que tapa Instagram (se encienden y apagan desde el «⋯» del editor). */
+  safeZones?: boolean;
 }
 
 /** Desviación del desenfoque en el lienzo (la misma cuenta que `blurSigma` del trabajador). */
@@ -95,7 +97,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
   useLayoutEffect(() => {
     latest.current = props;
   });
-  const [safeZones, setSafeZones] = useState(false);
+  const safeZones = props.safeZones ?? false;
   const [draggingText, setDraggingText] = useState(false);
   const [size, setSize] = useState({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT });
   const scheduled = useRef(0);
@@ -450,9 +452,7 @@ export function ReelPlayer(props: ReelPlayerProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center justify-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="Volver al principio" onClick={() => props.onSeek(0)}>
-          <SkipBack className="h-4 w-4" aria-hidden />
-        </Button>
+        {/* Como en CapCut: solo reproducir y el reloj. Volver al principio es la tecla Inicio o deslizar la línea. */}
         <Button
           variant="secondary"
           size="icon"
@@ -466,17 +466,6 @@ export function ReelPlayer(props: ReelPlayerProps) {
           {playing ? <Pause className="h-4 w-4" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
         </Button>
         <TimeLabel clock={clock} total={timeline.total} />
-        <Button
-          variant={safeZones ? 'primary' : 'ghost'}
-          size="icon"
-          aria-label="Zonas que tapa Instagram"
-          aria-pressed={safeZones}
-          title="Zonas que tapa Instagram (arriba, abajo y a la derecha)"
-          onClick={() => setSafeZones((v) => !v)}
-          data-testid="reel-safe-toggle"
-        >
-          <ScanLine className="h-4 w-4" aria-hidden />
-        </Button>
         {props.extra}
       </div>
     </div>

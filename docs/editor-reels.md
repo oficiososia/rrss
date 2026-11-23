@@ -570,3 +570,122 @@ la orden de FFmpeg es la de antes, carácter a carácter. Ejemplo compartido por
    de `20270101010000_asset_usage.sql`, que tiene fecha posterior.
 2. Redesplegar el trabajador (`worker-fly.yml`): el anterior rechaza un plan con `speed`, `filter` u `offset`.
 3. La aplicación (Vercel), después de lo anterior.
+
+## 11. Como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
+
+Cambio n.º 1 de la propuesta de simplificación que aceptó el dueño (`rrss-recursos-comparativa/simplificacion/`,
+R1–R6 y R8), más lo que salió de la prueba de punta a punta del 23/11 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`,
+fallos 4, 9, 10, 11, 12 y 24). Solo interfaz: sin migraciones, sin tocar el plan v2 ni el trabajador.
+
+### Pantalla
+
+- **Cabecera mínima:** volver, nombre, estado del guardado (automático), deshacer y rehacer, «⋯» y **un único
+  «Exportar»**. En modo agencia, además, la etiqueta del estado de la pieza; si ya está en Instagram, «Publicada».
+- **Una sola barra de herramientas** que cambia con lo elegido (`ContextBar.tsx`). Sin nada: Añadir, Texto, Música,
+  Subtítulos y Estilo (y Guion si el reel sale de un análisis). Con un clip: Dividir, Duración, Velocidad (vídeo) o
+  Movimiento (foto), Filtro, Sustituir y **«Más»** (Volumen, Silenciar y Subtítulos del clip si es vídeo; Duplicar y
+  Borrar). Con un texto: Editar, Estilo, Animación, Duración y «Más» (Duplicar, Borrar). Música y transición, como antes.
+- **Cada herramienta abre solo su ajuste** (`Inspector.tsx`, `sectionShown`): en escritorio, un panel estrecho al lado
+  del vídeo que solo existe mientras está abierto (el vídeo ocupa el resto); en móvil, la hoja de abajo. Elegir algo
+  ya no abre nada: cambia la barra. Una transición sí abre su ajuste al elegirla (es lo único que tiene).
+- **Plantilla dentro de «Estilo»:** el diálogo tiene «Estilos» y «Plantillas de la marca».
+- **Transporte:** reproducir y el reloj. «Volver al principio» es la tecla Inicio (o deslizar la línea).
+- **Línea de tiempo** con su duración y su zoom encima (escritorio); en móvil, el zoom es el pellizco.
+- **Móvil:** el editor ocupa la pantalla entera (`max-lg:fixed inset-0 z-40`), por encima de la cabecera de la marca y
+  de la barra inferior de la aplicación (también la nueva con «＋ Crear»), sin tocar `src/layout/`. «Rehacer» pasa al
+  «⋯» por debajo de 640 px. Los siete botones de un clip caben a 375 px sin deslizar la barra.
+- **Avisos flotantes** (`notify.ts`): en móvil bajan hasta debajo de la cabecera y duran 3 s, para no tapar
+  «Exportar», deshacer ni la barra de herramientas (antes el toque se lo quedaba el aviso).
+- **«Nuevo reel → Desde una plantilla»** (`?plantilla=`): mientras llegan las plantillas de la marca no se enseña la
+  galería; se piden directamente las fotos de la elegida, sin la galería detrás.
+
+### «Exportar»
+
+`ExportSheet.tsx` (hoja en móvil, diálogo en escritorio) y `exportFlow.ts` (puro):
+
+- Al pulsarlo **se monta si hace falta**: si lo que se ve no tiene vídeo, guarda la versión (sin aviso) y encarga el
+  montaje. Espera a que llegue la lista de montajes («Comprobando…») para no montar otra vez lo que ya está. Un
+  montaje que falló no se repite solo: se dice por qué y se ofrece «Probar otra vez».
+- **El vídeo de lo que se ve se reconoce por su montaje** (`renderOfPlan`: mismo estilo y mismo plan, con las claves
+  ordenadas y sin la tipografía que añade la base de datos), no por el número de versión. Cambiar solo el pie, o
+  volver a algo ya montado, **no pide montar otra vez**. Para publicar un reel vale cualquier vídeo de la marca
+  (`private.publication_media_problem`), así que esto no cambia ninguna regla.
+- Tres salidas: **Descargar**, **Guardar en la biblioteca** (el vídeo ya se guarda solo en «Reels»: el enlace lo abre
+  allí; no se finge un guardado) y **Publicar o programar**. Debajo, los avisos de la vista previa en una línea (sin
+  jerga: ni .ttf, ni DejaVu, ni FFmpeg, ni «trabajador»), la **Portada** y los **Vídeos anteriores**.
+- Con un **archivo borrado** de la biblioteca (rama f49) no se monta: la hoja lo dice lo primero y «Ir a lo que falta»
+  lleva a él. Sin trabajador en la instalación: «En esta instalación no se puede montar el vídeo».
+
+### «Publicar o programar»
+
+`PublishPanel.tsx`, dentro de la misma hoja:
+
+- **Pie y hashtags**, como en las publicaciones, con «Redactar con IA» si la tarea `post.caption` está configurada y
+  la marca no está en modo agencia. Se guardan en el proyecto del reel como `copy` (`{ caption, hashtags,
+  aiGenerated? }`), el mismo campo que leen el publicador (`content_versions.data -> 'copy'`) y la etiqueta de
+  contenido con IA. No va al trabajador. **Sin texto alternativo**: Instagram no lo admite en los reels (el
+  publicador solo lo manda con imágenes).
+- Si el reel sale de **«Hacer un reel como este»** y todavía no tiene pie, al abrir «Publicar o programar» se pone el
+  que propuso el análisis (se puede deshacer). Si otra rama (f56) lo deja ya en el `copy` de la pieza, se usa tal cual.
+- **Cuenta:** la primera de Instagram conectada (con selector si hay varias). **Sin cuenta, se dice antes**, con el
+  enlace a Marca → Cuentas conectadas, y no se aprueba nada.
+- **Cuándo:** «Ahora» o «Programar…» con día y hora en la zona de la marca. Se usa **el vídeo recién montado** sin
+  pedir que se elija. «Ahora» abre el diálogo de siempre (`PublishNowDialog`) con la cuenta y el vídeo ya puestos.
+- **Ya programada:** lo dice y deja cambiar la hora (la misma publicación) o publicarla ya.
+- **Ya publicada:** «Publicada» con la fecha y «Ver en Instagram» (lee `scheduled_publications`). En lugar de
+  «Publicar o programar» sale «Publicar otra vez», que avisa de que saldrá repetida y **hace una copia** del reel: la
+  base de datos admite una sola publicación por pieza (`scheduled_publications_one_per_content_idx`) y no vuelve a
+  publicar una ya publicada.
+
+### Aprobación (decisión del dueño)
+
+- **Autogestión** (`organizations.work_mode = 'self'`): no se ve. «Publicar o programar» guarda la versión si hay
+  cambios y la aprueba por debajo con los pasos que exige `set_content_status` (`selfApprovalSteps`: idea → borrador →
+  aprobada; borrador o en revisión → aprobada). Sin permiso de aprobar, el botón lo explica. No se ha cambiado ninguna
+  tabla ni función de estado.
+- **Modo agencia:** se conserva el flujo. El estado y su siguiente paso (Enviar a revisión, Aprobar) van en la hoja y
+  en «Publicar o programar»; los demás cambios, en «⋯». «Ahora» solo con la pieza aprobada y sin cambios; programar
+  sí, y queda en el calendario en espera hasta que se apruebe (como hasta ahora).
+- Los textos de **cupo** desaparecen en autogestión («Hacer un reel como este» y subtítulos automáticos): se dice el
+  coste. En modo agencia, igual que antes.
+
+### Dónde ha ido cada cosa
+
+| Antes | Ahora |
+| --- | --- |
+| «Guardar versión» (cabecera) | Guardado automático; «⋯ → Historial → Marcar esta versión» |
+| «Enviar a revisión», «Aprobar», «Pasar a borrador» (cabecera y «⋯») | Autogestión: no se ven («Publicar o programar» aprueba). Agencia: el siguiente paso en «Exportar», el resto en «⋯» |
+| «Guardar y montar el vídeo», «Montar otra vez» | «Exportar» (monta si hace falta) |
+| «Ver el vídeo» (franja de estado, panel y montajes) | La hoja «Exportar» enseña el vídeo |
+| «Publicar ahora» (cabecera, «⋯» y visor) | «Exportar → Publicar o programar → Ahora» |
+| Franja de estado (Idea, Versión 1, aviso, «Listo») | Guardado en la cabecera; versión en «⋯ → Historial»; estado solo en modo agencia |
+| Avisos fijos («1 aviso», «sin trabajador») | Una línea en «Exportar» |
+| Portada y Montajes (barra y panel) | «Exportar → Portada» y «Exportar → Vídeos anteriores» |
+| Plantilla (barra) | «Estilo → Plantillas de la marca» |
+| Recortar, Volumen, Silenciar, Subtítulos, Duplicar y Borrar del clip | «Duración» (recortar); el resto, en «Más» de la barra |
+| Volver al principio y zonas de Instagram (transporte) | Tecla Inicio; «⋯ → Ver lo que tapa Instagram» |
+| Deshacer y rehacer (transporte) | Cabecera (en móvil, rehacer en «⋯») |
+| Panel de propiedades fijo con todo a la vez y atajos escritos | Un ajuste cada vez; los atajos, en la ayuda de cada botón |
+
+**Acciones a la vista con un clip elegido** (botones, enlaces y campos; sin la línea de tiempo ni los textos sobre el
+vídeo; `tests/layout/reel-editor.spec.ts`): **52 → 13** a 1366 px y **22 → 12** a 375 px (antes, además, las 7 de la
+cabecera y la barra de la aplicación). Sin nada elegido: 11 y 10. La propuesta hablaba de 49 y 22, contadas a ojo.
+
+### Probado
+
+- `exportFlow.test.ts` (estado de la hoja, montar solo si hace falta, el vídeo por su montaje aunque cambien la
+  versión, el orden de las claves o la tipografía, y pasos de aprobación), `editorPro.test.ts` (barra y «Más»),
+  `editorReels.test.tsx` (cabecera mínima, exportar sin y con cambios, estados de la hoja, un ajuste cada vez, marcar
+  versión, autogestión y agencia, pie y hashtags en la versión, programar con el vídeo montado sin elegir, sin cuenta,
+  pie del análisis, ya publicada, plantilla por URL sin galería), `mediosBorrados.test.tsx` (con un archivo borrado no
+  se monta y se va a él) y `reelLike.test.tsx`.
+- **Navegador real** (Chromium, `test:layout`): sin scroll de página a 1440, 1366 y 375 px; acciones contadas; el
+  editor tapa la barra de la aplicación en móvil; el ajuste solo enseña su sección; la hoja «Exportar» y «Publicar o
+  programar» caben a 375 px; un aviso no tapa la cabecera ni la barra, y «Exportar» responde con él a la vista.
+
+### Sin probar
+
+- Un móvil de verdad y Safari (la hoja, los avisos desplazados, `env(safe-area-inset-*)`).
+- Publicar y programar contra Supabase y Meta reales: solo con la base simulada. La e2e `29-editor-reels.spec.ts`
+  está adaptada al flujo nuevo, **sin ejecutar** (necesita el stack local).
+- «Redactar con IA» con un proveedor real, y el pie del análisis cuando lo traiga f56.

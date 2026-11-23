@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
@@ -180,21 +180,25 @@ describe('reel con una foto borrada de la biblioteca', () => {
     expect(document.body.textContent).not.toContain(`${ORG_ID}/`);
   });
 
-  it('«Montar el vídeo» no se encarga: dice lo mismo y lleva al primero que falta', async () => {
+  it('«Exportar» no encarga el montaje: dice lo mismo, lo primero, y lleva al primero que falta', async () => {
     vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
     seed();
     await open();
     await screen.findByTestId('reel-missing-notice');
     // Se elige otro y se aparta el cabezal, para ver que lleva al que falta.
     fireEvent.click(within(clips()[1]!).getAllByRole('button')[0]!);
-    const render = screen.getByTestId('reel-render');
-    expect(render).toBeEnabled();
-    fireEvent.click(render);
-    expect(await screen.findByText(NOTICE, { selector: '[data-sonner-toast] *' })).toBeInTheDocument();
+    const exportButton = screen.getByTestId('reel-export');
+    expect(exportButton).toBeEnabled();
+    fireEvent.click(exportButton);
+    const problems = await screen.findByTestId('reel-problems');
+    expect(within(problems).getAllByRole('listitem')[0]).toHaveTextContent(NOTICE);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
     expect(fake.callsTo('request_media_job', 'rpc')).toHaveLength(0);
+    fireEvent.click(screen.getByTestId('reel-export-fix'));
+    await waitFor(() => expect(screen.queryByTestId('reel-export-sheet')).not.toBeInTheDocument());
     expect(within(clips()[0]!).getAllByRole('button')[0]).toHaveAttribute('aria-pressed', 'true');
-    // Y en «Avisos», lo mismo, lo primero.
-    expect(screen.getByTestId('reel-notices-chip')).toHaveTextContent('1');
   });
 
   it('«Sustituir» abre la biblioteca y conserva la duración, el movimiento, el filtro, la transición y los textos', async () => {

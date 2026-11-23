@@ -1,4 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { chooseMoreAction } from '@/test/moreMenu';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ReelReferenceRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
@@ -423,7 +425,6 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(clips).toEqual(['1. Clip IMG_0001.mp4, 2 s', '2. Foto IMG_0002.jpg, 1,5 s']);
     expect(screen.getAllByTestId('reel-text-block')).toHaveLength(1);
     expect(screen.getByTestId('reel-like-draft-notice')).toHaveTextContent('2 planos con material de tu biblioteca y 2 por grabar');
-    expect(screen.getByTestId('reel-version')).toHaveTextContent('cambios sin guardar');
 
     // Guion: hechos y huecos.
     expect(screen.getByTestId('reel-guide-summary')).toHaveTextContent('Faltan 2 planos por grabar de 4.');
@@ -448,9 +449,10 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(screen.getAllByTestId('reel-clip')).toHaveLength(2);
     fireEvent.click(screen.getByTestId('reel-redo'));
 
-    // Guardar: la versión lleva el plan (válido para el trabajador) y el guion.
-    fireEvent.click(screen.getByTestId('reel-save'));
-    const dialog = await screen.findByRole('dialog');
+    // Guardar (⋯ → Historial → Marcar esta versión): la versión lleva el plan (válido para el trabajador) y el guion.
+    await chooseMoreAction(userEvent.setup(), 'reel-more', 'reel-history');
+    fireEvent.click(await screen.findByTestId('reel-save'));
+    const dialog = await screen.findByRole('dialog', { name: /Guardar/ });
     fireEvent.click(within(dialog).getByRole('button', { name: /Guardar/ }));
     await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
     const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {
