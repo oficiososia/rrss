@@ -545,12 +545,14 @@ describe('editor de reels', () => {
     expect(within(dialog).getByTestId('reel-media-confirm')).toHaveTextContent('Montar el reel con 3');
     fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
 
-    // Cada pieza en su plano, con la duración de la plantilla, y los dos textos de muestra.
+    // Cada pieza en su plano, con la duración de la plantilla, los dos textos de muestra y, en el plano que
+    // no tiene texto, su rótulo sacado del nombre del archivo (docs/reels-calidad.md).
     await waitFor(() =>
       expect(clipLabels()).toEqual(['1. Foto plato.jpg, 1,8 s', '2. Clip cocina.mp4, 2 s', '3. Foto local.jpg, 3 s']),
     );
     expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual([
       'Así se hace',
+      'Cocina',
       'Ven a probarlo',
     ]);
     expect(await screen.findByText(/Reel montado con «Así se hace»/)).toBeInTheDocument();
@@ -561,14 +563,28 @@ describe('editor de reels', () => {
     const saved = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {
       p_data: {
         template: { id: string };
-        plan: { clips: unknown[]; cover: unknown; music?: unknown; texts: Array<{ style: { marginRatio: number } }> };
+        plan: {
+          clips: unknown[];
+          cover: unknown;
+          music?: unknown;
+          outro?: unknown;
+          texts: Array<{ text: string; role?: string; style: { marginRatio: number } }>;
+        };
       };
     };
     expect(saved.p_data.template).toEqual({ id: 'corte-ritmico' });
     expect(saved.p_data.plan.clips).toHaveLength(3);
     expect(saved.p_data.plan.cover).toEqual({ type: 'frame', at: 0.9 });
     expect(saved.p_data.plan.music).toBeUndefined();
-    expect(saved.p_data.plan.texts[1]!.style.marginRatio).toBe(0.37);
+    // Cada texto lleva su papel (el trabajador le da su tamaño mínimo y su animación); la llamada conserva su sitio.
+    expect(saved.p_data.plan.texts.map((t) => [t.text, t.role])).toEqual([
+      ['Así se hace', 'headline'],
+      ['Cocina', 'label'],
+      ['Ven a probarlo', 'cta'],
+    ]);
+    expect(saved.p_data.plan.texts[2]!.style.marginRatio).toBe(0.37);
+    // Sin perfil de la marca no hay cierre (no hay logotipo, usuario ni colores que poner).
+    expect(saved.p_data.plan.outro).toBeUndefined();
   });
 
   it('el selector filtra por fotos y vídeos', async () => {
@@ -1134,7 +1150,8 @@ describe('editor de reels: plantilla elegida antes de entrar («Nueva idea → R
     fireEvent.click(within(dialog).getByRole('button', { name: /«local.jpg»/ }));
     fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
     await waitFor(() => expect(clipLabels()).toEqual(['1. Foto plato.jpg, 1,8 s', '2. Foto local.jpg, 3 s']));
-    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual(['Así se hace']);
+    // El segundo plano no tiene texto de muestra: lleva su rótulo, del nombre del archivo.
+    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual(['Así se hace', 'Local']);
   });
 
   it('una clave que no existe, o un reel que ya tiene material, no abren nada', async () => {
@@ -1193,10 +1210,16 @@ describe('editor de reels: plantilla de la marca sobre un reel que ya tiene mate
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('Necesita: 3 fotos o clips');
     fireEvent.click(within(dialog).getByTestId('reel-apply-template'));
+    // El plano más fuerte abre (un vídeo real del sitio cuenta más que una foto sin medidas) y los
+    // planos sin texto de muestra llevan su rótulo, del nombre del archivo.
     await waitFor(() =>
-      expect(clipLabels()).toEqual(['1. Foto plato.jpg, 1,8 s', '2. Clip cocina.mp4, 2 s', '3. Foto local.jpg, 3 s']),
+      expect(clipLabels()).toEqual(['1. Clip cocina.mp4, 1,8 s', '2. Foto plato.jpg, 2 s', '3. Foto local.jpg, 3 s']),
     );
-    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual(['Así se hace']);
+    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual([
+      'Así se hace',
+      'Plato',
+      'Local',
+    ]);
     fireEvent.keyDown(document.body, { key: 'z', ctrlKey: true });
     expect(clipLabels()).toEqual(['1. Foto plato.jpg, 2 s', '2. Clip cocina.mp4, 3 s', '3. Foto local.jpg, 2 s']);
     expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual(['Menú del día']);
@@ -1205,7 +1228,12 @@ describe('editor de reels: plantilla de la marca sobre un reel que ya tiene mate
 
 describe('editor de reels: «Publicar o programar» desde «Exportar»', () => {
   /** Un reel con su vídeo ya montado (versión 1), una cuenta de Instagram y lo necesario para publicar. */
-  function seedReady(options: { workMode: 'self' | 'agency'; accounts?: boolean; published?: boolean; data?: unknown }) {
+  function seedReady(options: {
+    workMode: 'self' | 'agency';
+    accounts?: boolean;
+    published?: boolean;
+    data?: unknown;
+  }) {
     vi.stubEnv('VITE_MEDIA_WORKER_ENABLED', 'true');
     vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
     seed({ workMode: options.workMode, data: options.data });
@@ -1432,5 +1460,168 @@ describe('editor de reels: «Publicar o programar» desde «Exportar»', () => {
       p_content_version: null,
     });
     expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
+  });
+});
+
+describe('editor de reels: desde una plantilla, con la calidad de las muestras (docs/reels-calidad.md)', () => {
+  const LOGO_ID = '00000000-0000-4000-8000-0000000000aa';
+  const sized = (id: string, fileName: string, width: number, height: number, bytes: number) => ({
+    ...asset(id, 'image', fileName, 'image/jpeg'),
+    width,
+    height,
+    bytes,
+  });
+
+  function seedBrand() {
+    seed({ version: 0 });
+    fake.tables.media_assets = [
+      sized('foto-1', 'Croquetas caseras.jpg', 640, 480, 20_000),
+      sized('foto-2', 'arroz-negro.jpg', 1080, 1920, 800_000),
+      asset('foto-3', 'image', 'local.jpg', 'image/jpeg'),
+      { ...asset(LOGO_ID, 'logo', 'logo.png', 'image/png'), folder: 'Marca' },
+      // El recorte de «Quitar el fondo» del arroz y un recorte con su punto de interés del local.
+      {
+        ...asset('cutout-1', 'image', 'Sin fondo · arroz.png', 'image/png'),
+        provenance: { kind: 'media.cutout', sources: [{ path: path('arroz-negro.jpg') }] },
+      },
+      {
+        ...asset('crop-1', 'image', 'local 9x16.jpg', 'image/jpeg'),
+        provenance: {
+          kind: 'media.image.process',
+          focal_point: { x: 0.3, y: 0.6 },
+          sources: [{ path: path('local.jpg') }],
+        },
+      },
+    ];
+    fake.tables.brand_profiles = [
+      {
+        id: 'perfil-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        status: 'active',
+        version: 1,
+        data: {
+          visual: {
+            colors: [
+              { name: 'Dorado', role: 'acento', hex: '#C9A227' },
+              { name: 'Carbón', role: 'fondo', hex: '#1A1A1A' },
+            ],
+            logoAssetIds: [LOGO_ID],
+          },
+          channels: [{ platform: 'Instagram', handle: 'casa.prueba', url: '' }],
+          business: { locations: ['Calle Mayor 1, Pueblo'] },
+          voice: { callsToAction: ['Reserva tu mesa'] },
+        },
+      },
+    ];
+    fake.tables.brand_reel_templates = [
+      {
+        id: 'plantilla-plato',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        template_key: 'plato-estrella',
+        name: 'Plato estrella',
+        source: 'catalog',
+        document: {
+          kind: 'rrss.reel-template',
+          schemaVersion: 1,
+          purpose: 'Enseñar un plato.',
+          whenToUse: 'Para el plato de la semana.',
+          material: '3 fotos.',
+          style: { id: 'corte-ritmico' },
+          slots: [
+            { id: 'a', label: 'Resultado', kind: 'any', seconds: 1.8 },
+            { id: 'b', label: 'Detalle', kind: 'any', seconds: 1.6 },
+            { id: 'c', label: 'Cierre', kind: 'any', seconds: 2 },
+          ],
+          texts: [
+            { id: 'gancho', role: 'hook', text: 'Lo que sale de la cocina', from: 'a', position: 'center' },
+            { id: 'llamada', role: 'cta', text: 'Reserva ya', from: 'c', position: 'bottom' },
+          ],
+        },
+      },
+    ];
+  }
+
+  type SavedPlan = {
+    clips: Array<Record<string, unknown>>;
+    texts: Array<{ role?: string; style: { box: { color: string } | null } }>;
+    outro?: unknown;
+  };
+  const savedPlan = () =>
+    (fake.callsTo('save_content_version', 'rpc')[0]!.payload as { p_data: { plan: SavedPlan } }).p_data.plan;
+
+  it('ordena el material, abre con la mejor foto, pone rótulos, papeles, encuadre y el cierre de la marca', async () => {
+    seedBrand();
+    renderApp(`${EDITOR}?plantilla=plato-estrella`);
+    await screen.findByTestId('reel-editor', {}, SLOW);
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
+    // El selector enseña primero lo que mejor queda en un reel vertical; los recortes sin fondo, al final.
+    const names = within(dialog)
+      .getAllByTestId('reel-media-option')
+      .map((o) => o.getAttribute('aria-label'));
+    expect(names[0]).toBe('Elegir «arroz-negro.jpg»');
+    expect(names[names.length - 1]).toBe('Elegir «Sin fondo · arroz.png»');
+    // Se eligen en otro orden: la mejor abre el reel igualmente.
+    fireEvent.click(within(dialog).getByRole('button', { name: /«Croquetas caseras.jpg»/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /«arroz-negro.jpg»/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /«local.jpg»/ }));
+    fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
+    await waitFor(() =>
+      expect(clipLabels().map((l) => l?.replace(/, [\d,]+ s$/, ''))).toEqual([
+        '1. Foto arroz-negro.jpg',
+        '2. Foto Croquetas caseras.jpg',
+        '3. Foto local.jpg',
+      ]),
+    );
+    // El gancho y el rótulo del plato; la llamada de la plantilla pasa al cierre (no sale dos veces).
+    expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual([
+      'Lo que sale de la cocina',
+      'Croquetas caseras',
+    ]);
+    // Junto a «Exportar», el aviso de que sale sin música.
+    const notice = screen.getByTestId('reel-audio-notice');
+    expect(notice).toHaveTextContent('Sin música');
+    expect(notice).toHaveAttribute(
+      'title',
+      'Sin música: el vídeo saldrá sin sonido. La música se pone en la app de Instagram antes de publicar.',
+    );
+
+    await markVersion();
+    await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
+    const plan = savedPlan();
+    expect(plan.clips[0]).toMatchObject({
+      path: path('arroz-negro.jpg'),
+      subjectMaskPath: path('Sin fondo · arroz.png'),
+    });
+    expect(plan.clips[2]).toMatchObject({ path: path('local.jpg'), focalPoint: { x: 0.3, y: 0.6 } });
+    expect(plan.texts.map((t) => t.role)).toEqual(['headline', 'label']);
+    // El rótulo va en la caja oscura de la marca.
+    expect(plan.texts[1]!.style.box?.color).toBe('#1A1A1A');
+    expect(plan.outro).toEqual({
+      seconds: 2,
+      cta: 'Reserva ya',
+      handle: '@casa.prueba',
+      address: 'Calle Mayor 1, Pueblo',
+      logoPath: path('logo.png'),
+      accent: '#C9A227',
+      accentText: '#141414',
+    });
+  });
+
+  it('el cierre se puede quitar y volver a poner desde «⋯»', async () => {
+    seedBrand();
+    renderApp(`${EDITOR}?plantilla=plato-estrella`);
+    await screen.findByTestId('reel-editor', {}, SLOW);
+    const dialog = await screen.findByRole('dialog', {}, SLOW);
+    fireEvent.click(within(dialog).getByRole('button', { name: /«arroz-negro.jpg»/ }));
+    fireEvent.click(within(dialog).getByTestId('reel-media-confirm'));
+    await waitFor(() => expect(clipLabels()).toHaveLength(1));
+    const user = userEvent.setup();
+    await openMoreMenu(user, 'reel-more');
+    expect(await screen.findByTestId('reel-outro-toggle')).toHaveTextContent('Quitar el cierre con la marca');
+    await user.click(screen.getByTestId('reel-outro-toggle'));
+    await openMoreMenu(user, 'reel-more');
+    expect(await screen.findByTestId('reel-outro-toggle')).toHaveTextContent('Poner el cierre con la marca');
   });
 });

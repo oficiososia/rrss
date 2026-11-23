@@ -8,6 +8,7 @@ import { isAppDesign } from '@/features/library/filters';
 import { REEL_KIND } from '@/features/reels/api';
 import { readBrandReelTemplates, saveReelVersion } from '@/features/reels/editor/api';
 import { buildRenderRequest } from '@/features/reels/editor/project';
+import { brandReelKit, reelLogoPath, type BrandReelKit } from '@/features/reels/quality';
 import { REEL_TEMPLATES } from '@/features/reels/templates';
 import { requestKeys } from '@/features/requests/api';
 import type {
@@ -476,6 +477,27 @@ async function brandLook(brandId: string): Promise<EngineLook> {
   return { colors: profile.visual.colors.map((c) => c.hex), ...(font ? { fontFamily: font } : {}) };
 }
 
+/** Lo que los reels toman de la marca (colores, logotipo, usuario, dirección y llamada) para el cierre. */
+async function brandKit(brandId: string): Promise<BrandReelKit | null> {
+  const row = unwrap(
+    await supabase.from('brand_profiles').select('data').eq('brand_id', brandId).eq('status', 'active').maybeSingle(),
+  ) as { data: unknown } | null;
+  if (!row) return null;
+  const profile = parseProfile(row.data);
+  const ids = profile.visual.logoAssetIds;
+  const logos =
+    ids.length > 0
+      ? unwrap(
+          await supabase
+            .from('media_assets')
+            .select('id, kind, storage_path, mime_type')
+            .eq('brand_id', brandId)
+            .in('id', ids),
+        )
+      : [];
+  return brandReelKit(profile, reelLogoPath(ids, logos));
+}
+
 export interface PreparedReels {
   /** Reels del plan (piezas en formato reel). */
   total: number;
@@ -508,7 +530,7 @@ export async function prepareCampaignReels(
   const empty: PreparedReels = { total: indexes.length, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 };
   if (indexes.length === 0) return empty;
 
-  const [links, library, templateRows, fontInfo] = await Promise.all([
+  const [links, library, templateRows, fontInfo, kit] = await Promise.all([
     supabase
       .from('campaign_contents')
       .select('content_id, piece_index, plan_version')
@@ -528,6 +550,8 @@ export async function prepareCampaignReels(
       .order('name')
       .limit(60),
     supabase.rpc('brand_reel_font_info', { p_brand_id: brandId }),
+    // Sin perfil (o si falla al leerlo), los reels salen igual, sin el cierre de la marca.
+    brandKit(brandId).catch(() => null),
   ]);
   const contentOf = new Map(unwrap(links).map((l) => [l.piece_index, l.content_id]));
   const templates = readBrandReelTemplates(
@@ -553,6 +577,7 @@ export async function prepareCampaignReels(
     hints,
     library: unwrap(library) as CampaignMaterial[],
     ...(font ? { font } : {}),
+    kit,
     aiGenerated: campaign.origin === 'ai',
   });
 
