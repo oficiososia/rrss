@@ -98,5 +98,30 @@ describe('Plantillas de la marca', () => {
     expect(await screen.findAllByTestId('brand-template')).toHaveLength(3);
     expect(screen.queryByTestId('brand-template-rename')).not.toBeInTheDocument();
     expect(screen.queryByTestId('brand-template-delete')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('brand-template-more')).not.toBeInTheDocument();
+  });
+
+  it('en el móvil, el menú «⋯» de cada plantilla renombra, duplica y borra', async () => {
+    seed({ orgRole: 'owner' });
+    const calls: string[] = [];
+    fake.rpc('duplicate_design_template', (args) => {
+      calls.push(`duplicate ${args.p_template_id}`);
+      return null;
+    });
+    const { user } = renderApp(`${BRAND_BASE}/marca?seccion=visual`);
+    const items = await screen.findAllByTestId('brand-template');
+
+    await user.click(within(items[2]!).getByTestId('brand-template-more'));
+    await user.click(await screen.findByTestId('brand-template-menu-duplicate'));
+    await waitFor(() => expect(calls).toContain('duplicate t-3'));
+
+    await user.click(within(items[0]!).getByTestId('brand-template-more'));
+    await user.click(await screen.findByTestId('brand-template-menu-delete'));
+    expect(within(await screen.findByRole('dialog')).getByText(/Esta no la creaste aquí/)).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    await user.click(within(items[1]!).getByTestId('brand-template-more'));
+    await user.click(await screen.findByTestId('brand-template-menu-rename'));
+    expect(within(items[1]!).getByTestId('brand-template-rename-input')).toHaveValue('Cartel');
   });
 });

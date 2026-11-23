@@ -11,6 +11,7 @@ import {
   EmptyState,
   ErrorState,
   Input,
+  MoreMenu,
   Skeleton,
 } from '@/components/ui';
 import {
@@ -114,8 +115,16 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
                   ? { label: 'Nuestra', help: 'Del catálogo o preparada por vosotros.' }
                   : TEMPLATE_ORIGIN[template.source];
               const editing = renaming?.id === template.id;
+              const startRename = () => setRenaming({ id: template.id, name: template.name });
+              const startDuplicate = () =>
+                duplicate.mutate(template.id, {
+                  onSuccess: () => toast.success('Plantilla duplicada'),
+                  onError: (e) => toast.error(translateError(e)),
+                });
+              // En el móvil la miniatura y el nombre van arriba, a todo lo ancho, y las acciones en «⋯»
+              // (con los tres botones al lado, el nombre se quedaba sin sitio y salía partido letra a letra).
               return (
-                <li key={template.id} className="flex flex-wrap items-start gap-3 py-3" data-testid="brand-template">
+                <li key={template.id} className="flex items-start gap-3 py-3 sm:flex-wrap" data-testid="brand-template">
                   <span className="w-20 shrink-0 self-start" aria-hidden>
                     <TemplateThumb
                       canvas={document?.canvas ?? null}
@@ -176,11 +185,46 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
                     </p>
                   </div>
                   {canManage && !editing && (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="shrink-0 sm:hidden">
+                      <MoreMenu
+                        size="sm"
+                        label={`Acciones de «${template.name}»`}
+                        testId="brand-template-more"
+                        items={[
+                          {
+                            id: 'rename',
+                            label: 'Renombrar',
+                            icon: Pencil,
+                            onSelect: startRename,
+                            testId: 'brand-template-menu-rename',
+                          },
+                          {
+                            id: 'duplicate',
+                            label: 'Duplicar',
+                            icon: Copy,
+                            onSelect: startDuplicate,
+                            disabled: duplicate.isPending,
+                            testId: 'brand-template-menu-duplicate',
+                          },
+                          null,
+                          {
+                            id: 'delete',
+                            label: 'Borrar',
+                            icon: Trash2,
+                            onSelect: () => setDeleting(template),
+                            destructive: true,
+                            testId: 'brand-template-menu-delete',
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
+                  {canManage && !editing && (
+                    <div className="hidden flex-wrap gap-1 sm:flex">
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => setRenaming({ id: template.id, name: template.name })}
+                        onClick={startRename}
                         aria-label={`Renombrar «${template.name}»`}
                         data-testid="brand-template-rename"
                       >
@@ -192,12 +236,7 @@ export function BrandTemplatesCard({ brandId, canManage }: { brandId: string; ca
                         variant="secondary"
                         loading={duplicate.isPending && duplicate.variables === template.id}
                         disabled={duplicate.isPending}
-                        onClick={() =>
-                          duplicate.mutate(template.id, {
-                            onSuccess: () => toast.success('Plantilla duplicada'),
-                            onError: (e) => toast.error(translateError(e)),
-                          })
-                        }
+                        onClick={startDuplicate}
                         aria-label={`Duplicar «${template.name}»`}
                         data-testid="brand-template-duplicate"
                       >
