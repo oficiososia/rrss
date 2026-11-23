@@ -135,7 +135,15 @@ import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
 import { exportForPublishing } from './export/exportForPublishing';
 import { contentPaths, networkLabel, targetLabel } from './labels';
-import { allowedCanvasRatios, getFormatSpec, recommendedCanvasRatio, type NetworkFormatSpec } from './networks';
+import {
+  allowedCanvasRatios,
+  formatsOf,
+  getFormatSpec,
+  recommendedCanvasRatio,
+  type NetworkFormatSpec,
+} from './networks';
+import { reelFromDesign } from './editor/toReel';
+import { saveReelDraft } from '@/features/reels/editor/api';
 import { safeZoneFor } from './safeZones';
 import { STATUS_LABEL, STATUS_TONE, statusActions, statusChangedMessage, type StatusAction } from './status';
 import { useFeature, useTextTask } from '@/features/platform/integrations/useFeature';
@@ -1083,6 +1091,45 @@ function Editor({
     }
   }
 
+  /**
+   * Cambiar el tipo de pieza (Publicación, Carrusel, Historia, Reel…) desde la cabecera. Las capas se
+   * recolocan a la proporción del formato nuevo (como «Proporción»), en un paso que se deshace. A Reel,
+   * las fotos del diseño pasan a ser los clips del montaje y se abre el editor de reels.
+   */
+  async function changeFormat(format: string) {
+    if (format === item.format) return;
+    const next = getFormatSpec(item.network, format);
+    if (format === 'reel') {
+      const project = reelFromDesign(stateRef.current.document, assets.data ?? []);
+      try {
+        // Lo hecho hasta ahora queda guardado (el diseño sigue en el historial) antes de pasar a vídeo.
+        await autosave.flush();
+        await mutations.update.mutateAsync({ contentId, target: { network: item.network, format } });
+        if (project.plan.clips.length > 0) await saveReelDraft(contentId, project, expectedVersion);
+        toast.success(
+          project.plan.clips.length > 0
+            ? `Ahora es un reel: sus ${project.plan.clips.length === 1 ? 'foto es el primer clip' : `${project.plan.clips.length} fotos son los clips`}.`
+            : 'Ahora es un reel: añade fotos o vídeos al montaje.',
+        );
+        onReopen();
+      } catch (error) {
+        toast.error(translateError(error));
+      }
+      return;
+    }
+    const message = await saveSettings({ target: { network: item.network, format } });
+    if (message) {
+      toast.error(message);
+      return;
+    }
+    const media = next?.media.includes('image') ? 'image' : next?.media[0];
+    const ratio = next ? recommendedCanvasRatio(next, media)?.ratio : undefined;
+    if (ratio && ratio !== stateRef.current.document.canvas.aspectRatio) {
+      dispatch({ type: 'setRatio', ratio });
+      toast.message(`Lienzo en ${ratio}: las capas se han recolocado. Se deshace con Ctrl+Z.`);
+    }
+  }
+
   /** Salir del editor: si queda algo sin guardar, se guarda el borrador antes; solo si no se puede, se pregunta. */
   /** La versión guardada, exportada a JPEG y subida a la biblioteca: lo que el calendario acepta para publicar. */
   const exportApprovedVersion = () =>
@@ -1611,13 +1658,45 @@ function Editor({
           <ChevronLeft className="h-4 w-4" aria-hidden />
           <span className="max-md:sr-only">Contenidos</span>
         </Link>
-        <h1
-          className="min-w-0 shrink truncate text-base font-semibold"
-          data-testid="editor-title"
-          title={targetLabel(item.network, item.format)}
-        >
-          {item.title}
-        </h1>
+        {/* Nombre y tipo de pieza: en una línea en pantallas anchas; en el móvil, el tipo debajo del nombre. */}
+        <div className="flex min-w-0 shrink flex-col sm:flex-row sm:items-center sm:gap-1.5">
+          <h1
+            className="min-w-0 truncate text-base font-semibold max-sm:text-sm max-sm:leading-tight"
+            data-testid="editor-title"
+            title={targetLabel(item.network, item.format)}
+          >
+            {item.title}
+          </h1>
+          {/* El tipo de pieza, a la vista: cambiarlo recoloca las capas a su proporción (o abre el editor de reels). */}
+          {canEdit && !item.archived_at ? (
+            <label className="relative shrink-0">
+              <span className="sr-only">Tipo de pieza</span>
+              <select
+                className={cn(
+                  'cursor-pointer rounded-md text-xs font-medium text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+                  'h-8 max-w-[9.5rem] border border-border bg-surface pl-2 pr-6 hover:bg-subtle',
+                  'max-sm:h-6 max-sm:max-w-[9rem] max-sm:border-0 max-sm:bg-transparent max-sm:pl-0 max-sm:text-[11px] max-sm:text-muted',
+                )}
+                value={item.format}
+                disabled={mutations.update.isPending}
+                onChange={(event) => void changeFormat(event.target.value)}
+                title="Tipo de pieza: al cambiarlo, las capas se recolocan a su proporción"
+                data-testid="editor-format"
+              >
+                {formatsOf(item.network).map((option) => (
+                  <option key={option.format} value={option.format}>
+                    {option.label}
+                    {option.format === item.format ? ` · ${canvas.aspectRatio}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <span className="shrink-0 text-xs text-muted max-sm:text-[11px]" data-testid="editor-format-label">
+              {spec?.label ?? item.format} · {canvas.aspectRatio}
+            </span>
+          )}
+        </div>
         <span data-testid="editor-version" className="sr-only">
           {expectedVersion > 0 ? `Versión ${expectedVersion}` : 'Sin versiones todavía'}
         </span>
@@ -1709,7 +1788,7 @@ function Editor({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9"
+                className="h-9 w-9 max-sm:hidden"
                 aria-label="Rehacer"
                 title="Rehacer (Ctrl+Mayús+Z)"
                 disabled={state.future.length === 0}
@@ -1828,6 +1907,7 @@ function Editor({
           <EditorPanel
             title={DRAWER_TITLE[drawer]}
             testId={`drawer-panel-${drawer}`}
+            storageKey="rrss.editor.ancho.cajon"
             onClose={() => setDrawer(null)}
             closeLabel="Cerrar el cajón"
           >
@@ -1964,6 +2044,8 @@ function Editor({
           <EditorPanel
             title="Capas"
             testId="side-panel-layers"
+            side="right"
+            storageKey="rrss.editor.ancho.panel"
             onClose={() => setSide(null)}
             closeLabel="Cerrar las capas"
             closeTestId="side-close"
@@ -1975,6 +2057,8 @@ function Editor({
           <EditorPanel
             title="Tamaño y fondo"
             testId="side-panel-canvas"
+            side="right"
+            storageKey="rrss.editor.ancho.panel"
             onClose={() => setSide(null)}
             closeTestId="side-close"
           >
@@ -1993,6 +2077,8 @@ function Editor({
           <EditorPanel
             title="Ajustes"
             testId="side-panel-settings"
+            side="right"
+            storageKey="rrss.editor.ancho.panel"
             onClose={() => setSettingsFor(null)}
             closeLabel="Cerrar los ajustes"
             closeTestId="side-close"
