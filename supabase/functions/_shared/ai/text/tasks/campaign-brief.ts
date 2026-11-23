@@ -16,6 +16,9 @@
 // que admite un plan, ritmo acotado y una semana por fase como mucho.
 import { AiError, type AiOutputSchema, type AiService, type JsonSchema, type Json } from '../../contract.ts';
 import { CAMPAIGN_PLAN_PURPOSE, dayNumber, MAX_CAMPAIGN_DAYS, type CampaignTarget } from './campaign-plan.ts';
+import { canon, FORMAT_GROUPS, resolveFormat, resolveNetwork } from './targets.ts';
+
+export { resolveFormat, resolveNetwork };
 import {
   AiTaskInputError,
   brandProfileContext,
@@ -98,7 +101,9 @@ export const CAMPAIGN_BRIEF_INSTRUCTIONS = [
   'Tuteas y hablas en español llano. En «why» explica en una o dos frases por qué esa duración y ese ritmo, empezando por «Te propongo …».',
   'Redes: elige solo entre las de la lista «Destinos». Si la persona nombra una red que no está en la lista, no la pongas. Si no dice nada de redes, elige las que mejor encajen con el tema (normalmente una o dos).',
   'Fechas: el material «hoy» da la fecha de hoy. La campaña empieza como pronto mañana. «Hasta Navidad» acaba el 24 de diciembre; «esta semana» o «la semana que viene» son semanas naturales (de lunes a domingo). Si la persona no dice cuánto debe durar, propón la duración que mejor encaje con el tema y razónala (por ejemplo, 3 semanas: una de anuncio, una de platos y una de cierre); una campaña normal dura de 1 a 4 semanas y nunca más de 9.',
-  'Ritmo: «perWeek» es el total de publicaciones por semana y «mix» lo reparte por red y formato de la lista «Destinos» (la suma de «mix» es «perWeek»). Sé realista para un negocio pequeño: de 2 a 5 por semana en total, y nunca más de 7 por semana en un mismo formato. Si la persona prefiere un formato («sobre todo reels»), dale más peso en el reparto.',
+  'Ritmo: «perWeek» es el total de publicaciones por semana y «mix» lo reparte por red y formato de la lista «Destinos» (la suma de «mix» es «perWeek»). Cada entrada de «mix» lleva «network» y «format» copiados tal cual de un destino (por ejemplo «instagram» y «reel») y «perWeek», un número entero mayor que 0. Sé realista para un negocio pequeño: de 2 a 5 por semana en total, y nunca más de 7 por semana en un mismo formato. Si la persona prefiere un formato («sobre todo reels»), dale más peso en el reparto.',
+  'Si en «why» dices cuántas publicaciones de cada formato hay, que sean exactamente las de «mix».',
+  'Los reels se montan con fotos y vídeos de la biblioteca de la marca: no propongas reels solo tipográficos ni sin imágenes.',
   'Semanas: una entrada de «weeks» por semana de la campaña, en orden, con un título corto y qué se cuenta esa semana.',
   'Nombre y objetivo: «title» es un nombre corto para la campaña; «objective» es lo que se quiere conseguir, en una frase.',
   'Pregunta: si falta un dato imprescindible para proponer algo útil (casi siempre, de qué trata la campaña o qué se quiere dar a conocer), pon en «question» UNA pregunta corta y deja el resto vacío. Nunca preguntes por lo que puedes decidir tú (redes, duración, ritmo, nombre). Si el material «respuesta» ya contesta una pregunta anterior, no vuelvas a preguntar: propón.',
@@ -164,61 +169,7 @@ export function nextMonday(today: number): number {
 export const weeksBetween = (start: number, end: number): number => Math.ceil((end - start + 1) / 7);
 
 // ── Reparto tolerante ────────────────────────────────────────────────────
-// Un modelo real no siempre copia al carácter los identificadores de la lista:
-// puede decir «Reels», «Instagram», «publicación», «2,0» o «2». Antes de
-// descartar nada se normaliza todo a los destinos que sí se enviaron.
-
-const canon = (value: unknown): string =>
-  typeof value === 'string'
-    ? value
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-    : '';
-
-const NETWORK_ALIASES: Record<string, string> = {
-  ig: 'instagram',
-  insta: 'instagram',
-  fb: 'facebook',
-  twitter: 'x',
-  google: 'google_business',
-  google_my_business: 'google_business',
-  perfil_de_empresa_de_google: 'google_business',
-  yt: 'youtube',
-};
-
-/** Grupos de nombres que significan lo mismo, y los formatos del catálogo a los que equivalen. */
-const FORMAT_GROUPS: Array<{ words: string[]; formats: string[] }> = [
-  { words: ['reel', 'reels', 'video', 'videos', 'short', 'shorts', 'clip', 'clips'], formats: ['reel', 'video', 'short'] },
-  {
-    words: ['post', 'posts', 'publicacion', 'publicaciones', 'foto', 'fotos', 'imagen', 'imagenes', 'page_post', 'photo', 'pin'],
-    formats: ['post', 'page_post', 'photo', 'pin'],
-  },
-  { words: ['carousel', 'carrusel', 'carruseles', 'carousels'], formats: ['carousel'] },
-  { words: ['story', 'stories', 'historia', 'historias'], formats: ['story'] },
-];
-
-/** La red del catálogo a la que se refiere `value` («Instagram», «ig»…), o null. */
-export function resolveNetwork(value: unknown, targets: CampaignTarget[]): string | null {
-  const key = canon(value);
-  if (!key) return null;
-  const wanted = NETWORK_ALIASES[key] ?? key;
-  return targets.find((t) => t.network === wanted)?.network ?? null;
-}
-
-/** El formato del catálogo (de esa red) al que se refiere `value` («Reels», «publicación»…), o null. */
-export function resolveFormat(network: string, value: unknown, targets: CampaignTarget[]): string | null {
-  const own = targets.filter((t) => t.network === network);
-  const key = canon(value);
-  if (!key) return null;
-  const exact = own.find((t) => canon(t.format) === key);
-  if (exact) return exact.format;
-  const group = FORMAT_GROUPS.find((g) => g.words.includes(key));
-  if (!group) return null;
-  return own.find((t) => group.formats.includes(t.format))?.format ?? null;
-}
+// Los nombres de red y formato se normalizan en targets.ts (también los usa el plan).
 
 /** Un número de publicaciones por semana, venga como número o como texto («2», «2,5», «2 reels»); 0 si no es nada. */
 export function parsePerWeek(value: unknown): number {
@@ -270,6 +221,101 @@ export function formatsAsked(text: string, targets: CampaignTarget[], networks: 
       }
     }
   });
+  return out;
+}
+
+// ── Lo que dice el texto frente al ritmo ─────────────────────────────────
+// «Te propongo 4 semanas, dos de ellas reels» con un ritmo de 3 × reel es una
+// incoherencia que la persona ve (prueba de calidad del 23/11/2026, fallo 15).
+// Sin IA: se leen las cifras del texto y, si no cuadran con el ritmo final, el
+// texto se rehace con las del ritmo.
+
+const NUMBER_WORDS: Record<string, number> = {
+  un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, trece: 13, catorce: 14,
+};
+/** Palabras que cuentan publicaciones en total (no un formato). */
+const TOTAL_WORDS = ['publicacion', 'publicaciones', 'pieza', 'piezas'];
+
+const numberOf = (word: string): number | null =>
+  /^\d{1,2}$/.test(word) ? Number(word) : (NUMBER_WORDS[word] ?? null);
+
+/**
+ * Cifras que da un texto: por grupo de formato («dos reels», «3 carruseles»)
+ * y en total («tres publicaciones»). Busca el número hasta tres palabras antes.
+ */
+export function countsInText(text: string): { total: number | null; byGroup: Map<number, number> } {
+  const words = canon(text).split('_').filter(Boolean);
+  const byGroup = new Map<number, number>();
+  const totals: number[] = [];
+  words.forEach((word, i) => {
+    const isTotal = TOTAL_WORDS.includes(word);
+    const group = isTotal ? -1 : FORMAT_GROUPS.findIndex((g) => g.words.includes(word));
+    if (group < 0 && !isTotal) return;
+    for (let back = 1; back <= 3 && i - back >= 0; back += 1) {
+      const n = numberOf(words[i - back]!);
+      if (n === null) continue;
+      if (isTotal) totals.push(n);
+      else byGroup.set(group, (byGroup.get(group) ?? 0) + n);
+      break;
+    }
+  });
+  // «dos reels y una publicación»: junto a otros formatos, «publicación» es una foto, no el total.
+  if (byGroup.size > 0 && totals.length > 0) {
+    const post = FORMAT_GROUPS.findIndex((g) => g.formats.includes('post'));
+    byGroup.set(post, (byGroup.get(post) ?? 0) + totals.reduce((a, b) => a + b, 0));
+    return { total: null, byGroup };
+  }
+  return { total: totals[0] ?? null, byGroup };
+}
+
+const groupOf = (format: string): number => FORMAT_GROUPS.findIndex((g) => g.formats.includes(format));
+
+/** ¿Las cifras que da el texto son las del ritmo? Sin cifras, sí. */
+export function whyMatchesMix(why: string, mix: BriefMixItem[], perWeek: number): boolean {
+  const { total, byGroup } = countsInText(why);
+  if (total !== null && total !== perWeek && !byGroup.size) return false;
+  for (const [group, count] of byGroup) {
+    const have = mix.filter((m) => groupOf(m.format) === group).reduce((sum, m) => sum + m.perWeek, 0);
+    if (have !== count) return false;
+  }
+  return true;
+}
+
+const FORMAT_NAMES: Record<string, [string, string]> = {
+  reel: ['reel', 'reels'],
+  video: ['vídeo', 'vídeos'],
+  short: ['short', 'shorts'],
+  post: ['publicación', 'publicaciones'],
+  page_post: ['publicación', 'publicaciones'],
+  photo: ['foto', 'fotos'],
+  pin: ['pin', 'pines'],
+  carousel: ['carrusel', 'carruseles'],
+  story: ['historia', 'historias'],
+};
+
+/** «3 reels y 1 publicación a la semana». */
+export function rhythmSentence(mix: BriefMixItem[]): string {
+  const counts = new Map<string, number>();
+  for (const m of mix) {
+    const [one, many] = FORMAT_NAMES[m.format] ?? [m.format, m.format];
+    const key = `${one}|${many}`;
+    counts.set(key, (counts.get(key) ?? 0) + m.perWeek);
+  }
+  const parts = [...counts].map(([key, n]) => `${n} ${n === 1 ? key.split('|')[0] : key.split('|')[1]}`);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} y ${parts[parts.length - 1]}` : (parts[0] ?? '');
+  return `${list} a la semana`;
+}
+
+/** El reparto que dice el texto del modelo («dos reels y una publicación»), si lo dice con cifras. */
+export function mixFromText(text: string, targets: CampaignTarget[], networks: string[]): BriefMixItem[] {
+  const { byGroup } = countsInText(text);
+  const out: BriefMixItem[] = [];
+  for (const [group, count] of byGroup) {
+    const network = networks.find((n) => targets.some((t) => t.network === n && FORMAT_GROUPS[group]!.formats.includes(t.format)));
+    const target = network ? targets.find((t) => t.network === network && FORMAT_GROUPS[group]!.formats.includes(t.format)) : undefined;
+    if (target && count >= 1) out.push({ network: target.network, format: target.format, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, count) });
+  }
   return out;
 }
 
@@ -361,6 +407,11 @@ export function sanitizeBrief(
       mix = mix.map((m, i) => ({ ...m, perWeek: Math.min(MAX_PER_WEEK_PER_TARGET, shares[i]!) }));
       notes.push(`He ajustado el reparto para que sume ${mix.reduce((sum, m) => sum + m.perWeek, 0)} a la semana.`);
     }
+  } else if (mixFromText(clean(raw.why, 500), ctx.targets, networks).length > 0) {
+    // Sin reparto utilizable, pero el texto del modelo lo dice con cifras («dos reels y una
+    // publicación»): se usa ese, así el texto y el ritmo cuadran.
+    diagnostic = JSON.stringify({ mix: raw.mix, perWeek: raw.perWeek }).slice(0, 600);
+    mix = mixFromText(clean(raw.why, 500), ctx.targets, networks);
   } else {
     // Sin reparto utilizable: según los formatos que pidió la persona y, si no dijo ninguno, entre todos los de las redes elegidas.
     diagnostic = JSON.stringify({ mix: raw.mix, perWeek: raw.perWeek }).slice(0, 600);
@@ -390,16 +441,33 @@ export function sanitizeBrief(
     total -= 1;
   }
 
-  const weeks = raw.weeks
-    .map((week) => ({ title: clean(week.title, 80), focus: clean(week.focus, 240) }))
+  const weeks = (Array.isArray(raw.weeks) ? raw.weeks : [])
+    .map((week) => ({ title: clean(week?.title, 80), focus: clean(week?.focus, 240) }))
     .filter((week) => week.title)
     .slice(0, weekCount);
 
   const title = clean(raw.title, 120);
   const objective = clean(raw.objective, 600);
-  const why =
-    clean(raw.why, 500) ||
-    `Te propongo ${weekCount} ${weekCount === 1 ? 'semana' : 'semanas'} con ${total} publicaciones por semana.`;
+  const weeksText = `${weekCount} ${weekCount === 1 ? 'semana' : 'semanas'}`;
+  const ownWhy = clean(raw.why, 500);
+  // Si el texto da cifras que no son las del ritmo final, se rehace con las del ritmo
+  // (se conservan las frases del modelo que no dan cifras: el porqué).
+  const consistent = whyMatchesMix(ownWhy, mix, total);
+  const sentences = ownWhy.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const because = /\bporque\s+(.+?)[.!?]?$/i.exec(sentences[0] ?? '')?.[1];
+  const noCounts = (sentence: string) => {
+    const counts = countsInText(sentence);
+    return counts.byGroup.size === 0 && counts.total === null;
+  };
+  const reasons = [
+    ...(because && noCounts(because) ? [`Porque ${because}.`] : []),
+    ...sentences.slice(1).filter(noCounts),
+  ].join(' ');
+  const why = !ownWhy
+    ? `Te propongo ${weeksText} con ${rhythmSentence(mix)}.`
+    : consistent
+      ? ownWhy
+      : clean(`Te propongo ${weeksText} con ${rhythmSentence(mix)}.${reasons ? ` ${reasons}` : ''}`, 500);
   return {
     proposal: {
       title,

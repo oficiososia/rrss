@@ -66,6 +66,8 @@ export interface BriefRequest {
   current?: BriefProposal;
   adjust?: BriefAdjustment;
   answer?: { question: string; text: string };
+  /** A qué se dedica la marca, si no tiene perfil ni sector. */
+  brandSector?: string;
 }
 
 /** Todos los formatos de las redes dadas (los destinos que se ofrecen a la IA). */
@@ -82,6 +84,7 @@ export function requestCampaignBrief(request: BriefRequest): Promise<CampaignBri
     ...(request.current ? { current: request.current } : {}),
     ...(request.adjust ? { adjust: request.adjust } : {}),
     ...(request.answer ? { answer: request.answer } : {}),
+    ...(request.brandSector ? { brandSector: request.brandSector } : {}),
   });
 }
 

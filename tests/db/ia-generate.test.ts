@@ -105,9 +105,12 @@ async function setup(options: { quota?: number | null; profile?: Json | null; re
     // Igual que la función real: con la identidad del usuario, bajo RLS.
     loadBrandProfile: async (token, brandId) => {
       const user = sessions.get(token)!;
-      const brands = await as<{ ai_mode: string }>(db, user, `select id, ai_mode from public.brands where id = $1`, [
-        brandId,
-      ]);
+      const brands = await as<{ ai_mode: string; name: string; sector: string; website: string }>(
+        db,
+        user,
+        `select id, ai_mode, name, sector, website from public.brands where id = $1`,
+        [brandId],
+      );
       if (brands.length === 0) return { brandVisible: false, profile: null, aiMode: 'api' };
       const profiles = await as<{ data: Json }>(
         db,
@@ -119,6 +122,7 @@ async function setup(options: { quota?: number | null; profile?: Json | null; re
         brandVisible: true,
         profile: profiles[0]?.data ?? null,
         aiMode: brands[0]!.ai_mode === 'agency' ? 'agency' : 'api',
+        brand: { name: brands[0]!.name, sector: brands[0]!.sector, website: brands[0]!.website },
       };
     },
     log: (event, data) => logs.push({ event, data }),
@@ -243,11 +247,73 @@ describe('las tres acciones', () => {
     expect(await db.query(`select 1 from public.brand_profiles where brand_id = $1`, [t.brand])).toEqual([]);
   });
 
-  it('sin perfil de marca no se redacta ni se comprueba', async () => {
+  it('sin perfil ni sector, se pide el sector antes de gastar (nada de «completa el perfil»)', async () => {
     const t = await setup({ profile: null });
     const response = await t.call(t.token, t.caption());
-    expect(response).toMatchObject({ status: 409, body: { error: { code: 'brand_profile_missing' } } });
+    expect(response).toMatchObject({ status: 409, body: { error: { code: 'brand_basics_missing' } } });
+    expect((response.body.error as Row).message).toMatch(/a qué se dedica/);
     expect(t.provider.calls).toEqual([]);
+    expect(await generations(t.org)).toEqual([]);
+  });
+
+  it('sin perfil, la IA funciona con el nombre y el sector de la marca (y no se inventa el resto)', async () => {
+    const t = await setup({ profile: null });
+    await as(db, t.owner, `update public.brands set sector = 'Coctelería', website = 'https://bar.test' where id = $1`, [
+      t.brand,
+    ]);
+    const response = await t.call(t.token, t.caption());
+    expect(response.status).toBe(200);
+    const profile = JSON.parse(t.provider.calls[0]!.input.context![0]!.content) as Row;
+    expect(profile.brand).toEqual({ name: `Marca ${n}`, sector: 'Coctelería', website: 'https://bar.test' });
+    expect(profile.note).toMatch(/no inventes/);
+    // Tampoco se bloquea el formulario de la campaña.
+    const brief = await t.call(t.token, {
+      action: 'campaign.brief',
+      brandId: t.brand,
+      input: {
+        instruction: 'Prepara la semana que viene',
+        today: '2026-11-22',
+        targets: [{ network: 'instagram', format: 'post' }],
+      },
+    });
+    expect(brief.status).not.toBe(409);
+  });
+
+  it('sin perfil ni sector, el sector que se dice en el diálogo basta para esta petición', async () => {
+    const t = await setup({ profile: null });
+    const response = await t.call(t.token, t.caption({ brandSector: 'Gimnasio' }));
+    expect(response.status).toBe(200);
+    const profile = JSON.parse(t.provider.calls[0]!.input.context![0]!.content) as { brand: Row };
+    expect(profile.brand.sector).toBe('Gimnasio');
+  });
+
+  it('con perfil, la IA recibe además el nombre de la marca (y los lugares, como en el perfil)', async () => {
+    const t = await setup({ profile: { business: { locations: ['Crevillent'] } } });
+    await t.call(t.token, t.caption());
+    const profile = JSON.parse(t.provider.calls[0]!.input.context![0]!.content) as Row;
+    expect(profile).toMatchObject({ brand: { name: `Marca ${n}` }, business: { locations: ['Crevillent'] } });
+  });
+
+  it('cost.estimate: dice el coste máximo sin reservar cupo ni llamar al proveedor', async () => {
+    const t = await setup({ profile: null });
+    const response = await t.call(t.token, {
+      action: 'cost.estimate',
+      brandId: t.brand,
+      input: { action: 'post.caption', input: t.caption().input },
+    });
+    expect(response).toMatchObject({ status: 200, body: { action: 'cost.estimate', for: 'post.caption' } });
+    expect(response.body.costMicros as number).toBeGreaterThan(0);
+    expect(t.provider.calls).toEqual([]);
+    expect(await generations(t.org)).toEqual([]);
+    // Lo que se cobra después nunca pasa del máximo enseñado.
+    const real = await t.call(t.token, t.caption({ brandSector: 'Bar' }));
+    const [row] = await generations(t.org);
+    expect(real.status).toBe(200);
+    expect(Number(row!.cost_micros)).toBeLessThanOrEqual(response.body.costMicros as number);
+    // Una acción que no se puede estimar, o sin datos: 400.
+    for (const input of [{ action: 'brand.check', input: {} }, { action: 'post.caption' }]) {
+      expect((await t.call(t.token, { action: 'cost.estimate', brandId: t.brand, input })).status).toBe(400);
+    }
   });
 });
 
@@ -334,12 +400,25 @@ describe('modo agencia', () => {
 });
 
 describe('fallos de la IA', () => {
-  it('si la respuesta del modelo no sirve, se dice, con la generación registrada', async () => {
+  it('si la respuesta del modelo no sirve, se dice y NO se cobra (el coste real queda aparte)', async () => {
     const t = await setup({ respond: () => 'esto no es JSON' });
     const response = await t.call(t.token, t.caption());
-    expect(response).toMatchObject({ status: 502, body: { error: { code: 'invalid_output', retryable: true } } });
+    expect(response).toMatchObject({
+      status: 502,
+      body: { error: { code: 'invalid_output', retryable: true, charged: false } },
+    });
+    expect((response.body.error as Row).message).toMatch(/No se ha consumido cupo/);
     const [row] = await generations(t.org);
     expect((response.body.error as Row).generationId).toBe(row!.id);
+    expect(row).toMatchObject({ status: 'failed', error_code: 'invalid_output', cost_micros: null });
+    expect(Number(row!.waived_cost_micros)).toBeGreaterThan(0);
+    // El libro de la organización: reserva y devolución, ningún coste.
+    const usage = await db.query<Row>(
+      `select entry, cost_delta_micros from public.ai_usage where generation_id = $1 order by created_at, entry desc`,
+      [row!.id],
+    );
+    expect(usage.map((u) => u.entry).sort()).toEqual(['release', 'reserve']);
+    expect(usage.every((u) => Number(u.cost_delta_micros) === 0)).toBe(true);
   });
 
   it('IA sin configurar: 503 con un mensaje neutro; el motivo (qué variable falta) solo va al registro del servidor', async () => {
