@@ -32,6 +32,18 @@ export const campaignPieceSchema = z
       .max(30),
     assetIds: z.array(z.string().uuid('Recurso no válido')).max(MAX_PIECE_ASSETS),
     why: z.string().trim().max(600),
+    // Opcionales (migración 20270115010000): lo que el plan promete y debe llegar a la pieza.
+    /** Nombre corto de la pieza (el de la lista de contenidos). */
+    title: z.string().trim().max(80).optional(),
+    /** Hora propuesta para publicarla, en la hora de la marca. */
+    time: z
+      .string()
+      .regex(/^(|([01][0-9]|2[0-3]):[0-5][0-9])$/, 'Hora no válida (HH:MM)')
+      .optional(),
+    /** Proporción que pide la pieza. */
+    aspect: z.enum(['', '1:1', '4:5', '9:16', '16:9']).optional(),
+    /** Titular que va en la imagen o en el vídeo. */
+    headline: z.string().trim().max(120).optional(),
   })
   .strict();
 

@@ -65,7 +65,11 @@ const handlerFor = memoByEnv((effective) =>
         ...options,
         global: { headers: { Authorization: `Bearer ${accessToken}` } },
       });
-      const brand = await asUser.from('brands').select('id, ai_mode').eq('id', brandId).maybeSingle();
+      const brand = await asUser
+        .from('brands')
+        .select('id, ai_mode, name, sector, website')
+        .eq('id', brandId)
+        .maybeSingle();
       if (brand.error) throw new Error('No se ha podido leer la marca');
       if (!brand.data) return { brandVisible: false, profile: null, aiMode: 'api' };
       const aiMode = brand.data.ai_mode === 'agency' ? 'agency' : 'api';
@@ -76,7 +80,16 @@ const handlerFor = memoByEnv((effective) =>
         .eq('status', 'active')
         .maybeSingle();
       if (profile.error) throw new Error('No se ha podido leer el perfil de marca');
-      return { brandVisible: true, profile: (profile.data?.data as Json | undefined) ?? null, aiMode };
+      return {
+        brandVisible: true,
+        profile: (profile.data?.data as Json | undefined) ?? null,
+        aiMode,
+        brand: {
+          name: String(brand.data.name ?? ''),
+          sector: String(brand.data.sector ?? ''),
+          website: String(brand.data.website ?? ''),
+        },
+      };
     },
 
     // Copiloto por voz: solo las fotos de la marca que el usuario ve (RLS).

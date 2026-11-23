@@ -119,16 +119,32 @@ const publication = (id: string, contentId: string, patch: Record<string, unknow
   published_at: null,
   ...patch,
 });
+// La semana del inicio va de lunes a domingo: lo programado se coloca dentro de ella (si el día ya
+// no cabe antes del domingo, más tarde hoy), para que el banco sirva cualquier día de la semana.
+const endOfWeek = (() => {
+  const now = new Date();
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7).getTime() - 3_600_000;
+})();
+const inWeek = (n: number) => {
+  const at = Date.now() + n * 86_400_000;
+  return new Date(at < endOfWeek ? at : Date.now() + (n + 1) * 60_000).toISOString();
+};
 fake.tables.scheduled_publications =
   view === 'vacia'
     ? []
     : [
-        publication('p1', 'c3', { status: 'scheduled', scheduled_at: inDays(0.3) }),
-        publication('p2', 'c4', { status: 'scheduled', scheduled_at: inDays(1.2) }),
-        publication('p3', 'c5', { status: 'scheduled', scheduled_at: inDays(1.3) }),
-        publication('p4', 'c8', { status: 'scheduled', scheduled_at: inDays(1.4) }),
+        publication('p1', 'c3', { status: 'scheduled', scheduled_at: inWeek(0.01) }),
+        publication('p2', 'c4', { status: 'scheduled', scheduled_at: inWeek(1.2) }),
+        publication('p3', 'c5', { status: 'scheduled', scheduled_at: inWeek(1.3) }),
+        publication('p4', 'c8', { status: 'scheduled', scheduled_at: inWeek(1.4) }),
         publication('p5', 'c0', { status: 'scheduled', scheduled_at: inDays(3), hold_reason: 'no_account' }),
-        publication('p6', 'c1', { status: 'published', scheduled_at: inDays(-3), published_at: inDays(-3) }),
+        publication('p6', 'c1', {
+          status: 'published',
+          scheduled_at: inDays(-3),
+          published_at: inDays(-3),
+          external_url: 'https://instagram.simulado.invalid/p/1/',
+        }),
         publication('p7', 'c2', { status: 'published', scheduled_at: inDays(-6), published_at: inDays(-6) }),
       ];
 fake.tables.social_accounts = [];

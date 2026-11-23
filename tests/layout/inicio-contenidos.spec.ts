@@ -51,9 +51,14 @@ test.describe(size.name, () => {
       await expect(page.getByTestId('home-week-piece').first()).toBeVisible();
       await expect(page.getByTestId('home-stalled-item')).toHaveCount(1);
       await expect(page.getByTestId('home-published-figures')).toContainText('personas');
+      // Ficha «N de M publicadas» y enlace a Instagram de lo publicado; sin «Tu rol».
+      await expect(page.getByTestId('home-week-count')).toContainText(/\d+ de \d+/);
+      await expect(page.getByTestId('home-published-link')).toHaveCount(1);
+      await expect(page.getByText(/Tu rol/)).toHaveCount(0);
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
-      // El arreglo de lo parado también.
+      // El arreglo de lo parado también, y el enlace a Instagram se puede tocar con el dedo.
       expect((await page.getByTestId('home-stalled-fix').boundingBox())!.height).toBeGreaterThanOrEqual(40);
+      expect((await page.getByTestId('home-published-link').boundingBox())!.height).toBeGreaterThanOrEqual(40);
     });
 
     test('contenidos: rejilla con miniaturas reales, pestañas con contador y sin scroll lateral', async ({ page }) => {

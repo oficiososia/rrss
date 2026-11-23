@@ -45,8 +45,9 @@ function segments(points: Point[]): Array<Array<{ i: number; value: number }>> {
 /**
  * Evolución diaria de una cifra: una línea de 2 px con un velo suave debajo, rejilla
  * recesiva, marcas del eje en números redondos, el máximo señalado y una guía que
- * sigue al puntero (o a las flechas del teclado) con el valor de ese día. Debajo, la
- * misma información como tabla. Los días sin cifra se dicen y no se dibujan como cero.
+ * sigue al puntero (o a las flechas del teclado) con el valor de ese día. Los días sin
+ * cifra no se dibujan como cero (lo dice la nota al pie de Resultados). Las cifras día a
+ * día, como tabla, están en «Más detalle» (`DailyTable`).
  */
 export function TrendChart({
   title,
@@ -59,7 +60,6 @@ export function TrendChart({
   testId?: string;
 }) {
   const { ref, width } = useWidth();
-  const id = useId();
   const [active, setActive] = useState<number | null>(null);
   const height = width < 420 ? 170 : 220;
   const innerW = Math.max(40, width - MARGIN.left - MARGIN.right);
@@ -195,36 +195,47 @@ export function TrendChart({
           />
         </svg>
       </div>
-      {missing > 0 && (
-        <figcaption className="mt-1 text-xs text-muted">
-          {missing} día{missing === 1 ? '' : 's'} sin cifra (sin medir todavía o sin dato de Meta): no se dibujan como
-          cero.
-        </figcaption>
-      )}
-      <details className="mt-2 text-sm">
-        <summary className="cursor-pointer text-muted hover:text-fg">Ver las cifras día a día</summary>
-        <div className="mt-2 max-h-48 overflow-y-auto">
-          <table className="w-full text-left text-xs" aria-labelledby={`${id}-t`}>
-            <caption id={`${id}-t`} className="sr-only">
-              {title}, día a día
-            </caption>
-            <thead className="text-muted">
-              <tr>
-                <th className="py-1 font-medium">Día</th>
-                <th className="py-1 text-right font-medium">Cifra</th>
-              </tr>
-            </thead>
-            <tbody>
-              {points.map((p) => (
-                <tr key={p.date} className="border-t border-border">
-                  <td className="py-1">{dayLabel(p.date)}</td>
-                  <td className="py-1 text-right tabular-nums">{p.value === null ? '—' : formatNumber(p.value)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
     </figure>
+  );
+}
+
+/** Las cifras día a día en una tabla: una columna por cifra. Va en «Más detalle». */
+export function DailyTable({ series, testId }: { series: Array<{ title: string; points: Point[] }>; testId?: string }) {
+  const id = useId();
+  const days = series[0]?.points ?? [];
+  if (!days.length) return null;
+  return (
+    <div className="max-h-64 overflow-auto" data-testid={testId}>
+      <table className="w-full text-left text-xs" aria-labelledby={`${id}-t`}>
+        <caption id={`${id}-t`} className="sr-only">
+          Cifras día a día
+        </caption>
+        <thead className="text-muted">
+          <tr>
+            <th className="py-1 font-medium">Día</th>
+            {series.map((s) => (
+              <th key={s.title} className="py-1 text-right font-medium">
+                {s.title}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {days.map((p, i) => (
+            <tr key={p.date} className="border-t border-border">
+              <td className="py-1">{dayLabel(p.date)}</td>
+              {series.map((s) => {
+                const value = s.points[i]?.value ?? null;
+                return (
+                  <td key={s.title} className="py-1 text-right tabular-nums">
+                    {value === null ? '—' : formatNumber(value)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

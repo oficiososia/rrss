@@ -4,10 +4,12 @@ import type { BrandRole, ContentItemRow, OrgRole, ScheduledPublicationRow } from
 import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 
-// Inicio de la marca: «qué hago hoy». Accesos grandes, lo que sale esta semana, lo que está parado
-// (con su botón de arreglo) y lo último publicado con sus cifras si existen.
+// Inicio de la marca: «qué hago hoy». La semana de lunes a domingo con «N de M publicadas», lo que
+// está parado (con su botón de arreglo) y lo último publicado con sus cifras y su enlace a la red.
 
 const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
+/** Un momento de esta misma semana (de lunes a domingo): dentro de un minuto. */
+const soon = () => new Date(Date.now() + 60_000).toISOString();
 
 function piece(patch: Partial<ContentItemRow> = {}): ContentItemRow {
   return {
@@ -37,7 +39,7 @@ function publication(patch: Partial<ScheduledPublicationRow> = {}): ScheduledPub
     social_account_id: null,
     network: 'instagram',
     format: 'post',
-    scheduled_at: inDays(1),
+    scheduled_at: soon(),
     media_asset_ids: [],
     status: 'scheduled',
     hold_reason: null,
@@ -97,8 +99,38 @@ describe('Inicio de la marca', () => {
     const link = await screen.findByTestId('home-week-piece');
     expect(link).toHaveAttribute('aria-label', expect.stringContaining('Menú de otoño'));
     expect(link).toHaveAttribute('href', `${BRAND_BASE}/contenidos/c1`);
-    expect(screen.getAllByTestId('home-day')).toHaveLength(7);
+    const days = screen.getAllByTestId('home-day');
+    expect(days).toHaveLength(7);
+    // De lunes a domingo.
+    expect(days[0]).toHaveTextContent(/^lun/);
+    expect(days[6]).toHaveTextContent(/^dom/);
     expect(screen.queryByTestId('home-week-empty')).toBeNull();
+  });
+
+  it('no enseña el rol de quien mira', async () => {
+    seed();
+    renderApp(`${BRAND_BASE}/inicio`);
+    await screen.findAllByTestId('home-day');
+    expect(screen.queryByText(/Tu rol/)).toBeNull();
+  });
+
+  it('la ficha de la semana dice cuántas han salido de las que tocan: programado no es publicado', async () => {
+    seed();
+    fake.tables.content_items = [piece(), piece({ id: 'c2', title: 'Ya salió' }), piece({ id: 'c3', title: 'Anulada' })];
+    fake.tables.scheduled_publications = [
+      publication(),
+      publication({ id: 'p2', content_id: 'c2', status: 'published', published_at: soon() }),
+      publication({ id: 'p3', content_id: 'c3', status: 'cancelled' }),
+    ];
+    renderApp(`${BRAND_BASE}/inicio`);
+    expect(await screen.findByTestId('home-week-count')).toHaveTextContent('1 de 2 publicadas');
+  });
+
+  it('con la semana vacía no hay ficha de «0 de 0»', async () => {
+    seed();
+    renderApp(`${BRAND_BASE}/inicio`);
+    await screen.findByTestId('home-week-empty');
+    expect(screen.queryByTestId('home-week-count')).toBeNull();
   });
 
   it('con la semana vacía no inventa nada', async () => {
@@ -137,10 +169,15 @@ describe('Inicio de la marca', () => {
     expect(within(notice).getByTestId('home-connect')).toBeInTheDocument();
   });
 
-  it('lo último publicado lleva cifras solo si existen', async () => {
+  it('lo último publicado lleva cifras solo si existen y su enlace a Instagram si lo hay', async () => {
     seed();
     fake.tables.scheduled_publications = [
-      publication({ status: 'published', published_at: inDays(-2), scheduled_at: inDays(-2) }),
+      publication({
+        status: 'published',
+        published_at: inDays(-2),
+        scheduled_at: inDays(-2),
+        external_url: 'https://instagram.simulado.invalid/p/1/',
+      }),
       publication({ id: 'p2', content_id: 'c2', status: 'published', published_at: inDays(-5), scheduled_at: inDays(-5) }),
     ];
     fake.tables.content_items = [piece(), piece({ id: 'c2', title: 'Sin cifras todavía' })];
@@ -162,5 +199,11 @@ describe('Inicio de la marca', () => {
     expect(items).toHaveLength(2);
     await waitFor(() => expect(within(items[0]!).getByTestId('home-published-figures')).toHaveTextContent('personas'));
     expect(within(items[1]!).queryByTestId('home-published-figures')).toBeNull();
+    // El enlace a la red va aparte del de la pieza (no hay un enlace dentro de otro).
+    const external = within(items[0]!).getByRole('link', { name: 'Ver en Instagram' });
+    expect(external).toHaveAttribute('href', 'https://instagram.simulado.invalid/p/1/');
+    expect(external).toHaveAttribute('target', '_blank');
+    expect(external.closest('a[href^="/"]')).toBeNull();
+    expect(within(items[1]!).queryByTestId('home-published-link')).toBeNull();
   });
 });

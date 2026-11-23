@@ -1,4 +1,5 @@
-import { ArrowLeft, CheckCircle2, CircleSlash, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ChevronRight, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Badge,
@@ -22,21 +23,33 @@ import { billingEnabled } from '@/features/billing/labels';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
 import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
-import { formatDateTime } from '@/lib/utils';
-import { useIntegrationStatus, type AiTextTask, type IntegrationStatus } from './api';
+import { cn, formatDateTime } from '@/lib/utils';
+import { useIntegrationStatus, type AiTextTask, type IntegrationStatus, type ProbeResult } from './api';
 import { TEXT_TASKS, UI_INTEGRATIONS } from './catalog';
-import { ServiceCard } from './ServiceCard';
-import { SERVICES, SERVICE_BY_ID, SUMMARY, TEST_RECORD_TITLE } from './services';
+import { ServiceSheet } from './ServiceSheet';
+import {
+  buildServiceCtx,
+  rowAction,
+  serviceStatus,
+  SERVICES,
+  SERVICE_BY_ID,
+  SUMMARY,
+  TEST_RECORD_TITLE,
+  type ServiceDef,
+  type ServiceId,
+  type ServiceStatus,
+} from './services';
 
 const ACTION_LABEL: Record<string, string> = { set: 'Guardó', delete: 'Borró', test: 'Probó la conexión de' };
 const TITLE: Record<string, string> = Object.fromEntries(UI_INTEGRATIONS.map((i) => [i.id, i.title]));
 
 /**
- * Plataforma → Integraciones (solo superadministradores). Vista sencilla: una
- * tarjeta por servicio con su clave, «Guardar» y «Probar conexión»; todo lo
- * demás (proveedor y modelo por tarea, precios, región, nombres de variable)
- * cuelga de «Opciones avanzadas» de cada tarjeta. Los secretos se escriben y no
- * se vuelven a ver: la pantalla solo sabe «configurado · pista · fecha · quién».
+ * Integraciones (solo superadministradores; se llega desde el menú de la
+ * cuenta). Una fila por servicio con lo que hace, su estado y una acción; al
+ * tocarla, una hoja con la clave y «Guardar y probar». Lo que no hace falta
+ * para empezar va en «Opcionales», plegado; modelos, región, URL y precios, en
+ * «Opciones avanzadas» de cada hoja. Los secretos se escriben y no se vuelven a
+ * ver: la pantalla solo sabe «configurado · pista · fecha · quién».
  */
 export function IntegrationsPage() {
   const user = useUser();
@@ -69,7 +82,7 @@ export function IntegrationsPage() {
           <>
             <PageHeader
               title="Integraciones"
-              description="Pega la clave de cada servicio y la aplicación deja lo demás listo. Las claves se guardan cifradas y no se vuelven a ver."
+              description="Las claves se guardan cifradas y no se vuelven a ver."
             />
             <IntegrationsBody />
           </>
@@ -82,18 +95,39 @@ export function IntegrationsPage() {
 function IntegrationsBody() {
   const status = useIntegrationStatus();
   const { internal, pending: modePending } = useInternalUseState();
+  const [openId, setOpenId] = useState<ServiceId | null>(null);
+  // Lo que dio la última prueba de cada servicio en esta visita: la fila y la hoja lo enseñan
+  // aunque el servidor todavía no lo tenga anotado.
+  const [probes, setProbes] = useState<Partial<Record<ServiceId, ProbeResult | null>>>({});
   if (status.isPending || modePending) return <Spinner />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => void status.refetch()} />;
   const data = status.data;
+  // En uso interno no se cobra a nadie: la fila de pagos no sale.
+  const visible = SERVICES.filter((service) => !internal || service.id !== 'stripe');
+  const main = visible.filter((s) => s.tier === 'main');
+  const optional = visible.filter((s) => s.tier === 'optional');
+  const open = openId ? SERVICE_BY_ID[openId] : null;
+  const row = (service: ServiceDef) => (
+    <ServiceRow
+      key={service.id}
+      service={service}
+      status={data}
+      probe={probes[service.id] ?? null}
+      onOpen={() => setOpenId(service.id)}
+    />
+  );
   return (
     <div className="space-y-6">
       <WorkingNow status={data} internal={internal} />
-      <div className="space-y-6">
-        {/* En uso interno no se cobra a nadie: la tarjeta de pagos no sale. */}
-        {SERVICES.filter((service) => !internal || service.id !== 'stripe').map((service) => (
-          <ServiceCard key={service.id} service={service} status={data} />
-        ))}
-      </div>
+      <ul className="space-y-2" data-testid="integration-rows">
+        {main.map(row)}
+      </ul>
+      <details className="rounded-xl border border-border bg-surface" data-testid="integration-optional">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+          Opcionales ({optional.length}): {optional.map((s) => s.short ?? s.provider).join(', ')}
+        </summary>
+        <ul className="space-y-2 border-t border-border p-3">{optional.map(row)}</ul>
+      </details>
       <details className="rounded-xl border border-border bg-surface" data-testid="platform-advanced">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
           Opciones avanzadas: qué enseña este despliegue y quién cambió qué
@@ -103,52 +137,77 @@ function IntegrationsBody() {
           <Activity status={data} />
         </div>
       </details>
+      {open && (
+        <ServiceSheet
+          key={open.id}
+          service={open}
+          status={data}
+          probe={probes[open.id] ?? null}
+          onProbe={(result) => setProbes((p) => ({ ...p, [open.id]: result }))}
+          onClose={() => setOpenId(null)}
+        />
+      )}
     </div>
   );
 }
 
-/** «Qué funciona ahora»: las funciones que la gente nota, con su estado. */
-function WorkingNow({ status, internal }: { status: IntegrationStatus; internal: boolean }) {
-  const items = SUMMARY.filter((s) => !internal || s.needs !== 'stripe').map((s) => ({
-    ...s,
-    ok: s.on(status.availability),
-  }));
-  const working = items.filter((i) => i.ok).length;
+const DOT: Record<ServiceStatus['tone'], string> = {
+  success: 'bg-success',
+  warning: 'bg-warning',
+  danger: 'bg-danger',
+  neutral: 'bg-muted',
+};
+
+/** Una fila por servicio: lo que hace, con qué, su estado y una sola acción (abre su hoja). */
+function ServiceRow({
+  service,
+  status,
+  probe,
+  onOpen,
+}: {
+  service: ServiceDef;
+  status: IntegrationStatus;
+  probe: ProbeResult | null;
+  onOpen: () => void;
+}) {
+  const saved = buildServiceCtx(service, status);
+  const ctx = probe ? { ...saved, lastTest: { ok: probe.ok, message: probe.message } } : saved;
+  const state = serviceStatus(service, ctx);
   return (
-    <Card data-testid="working-now">
-      <CardHeader
-        title="Qué funciona ahora"
-        description={`${working} de ${items.length} funciones están listas.`}
-      />
-      <CardBody>
-        <ul className="grid gap-x-6 sm:grid-cols-2">
-          {items.map((i) => (
-            <li key={i.label} className="flex items-start gap-2 border-b border-border py-2.5 text-sm last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0">
-              {i.ok ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
-              ) : (
-                <CircleSlash className="mt-0.5 h-4 w-4 shrink-0 text-muted" aria-hidden />
-              )}
-              <span className="min-w-0 flex-1">
-                {i.label}
-                <span className="block text-xs">
-                  {i.ok ? (
-                    <span className="font-medium text-success">Funciona</span>
-                  ) : (
-                    <>
-                      <span className="text-muted">No disponible · falta </span>
-                      <a className="text-primary underline" href={`#integration-${i.needs}`}>
-                        {SERVICE_BY_ID[i.needs].title}
-                      </a>
-                    </>
-                  )}
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CardBody>
-    </Card>
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        data-testid={`integration-row-${service.id}`}
+        className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-left transition-colors hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <span aria-hidden className={cn('h-2.5 w-2.5 shrink-0 rounded-full', DOT[state.tone])} />
+        <span className="min-w-0 flex-1">
+          <span className="block break-words text-sm font-medium">{service.does}</span>
+          <span className="block break-words text-xs text-muted">{service.provider}</span>
+        </span>
+        <Badge tone={state.tone} className="shrink-0">
+          <span data-testid={`service-status-${service.id}`}>{state.word}</span>
+        </Badge>
+        <span className="hidden w-20 shrink-0 text-right text-sm font-medium text-primary sm:inline">
+          {rowAction(state.word)}
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted sm:hidden" aria-hidden />
+      </button>
+    </li>
+  );
+}
+
+/** Cuántas de las funciones que la gente nota están listas, en una línea. */
+function WorkingNow({ status, internal }: { status: IntegrationStatus; internal: boolean }) {
+  const items = SUMMARY.filter((s) => !internal || s.needs !== 'stripe');
+  const working = items.filter((i) => i.on(status.availability)).length;
+  return (
+    <div data-testid="working-now">
+      <Badge tone={working === items.length ? 'success' : 'warning'}>
+        {working} de {items.length} funciones listas
+      </Badge>
+    </div>
   );
 }
 

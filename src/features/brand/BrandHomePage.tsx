@@ -3,7 +3,6 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ActionNotice, Badge, LinkButton, Notice, PageHeader } from '@/components/ui';
 import { useBrand, useOrg } from '@/features/orgs/context';
-import { BRAND_ROLE_LABEL } from '@/features/permissions/roles';
 import { useSocialConnectModes } from '@/features/platform/integrations/useFeature';
 import { useSocialAccounts } from '@/features/social/api';
 import { AccountAttentionNotice } from '@/features/social/AccountAttentionNotice';
@@ -21,7 +20,7 @@ import { parseProfile } from './profile';
  */
 export function BrandHomePage() {
   const { org } = useOrg();
-  const { brand, role, can } = useBrand();
+  const { brand, can } = useBrand();
   const base = `/o/${org.id}/m/${brand.id}`;
   const canEdit = can('edit');
   const canManage = can('manage');
@@ -40,7 +39,7 @@ export function BrandHomePage() {
     <>
       <PageHeader
         title={brand.name}
-        description={[brand.sector, `Tu rol: ${BRAND_ROLE_LABEL[role]}`].filter(Boolean).join(' · ')}
+        description={brand.sector || undefined}
         className="!mb-4"
         action={
           brand.status !== 'active' && (
@@ -94,7 +93,10 @@ export function BrandHomePage() {
             <span className="font-semibold tabular-nums" data-testid="completeness-percent">
               {completeness.percent}%
             </span>
-            <span className="flex-1">del perfil de marca. Completarlo mejora los textos de la IA.</span>
+            <span className="flex-1">
+              del perfil de marca. La IA ya funciona con el nombre y el sector; con el perfil completo, los textos
+              se parecerán más a tu marca.
+            </span>
             <ArrowRight className="h-4 w-4 text-muted" aria-hidden />
           </Link>
         )}

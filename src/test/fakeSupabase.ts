@@ -275,6 +275,8 @@ export class FakeSupabase {
     resetPasswordForEmail: vi.fn<(email: string, options?: unknown) => Promise<{ error: unknown }>>(),
     updateUser: vi.fn<(attributes: unknown) => Promise<{ error: unknown }>>(),
   };
+  /** Peticiones de coste máximo (`cost.estimate`), aparte de `calls`. */
+  estimates: unknown[] = [];
   /** Contenido de los archivos del almacenamiento simulado, por ruta (lo que devuelve `download`). */
   files: Record<string, string> = {};
   storage = {
@@ -292,6 +294,20 @@ export class FakeSupabase {
 
   functions = {
     invoke: async (name: string, options: { body?: unknown } = {}): Promise<{ data: unknown; error: unknown }> => {
+      // El coste máximo que se enseña antes de pulsar (`cost.estimate`) se responde solo y no cuenta como
+      // llamada: así las pruebas siguen viendo solo lo que pide la persona. Una prueba puede simularlo
+      // con `fake.fn('ai-generate:estimate', …)` y leer las peticiones en `estimates`.
+      const body = options.body as { action?: unknown; input?: { action?: unknown } } | undefined;
+      if (name === 'ai-generate' && body?.action === 'cost.estimate') {
+        this.estimates.push(options.body);
+        const own = this.functionHandlers.get('ai-generate:estimate');
+        const reply = own
+          ? await own(options.body)
+          : { status: 200, body: { action: 'cost.estimate', for: body.input?.action, costMicros: 12_000 } };
+        return reply.status >= 200 && reply.status < 300
+          ? { data: structuredClone(reply.body), error: null }
+          : { data: null, error: new FunctionsHttpError(new Response(JSON.stringify(reply.body), { status: reply.status })) };
+      }
       this.calls.push({ kind: 'function', name, payload: options.body });
       const handler = this.functionHandlers.get(name);
       if (!handler)
