@@ -673,6 +673,12 @@ describe('«Hacer un reel como este»: resultado', () => {
       path('fachada-nueva.jpg'),
     ]);
     expect(saved.p_data.guide.referenceId).toBe(REF);
+    // El pie y los hashtags que propuso el análisis van en la pieza: se publica con ellos (prueba real, fallo 5).
+    expect((saved.p_data as unknown as { copy?: unknown }).copy).toEqual({
+      caption: 'Pan hecho hoy, con masa madre.',
+      hashtags: ['masamadre'],
+      aiGenerated: true,
+    });
     expect(saved.p_data.guide.shots.map((s) => Boolean(s.clipId))).toEqual([true, true, false, true]);
   });
 

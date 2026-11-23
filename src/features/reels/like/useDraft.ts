@@ -7,6 +7,7 @@ import { useActiveProfile } from '@/features/brand/api';
 import { useBrandFontFaces, useReelFont } from '@/features/brand/fontsApi';
 import { parseProfile } from '@/features/brand/profile';
 import { parseReelLikeResult } from '../../../../supabase/functions/_shared/reels/like';
+import { REEL_CAPTION_MAX, REEL_HASHTAGS_MAX, type ReelCopy } from '../editor/project';
 import { REEL_TEMPLATES } from '../templates';
 import { useLikeLibrary, useReelReference } from './api';
 import { buildDraft, matchShots, type BrandLook, type ReelDraft, type ShotMatch } from './draft';
@@ -48,7 +49,25 @@ export function useReelLikeDraft(brandId: string, referenceId: string | null): D
     const result = parseReelLikeResult(row?.status === 'ready' ? row.result : null);
     if (!result) return { loading: false, missing: true, draft: null };
     const matches = matchShots(result, library.data ?? []);
-    const draft = buildDraft(result, matches, { referenceId, templates: REEL_TEMPLATES, look });
+    const built = buildDraft(result, matches, { referenceId, templates: REEL_TEMPLATES, look });
+    // El pie y los hashtags que propone el análisis van en la pieza (\`copy\`): se publica con ellos y se
+    // pueden cambiar en «Exportar». Los escribió la IA: se marca (\`aiGenerated\`).
+    const copy = likeCopy(result.texts);
+    const draft = copy ? { ...built, project: { ...built.project, copy } } : built;
     return { loading: false, missing: false, draft: { ...draft, matches } };
   }, [referenceId, reference.isPending, row, library.isPending, library.data, look]);
+}
+
+/**
+ * El pie y los hashtags que propone «Hacer un reel como este», como `copy` de
+ * la pieza de reel (lo que lee el publicador). `null` si no hay pie ni
+ * hashtags. Los hashtags que no cumplen el formato se quitan.
+ */
+export function likeCopy(texts: { caption: string; hashtags: string[] }): ReelCopy | null {
+  const caption = [...texts.caption.trim()].slice(0, REEL_CAPTION_MAX).join('');
+  const hashtags = [...new Set(texts.hashtags.map((tag) => tag.replace(/^#+/, '').trim()))]
+    .filter((tag) => /^[\p{L}\p{N}_]{1,100}$/u.test(tag))
+    .slice(0, REEL_HASHTAGS_MAX);
+  if (!caption && hashtags.length === 0) return null;
+  return { caption, hashtags, aiGenerated: true };
 }
