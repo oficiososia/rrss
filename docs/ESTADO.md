@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f49/medios-borrados`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1276,3 +1276,50 @@ De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de 
 - **Sin probar**: nada contra un proveedor real (las sondas, con respuestas HTTP simuladas); las e2e
   01, 06 y 08, adaptadas al selector único **sin ejecutar** (necesitan el Supabase local); un
   navegador y un móvil reales fuera del banco.
+
+## Fotos y vídeos borrados de la biblioteca, y subir desde los selectores (rama `f49/medios-borrados`, 23/11/2026)
+
+Origen: el reel «Reel nuevo» de staging usaba una foto que después se borró de la biblioteca; se
+abría negro y sin aviso, y «Montar otra vez» enseñaba la ruta interna en rojo. Además, el dueño pidió
+poder subir y crear con IA desde los selectores de material, y que el de reels no mezcle piezas ya
+diseñadas con fotos.
+
+- **Editor de reels** (`reels/editor/missing.ts`, `MissingMedia.tsx`): al abrir (versión, borrador
+  automático o «Hacer un reel como este») se pregunta qué rutas del plan siguen en `media_assets`.
+  Lo que falta se marca en la línea de tiempo y en la vista previa («Falta esta foto / este vídeo /
+  esta música», con «Sustituir» y «Quitar»), con un aviso de una línea arriba. «Montar el vídeo» no se
+  encarga mientras falte algo: lo dice y lleva al primero. Sustituir conserva duración, movimiento,
+  filtro, transición y textos; si era la foto de la portada, la portada la sigue.
+- **Editor de piezas** (`content/editor/missingAssets.tsx`): las capas de imagen y de logotipo cuyo
+  recurso falta (de las que tenía la pieza al abrirla) pasan a ser un marco vacío «Poner foto», con aviso
+  en la cabecera; un marco vacío no se exporta, así que exportar sigue funcionando. En solo lectura,
+  solo el aviso.
+- **Servidor** (migración `20270107010000_media_missing_messages.sql`, con vuelta atrás):
+  `private.media_job_input` ya no enseña rutas; «La foto N ya no está en la biblioteca» (o «El vídeo
+  N», «La música», «La foto de la portada») si la ruta es de la carpeta de la marca y no hay recurso;
+  «Pieza N: el archivo no es un recurso de esta marca» si es de otra (sin revelar si existe). Mismo
+  `errcode`. `asset_usage` busca también la ruta (los reels guardan la ruta) y mira el borrador de
+  los reels.
+- **Cliente**: `translateError` y el motivo de los trabajos pasan por `cleanMessage` (sin rutas ni
+  identificadores; los errores de archivos, con qué hacer, también el mensaje antiguo del servidor).
+- **Biblioteca**: el aviso al eliminar nombra las piezas afectadas (tres y «y N más») y dice que
+  quedan con un hueco para sustituir.
+- **Selectores** (`library/PickerUpload.tsx`): «Subir» a la vista y soltar archivos sobre el selector
+  (cola de `UploadPanel`, con progreso, errores y duplicados), y «Crear con IA» (`GenerateImageDialog`
+  con la proporción del plano o del hueco) si la imagen con IA está disponible. Lo nuevo queda elegido.
+  En el material de reels («Añadir», «Sustituir», planos de una plantilla), en «Poner foto» y
+  «Sustituir la foto» y en todo `ImagePickerDialog` con `uploadTo` (también el del copiloto, sin tocar
+  su carpeta; para darle «Crear con IA» basta pasarle `aiRatio`). La música admite soltar la pista. El
+  selector de reels oculta exportaciones, reels montados y portadas (`isAppDesign`) salvo con «Ver
+  también diseños y montajes»; las fotos con IA y las ediciones sí salen.
+- **Probado**: componentes (`mediosBorrados.test.tsx`, `piezaMediosBorrados.test.tsx`,
+  `selectoresSubir.test.tsx`, `usageText.test.ts`, `errors.test.ts`, `biblioteca.test.tsx`), base de
+  datos (`editor-reels.test.ts`, `medios.test.ts`, `aislamiento.test.ts` con el rechazo exacto sin ruta,
+  `migraciones.test.ts`) y maquetación en Chromium (`tests/layout/medios-borrados.spec.ts`, 375 y
+  1366 px: aviso y marca a la vista sin scroll de página; «Subir» a la vista sin scroll lateral).
+- **Para llevarlo a staging**: aplicar `20270107010000` (sin ella la aplicación funciona igual y traduce
+  el mensaje antiguo sin enseñar la ruta) y desplegar la aplicación. No hay funciones que redesplegar.
+  El reel de staging lo arregla el dueño con «Sustituir».
+- **Sin probar**: arrastrar archivos de verdad desde el escritorio (solo con eventos simulados y en
+  Chromium sin archivo real); la imagen con IA real (solo con `ai-media` simulada); la migración en
+  staging; un móvil de verdad.
