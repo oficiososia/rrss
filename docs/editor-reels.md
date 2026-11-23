@@ -689,3 +689,71 @@ cabecera y la barra de la aplicación). Sin nada elegido: 11 y 10. La propuesta 
 - Publicar y programar contra Supabase y Meta reales: solo con la base simulada. La e2e `29-editor-reels.spec.ts`
   está adaptada al flujo nuevo, **sin ejecutar** (necesita el stack local).
 - «Redactar con IA» con un proveedor real, y el pie del análisis cuando lo traiga f56.
+
+## 12. La calidad de las muestras, en el editor (rama `f64/calidad-en-editor`, 23/11/2026)
+
+El trabajador y `quality.ts` ya sabían hacer reels como las muestras profesionales (`docs/reels-calidad.md`, rama f54),
+pero el editor no se lo pasaba. Ahora sí. Sin migraciones (la de f54, `20270113010000`, ya admite los campos) y sin tocar
+el trabajador ni la hoja «Exportar» (otra rama, f62).
+
+### Qué cambia
+
+| # | Antes | Ahora | Dónde |
+| --- | --- | --- | --- |
+| 1 | El proyecto no guardaba `role`, `outro`, `grade` ni `subjectMaskPath`: un plan con ellos no se abría | Se guardan como opcionales (sin nulos) y van al trabajador. El cierre cuenta para el máximo de 90 s con la misma cuenta que el motor (`outroSpan`: entra fundido 0,4 s con el último plano) | `editor/project.ts` |
+| 2 | «Desde una plantilla», «Plantillas de la marca» y los reels de las campañas llamaban a `buildReelFromTemplate` solo con la tipografía | Los tres pasan por `buildBrandReel` (`reelTemplate.ts`): material ordenado para los planos (`strongestFirst` + `orderForSlots`: la mejor foto abre si es claramente mejor, los vídeos van a los planos de ambiente y los planos sin preferencia conservan el orden), colores de la marca, punto de interés y máscara de «Quitar el fondo» guardados, **un rótulo por plano** (`captions`), **cortes al pulso** (`beatSync`), **papel** en cada texto y **cierre con la marca** (`withBrandOutro`: logotipo, llamada, usuario y dirección del perfil). Si la llamada de la plantilla pasa al cierre, su plano se queda con su rótulo, y los textos acaban cuando entra el cierre (el trabajador no tiene que recortarlos) | `reelTemplate.ts`, `ReelEditor.tsx`, `campaigns/reelPieces.ts` y `campaigns/api.ts` |
+| 2b | — | El logotipo del cierre es el primero de `visual.logoAssetIds` que sea PNG, JPEG o WebP (un SVG no se puede superponer). Sin perfil o sin llamada, no hay cierre. El cierre se quita o se vuelve a poner desde «⋯» | `quality.ts` (`reelLogoPath`), `ReelEditor.tsx` |
+| 2c | Las fotos añadidas a mano entraban sin su encuadre guardado | «Añadir», «Sustituir» y crear sin plantilla ponen el punto y la máscara guardados de cada foto que no los tenga. Si después se borra de la biblioteca una máscara o el logotipo, se quitan del reel solos (no impiden montar) | `ops.ts` (`applySavedFraming`), `missing.ts` (`dropMissingHelpers`) |
+| 3 | Los selectores enseñaban lo más reciente primero | «Añadir», «Sustituir» y los planos de una plantilla (y los huecos del guion de «como este») enseñan primero lo que mejor queda en un reel (`rankReelAssets`: resolución, nitidez, proporción, vídeos reales; los recortes sin fondo y las capturas, al final), sin repetidos. «Subir» y «Crear con IA» siguen ahí y lo nuevo sale lo primero y elegido. La lista de la biblioteca pide ahora `width`, `height` y `bytes` | `MediaPicker.tsx`, `reels/api.ts` |
+| 4 | Nada avisaba de que el reel sale sin música | Junto a «Exportar», «Sin música» (icono en móvil; el aviso entero en el título y para lectores de pantalla): «Sin música: el vídeo saldrá sin sonido. La música se pone en la app de Instagram antes de publicar.» | `AudioNotice.tsx`, cabecera de `ReelEditor.tsx` |
+| 5 | La vista previa partía las líneas con un ancho medio, sin mínimos, sin caja ni contorno añadidos, fuera de las zonas seguras y con dos textos encima | `textFit.ts` repite la cuenta del trabajador (`textlayout.ts` y `legible`): tamaño mínimo por papel (el guardado o el deducido), líneas equilibradas sin «de» al final, zonas seguras 250/400/60 px, caja translúcida en rótulos pequeños o contorno con sombra, y apilar o encadenar si dos coinciden. Mide con la letra del lienzo (la de la marca o, sin ella, una de palo grueso como Montserrat ExtraBold). Las cajas para mover textos salen donde el vídeo pone cada texto, y **el cierre se ve** al final de la reproducción | `textFit.ts`, `compose.ts`, `ReelPlayer.tsx`, `TextOverlay.tsx` |
+
+### Para enganchar en la hoja «Exportar» (rama f62)
+
+`AudioNotice` tiene una forma `line` lista para la hoja, junto a los avisos de la vista previa:
+
+```tsx
+<AudioNotice plan={project.plan} variant="line" onFinishInInstagram={() => /* abrir «Terminar en Instagram» */} />
+```
+
+Con `onFinishInInstagram`, el aviso remite a «Terminar en Instagram»; sin él, dice que la música se pone en la app de
+Instagram. `audioNoticeText(plan, true)` da el texto para cualquier otro sitio.
+
+### Montajes de prueba por el camino del editor
+
+`scripts/reels-desde-editor.ts` (con `npx vite-node`) monta en local, con FFmpeg 9 y el manejador real del trabajador,
+reels creados con las mismas funciones que el editor (selector → `buildBrandReel` → `finalizeProject` →
+`buildRenderRequest`), y comprueba textos sin solape, texto en cada plano, sin bandas, cierre con logotipo y sin fotos
+repetidas. Resultado del 23/11 con fotos reales de Casa Tomás (las de la carta mejoradas y las de la web) en
+`rrss-recursos-comparativa/reels-calidad/desde-editor-*.jpg` (hoja de 12 fotogramas), `.mp4` y `.json`:
+
+| Plantilla | Duración | Textos por plano | Solapes | Bandas | Cierre | Repetidas |
+| --- | --- | --- | --- | --- | --- | --- |
+| Fotos con ritmo (8 fotos) | 13,7 s | 1 en cada uno | 0 | 0 | sí, con logotipo | 0 |
+| Oferta de la semana (4 fotos) | 8,1 s | 1, 1, 1 y 2 (el precio y su condición van juntos en la plantilla, apilados) | 0 | 0 | sí, con logotipo | 0 |
+
+El logotipo de la web de Casa Tomás es oscuro y en el cierre (fondo oscurecido) no se vería: para la prueba se usó una
+copia clara. El trabajador no aclara un logotipo oscuro; la marca tiene que subir uno claro (ver «Sin probar»).
+
+### Probado
+
+- Unitarias (`editor/calidadEditor.test.ts`): campos nuevos admitidos y rechazados, el cierre en la duración y en el
+  máximo, `buildBrandReel` (orden, máscaras, puntos, pulsos, rótulos, papel, cierre), `orderForSlots`, el logotipo,
+  encuadre guardado al añadir y lo que se quita si se borra, el aviso y la vista previa (mínimos, caja, apilado, zonas
+  seguras, líneas equilibradas, cierre).
+- Componentes (`editorReels.test.tsx`): crear desde una plantilla con perfil y biblioteca (selector ordenado, la mejor
+  abre, rótulos, papeles, máscara, punto, cierre guardado y «Sin música» en la cabecera), quitar y poner el cierre desde
+  «⋯»; las pruebas de plantilla de antes, con los rótulos y el orden nuevos.
+- `tests/db/vista-previa-textos.test.ts`: la cuenta de la vista previa da lo mismo que la del trabajador (líneas,
+  tamaños, sitio, apilados, papel deducido) y el esquema del trabajador acepta un reel hecho por el camino del editor.
+- Montaje real con FFmpeg (tabla de arriba).
+
+### Sin probar
+
+- La vista previa en un navegador real con la letra de la marca: las medidas del lienzo se acercan a las del trabajador
+  pero no son las mismas (el trabajador lee la tipografía del archivo; sin ella, Montserrat ExtraBold). Con la letra que
+  no ha cargado, la vista previa usa una parecida (ya se avisa en «Exportar»).
+- Un logotipo oscuro sobre el cierre (no se aclara solo) y un logotipo SVG (no se usa).
+- «Hacer un reel como este» (`like/draft.ts`) sigue sin escribir `role` ni el cierre: en esta rama solo se tocó el orden
+  de su material.
+- El aviso en la hoja «Exportar» y «Terminar en Instagram» (otra rama).
