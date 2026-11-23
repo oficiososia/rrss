@@ -43,10 +43,15 @@ for (const size of SIZES) {
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
       await page.getByTestId('reel-like-mode-link').click();
       await page.getByTestId('reel-like-url').fill('https://www.instagram.com/reel/C8xYz1234567890abcdefghijklmnopqrstuvwxyz/?igsh=abcdefghijklmnop');
+      // Un enlace de Instagram se avisa al momento y no se manda: el aviso largo también cabe.
+      await expect(page.getByTestId('reel-like-start')).toBeDisabled();
+      await expect(page.getByTestId('reel-like-link-notice')).toBeVisible();
+      expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
+      await page.getByTestId('reel-like-url').fill('https://videos.ejemplo.es/un-reel-que-me-gusta-mucho-con-un-nombre-muy-largo.mp4');
       await expect(page.getByTestId('reel-like-start')).toBeEnabled();
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
       // Los controles se pueden tocar con el dedo.
-      for (const id of ['reel-like-mode-file', 'reel-like-mode-link', 'reel-like-start']) {
+      for (const id of ['reel-like-mode-file', 'reel-like-mode-library', 'reel-like-mode-link', 'reel-like-start']) {
         expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(44);
       }
     });
