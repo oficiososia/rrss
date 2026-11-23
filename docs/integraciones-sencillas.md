@@ -43,13 +43,41 @@ variable de entorno del servidor». OpenAI estaba partido entre «IA de texto» 
 «Qué enseña este despliegue» (interruptores de compilación) y «Actividad» pasan a un bloque
 «Opciones avanzadas» al final de la página, con su jerga.
 
+**En uso interno** (todas las organizaciones de quien mira están en autogestión;
+`docs/modo-de-trabajo.md`, §3) no salen la tarjeta «Pagos (Stripe)», la línea «Cobrar los planes»
+del resumen (quedan 7 funciones) ni la fila «Pago con Stripe» de los interruptores.
+
 ### El estado en una palabra
 
 Honesto: **Funciona** solo si lo imprescindible está puesto y la última «Probar conexión» salió
 bien; si no se ha probado, **Sin probar**; si la prueba falló, **No funciona** y dice por qué.
 **Falta la clave** / **Falta algo: …** salen de lo que falta de verdad (con nombres llanos).
-La prueba de «IA de texto» es de todos los proveedores: a la tarjeta de Claude solo le cuenta si
-alguna tarea usa Claude.
+
+### Cada tarjeta prueba solo lo suyo (23/11/2026, rama `f46/pulido`)
+
+**Antes.** OpenAI y Claude compartían la prueba de «IA de texto» (todos los proveedores) y la misma
+fila de última prueba, así que la tarjeta de Claude, sin configurar, decía «Funcionaba en la última
+prueba…: OpenAI acepta la clave». Lo mismo entre fal.ai y «Otras imágenes con IA» («IA de imagen»).
+
+**Ahora.** «Probar conexión» manda qué tarjeta prueba (`{ action: 'test', integration, service }`,
+con `service` = `openai`, `claude`, `fal` o `images_other`; las demás tarjetas no lo mandan) y el
+servidor (`probes.ts`, `PROBE_SCOPES`):
+
+- **prueba solo los proveedores de esa tarjeta**: la de Claude no llama a OpenAI (ni paga su
+  generación mínima) y la de OpenAI no pide el token de Google; un fallo de una no deja en rojo a la
+  otra, y un precio que falta solo sale en la tarjeta de su proveedor;
+- **anota el resultado en la fila de esa tarjeta**: `ai_text` es la de OpenAI y `ai_image` la de
+  «Otras imágenes con IA» (las de siempre); Claude usa `ai_text_claude` y fal.ai `ai_image_fal`
+  (migración `20270105010000_pruebas_por_tarjeta.sql`). **Sin la migración** la función funciona
+  igual: la prueba se hace y se enseña, pero la de Claude y la de fal.ai no quedan anotadas (la
+  tarjeta vuelve a «Sin probar» al recargar);
+- **Claude con credenciales pero sin ninguna tarea que lo use**: comprueba el acceso (token de
+  Google, o listar modelos con la clave de Anthropic, Bedrock o Mistral), no genera nada y lo dice
+  («Ninguna tarea de texto usa todavía este acceso: no se ha probado a generar»). Sin credenciales,
+  «no hay nada que probar».
+
+Sin `service` la función hace la prueba completa de antes (compatibilidad). La tarjeta enseña su
+estado con lo que acaba de probar, sin esperar a que el servidor lo tenga anotado.
 
 ## 2. Valores por defecto al guardar la clave de OpenAI
 

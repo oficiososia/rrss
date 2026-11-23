@@ -48,10 +48,10 @@ Deno.serve(
       if (error) throw new Error('No se ha podido leer el registro de modelos');
       return (data ?? []) as MediaModelRow[];
     },
-    probe(id, effective) {
+    probe(id, effective, scope) {
       const realFetch = (input: string, init?: RequestInit) => fetch(input, init);
       const local = loadSocialLocalTest(effective);
-      return probeIntegration(id, effective, { fetch: realFetch, graphFetch: local ? local.fetch : realFetch });
+      return probeIntegration(id, effective, { fetch: realFetch, graphFetch: local ? local.fetch : realFetch }, scope);
     },
     listOpenAiModels: (effective) => listOpenAiModels(effective, { fetch: (input, init) => fetch(input, init) }),
     async activateImageModels(models) {

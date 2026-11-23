@@ -15,6 +15,7 @@ import {
   SECTION_LABEL,
   type FieldComparison,
 } from './profileProposal';
+import { useWorkMode } from '@/features/orgs/workMode';
 
 const number = new Intl.NumberFormat('es-ES');
 
@@ -51,6 +52,7 @@ export function ProfileProposalDialog(props: ProfileProposalDialogProps) {
 }
 
 function ProposalBody({ brandId, sources, onAccept, onOpenChange, currentProfile }: ProfileProposalDialogProps) {
+  const { selfManaged } = useWorkMode();
   const active = useActiveProfile(brandId);
   const current = useMemo(
     () => (currentProfile !== undefined ? currentProfile : active.data ? parseProfile(active.data.data) : null),
@@ -131,7 +133,8 @@ function ProposalBody({ brandId, sources, onAccept, onOpenChange, currentProfile
           <Notice tone="warning">{problem}</Notice>
         ) : (
           <p className="text-xs text-muted">
-            La propuesta no se guarda sola: nada cambia hasta que aceptes. Descuenta del cupo de IA de la organización.
+            La propuesta no se guarda sola: nada cambia hasta que aceptes.
+            {!selfManaged && ' Descuenta del cupo de IA de la organización.'}
           </p>
         )}
         {!current && <p className="text-xs text-muted">La marca aún no tiene perfil: la propuesta parte de cero.</p>}

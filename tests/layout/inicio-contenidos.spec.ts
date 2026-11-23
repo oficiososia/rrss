@@ -114,6 +114,48 @@ for (const size of SIZES) {
       const box = (await page.getByRole('dialog').boundingBox())!;
       expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
     });
+
+    test('«Nueva idea → Reel»: la barra de «Cancelar / Crear y abrir» tapa hasta el borde de abajo', async ({
+      page,
+    }) => {
+      await open(page, 'vista=contenidos');
+      await page.getByTestId('content-new').click();
+      await page.getByTestId('create-content-format-reel').click();
+      await page.getByTestId('create-content-from-template').check();
+      await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);
+      /** Hueco (px) entre la barra y el borde de abajo de la zona que se desplaza, y qué asoma por él. */
+      const gap = () =>
+        page.evaluate(() => {
+          const bar = document.querySelector('[data-testid="create-content-actions"]')!;
+          let area = bar.parentElement!;
+          while (getComputedStyle(area).overflowY !== 'auto') area = area.parentElement!;
+          const barBox = bar.getBoundingClientRect();
+          const bottom = area.getBoundingClientRect().bottom;
+          // Lo que se ve en la última fila de píxeles de la zona, a lo ancho.
+          const under = [0.2, 0.5, 0.8].map((f) => {
+            const el = document.elementFromPoint(barBox.left + barBox.width * f, bottom - 2);
+            return el !== null && bar.contains(el);
+          });
+          return {
+            px: Math.round(bottom - barBox.bottom),
+            barOnTop: under.every(Boolean),
+            scrollable: area.scrollHeight > area.clientHeight + 1,
+          };
+        });
+      const scrollTo = (fraction: number) =>
+        page.evaluate((f) => {
+          let area = document.querySelector('[data-testid="create-content-actions"]')!.parentElement!;
+          while (getComputedStyle(area).overflowY !== 'auto') area = area.parentElement!;
+          area.scrollTop = (area.scrollHeight - area.clientHeight) * f;
+        }, fraction);
+      // Arriba, a media lista y al final: nunca queda una franja por la que asomen las plantillas.
+      for (const fraction of [0, 0.5, 1]) {
+        await scrollTo(fraction);
+        const seen = await gap();
+        expect(seen.px, `hueco bajo la barra al ${fraction * 100} %`).toBeLessThanOrEqual(0);
+        expect(seen.barOnTop, `la barra tapa el borde al ${fraction * 100} %`).toBe(true);
+      }
+    });
   });
 }
 

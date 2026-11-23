@@ -1,8 +1,10 @@
 import { ArrowLeft, Gauge, Plug, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Card, EmptyState, ErrorState, PageHeader, Spinner } from '@/components/ui';
 import { useUser } from '@/features/auth/AuthProvider';
 import { useAdminOrganizations, useIsPlatformAdmin } from '@/features/orgs/api';
+import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { formatBytes, formatDate } from '@/lib/utils';
 import { AiQuotaPanel } from './AiQuotaPanel';
@@ -16,6 +18,17 @@ export function PlatformPage() {
   const orgs = useAdminOrganizations(admin.data === true);
   const alerts = usePlatformAlerts(admin.data === true);
   const openAlerts = alerts.data?.length ?? 0;
+  // Uso interno (todas las organizaciones propias en autogestión): cupos, ingresos, margen y planes
+  // no se enseñan; quedan plegados por si hay que subir un tope.
+  const { internal, pending: modePending } = useInternalUseState();
+  const [commercialOpen, setCommercialOpen] = useState(false);
+  const commercial = (
+    <>
+      {orgs.data && <AiQuotaPanel organizations={orgs.data} />}
+      <BillingPanel />
+      <PlansEditor />
+    </>
+  );
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-10">
@@ -120,15 +133,21 @@ export function PlatformPage() {
                 </div>
               )}
             </Card>
-            {orgs.data && (
-              <div className="mt-6">
-                <AiQuotaPanel organizations={orgs.data} />
-              </div>
+            {modePending ? null : internal ? (
+              <details
+                className="mt-6 rounded-xl border border-border bg-surface"
+                data-testid="platform-commercial"
+                onToggle={(e) => setCommercialOpen(e.currentTarget.open)}
+              >
+                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                  Opciones avanzadas: límites de cada organización
+                </summary>
+                {/* Solo se monta al abrirlo: cerrado no pide ni pinta nada de esto. */}
+                {commercialOpen && <div className="space-y-6 border-t border-border p-4">{commercial}</div>}
+              </details>
+            ) : (
+              <div className="mt-6 space-y-6">{commercial}</div>
             )}
-            <div className="mt-6 space-y-6">
-              <BillingPanel />
-              <PlansEditor />
-            </div>
           </>
         )}
       </main>

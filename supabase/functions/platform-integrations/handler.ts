@@ -10,7 +10,8 @@
 //                       vienen de variables de entorno, la última prueba y la actividad.
 //   save                superadministrador: guarda o borra ajustes de UNA integración
 //                       (`values: { NOMBRE: "valor" | null }`).
-//   test                superadministrador: «Probar conexión» (probes.ts).
+//   test                superadministrador: «Probar conexión» (probes.ts). Con `service`
+//                       (la tarjeta: openai, claude, fal, images_other) prueba solo lo suyo.
 //   worker_check        superadministrador: estado de la máquina de Fly; si lleva
 //                       encendida más de WORKER_MAX_UPTIME_HOURS levanta un aviso de plataforma.
 //   ai_overview         superadministrador: qué modelo se sugiere para cada tarea de
@@ -52,7 +53,12 @@ import {
   type ApplyScope,
 } from '../_shared/integrations/ai-setup.ts';
 import { fetchPriceSource, loadPrices, parseSnapshot } from '../_shared/integrations/pricing.ts';
-import { WORKER_MAX_UPTIME_HOURS, type ProbeResult } from '../_shared/integrations/probes.ts';
+import {
+  probeRecordId,
+  WORKER_MAX_UPTIME_HOURS,
+  type ProbeResult,
+  type ProbeScope,
+} from '../_shared/integrations/probes.ts';
 import type { RecProvider } from '../_shared/integrations/recommendations.ts';
 import type { Env, SettingsLoader } from '../_shared/integrations/settings.ts';
 
@@ -68,7 +74,8 @@ export interface PlatformIntegrationsDeps {
   baseEnv: Env;
   /** Modelos de imagen activos (`ai_media_models`), con la clave de servicio. */
   imageModelRows(): Promise<MediaModelRow[]>;
-  probe(id: IntegrationId, env: Env): Promise<ProbeResult>;
+  /** `scope`: la tarjeta que prueba, si la integración la comparten varias (probes.ts, PROBE_SCOPES). */
+  probe(id: IntegrationId, env: Env, scope?: ProbeScope): Promise<ProbeResult>;
   /** Estado de la máquina de Fly (solo lectura); sin esto, `worker_check` dice que no se sabe. */
   workerMachine?(env: Env): Promise<{ state: string; startedAt: string | null } | { problem: string }>;
   /** Lee la fuente de precios (JSON ya leído). Lanza si falla. Por defecto, la real. */
@@ -328,22 +335,35 @@ export function createPlatformIntegrationsHandler(
 
     if (body.action === 'test') {
       if (!isIntegration(body.integration)) return fail(400, 'bad_request', 'Falta la integración.');
+      // `service`: la tarjeta que prueba, cuando varias comparten integración
+      // (OpenAI y Claude; fal.ai y los demás de imagen). Cada una prueba, recibe
+      // y anota solo lo suyo. Sin `service`, la prueba completa de siempre.
+      let scope: ProbeScope | undefined;
+      let record: string = body.integration;
+      if (body.service !== undefined) {
+        const own = probeRecordId(body.integration, body.service);
+        if (!own) return fail(400, 'bad_request', 'Esa tarjeta no es de esta integración.');
+        scope = body.service as ProbeScope;
+        record = own;
+      }
       deps.settings.invalidate();
       let result: ProbeResult;
       try {
-        result = await deps.probe(body.integration, await deps.settings.get());
+        result = await deps.probe(body.integration, await deps.settings.get(), scope);
       } catch {
         deps.log?.('probe_failed', { integration: body.integration });
         result = { ok: false, message: 'No se pudo hacer la prueba (error inesperado del servidor).', checks: [] };
       }
+      // Si la base de datos aún no admite la fila propia de la tarjeta (migración
+      // 20270105010000 sin aplicar), la prueba se devuelve igual; solo no queda anotada.
       const recorded = await deps.rpc('integration_record_test', {
         p_user_id: user.userId,
-        p_integration: body.integration,
+        p_integration: record,
         p_ok: result.ok,
         p_message: result.message.slice(0, 500),
       });
-      if (recorded.error) deps.log?.('record_test_failed', { code: recorded.error.code ?? null });
-      deps.log?.('tested', { integration: body.integration, ok: result.ok });
+      if (recorded.error) deps.log?.('record_test_failed', { record, code: recorded.error.code ?? null });
+      deps.log?.('tested', { integration: body.integration, service: scope ?? null, ok: result.ok });
       return json(200, result);
     }
 

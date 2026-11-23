@@ -2,6 +2,7 @@ import { BellRing, Check, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge, Button, Card, CardBody, CardHeader, ErrorState, Spinner } from '@/components/ui';
 import { formatMicros } from '@/features/ai/money';
+import { useInternalUse } from '@/features/orgs/workMode';
 import type { PlatformAlertRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { formatDate } from '@/lib/utils';
@@ -29,6 +30,7 @@ function figures(alert: PlatformAlertRow): string | null {
 /** Plataforma → avisos abiertos: cupos, tope global, trabajos de medios y tareas programadas. */
 export function AlertsPanel() {
   const alerts = usePlatformAlerts();
+  const internal = useInternalUse();
   const refresh = useRefreshAlerts();
   const resolve = useResolveAlert();
   const fail = (e: unknown) => toast.error(translateError(e));
@@ -38,7 +40,11 @@ export function AlertsPanel() {
     <Card data-testid="platform-alerts">
       <CardHeader
         title="Avisos"
-        description="Cupos de IA al 80 % y al 100 %, tope global, trabajos de medios que fallan y tareas programadas con errores. Se revisan cada 10 minutos."
+        description={
+          internal
+            ? 'Gasto de IA cerca del tope, trabajos de medios que fallan y tareas programadas con errores. Se revisan cada 10 minutos.'
+            : 'Cupos de IA al 80 % y al 100 %, tope global, trabajos de medios que fallan y tareas programadas con errores. Se revisan cada 10 minutos.'
+        }
         action={
           <div className="flex gap-2">
             <Button

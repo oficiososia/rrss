@@ -1,9 +1,10 @@
 import { Check, Minus } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge, Button, Card, CardBody, CardHeader, ErrorState, Notice, Spinner } from '@/components/ui';
 import { formatMicros } from '@/features/ai/money';
 import { useOrg } from '@/features/orgs/context';
+import { useWorkMode } from '@/features/orgs/workMode';
 import type { OrganizationPlanUsage, PlanRow } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn, formatDate } from '@/lib/utils';
@@ -30,9 +31,12 @@ export function PlanSettingsPage({ billingEnabled: forced }: { billingEnabled?: 
   const live = useFeature('billing');
   const billingEnabled = forced ?? live;
   const { org, isAdmin } = useOrg();
-  const usage = usePlanUsage(org.id, isAdmin);
+  const { selfManaged } = useWorkMode();
+  const usage = usePlanUsage(org.id, isAdmin && !selfManaged);
   const [params] = useSearchParams();
 
+  // En autogestión los planes de pago no se enseñan: la pestaña no sale y su dirección vuelve a General.
+  if (selfManaged) return <Navigate to={`/o/${org.id}/ajustes/general`} replace />;
   if (!isAdmin) return <p className="text-sm text-muted">Solo los administradores pueden ver el plan.</p>;
 
   return (

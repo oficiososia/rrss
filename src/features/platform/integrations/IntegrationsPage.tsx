@@ -20,12 +20,13 @@ import {
 import { useUser } from '@/features/auth/AuthProvider';
 import { billingEnabled } from '@/features/billing/labels';
 import { useIsPlatformAdmin } from '@/features/orgs/api';
+import { useInternalUseState } from '@/features/orgs/workMode';
 import { UserMenu } from '@/layout/AppShell';
 import { formatDateTime } from '@/lib/utils';
 import { useIntegrationStatus, type AiTextTask, type IntegrationStatus } from './api';
 import { TEXT_TASKS, UI_INTEGRATIONS } from './catalog';
 import { ServiceCard } from './ServiceCard';
-import { SERVICES, SERVICE_BY_ID, SUMMARY } from './services';
+import { SERVICES, SERVICE_BY_ID, SUMMARY, TEST_RECORD_TITLE } from './services';
 
 const ACTION_LABEL: Record<string, string> = { set: 'Guardó', delete: 'Borró', test: 'Probó la conexión de' };
 const TITLE: Record<string, string> = Object.fromEntries(UI_INTEGRATIONS.map((i) => [i.id, i.title]));
@@ -80,14 +81,16 @@ export function IntegrationsPage() {
 
 function IntegrationsBody() {
   const status = useIntegrationStatus();
-  if (status.isPending) return <Spinner />;
+  const { internal, pending: modePending } = useInternalUseState();
+  if (status.isPending || modePending) return <Spinner />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => void status.refetch()} />;
   const data = status.data;
   return (
     <div className="space-y-6">
-      <WorkingNow status={data} />
+      <WorkingNow status={data} internal={internal} />
       <div className="space-y-6">
-        {SERVICES.map((service) => (
+        {/* En uso interno no se cobra a nadie: la tarjeta de pagos no sale. */}
+        {SERVICES.filter((service) => !internal || service.id !== 'stripe').map((service) => (
           <ServiceCard key={service.id} service={service} status={data} />
         ))}
       </div>
@@ -96,7 +99,7 @@ function IntegrationsBody() {
           Opciones avanzadas: qué enseña este despliegue y quién cambió qué
         </summary>
         <div className="space-y-6 border-t border-border p-4">
-          <BuildFlags status={data} />
+          <BuildFlags status={data} internal={internal} />
           <Activity status={data} />
         </div>
       </details>
@@ -105,8 +108,11 @@ function IntegrationsBody() {
 }
 
 /** «Qué funciona ahora»: las funciones que la gente nota, con su estado. */
-function WorkingNow({ status }: { status: IntegrationStatus }) {
-  const items = SUMMARY.map((s) => ({ ...s, ok: s.on(status.availability) }));
+function WorkingNow({ status, internal }: { status: IntegrationStatus; internal: boolean }) {
+  const items = SUMMARY.filter((s) => !internal || s.needs !== 'stripe').map((s) => ({
+    ...s,
+    ok: s.on(status.availability),
+  }));
   const working = items.filter((i) => i.ok).length;
   return (
     <Card data-testid="working-now">
@@ -147,7 +153,7 @@ function WorkingNow({ status }: { status: IntegrationStatus }) {
 }
 
 /** Qué módulos enseña la interfaz: interruptor de compilación Y servicio configurado. */
-function BuildFlags({ status }: { status: IntegrationStatus }) {
+function BuildFlags({ status, internal }: { status: IntegrationStatus; internal: boolean }) {
   // Un servidor anterior a la disponibilidad por tarea solo sabe decir «alguna»: vale para todas.
   const taskLive = (task: AiTextTask) => status.availability.aiTextTasks?.[task] ?? status.availability.aiText;
   const rows = [
@@ -176,12 +182,16 @@ function BuildFlags({ status }: { status: IntegrationStatus }) {
       live: status.availability.aiImage,
       flag: 'VITE_AI_IMAGE_ENABLED',
     },
-    {
-      label: 'Pago con Stripe',
-      build: billingEnabled(),
-      live: status.availability.billing,
-      flag: 'VITE_BILLING_ENABLED',
-    },
+    ...(internal
+      ? []
+      : [
+          {
+            label: 'Pago con Stripe',
+            build: billingEnabled(),
+            live: status.availability.billing,
+            flag: 'VITE_BILLING_ENABLED',
+          },
+        ]),
     {
       label: 'IA de texto · Copiloto por voz del editor',
       build: aiVoiceCopilotEnabled(),
@@ -242,7 +252,7 @@ function Activity({ status }: { status: IntegrationStatus }) {
                 <span className="text-muted">{formatDateTime(a.created_at)}</span> · {a.actor_email ?? 'alguien'}{' '}
                 {ACTION_LABEL[a.action] ?? a.action} {a.setting_key ? <code>{a.setting_key}</code> : null}
                 {a.setting_key ? ' en ' : ' '}
-                {TITLE[a.integration] ?? a.integration}
+                {TITLE[a.integration] ?? TEST_RECORD_TITLE[a.integration] ?? a.integration}
                 {a.action === 'test' && typeof a.data === 'object' && a.data && 'ok' in a.data
                   ? (a.data as { ok: boolean }).ok
                     ? ': funcionaba'

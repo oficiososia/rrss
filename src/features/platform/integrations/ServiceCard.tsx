@@ -18,7 +18,7 @@ import {
 } from './api';
 import { UI_INTEGRATIONS, type IntegrationId, type UiField } from './catalog';
 import { ReadOnlySetting, SettingField, TokenKeys, WorkerGatewayToken } from './fields';
-import { advancedGroups, buildServiceCtx, serviceStatus, simpleFields, type ServiceDef } from './services';
+import { advancedGroups, buildServiceCtx, lastTestOf, serviceStatus, simpleFields, type ServiceDef } from './services';
 
 const ALL_FIELDS = new Map<string, UiField>(
   UI_INTEGRATIONS.flatMap((i) => i.groups.flatMap((g) => g.fields.map((f) => [f.key, f] as const))),
@@ -93,9 +93,13 @@ export function ServiceCard({ service, status }: { service: ServiceDef; status: 
 
   const stored = new Map(status.settings.map((s) => [s.setting_key, s]));
   const fromEnv = new Set(status.environment);
-  const ctx = buildServiceCtx(service, status);
+  const saved = buildServiceCtx(service, status);
+  // Recién probada, manda lo que se acaba de ver: el estado de la tarjeta no
+  // contradice al resultado (ni depende de que el servidor ya lo haya anotado).
+  const ctx = probe ? { ...saved, lastTest: { ok: probe.ok, message: probe.message } } : saved;
   const state = serviceStatus(service, ctx);
-  const lastTest = status.tests.find((t) => t.integration === service.testIntegration);
+  // La última prueba de ESTA tarjeta: Claude no enseña la de OpenAI ni fal.ai la de los demás.
+  const lastTest = lastTestOf(service, status);
   const fields = service.keys.map((k) => ALL_FIELDS.get(k)!).filter((f) => f && !f.hidden);
 
   const changes: Record<string, string | null> = {};
@@ -112,7 +116,7 @@ export function ServiceCard({ service, status }: { service: ServiceDef; status: 
 
   const runTest = () => {
     setProbe(null);
-    test.mutate(service.testIntegration, {
+    test.mutate({ integration: service.testIntegration, service: service.testScope }, {
       onSuccess: (result) => setProbe(result),
       onError: (e) => toast.error(translateError(e)),
     });

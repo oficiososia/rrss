@@ -17,6 +17,7 @@ import {
   type ImageModelChoice,
 } from './imageApi';
 import { formatMicros, moneyEstimateNote } from './money';
+import { useWorkMode } from '@/features/orgs/workMode';
 
 const RATIOS: { value: ImageAspectRatio; label: string }[] = [
   { value: '1:1', label: 'Cuadrada (1:1)' },
@@ -77,6 +78,7 @@ function ImageGenerator({
   canvasRatio: ImageAspectRatio;
   onGenerated: (image: GeneratedImage) => void;
 }) {
+  const { selfManaged } = useWorkMode();
   const models = useImageModels(brandId);
   const generate = useGenerateImage(brandId);
   const [prompt, setPrompt] = useState('');
@@ -265,8 +267,8 @@ function ImageGenerator({
           </Button>
         </div>
         <p className="text-xs text-muted">
-          Cada imagen descuenta del cupo de IA de la organización. Una imagen generada no es una foto real: no la
-          presentes como tal.
+          {!selfManaged && 'Cada imagen descuenta del cupo de IA de la organización. '}Una imagen generada no es una
+          foto real: no la presentes como tal.
         </p>
       </form>
 

@@ -589,7 +589,7 @@ describe('«Probar conexión» de la IA de texto genera de verdad', () => {
     expect(hint).not.toHaveTextContent(/No genera nada|ni gasta/);
     // El aviso está al lado del botón: en el mismo formulario.
     expect(hint.closest('form')).toBe(within(openai).getByTestId('integration-test').closest('form'));
-    // Claude se prueba con la misma integración: mismo aviso.
+    // Claude también genera al probar (solo con lo suyo): mismo aviso.
     expect(within(screen.getByTestId('integration-claude')).getByTestId('integration-test-hint')).toHaveTextContent(COST);
     // Las pruebas que no generan nada no llevan el aviso.
     for (const id of ['comfyui', 'stripe', 'meta']) {
@@ -639,7 +639,8 @@ describe('«Probar conexión» de la IA de texto genera de verdad', () => {
     const { user } = renderApp('/plataforma/integraciones');
     const card = await screen.findByTestId('integration-openai');
     await user.click(within(card).getByTestId('integration-test'));
-    expect(payloads('test')).toEqual([{ action: 'test', integration: 'ai_text' }]);
+    // Pide solo lo de OpenAI: la tarjeta no prueba (ni paga) lo de Claude.
+    expect(payloads('test')).toEqual([{ action: 'test', integration: 'ai_text', service: 'openai' }]);
     const result = await within(card).findByTestId('integration-test-result');
     expect(result).toHaveTextContent('No funciona');
     expect(result).toHaveTextContent('la rechaza al generar con «gpt-6-luna» (401)');
@@ -651,6 +652,151 @@ describe('«Probar conexión» de la IA de texto genera de verdad', () => {
     );
     // Y sigue ofreciendo el servidor general en un clic.
     expect(await within(card).findByTestId('openai-region-fix')).toBeInTheDocument();
+  });
+});
+
+describe('cada tarjeta prueba y enseña solo lo suyo', () => {
+  const setting = (key: string, integration: string, secret = true): IntegrationSettingRow => ({
+    setting_key: key,
+    integration,
+    is_secret: secret,
+    value: secret ? null : 'valor',
+    hint: secret ? '…abcd' : null,
+    updated_at: '2026-11-19T10:00:00Z',
+    updated_by_email: 'otra@example.com',
+  });
+  const OPENAI_TEST = {
+    integration: 'ai_text',
+    ok: true,
+    message: 'OpenAI acepta la clave (eu.api.openai.com).',
+    tested_at: '2026-11-22T10:00:00Z',
+    tested_by_email: 'yo@example.com',
+  };
+
+  /** Servidor con claves de OpenAI, Claude (Vertex), fal.ai y Black Forest Labs, y las pruebas guardadas que se le den. */
+  function serveWithTests(tests: unknown[], reply: (body: { integration?: string; service?: string }) => unknown) {
+    const server = serveIntegrations();
+    server.settings.push(
+      setting('OPENAI_API_KEY', 'ai_text'),
+      setting('AI_VERTEX_PROJECT_ID', 'ai_text', false),
+      setting('AI_VERTEX_LOCATION', 'ai_text', false),
+      setting('AI_VERTEX_SERVICE_ACCOUNT_JSON', 'ai_text'),
+      setting('FAL_KEY', 'ai_image'),
+      setting('AI_MEDIA_ALLOW_NON_EU', 'ai_image', false),
+      setting('BFL_API_KEY', 'ai_image'),
+    );
+    fake.fn('platform-integrations', (raw) => {
+      const body = raw as { action: string; integration?: string; service?: string };
+      if (body.action === 'test') return { status: 200, body: reply(body) };
+      const usual = serveOnce(server, body);
+      if (body.action === 'status') (usual.body as { tests: unknown[] }).tests = tests;
+      return usual;
+    });
+  }
+
+  it('la tarjeta de Claude no enseña la última prueba de OpenAI: tiene la suya', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    serveWithTests([OPENAI_TEST], () => ({ ok: true, message: '', checks: [] }));
+    renderApp('/plataforma/integraciones');
+    const openai = await screen.findByTestId('integration-openai');
+    expect(within(openai).getByTestId('integration-last-test')).toHaveTextContent('OpenAI acepta la clave');
+    const claude = screen.getByTestId('integration-claude');
+    // Antes: «Funcionaba en la última prueba … OpenAI acepta la clave» también aquí.
+    expect(within(claude).queryByTestId('integration-last-test')).toBeNull();
+    expect(claude).not.toHaveTextContent('OpenAI acepta la clave');
+    expect(within(claude).getByTestId('service-status-claude')).toHaveTextContent('Sin probar');
+    expect(claude).toHaveTextContent('Todavía no se ha probado.');
+  });
+
+  it('«Probar conexión» en Claude pide solo lo de Claude y enseña solo su resultado', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    const access = 'Google da acceso a la cuenta de servicio rrss@proyecto.iam.gserviceaccount.com.';
+    serveWithTests([OPENAI_TEST], (body) =>
+      body.service === 'claude'
+        ? {
+            ok: true,
+            message: access,
+            checks: [
+              { name: 'Google Vertex AI', ok: true, message: access },
+              { name: 'Tareas', ok: null, message: 'Ninguna tarea de texto usa todavía este acceso: no se ha probado a generar.' },
+            ],
+          }
+        : { ok: true, message: 'OpenAI acepta la clave (eu.api.openai.com).', checks: [] },
+    );
+    const { user } = renderApp('/plataforma/integraciones');
+    const claude = await screen.findByTestId('integration-claude');
+    await user.click(within(claude).getByTestId('integration-test'));
+    expect(payloads('test')).toEqual([{ action: 'test', integration: 'ai_text', service: 'claude' }]);
+    const result = await within(claude).findByTestId('integration-test-result');
+    expect(result).toHaveTextContent('Funciona. Google da acceso a la cuenta de servicio');
+    expect(result).not.toHaveTextContent('OpenAI');
+    // El estado de la tarjeta sigue al resultado, aunque el servidor aún no lo tenga anotado.
+    expect(within(claude).getByTestId('service-status-claude')).toHaveTextContent('Funciona');
+    // La de OpenAI no se entera de la prueba de Claude.
+    const openai = screen.getByTestId('integration-openai');
+    expect(within(openai).queryByTestId('integration-test-result')).toBeNull();
+    expect(within(openai).getByTestId('integration-test-hint')).not.toHaveTextContent('Claude');
+    expect(within(claude).getByTestId('integration-test-hint')).toHaveTextContent('No prueba OpenAI');
+  });
+
+  it('la prueba guardada de Claude sale en Claude y no en OpenAI', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    serveWithTests(
+      [
+        OPENAI_TEST,
+        {
+          integration: 'ai_text_claude',
+          ok: false,
+          message: 'Google no da acceso a la cuenta de servicio.',
+          tested_at: '2026-11-22T11:00:00Z',
+          tested_by_email: null,
+        },
+      ],
+      () => ({ ok: true, message: '', checks: [] }),
+    );
+    renderApp('/plataforma/integraciones');
+    const claude = await screen.findByTestId('integration-claude');
+    expect(within(claude).getByTestId('service-status-claude')).toHaveTextContent('No funciona');
+    expect(within(claude).getByTestId('integration-last-test')).toHaveTextContent('Google no da acceso');
+    const openai = screen.getByTestId('integration-openai');
+    expect(within(openai).getByTestId('service-status-openai')).toHaveTextContent('Funciona');
+    expect(openai).not.toHaveTextContent('Google no da acceso');
+  });
+
+  it('fal.ai y «Otras imágenes con IA» tampoco se pisan: cada una pide lo suyo', async () => {
+    seedWorkspace({ orgRole: 'owner', platformAdmin: true });
+    serveWithTests(
+      [
+        {
+          integration: 'ai_image',
+          ok: true,
+          message: 'Black Forest Labs acepta la clave.',
+          tested_at: '2026-11-22T10:00:00Z',
+          tested_by_email: null,
+        },
+      ],
+      (body) => ({ ok: true, message: `prueba de ${body.service}`, checks: [] }),
+    );
+    const { user } = renderApp('/plataforma/integraciones');
+    const fal = await screen.findByTestId('integration-fal');
+    const others = screen.getByTestId('integration-images_other');
+    expect(fal).not.toHaveTextContent('Black Forest Labs acepta la clave');
+    expect(within(others).getByTestId('integration-last-test')).toHaveTextContent('Black Forest Labs acepta la clave');
+    await user.click(within(fal).getByTestId('integration-test'));
+    await within(fal).findByTestId('integration-test-result');
+    await user.click(within(others).getByTestId('integration-test'));
+    await within(others).findByTestId('integration-test-result');
+    expect(payloads('test')).toEqual([
+      { action: 'test', integration: 'ai_image', service: 'fal' },
+      { action: 'test', integration: 'ai_image', service: 'images_other' },
+    ]);
+    expect(within(fal).getByTestId('integration-test-result')).toHaveTextContent('prueba de fal');
+    expect(within(others).getByTestId('integration-test-result')).toHaveTextContent('prueba de images_other');
+    // Las que no comparten integración siguen como siempre, sin `service`.
+    const stripe = screen.getByTestId('integration-stripe');
+    await user.click(within(stripe).getByTestId('integration-test'));
+    await within(stripe).findByTestId('integration-test-result');
+    expect(payloads('test').at(-1)).toEqual({ action: 'test', integration: 'stripe' });
   });
 });
 

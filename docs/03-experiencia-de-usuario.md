@@ -31,8 +31,12 @@ Menú final del producto (nueve áreas, no más):
 Hoy el menú muestra solo lo construido: Inicio, Biblioteca, Marca, Equipo y
 Configuración. Las demás áreas se añaden cuando funcionen de verdad.
 
-En la cabecera, dos selectores: **organización** y **marca**. Una agencia entra
-a una vista con todas sus marcas; una empresa con una sola marca entra directa.
+Un solo selector, el de **marca** (en el menú lateral; en móvil y tablet, en la
+cabecera): lista todas las marcas a las que se tiene acceso, agrupadas por
+organización si hay más de una, y la organización se lee debajo del nombre de la
+marca (desde el 23/11/2026; antes había dos selectores, organización y marca).
+Una agencia entra a una vista con todas sus marcas; una empresa con una sola
+marca entra directa.
 
 ## Recorridos principales
 

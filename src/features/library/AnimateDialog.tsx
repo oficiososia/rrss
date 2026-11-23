@@ -18,6 +18,8 @@ import {
   type AnimateModelChoice,
   type MovementId,
 } from './animateApi';
+import { useWorkMode } from '@/features/orgs/workMode';
+import { SPEND_LIMIT_TEXT } from '@/features/ai/cupo';
 
 const DURATIONS = [5, 8, 10];
 
@@ -50,6 +52,7 @@ export function AnimateDialog({ asset, open, onOpenChange, onOpenAsset }: Animat
 }
 
 function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: (assetId: string) => void }) {
+  const { selfManaged } = useWorkMode();
   const brandId = asset.brand_id;
   const options = useAnimateOptions(brandId);
   const animate = useAnimatePhoto(brandId);
@@ -107,9 +110,13 @@ function Animator({ asset, onOpenAsset }: { asset: MediaAssetRow; onOpenAsset?: 
           : data?.reason === 'ai_paused'
             ? 'La IA de pago está en pausa este mes por el tope global de la plataforma.'
             : data?.reason === 'quota_exhausted' || data?.reason === 'no_quota'
-              ? 'No queda cupo de IA este mes para animar fotos.'
+              ? selfManaged
+                ? `${SPEND_LIMIT_TEXT.exhaustedTitle}: no se pueden animar fotos hasta el mes que viene, salvo que se suba.`
+                : 'No queda cupo de IA este mes para animar fotos.'
               : data?.reason === 'plan'
-                ? 'Tu plan no incluye el vídeo con IA.'
+                ? selfManaged
+                  ? 'El vídeo con IA está apagado para esta organización. Lo enciende quien administra la plataforma.'
+                  : 'Tu plan no incluye el vídeo con IA.'
                 : data?.reason === 'no_permission'
                   ? 'No tienes permiso para generar con IA en esta marca.'
                   : 'Animar fotos con IA no está disponible ahora mismo.'}

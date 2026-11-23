@@ -4,6 +4,7 @@ import { useOrg } from '@/features/orgs/context';
 import { useWorkMode } from '@/features/orgs/workMode';
 import { cn } from '@/lib/utils';
 import { lastPeriods, periodStartOf, useAiMonthLedger, useAiMonthlyCost, useAiQuota, type MonthLedger } from './api';
+import { SPEND_LIMIT_TEXT } from './cupo';
 import { formatMicros, moneyEstimateNote } from './money';
 import { OrgSpendCard } from './OrgSpendCard';
 
@@ -29,7 +30,12 @@ export function AiUsageSettingsPage({ now = new Date() }: { now?: Date }) {
 
   return (
     <div className="space-y-6" data-testid="ai-usage-page">
-      <QuotaCard orgId={org.id} periodStart={current} />
+      {/* El cupo del plan es cosa de clientes: en autogestión solo se avisa si el tope de gasto aprieta. */}
+      {selfManaged ? (
+        <SpendLimitNotice orgId={org.id} periodStart={current} />
+      ) : (
+        <QuotaCard orgId={org.id} periodStart={current} />
+      )}
       {selfManaged && org.role === 'owner' && <OrgSpendCard orgId={org.id} periodStart={current} />}
       <BrandBreakdown orgId={org.id} periods={periods} selected={selected} onSelect={setSelected} />
       <MonthlyHistory orgId={org.id} periods={periods} />
@@ -37,6 +43,43 @@ export function AiUsageSettingsPage({ now = new Date() }: { now?: Date }) {
         {moneyEstimateNote()}
       </p>
     </div>
+  );
+}
+
+/**
+ * Autogestión: ni cupo, ni plan, ni barra. El límite mensual sigue protegiendo del gasto, así que
+ * solo se dice algo cuando importa: falta, se acerca (80 %) o se ha alcanzado. Sin cifras del plan.
+ */
+function SpendLimitNotice({ orgId, periodStart }: { orgId: string; periodStart: string }) {
+  const quota = useAiQuota(orgId);
+  const ledger = useAiMonthLedger(orgId, periodStart);
+  if (!quota.isSuccess || !ledger.isSuccess) return null;
+  if (quota.data === null) {
+    return (
+      <Notice tone="warning">
+        <span data-testid="ai-spend-limit-missing">
+          {SPEND_LIMIT_TEXT.missingTitle}. {SPEND_LIMIT_TEXT.missing}
+        </span>
+      </Notice>
+    );
+  }
+  const limit = Number(quota.data.limit_value);
+  const committed = ledger.data.consumedMicros + ledger.data.reservedMicros;
+  if (limit <= 0 || committed >= limit) {
+    return (
+      <Notice tone="warning">
+        <span data-testid="ai-spend-limit-reached">
+          {SPEND_LIMIT_TEXT.exhaustedTitle}. {SPEND_LIMIT_TEXT.exhausted}
+        </span>
+      </Notice>
+    );
+  }
+  const percent = Math.round((committed / limit) * 100);
+  if (percent < 80) return null;
+  return (
+    <Notice tone="warning">
+      <span data-testid="ai-spend-limit-near">{SPEND_LIMIT_TEXT.near(percent)}</span>
+    </Notice>
   );
 }
 
