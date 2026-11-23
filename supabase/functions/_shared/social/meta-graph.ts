@@ -13,6 +13,11 @@
 //     y, opcionales, cover_url (JPEG público, ≤ 8 MB, sRGB, mejor 9:16) o
 //     thumb_offset (ms del fotograma); si van los dos, Instagram usa cover_url
 //     (consultado el 22/11/2026 en la referencia de ig-user/media).
+//     Historia: media_type=STORIES + image_url (solo imagen aquí), sin caption
+//     ni alt_text; se publica igual con media_publish. Las historias no salen
+//     en GET /{ig-user-id}/media: se listan con GET /{ig-user-id}/stories
+//     (solo las de las últimas 24 h). Ver la referencia de ig-user/media y
+//     ig-user/stories.
 //     Host graph.facebook.com con el token de la página (Facebook Login).
 //   · Parámetros: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media
 //     caption ≤ 2200, alt_text ≤ 1000 (solo imágenes), JPEG ≤ 8 MB.
@@ -307,6 +312,10 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
       else if (typeof thumbOffsetMs === 'number' && thumbOffsetMs >= 0) form.thumb_offset = String(Math.round(thumbOffsetMs));
       return idOf(await call('POST', `/${encodeURIComponent(igUserId)}/media`, { token, form }), 'del reel');
     },
+    async createStoryContainer(igUserId, token, { imageUrl }) {
+      const form: Record<string, string> = { media_type: 'STORIES', image_url: imageUrl };
+      return idOf(await call('POST', `/${encodeURIComponent(igUserId)}/media`, { token, form }), 'de la historia');
+    },
     async containerStatus(containerId, token): Promise<ContainerInfo> {
       const r = await call<{ id?: string; status_code?: string; status?: string }>(
         'GET',
@@ -343,6 +352,16 @@ export function createMetaGraph(options: MetaGraphOptions): InstagramApi & MetaL
           timestamp: m.timestamp ?? null,
           permalink: m.permalink ?? null,
         }));
+    },
+    async recentStories(igUserId, token): Promise<PublishedMedia[]> {
+      const r = await call<{ data?: Array<{ id?: string; timestamp?: string; permalink?: string }> }>(
+        'GET',
+        `/${encodeURIComponent(igUserId)}/stories`,
+        { token, query: { fields: 'id,timestamp,permalink' } },
+      );
+      return (r.data ?? [])
+        .filter((m) => m.id)
+        .map((m) => ({ id: String(m.id), caption: null, timestamp: m.timestamp ?? null, permalink: m.permalink ?? null }));
     },
     async permalink(mediaId, token) {
       const r = await call<{ permalink?: string }>('GET', `/${encodeURIComponent(mediaId)}`, {

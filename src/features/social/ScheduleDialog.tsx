@@ -105,7 +105,9 @@ export function ScheduleDialog({
    */
   const pageSet = useMemo(
     () =>
-      (content?.format === 'carousel' || content?.format === 'post') && media.data && content.current_version > 0
+      (content?.format === 'carousel' || content?.format === 'post' || content?.format === 'story') &&
+      media.data &&
+      content.current_version > 0
         ? publishableExportsOf(media.data, content.id, content.current_version, content.format)
         : null,
     [content, media.data],
@@ -129,7 +131,7 @@ export function ScheduleDialog({
     content.id === exportVersion.contentId &&
     content.status === 'approved' &&
     supported &&
-    (content.format === 'post' || content.format === 'carousel') &&
+    (content.format === 'post' || content.format === 'carousel' || content.format === 'story') &&
     // Solo si no hay nada que proponer: quien desmarca a mano lo que había no pide otra exportación.
     assetChoice === null &&
     assetIds.length === 0;
@@ -137,7 +139,7 @@ export function ScheduleDialog({
   const toggle = (id: string) =>
     setAssetIds((choice) => {
       const prev = choice ?? assetIds;
-      return content?.format === 'reel' || content?.format === 'post'
+      return content?.format === 'reel' || content?.format === 'post' || content?.format === 'story'
         ? prev[0] === id
           ? []
           : [id]
