@@ -68,6 +68,7 @@ import { AiBrandCheck } from '@/features/ai/AiBrandCheck';
 import { GenerateCaptionDialog } from '@/features/ai/GenerateCaptionDialog';
 import { GenerateImageDialog } from '@/features/ai/GenerateImageDialog';
 import { useImageAgencyBlock } from '@/features/ai/imageApi';
+import { nearestImageRatio } from '@/features/ai/useAiImage';
 import {
   canEditPhoto,
   canEditWithAi,
@@ -2215,6 +2216,7 @@ function Editor({
             brandId={brand.id}
             libraryPath={`${brandBase}/biblioteca`}
             uploadTo={{ organizationId: org.id }}
+            aiRatio={aiImage ? canvas.aspectRatio : undefined}
             open={imagePicker}
             onOpenChange={setImagePicker}
             onPick={(asset) => {
@@ -2230,6 +2232,7 @@ function Editor({
             libraryPath={`${brandBase}/biblioteca`}
             uploadTo={{ organizationId: org.id }}
             title={replaceLayer && isEmptyFrame(replaceLayer) ? 'Poner foto' : 'Sustituir la foto'}
+            aiRatio={aiImage && replaceLayer ? nearestImageRatio(replaceLayer.width, replaceLayer.height) : undefined}
             open={replaceLayerId !== null}
             onOpenChange={(open) => {
               if (!open) setReplaceLayerId(null);

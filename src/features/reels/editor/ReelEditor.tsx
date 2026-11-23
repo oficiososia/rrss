@@ -2111,7 +2111,7 @@ function MusicPicker({
       void queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
       toast.success(`«${row.file_name}» está en la biblioteca. Confirma la licencia para usarla.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : translateError(error));
+      toast.error(translateError(error));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -2167,6 +2167,18 @@ function MusicPicker({
         </>
       }
     >
+      {/* También se puede soltar aquí la pista desde el ordenador. */}
+      <div
+        onDragOver={(e) => {
+          if (canUpload && Array.from(e.dataTransfer?.types ?? []).includes('Files')) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (!canUpload || !Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          void upload(e.dataTransfer.files[0]);
+        }}
+        data-testid="reel-music-drop"
+      >
       {all.length === 0 ? (
         <div className="space-y-3" data-testid="reel-music-empty">
           <p className="text-sm text-muted">
@@ -2215,6 +2227,7 @@ function MusicPicker({
           />
         </div>
       )}
+      </div>
     </Dialog>
   );
 }

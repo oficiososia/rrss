@@ -1,10 +1,10 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { Images, Search, Upload } from 'lucide-react';
-import { useDeferredValue, useMemo, useRef, useState } from 'react';
+import { Images, Search } from 'lucide-react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Dialog, EmptyState, ErrorState, Input, Skeleton, Spinner } from '@/components/ui';
-import { assetKeys, previewPath, uploadAsset, useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
-import { translateError } from '@/lib/errors';
+import type { ImageAspectRatio } from '@/features/ai/imageApi';
+import { previewPath, useAssets, useAssetsByIds, useSignedUrls } from '@/features/library/api';
+import { PickerUpload } from '@/features/library/PickerUpload';
 import type { MediaAssetRow } from '@/lib/database.types';
 
 interface PickerProps {
@@ -53,67 +53,10 @@ function AssetGrid({
 }
 
 /**
- * Subir una foto desde el dispositivo a la biblioteca de la marca y elegirla
- * en el mismo paso (queda en la biblioteca como cualquier otra).
+ * Elegir una imagen de la biblioteca de la marca. Con `uploadTo`, además «Subir» y soltar fotos desde
+ * el ordenador sobre el diálogo; con `aiRatio`, «Crear con IA» (si la marca la tiene). Lo nuevo queda
+ * en la biblioteca y se elige en el acto (el primero, si se suben varios: los demás quedan en la biblioteca).
  */
-function UploadPhoto({
-  organizationId,
-  brandId,
-  onUploaded,
-}: {
-  organizationId: string;
-  brandId: string;
-  onUploaded: (asset: MediaAssetRow) => void;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function upload(file: File) {
-    setBusy(true);
-    setError(null);
-    try {
-      const asset = await uploadAsset({ organizationId, brandId, file, kind: 'image' });
-      await queryClient.invalidateQueries({ queryKey: assetKeys.all(brandId) });
-      onUploaded(asset);
-    } catch (err) {
-      setError(translateError(err));
-    } finally {
-      setBusy(false);
-      if (input.current) input.current.value = '';
-    }
-  }
-
-  return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      <input
-        ref={input}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        className="sr-only"
-        aria-label="Subir una foto"
-        data-testid="picker-upload-input"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void upload(file);
-        }}
-      />
-      <Button variant="secondary" size="sm" loading={busy} onClick={() => input.current?.click()}>
-        <Upload className="h-4 w-4" aria-hidden />
-        Subir una foto
-      </Button>
-      <span className="text-xs text-muted">Se guarda también en la biblioteca.</span>
-      {error && (
-        <p role="alert" className="w-full text-sm text-danger">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Elegir una imagen de la biblioteca de la marca (o subirla, si se indica la organización). */
 export function ImagePickerDialog({
   brandId,
   libraryPath,
@@ -121,14 +64,27 @@ export function ImagePickerDialog({
   onOpenChange,
   onPick,
   uploadTo,
+  aiRatio,
   title = 'Añadir imagen',
 }: PickerProps & {
   brandId: string;
   libraryPath: string;
-  /** Con la organización, se ofrece subir una foto desde el dispositivo. */
+  /** Con la organización, se ofrece subir fotos desde el dispositivo (botón y soltar). */
   uploadTo?: { organizationId: string };
+  /** Proporción del hueco: con ella, «Crear con IA». */
+  aiRatio?: ImageAspectRatio;
   title?: string;
 }) {
+  // Un hueco, una foto: lo que termine de subirse después de la primera ya no la cambia.
+  const picked = useRef(false);
+  useEffect(() => {
+    if (open) picked.current = false;
+  }, [open]);
+  const pickNew = (asset: MediaAssetRow) => {
+    if (picked.current || asset.kind !== 'image') return;
+    picked.current = true;
+    onPick(asset);
+  };
   const [search, setSearch] = useState('');
   const deferred = useDeferredValue(search);
   const filters = useMemo(() => ({ kind: 'image' as const, tag: '', folder: '', search: deferred }), [deferred]);
@@ -143,7 +99,7 @@ export function ImagePickerDialog({
       description={uploadTo ? 'Fotos de la biblioteca de la marca, o sube una nueva.' : 'Fotos de la biblioteca de la marca.'}
       size="lg"
     >
-      {uploadTo && <UploadPhoto organizationId={uploadTo.organizationId} brandId={brandId} onUploaded={onPick} />}
+      <MaybeUpload enabled={Boolean(uploadTo)} aiRatio={aiRatio} onAdded={pickNew}>
       <div className="relative mb-4">
         <Search
           className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
@@ -189,7 +145,27 @@ export function ImagePickerDialog({
           )}
         </>
       )}
+      </MaybeUpload>
     </Dialog>
+  );
+}
+
+function MaybeUpload({
+  enabled,
+  aiRatio,
+  onAdded,
+  children,
+}: {
+  enabled: boolean;
+  aiRatio?: ImageAspectRatio;
+  onAdded: (asset: MediaAssetRow) => void;
+  children: ReactNode;
+}) {
+  if (!enabled) return <>{children}</>;
+  return (
+    <PickerUpload className="mb-4 space-y-4" accept={['image/jpeg', 'image/png', 'image/webp']} aiRatio={aiRatio} onAdded={onAdded}>
+      {children}
+    </PickerUpload>
   );
 }
 
