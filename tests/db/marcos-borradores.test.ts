@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  addAsset,
   as,
   asService,
   createBrand,
@@ -166,6 +167,58 @@ describe('plantillas con el documento v6 (marcos de foto)', () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]!.document.schemaVersion).toBe(6);
+  });
+});
+
+describe('historias del catálogo (9:16, con el logotipo de la marca)', () => {
+  const STYLES = ['corte-ritmico', 'fundido-suave', 'pase-lateral'];
+  // El catálogo se carga al ejecutar (no se comprueban sus tipos aquí: arrastra módulos de Vite que el
+  // tsconfig de las pruebas no conoce; los comprueba el de agency/).
+  type Catalog = {
+    buildCatalogWith: (
+      set: string,
+      theme: Record<string, string>,
+      styles: string[],
+    ) => { stories: { templates: Array<{ key: string }> } | null };
+  };
+  const NEUTRO = {
+    dark: '#1F2328',
+    light: '#F7F5F2',
+    accent: '#C2562B',
+    accentOnDark: '#E8956F',
+    onDark: '#FFFFFF',
+    onLight: '#1F2328',
+    onAccent: '#FFFFFF',
+    placeholder: '#5A6068',
+    headline: 'Inter',
+    body: 'Inter',
+  };
+  it('se guardan como plantillas de historia y el logotipo tiene que ser de la marca', async () => {
+    const modulePath = '../../agency/catalogo/construir.ts';
+    const { buildCatalogWith } = (await import(/* @vite-ignore */ modulePath)) as Catalog;
+    const NEUTRAL_THEME = NEUTRO;
+    const logo = await addAsset(db, ana, org, marca);
+    const built = buildCatalogWith('restaurante', { ...NEUTRAL_THEME, logo }, STYLES);
+    const stories = built.stories!.templates;
+    const rows = await as<{ template_key: string; format: string; document: { canvas: { aspectRatio: string } } }>(
+      db,
+      ana,
+      `select template_key, format, document from public.deliver_design_templates($1, $2::jsonb)`,
+      [marca, JSON.stringify(stories)],
+    );
+    expect(rows.map((r) => [r.template_key, r.format, r.document.canvas.aspectRatio])).toEqual(
+      stories.map((t) => [t.key, 'story', '9:16']),
+    );
+    // Con el logotipo de otra marca no se guarda.
+    const ajeno = await addAsset(db, berta, otraOrg, otraMarca);
+    const otro = buildCatalogWith('restaurante', { ...NEUTRAL_THEME, logo: ajeno }, STYLES);
+    await denied(
+      db,
+      ana,
+      `select public.deliver_design_templates($1, $2::jsonb)`,
+      [marca, JSON.stringify(otro.stories!.templates.slice(0, 1))],
+      /recurso que no es de la biblioteca/,
+    );
   });
 });
 

@@ -37,6 +37,7 @@ import {
   createUser,
   denied,
   join,
+  MIGRATIONS_DIR,
   type Db,
   type Row,
   type TestUser,
@@ -138,7 +139,7 @@ const pubOf = async (id: string) =>
 async function piece(
   opts: {
     brand?: string;
-    format?: 'post' | 'carousel' | 'reel';
+    format?: 'post' | 'carousel' | 'reel' | 'story';
     approve?: boolean;
     exports?: number;
     /** Páginas del documento; por omisión, en un carrusel, una por exportación (al menos 2). */
@@ -1519,6 +1520,99 @@ describe('renovar el acceso sin volver a conectar', () => {
     const body = (await (await mk(true)(req())).json()) as { tokensRenewed: number };
     expect(body.tokensRenewed).toBeGreaterThanOrEqual(1);
     expect((await accountOf(cuenta3)).token_renewed_at).not.toBeNull();
+  });
+});
+
+describe('historias de Instagram (una imagen)', () => {
+  const MIGRATION = path.join(MIGRATIONS_DIR, '20270119010000_instagram_stories.sql');
+  const ROLLBACK = path.join(MIGRATIONS_DIR, '../rollbacks/20270119010000_instagram_stories.sql');
+
+  beforeEach(async () => {
+    await tick();
+    graph = createSimulatedGraph();
+  });
+
+  it('una historia aprobada con su exportación queda programada y sale como STORIES, sin pie ni texto alternativo', async () => {
+    const p = await piece({ format: 'story', caption: 'Este pie no se publica', hashtags: ['tapas'] });
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub).toMatchObject({ status: 'scheduled', hold_reason: null });
+    await makeDue(pub.id);
+    const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
+    expect(r).toMatchObject({ outcome: 'published' });
+
+    expect(graph.published).toHaveLength(1);
+    const story = graph.published[0]!;
+    expect(story.kind).toBe('STORIES');
+    expect(story.caption).toBe('');
+    expect(story.mediaUrls[0]).toMatch(/^https:\/\/almacen\.pruebas\.invalid\/firmada\//);
+    const container = graph.containers.get(story.containerId)!;
+    expect(container.altText).toBeNull();
+    const after = await pubOf(pub.id);
+    expect(after).toMatchObject({ status: 'published', external_id: story.id });
+    expect(after.external_url).toBe(`${SIMULATED_PERMALINK_HOST}/stories/simulada/${story.id}/`);
+    // Una historia no sale en el muro: /media no la lista.
+    expect(await createMetaGraph({ fetch: graph.fetch }).recentMedia(SIMULATED_IG_USER_ID, TOKEN)).toEqual([]);
+  });
+
+  it('solo con UNA exportación JPEG de un documento de una página; un vídeo tampoco vale todavía', async () => {
+    const dos = await piece({ format: 'story', exports: 2 });
+    expect((await schedule(dos.contentId, dos.assets)).hold_reason).toBe('invalid_media');
+    const varias = await piece({ format: 'story', exports: 0, pages: 2 });
+    const primera = await exportOf(marca, varias.contentId, 1, 'image/jpeg', { page: 1, count: 2 });
+    expect((await schedule(varias.contentId, [primera])).hold_reason).toBe('invalid_media');
+    const png = await piece({ format: 'story', exports: 0 });
+    const asset = await exportOf(marca, png.contentId, 1, 'image/png');
+    expect((await schedule(png.contentId, [asset])).hold_reason).toBe('invalid_media');
+    const video = await piece({ format: 'story', exports: 0 });
+    const [clip] = await as<{ id: string }>(
+      db,
+      editor,
+      `insert into public.media_assets (brand_id, organization_id, kind, storage_path, file_name, mime_type, bytes)
+       values ($1, $2, 'video', $3, 'historia.mp4', 'video/mp4', 100) returning id`,
+      [marca, org, assetPath(org, marca, `${crypto.randomUUID()}.mp4`)],
+    );
+    expect((await schedule(video.contentId, [clip!.id])).hold_reason).toBe('invalid_media');
+  });
+
+  it('un tiempo agotado después de publicar no la duplica: se recupera en /stories', async () => {
+    const p = await piece({ format: 'story' });
+    const pub = await schedule(p.contentId, p.assets);
+    await makeDue(pub.id);
+    graph.fail({ op: 'media_publish', mode: 'timeout_after' });
+    const [r] = (await tick()).filter((x) => x.publicationId === pub.id);
+    expect(r).toMatchObject({ outcome: 'recovered' });
+    expect(graph.published).toHaveLength(1);
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'published', external_id: graph.published[0]!.id });
+    expect(graph.calls).toContain(`GET /${SIMULATED_IG_USER_ID}/stories`);
+    expect(graph.calls.filter((c) => c.endsWith('/media_publish'))).toHaveLength(1);
+  });
+
+  it('si hay otra historia reciente y no se puede saber cuál es, no se da por publicada ni se repite', async () => {
+    const primera = await piece({ format: 'story' });
+    const pub1 = await schedule(primera.contentId, primera.assets);
+    await makeDue(pub1.id);
+    await tick();
+    const segunda = await piece({ format: 'story' });
+    const pub2 = await schedule(segunda.contentId, segunda.assets);
+    await makeDue(pub2.id);
+    graph.fail({ op: 'media_publish', mode: 'timeout_after' });
+    const [r] = (await tick()).filter((x) => x.publicationId === pub2.id);
+    expect(r).toMatchObject({ outcome: 'failed', errorCode: 'published_unconfirmed' });
+    expect(graph.published).toHaveLength(2);
+    expect(graph.calls.filter((c) => c.endsWith('/media_publish'))).toHaveLength(2);
+  });
+
+  it('la vuelta atrás deja las historias en espera («unsupported_format») y se puede volver a aplicar', async () => {
+    const p = await piece({ format: 'story' });
+    const pub = await schedule(p.contentId, p.assets);
+    expect(pub.status).toBe('scheduled');
+    await db.exec(await readFile(ROLLBACK, 'utf8'));
+    expect(await pubOf(pub.id)).toMatchObject({ hold_reason: 'unsupported_format' });
+    // Lo demás no cambia: una publicación de una imagen se sigue armando.
+    const post = await piece({ format: 'post' });
+    expect((await schedule(post.contentId, post.assets)).status).toBe('scheduled');
+    await db.exec(await readFile(MIGRATION, 'utf8'));
+    expect(await pubOf(pub.id)).toMatchObject({ status: 'scheduled', hold_reason: null });
   });
 });
 

@@ -293,4 +293,4 @@ export function defaultScheduleDate(day: Date | null | undefined): Date {
 }
 
 /** Formatos que el publicador sabe publicar hoy (espejo de private.publication_format_supported). */
-export const PUBLISHABLE_TARGETS = new Set(['instagram:post', 'instagram:carousel', 'instagram:reel']);
+export const PUBLISHABLE_TARGETS = new Set(['instagram:post', 'instagram:carousel', 'instagram:reel', 'instagram:story']);

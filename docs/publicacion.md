@@ -6,7 +6,7 @@ Instagram. Estado a 19/11/2026:
 | Qué | Estado |
 |---|---|
 | Base de datos: cuentas, calendario, regla de aprobación, intentos, comentarios, publicador (migraciones `20261119010000` a `20261119040000`) | Implementado y probado en base de datos (PGlite, migraciones reales) |
-| Publicador (`social-publish`) con cerrojo, idempotencia, reintentos, cupo, imagen, carrusel y reel | Probado contra la **Graph API simulada** |
+| Publicador (`social-publish`) con cerrojo, idempotencia, reintentos, cupo, imagen, carrusel, reel e historia de una imagen (`media_type=STORIES`, sin pie; migración `20270119010000`) | Probado contra la **Graph API simulada** |
 | Conexión por OAuth (`social-connect`) y tokens cifrados | Probado contra la **Graph API simulada** |
 | Interfaz: «Calendario» de la marca y «Cuentas conectadas» en Marca → Datos | Probado en componentes (Supabase simulado) |
 | Escenario de extremo a extremo `tests/e2e/13-publicacion-calendario.spec.ts` | Escrito, **sin ejecutar** |

@@ -156,6 +156,29 @@ describe('Plantillas: etiquetas y catálogo', () => {
     expect(await screen.findByText(/Cargadas \d+ plantillas de publicación/)).toBeInTheDocument();
   });
 
+  it('el juego de restaurante guarda también sus historias (9:16), en una entrega aparte de las publicaciones', async () => {
+    seedWorkspace({ orgRole: 'owner', workMode: 'self' });
+    fake.tables.brand_fonts = [];
+    fake.tables.brand_design_templates = [];
+    fake.tables.brand_profiles = [];
+    const deliveries: Array<Array<{ key: string; format: string }>> = [];
+    fake.rpc('deliver_design_templates', (args) => {
+      deliveries.push(args.p_templates as Array<{ key: string; format: string }>);
+      return [];
+    });
+    fake.rpc('deliver_reel_templates', () => []);
+    const { user } = renderApp(`${BRAND_BASE}/marca?seccion=visual`);
+    await user.click(await screen.findByTestId('catalog-open'));
+    expect(await screen.findByText(/y 5 de historia/)).toBeInTheDocument();
+    await user.click(await screen.findByTestId('catalog-set-restaurante'));
+    await user.click(screen.getByTestId('catalog-load'));
+    await waitFor(() => expect(deliveries).toHaveLength(2));
+    expect(deliveries[0]!.every((t) => t.format !== 'story')).toBe(true);
+    expect(deliveries[1]!.map((t) => t.key)).toContain('rest-historia-tapa-del-dia');
+    expect(deliveries[1]!.every((t) => t.format === 'story')).toBe(true);
+    expect(await screen.findByText(/Cargadas 10 plantillas de publicación, 5 de historia y \d+ de reel/)).toBeInTheDocument();
+  });
+
   it('quien solo ve la marca no tiene el botón del catálogo', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'viewer', workMode: 'self' });
     fake.tables.brand_fonts = [];

@@ -13,6 +13,7 @@ import {
 } from '../../src/features/reels/reelTemplate.ts';
 import { TEMPLATES_DELIVERY_FORMAT, TEMPLATES_DELIVERY_VERSION } from '../../src/features/brand/templates.ts';
 import { CATALOG_SETS, type CatalogSet, type PostDraft } from './juegos.ts';
+import { STORY_H, STORY_W } from './historias.ts';
 import { H, W, type Look } from './publicaciones.ts';
 import type { Theme } from './tema.ts';
 
@@ -27,6 +28,7 @@ type Role = 'photo' | 'background' | 'headline' | 'body' | 'logo' | 'badge' | 'o
 
 function roleOf(id: string, type: string): Role {
   const name = id.slice(id.indexOf('-') + 1);
+  if (type === 'logo') return 'logo';
   if (name.startsWith('foto')) return 'photo';
   if (name === 'fondo') return 'background';
   if (name === 'titular' || name === 'frase' || name === 'nombre') return 'headline';
@@ -37,11 +39,14 @@ function roleOf(id: string, type: string): Role {
   return type === 'text' ? 'body' : 'other';
 }
 
-function positionOf(layer: { x: number; y: number; width: number; height: number }): string {
-  if (layer.width >= W * 0.9 && layer.height >= H * 0.9) return 'a sangre, ocupa todo el lienzo';
+function positionOf(
+  layer: { x: number; y: number; width: number; height: number },
+  size: { width: number; height: number },
+): string {
+  if (layer.width >= size.width * 0.9 && layer.height >= size.height * 0.9) return 'a sangre, ocupa todo el lienzo';
   const pick = (value: number) => (value < 1 / 3 ? 0 : value < 2 / 3 ? 1 : 2);
-  const x = ['a la izquierda', 'centrado', 'a la derecha'][pick((layer.x + layer.width / 2) / W)]!;
-  const y = ['arriba', 'en el centro', 'abajo'][pick((layer.y + layer.height / 2) / H)]!;
+  const x = ['a la izquierda', 'centrado', 'a la derecha'][pick((layer.x + layer.width / 2) / size.width)]!;
+  const y = ['arriba', 'en el centro', 'abajo'][pick((layer.y + layer.height / 2) / size.height)]!;
   return `${y}, ${x}`;
 }
 
@@ -77,7 +82,7 @@ function analysisOf(draft: PostDraft, document: ContentDocumentInput, theme: The
     summary,
     layers: first.slice(0, 20).map((layer) => ({
       role: roleOf(layer.id, layer.type),
-      position: positionOf(layer),
+      position: positionOf(layer, document.canvas),
       description: (layer.type === 'text' ? layer.text : (layer.name ?? '')).trim().slice(0, 300),
     })),
     typography: hasText
@@ -93,7 +98,9 @@ function analysisOf(draft: PostDraft, document: ContentDocumentInput, theme: The
         ]
       : [],
     colors,
-    logo: { position: 'none' as const },
+    logo: all.some((layer) => layer.type === 'logo')
+      ? { position: 'top-center' as const }
+      : { position: 'none' as const },
     photo: { type: draft.photo, treatment: '' },
     tone: { description: draft.caption.slice(0, 400), samples: [] },
     recurrence: { count: 1, reviewed: 1 },
@@ -103,12 +110,14 @@ function analysisOf(draft: PostDraft, document: ContentDocumentInput, theme: The
 }
 
 function documentOf(draft: PostDraft, theme: Theme): ContentDocumentInput {
+  // Las historias van en 9:16 (1080 × 1920); publicaciones y carruseles, en 4:5.
+  const story = draft.format === 'story';
   return {
     schemaVersion: DOCUMENT_SCHEMA_VERSION,
     canvas: {
-      aspectRatio: '4:5',
-      width: W,
-      height: H,
+      aspectRatio: story ? '9:16' : '4:5',
+      width: story ? STORY_W : W,
+      height: story ? STORY_H : H,
       backgroundColor:
         draft.background === 'accent' ? theme.accent : draft.background === 'light' ? theme.light : theme.dark,
     },
@@ -125,14 +134,14 @@ function documentOf(draft: PostDraft, theme: Theme): ContentDocumentInput {
   };
 }
 
-/** Archivo de entrega de las publicaciones y carruseles de un juego, con el tema de la marca. */
-export function buildPublications(set: CatalogSet, theme: Theme) {
+/** Archivo de entrega de unas plantillas de diseño (publicaciones, carruseles o historias). */
+function designFile(set: CatalogSet, theme: Theme, drafts: PostDraft[], what: string) {
   return {
     format: TEMPLATES_DELIVERY_FORMAT,
     version: TEMPLATES_DELIVERY_VERSION,
     source: 'manual' as const,
-    note: `Catálogo de plantillas · juego «${set.name}» (${set.id})`,
-    templates: set.posts(theme).map((draft) => {
+    note: `Catálogo de plantillas · juego «${set.name}» (${set.id})${what}`,
+    templates: drafts.map((draft) => {
       const document = documentOf(draft, theme);
       return {
         key: draft.key,
@@ -145,6 +154,20 @@ export function buildPublications(set: CatalogSet, theme: Theme) {
       };
     }),
   };
+}
+
+/** Archivo de entrega de las publicaciones y carruseles de un juego, con el tema de la marca. */
+export function buildPublications(set: CatalogSet, theme: Theme) {
+  return designFile(set, theme, set.posts(theme), '');
+}
+
+/**
+ * Archivo de entrega de las historias (9:16) de un juego, o null si no trae.
+ * Va aparte de las publicaciones: cada entrega admite como mucho 12 plantillas.
+ */
+export function buildStories(set: CatalogSet, theme: Theme) {
+  const drafts = set.stories?.(theme) ?? [];
+  return drafts.length > 0 ? designFile(set, theme, drafts, ' · historias') : null;
 }
 
 /** Archivo de entrega de las plantillas de reel de un juego, con el tema de la marca. */

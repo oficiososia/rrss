@@ -39,6 +39,11 @@ export const themeSchema = z
     /** Familia de los titulares y del texto. */
     headline: family,
     body: family,
+    /**
+     * Logotipo de la marca: un recurso de su biblioteca (el primero de `visual.logoAssetIds`).
+     * Solo lo usan las plantillas de historia; sin logotipo, esas plantillas salen sin él.
+     */
+    logo: z.string().uuid().optional(),
   })
   .strict();
 export type Theme = z.infer<typeof themeSchema>;
@@ -109,9 +114,11 @@ export function themeFromProfile(
 ): Theme {
   const colors = (profile?.visual.colors ?? []).map((c) => c.hex.toUpperCase());
   const fonts = (profile?.visual.fonts ?? []).map((f) => f.family);
+  const logo = profile?.visual.logoAssetIds?.[0];
   const typography = {
     headline: fonts[0] ?? NEUTRAL_THEME.headline,
     body: fonts[1] ?? fonts[0] ?? NEUTRAL_THEME.body,
+    ...(logo ? { logo } : {}),
   };
   // Sin colores en el perfil no hay nada que repartir: el tema neutro, tal cual.
   if (colors.length === 0) return themeSchema.parse({ ...NEUTRAL_THEME, ...typography, ...overrides });

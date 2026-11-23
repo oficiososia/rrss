@@ -189,6 +189,12 @@ npm run agencia -- cargar-catalogo - restaurante --perfil perfil.json
   Para aceptar estos documentos la base de datos necesita la migración `20270103010000`. Las plantillas
   ya entregadas con el marcador antiguo (una forma llamada «… (sustituir)») siguen valiendo: la
   aplicación las convierte en marcos al leerlas.
+- **Historias (9:16).** El juego `restaurante` trae además 5 plantillas de historia (`agency/catalogo/historias.ts`):
+  «Tapa del día», «Tapas de la semana», «Dos tapas», «Menú del día» y «Menú del día con foto». Van en su propio
+  archivo (`historias.json`) y en una segunda llamada a `deliver_design_templates`, porque cada entrega admite 12
+  plantillas como mucho. Nada que leer en los 250 px de arriba ni en los 340 px de abajo. Llevan el **logotipo** de
+  la marca si su perfil lo tiene (el primero de `visual.logoAssetIds`; un tema puede fijar otro con `"logo": "<id>"`);
+  sin logotipo salen sin él. Vistas previas con fotos de verdad: `tests/layout/historias.spec.ts` (`HISTORIAS_VISTAS`).
 - Por qué estas plantillas: `docs/plantillas-competencia.md`. El formato de las de reel:
   `docs/editor-reels.md`, sección 9.
 

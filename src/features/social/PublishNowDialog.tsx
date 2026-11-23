@@ -89,7 +89,7 @@ export function PublishNowDialog({
       ? publishableExportsOf(media.data, item.id, item.current_version, item.format)
       : null;
   const existing = pub?.media_asset_ids ?? [];
-  const exportable = item?.format === 'post' || item?.format === 'carousel';
+  const exportable = item?.format === 'post' || item?.format === 'carousel' || item?.format === 'story';
   let assetIds: string[] = forcedAssets ?? [];
   if (assetIds.length === 0 && exportable) assetIds = exported?.map((a) => a.id) ?? [];
   if (assetIds.length === 0 && item && item.format === 'reel') assetIds = existing;
@@ -113,7 +113,7 @@ export function PublishNowDialog({
     else if (!accountId) blocker = HOLD_REASON_TEXT.no_account;
     else if (assetIds.length === 0 && !needsExport)
       blocker =
-        item.format === 'post'
+        item.format === 'post' || item.format === 'story'
           ? `Falta la imagen de la versión ${item.current_version}. Abre la pieza en el editor y publícala desde allí («Publicar o compartir»): se prepara sola.`
           : item.format === 'carousel'
             ? `Faltan las imágenes de las páginas de la versión ${item.current_version}. Abre la pieza en el editor y publícala desde allí («Publicar o compartir»): se preparan solas.`
