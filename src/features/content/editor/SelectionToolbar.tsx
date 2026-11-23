@@ -365,7 +365,8 @@ export function SelectionToolbar({
         <Tool
           icon={Replace}
           label="Sustituir"
-          showLabel="always"
+          // En el móvil, solo el icono: con el texto, «⋯» ya no cabía a la vista.
+          showLabel
           title="Sustituir la foto (se conservan el marco y los efectos)"
           testId="bar-replace-photo"
           onClick={() => onPickPhoto(single.id)}

@@ -124,6 +124,7 @@ import { activeLayers, activePageIndex, editorReducer, initEditor, type EditorAc
 import { AddStickerSelect } from './editor/panels/AddStickerSelect';
 import { newImageLayer, newLogoLayer, newShapeLayer, newTextLayer } from './editor/layers';
 import { MultiSelectionPanel } from './editor/panels/ArrangeControls';
+import { BrandPhotos } from './editor/panels/BrandPhotos';
 import { CropDialog } from './editor/panels/CropDialog';
 import { PointMenu } from './editor/PointMenu';
 import { selectionMenuItems } from './editor/selectionMenu';
@@ -164,8 +165,6 @@ import { cn } from '@/lib/utils';
 const CanvasView = lazy(() => import('./editor/canvas/KonvaCanvas'));
 // El editor de reels (piezas de formato reel), aparte: solo se descarga al abrir una.
 const ReelEditor = lazy(() => import('@/features/reels/editor/ReelEditor').then((m) => ({ default: m.ReelEditor })));
-// El panel de fotos de la biblioteca (carpetas, buscador, subir), también aparte: solo al abrir su pestaña.
-const PhotoPanel = lazy(() => import('@/features/library/PhotoPanel').then((m) => ({ default: m.PhotoPanel })));
 // El copiloto por voz, también aparte: solo se descarga al pulsar «Dictar».
 const VoiceCopilot = lazy(() => import('./copilot/VoiceCopilot').then((m) => ({ default: m.VoiceCopilot })));
 
@@ -1892,15 +1891,6 @@ function Editor({
                   >
                     Diseño
                   </TabsTrigger>
-                  {!readOnly && (
-                    <TabsTrigger
-                      value="photos"
-                      className="px-2.5 max-lg:min-h-[2.75rem]"
-                      onClick={() => setSheetOpen(true)}
-                    >
-                      Fotos
-                    </TabsTrigger>
-                  )}
                   <TabsTrigger
                     value="layers"
                     className="px-2.5 max-lg:min-h-[2.75rem]"
@@ -1988,23 +1978,27 @@ function Editor({
                           : undefined
                       }
                     />
+                    {/* Sin nada elegido, o con un hueco vacío elegido, las fotos de la marca están ahí mismo. */}
+                    {!readOnly && (selected === null || isEmptyFrame(selected)) && (
+                      <BrandPhotos
+                        hint={
+                          selected
+                            ? 'Toca una foto para ponerla en este hueco.'
+                            : 'Toca una foto para ponerla en el diseño, o arrástrala al lienzo o a un hueco.'
+                        }
+                        onPick={(asset) => {
+                          placePhoto(
+                            { id: asset.id, name: asset.file_name, width: asset.width, height: asset.height },
+                            selected ? { frameId: selected.id } : {},
+                          );
+                          // En el móvil la hoja tapa medio lienzo: se cierra para ver cómo ha quedado.
+                          setSheetOpen(false);
+                        }}
+                      />
+                    )}
                   </>
                 )}
               </TabsContent>
-              {!readOnly && (
-                // Las fotos de la marca a mano, sin tapar el diseño: tocar una la pone (en el hueco vacío, si lo
-                // hay) y también se puede arrastrar al lienzo o a un marco concreto.
-                <TabsContent value="photos" className="h-full pt-3 max-lg:h-[36dvh]" data-testid="editor-photos">
-                  <Suspense fallback={<Spinner label="Cargando las fotos…" />}>
-                    <PhotoPanel
-                      className="h-full"
-                      onPick={(asset) =>
-                        placePhoto({ id: asset.id, name: asset.file_name, width: asset.width, height: asset.height })
-                      }
-                    />
-                  </Suspense>
-                </TabsContent>
-              )}
               <TabsContent value="layers" className="pt-4">
                 <LayersPanel layers={layers} selectedIds={state.selectedIds} readOnly={readOnly} dispatch={dispatch} />
               </TabsContent>

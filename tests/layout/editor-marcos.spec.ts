@@ -145,9 +145,11 @@ test('móvil 375 px: tocar el hueco pone la foto y la barra de acciones queda a 
   expect(bar.x + bar.width).toBeLessThanOrEqual(375);
   const frameBottom = (await at(page, 0, 663)).y;
   expect(bar.y).toBeGreaterThanOrEqual(frameBottom);
-  // Botones para el dedo.
+  // Botones para el dedo, y todos a la vista (también «⋯», el último): nada queda cortado por la derecha.
   const replace = (await page.getByTestId('bar-replace-photo').boundingBox())!;
   expect(replace.height).toBeGreaterThanOrEqual(40);
+  const more = (await page.getByTestId('bar-more').boundingBox())!;
+  expect(more.x + more.width).toBeLessThanOrEqual(bar.x + bar.width + 1);
   await shot(page, 'barra-foto-movil');
 
   // Con un texto elegido, la barra cambia a lo del texto.
@@ -155,7 +157,9 @@ test('móvil 375 px: tocar el hueco pone la foto y la barra de acciones queda a 
   await page.mouse.click(title.x, title.y);
   await expect(page.getByTestId('bar-size-up')).toBeVisible();
   await page.getByTestId('bar-size-up').click();
-  await barInsideCanvas(page);
+  const textBar = await barInsideCanvas(page);
+  const textMore = (await page.getByTestId('bar-more').boundingBox())!;
+  expect(textMore.x + textMore.width).toBeLessThanOrEqual(textBar.x + textBar.width + 1);
   await shot(page, 'barra-texto-movil');
   expect((await draftLayers(page)).find((l) => l.id === 'titulo')).toMatchObject({ type: 'text' });
 
@@ -208,23 +212,38 @@ test('el botón derecho abre el menú de lo elegido (duplicar, orden, bloquear�
   await expect(page.getByRole('tab', { name: 'Capas (4)' })).toBeVisible();
 });
 
-test('móvil 375 px: la pestaña «Fotos» enseña las fotos de la marca y tocar una rellena el hueco', async ({ page }) => {
+test('móvil 375 px: «Diseño» tiene las fotos de la marca a mano y tocar una rellena el hueco', async ({ page }) => {
   await open(page, 'titular', { width: 375, height: 812 });
-  await page.getByRole('tab', { name: 'Fotos' }).click();
-  const panel = page.getByTestId('photo-panel');
-  await expect(panel).toBeVisible();
-  // Las cinco pestañas caben (la fila se desliza si hace falta) sin mover la página.
+  await page.getByRole('tab', { name: 'Diseño' }).click();
+  const photos = page.getByTestId('editor-photos');
+  await expect(photos.getByTestId('photo-panel')).toBeVisible();
+  // La hoja se desplaza por dentro; la página, no.
   expect((await pageScroll(page)).horizontal).toBeLessThanOrEqual(0);
   expect((await pageScroll(page)).vertical).toBeLessThanOrEqual(0);
-  await panel.getByTestId('photo-panel-item').first().click();
+  await shot(page, 'fotos-movil');
+  await photos.getByTestId('photo-panel-item').first().click();
   const layers = await draftLayers(page);
   expect(layers.find((l) => l.id === 'foto')!.source).toMatchObject({ kind: 'asset' });
   expect(layers).toHaveLength(3);
-  await shot(page, 'fotos-movil');
-  // El lienzo sigue entero por encima de la hoja.
+  // Al poner la foto la hoja se cierra: el lienzo se ve entero, con la barra de la foto.
+  await expect(page.getByTestId('editor-panel-scroll')).toBeHidden();
+  await expect(page.getByTestId('bar-replace-photo')).toBeVisible();
   const stage = (await page.getByTestId('editor-stage').boundingBox())!;
-  const sheet = (await page.getByTestId('editor-panels').boundingBox())!;
-  expect(stage.y + stage.height).toBeLessThanOrEqual(sheet.y + 1);
+  expect(stage.width).toBeGreaterThan(375 * 0.5);
+  await shot(page, 'fotos-movil-puesta');
+});
+
+test('escritorio: las cuatro pestañas del panel caben a la vista y las fotos de la marca salen sin elegir nada', async ({
+  page,
+}) => {
+  await open(page, 'titular', { width: 1366, height: 768 });
+  const panels = (await page.getByTestId('editor-panels').boundingBox())!;
+  for (const name of ['Diseño', /Capas/, 'Publicación', 'Marca']) {
+    const tab = (await page.getByRole('tab', { name }).boundingBox())!;
+    expect(tab.x + tab.width).toBeLessThanOrEqual(panels.x + panels.width);
+  }
+  await expect(page.getByTestId('editor-photos').getByTestId('photo-panel-item').first()).toBeVisible();
+  await shot(page, 'fotos-escritorio');
 });
 
 test('«Publicar o compartir» reúne ver, descargar y publicar, y cabe en el móvil', async ({ page }) => {

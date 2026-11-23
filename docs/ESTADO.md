@@ -1148,7 +1148,9 @@ no su aspecto.
   misma pestaña), Ctrl+D, Ctrl+A, pegar una imagen del portapapeles y soltar archivos sobre el
   lienzo (se suben a la biblioteca), rueda del ratón para acercar hacia el cursor, Espacio para
   arrastrar la vista, bloquear y agrupar. El panel de fotos de la biblioteca (`PhotoPanel`) está
-  conectado como pestaña «Fotos»: tocar una foto la pone y se puede arrastrar a un marco.
+  conectado dentro de «Diseño» («Fotos de la marca», sin nada elegido o con un hueco vacío
+  elegido): tocar una foto la pone y se puede arrastrar a un marco. No es una pestaña más: con
+  cinco, «Marca» dejaba de verse en el panel de escritorio.
 - **Migración** `20270103010000_editor_frames_drafts.sql` (vuelta atrás en `supabase/rollbacks/`):
   las plantillas aceptan el documento v6 y se crea `content_drafts` con RLS (solo los propios, y
   solo donde se edita), `save_content_draft()` y el disparador que borra el borrador al guardar una
