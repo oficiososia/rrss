@@ -193,23 +193,28 @@ describe('copiloto por teclado: sin micrófono', () => {
     expect(mocks.request).not.toHaveBeenCalled();
   });
 
-  it('con el aviso de voz sin aceptar, el campo de texto ya funciona y no se escucha nada', async () => {
+  it('para escribir no sale el aviso de voz: solo al pulsar el micrófono, y sin aceptarlo no se escucha', async () => {
     withSpeech();
     const host = makeHost();
     renderCopilot({ host });
-    expect(screen.getByTestId('copilot-voice-notice')).toHaveTextContent('Google');
-    // El aviso es una franja compacta: el texto, «No volver a mostrar» y el botón; el campo de texto está debajo.
-    expect(screen.getByTestId('copilot-voice-notice-ok')).toHaveTextContent('Entendido, dictar');
-    expect(screen.getByLabelText('No volver a mostrar')).toBe(screen.getByTestId('copilot-voice-notice-hide'));
-    expect(screen.getByRole('link', { name: 'Política de privacidad' })).toBeInTheDocument();
+    // Al abrir: ni aviso ni micrófono abierto; el campo de texto funciona.
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
     expect(input()).toBeEnabled();
     await order('deshaz');
     await lastOrder('nothing');
     expect(host.history).toHaveBeenCalledWith('undo');
-    // El aviso sigue ahí y el dictado no ha empezado.
-    expect(screen.getByTestId('copilot-voice-notice')).toBeInTheDocument();
-    expect(screen.queryByTestId('copilot-mic')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
     expect(starts).not.toHaveBeenCalled();
+    // Al pulsar el micrófono por primera vez: el aviso, compacto, y todavía sin escuchar.
+    expect(screen.getByTestId('copilot-mic')).toHaveTextContent('Dictar');
+    await userEvent.click(screen.getByTestId('copilot-mic'));
+    expect(screen.getByTestId('copilot-voice-notice')).toHaveTextContent('Google');
+    expect(screen.getByTestId('copilot-voice-notice-ok')).toHaveTextContent('Entendido, dictar');
+    expect(screen.getByLabelText('No volver a mostrar')).toBe(screen.getByTestId('copilot-voice-notice-hide'));
+    expect(screen.getByRole('link', { name: 'Política de privacidad' })).toBeInTheDocument();
+    expect(starts).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
+    expect(starts).toHaveBeenCalledTimes(1);
   });
 
   it('con el transcriptor disponible sale el selector de motor y su aviso nombra a OpenAI', async () => {
@@ -222,30 +227,33 @@ describe('copiloto por teclado: sin micrófono', () => {
       'Transcriptor (OpenAI)',
       'Dictado del navegador',
     ]);
-    // Por defecto, el transcriptor: su aviso dice adónde va el audio.
+    // Por defecto, el transcriptor; su aviso (al pulsar el micrófono) dice adónde va el audio.
     expect(selector).toHaveValue('transcriber');
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
+    expect(screen.getByTestId('copilot-mic')).toHaveTextContent('Pulsar para hablar');
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     const notice = screen.getByTestId('copilot-voice-notice');
     expect(notice).toHaveTextContent('OpenAI');
     expect(notice).toHaveTextContent('cada dictado cuenta para el cupo');
     expect(notice).not.toHaveTextContent('Google');
-    // Al cambiar de motor, el aviso es el del otro (no vale haber leído uno para el otro).
+    // Al cambiar de motor se cierra; el aviso del otro es el suyo (no vale haber leído uno para el otro).
     await userEvent.selectOptions(selector, 'browser');
+    expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     expect(screen.getByTestId('copilot-voice-notice')).toHaveTextContent('Google');
     expect(screen.getByTestId('copilot-voice-notice')).not.toHaveTextContent('OpenAI');
     expect(starts).not.toHaveBeenCalled();
-    // Aceptado el del transcriptor: micrófono de «pulsar para hablar», sin escuchar de seguido.
     await userEvent.selectOptions(selector, 'transcriber');
-    await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
-    expect(screen.getByTestId('copilot-mic')).toHaveTextContent('Pulsar para hablar');
-    expect(screen.getByTestId('copilot-voice-status')).toHaveTextContent('Pulsa para hablar o escribe la orden.');
+    expect(screen.getByTestId('copilot-voice-status')).toHaveTextContent('Escribe la orden o pulsa para hablar.');
     expect(starts).not.toHaveBeenCalled();
   });
 
-  it('solo con el transcriptor (sin dictado del navegador) no hay selector y el aviso es el suyo', () => {
+  it('solo con el transcriptor (sin dictado del navegador) no hay selector y el aviso es el suyo', async () => {
     mocks.transcriberConfigured = true;
     mocks.canRecord = true;
     const first = renderCopilot();
     expect(screen.queryByTestId('copilot-voice-engine')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
     expect(screen.getByTestId('copilot-voice-notice')).toHaveTextContent('OpenAI');
     expect(first.onApply).not.toHaveBeenCalled();
   });

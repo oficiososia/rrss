@@ -150,6 +150,8 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
   await expect(page.getByTestId('copilot-open')).toHaveText('Copiloto');
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
+  await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
+  await page.getByTestId('copilot-mic').click();
   await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
   await page.getByTestId('copilot-voice-notice-ok').click();
   await expect(page.getByTestId('copilot-panel')).toBeVisible();
@@ -245,6 +247,8 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   await page.getByTestId('create-content-submit').click();
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
+  await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
+  await page.getByTestId('copilot-mic').click();
   await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
   await page.getByTestId('copilot-voice-notice-ok').click();
   await page.waitForFunction(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true);
@@ -272,8 +276,8 @@ test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y d
   await s.context.addInitScript(SPEECH_FAKE);
   await piezaNueva(page, 'Órdenes por teclado');
   await page.getByTestId('copilot-open').click();
-  // El aviso de voz sigue sin aceptar: el campo de texto ya funciona y no se escucha nada.
-  await expect(page.getByTestId('copilot-voice-notice')).toContainText('Google');
+  // Para escribir no hace falta el aviso de voz: no sale, y no se escucha nada.
+  await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
   const antes = await generacionesCopiloto(orgA);
 
   // Orden escrita que no es de las frecuentes: la interpreta la IA y se aplica.
@@ -301,8 +305,8 @@ test('una orden escrita va a la IA y «deshaz», escrito, se resuelve sin IA y d
   // Tres órdenes y una sola llamada a la IA.
   expect(await generacionesCopiloto(orgA)).toBe(antes + 1);
 
-  // No se ha aceptado el aviso: el dictado no ha llegado a empezar.
-  await expect(page.getByTestId('copilot-voice-notice')).toBeVisible();
+  // No se ha pulsado el micrófono: ni aviso ni dictado.
+  await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
   expect(await page.evaluate(() => (globalThis as unknown as { __escuchando?: boolean }).__escuchando === true)).toBe(false);
   sinErrores(s);
   await s.context.close();
@@ -409,6 +413,13 @@ test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta 
   await expect(plan).toContainText('Buscar en la biblioteca hasta 3 fotos de «boletus»');
   await expect(plan).toContainText(FOTO);
   await expect(plan).toContainText('en el centro');
+  // Sobre un fondo creado con IA las fotos van recortadas por defecto (la IA simulada no lo pide): la tarjeta
+  // lo dice y trae el interruptor marcado. Aquí se desmarca: este caso es el camino sin recorte.
+  const recortar = plan.getByTestId('copilot-plan-cutout');
+  await expect(recortar).toBeChecked();
+  await expect(plan).toContainText(/recortadas?, sin su fondo/);
+  await recortar.uncheck();
+  await expect(plan).toContainText(/enteras?, con su fondo/);
   await expect(plan).toContainText('Poner el titular «Menú de otoño»');
   await expect(plan.getByTestId('copilot-plan-cost')).toContainText('Coste máximo: 0,02 créditos');
   await expect(plan.getByTestId('copilot-plan-confirm')).toBeEnabled();

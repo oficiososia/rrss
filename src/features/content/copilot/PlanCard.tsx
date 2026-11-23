@@ -58,9 +58,11 @@ export interface PlanCardProps {
   /** Abre el selector de fotos de la biblioteca para añadir una al plan. */
   onPick: () => void;
   onRemovePhoto: (id: string) => void;
+  /** El interruptor «Recortar las fotos»: recortadas (sin su fondo) o enteras. Solo cambia algo antes del «sí». */
+  onCutoutChange: (cutout: boolean) => void;
 }
 
-export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto }: PlanCardProps) {
+export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, onCutoutChange }: PlanCardProps) {
   const { plan, photos, phase } = pending;
   const known = phase === 'preparing' ? undefined : photos.length;
   const steps = describePlan(plan, known);
@@ -136,6 +138,31 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto }
               Elegir fotos ({photos.length} de {Math.max(target, photos.length)})
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Recortadas (lo normal sobre una imagen de fondo) o enteras: se decide aquí, antes del «sí». */}
+      {plan.placement && plan.canCutout && (
+        <div className="space-y-0.5">
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={plan.placement.cutout}
+              disabled={!ready}
+              aria-describedby="copilot-plan-cutout-hint"
+              onChange={(event) => onCutoutChange(event.target.checked)}
+              data-testid="copilot-plan-cutout"
+            />
+            Recortar las fotos (quitarles su fondo)
+          </label>
+          <p id="copilot-plan-cutout-hint" className="pl-[1.375rem] text-xs text-muted" data-testid="copilot-plan-cutout-hint">
+            {plan.placement.cutout
+              ? 'Se colocan recortadas, sin su fondo. Si ya hay un recorte de una foto en la biblioteca, se usa ese. Desmárcalo para colocarlas enteras.'
+              : plan.overImage
+                ? 'Se colocan enteras: sobre el fondo se verá un rectángulo con el fondo de cada foto.'
+                : 'Se colocan enteras, tal como están en la biblioteca.'}
+          </p>
         </div>
       )}
 

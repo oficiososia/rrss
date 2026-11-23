@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1276,3 +1276,31 @@ De la auditoría de UX (hallazgos F9, H11, H20, H31 y H32) y de dos defectos de 
 - **Sin probar**: nada contra un proveedor real (las sondas, con respuestas HTTP simuladas); las e2e
   01, 06 y 08, adaptadas al selector único **sin ejecutar** (necesitan el Supabase local); un
   navegador y un móvil reales fuera del banco.
+
+## Ajustes del copiloto tras la prueba real (rama `f48/copiloto-ajustes`, 23/11/2026)
+
+Prueba del dueño en staging con `gpt-6-luna` por la interfaz: las órdenes con corrección y dos
+acciones ya llegan enteras y con nota; el plan «menú de otoño» generó un buen fondo sin comida.
+Cuatro defectos corregidos (detalle en `docs/copiloto-voz.md`, apartados 9 bis y 15):
+
+1. **Fotos sin recortar.** Antes: el recorte dependía de que el modelo mandase `cutout: true`.
+   Ahora: si las fotos van sobre una imagen de fondo (generada, propia o ya puesta), el recorte es
+   lo predeterminado, lo fija el navegador y la tarjeta lo dice («recortadas, sin su fondo»), con
+   una casilla para colocarlas enteras. Un recorte ya guardado de esa foto se reutiliza.
+2. **Colocación y legibilidad.** Antes: el título centrado quedó ilegible sobre el fondo nuevo y
+   las fotos se fueron al tercio inferior. Ahora: se mide el tono del fondo generado (medio y por
+   zonas) y los textos que ya había se revisan con la regla de contraste de siempre; si no se
+   puede medir, llevan un contorno del color contrario. Los textos del centro dejan sitio a las
+   fotos (los de titular suben, el resto baja) y las fotos van centradas en el hueco libre.
+3. **El panel tapaba el lienzo.** Ahora es estrecho y acoplado (columna junto al lienzo en
+   escritorio, hoja baja en móvil), con el historial plegado y sin scroll de página.
+4. **El aviso «Antes de dictar»** sale solo al pulsar el micrófono por primera vez; para escribir
+   no hace falta, y el micrófono ya no se abre solo al abrir el copiloto.
+
+- **Probado:** unitarias, componentes, base de datos y banco en seco; maquetación en Chromium real
+  (`tests/layout/copiloto-lienzo.spec.ts`, a 375, 1024 y 1366 px).
+- **Sin probar:** nada de esto con IA real ni en staging. En particular, que el navegador pueda
+  leer los píxeles del fondo generado (depende de las cabeceras CORS del almacenamiento; si no
+  puede, sale el contorno), el recorte de fotos reales dentro de un plan y el aspecto final de la
+  composición. La e2e 19 está adaptada y sin ejecutar en local.
+- **Para staging:** solo la aplicación (sin migraciones ni funciones).

@@ -48,7 +48,33 @@ export interface Backdrop {
   /** Contraste mínimo exigido sobre este fondo. */
   required: number;
   kind: 'color' | 'photo';
+  /** Si es una foto de la biblioteca, cuál (para saber si su tono se ha podido medir). */
+  assetId?: string;
 }
+
+/**
+ * Tono de una foto POR ZONAS: una rejilla de luminancias medias. Sirve para
+ * saber qué hay justo debajo de un texto (un fondo puede ser claro arriba y
+ * oscuro abajo), no solo el tono medio de la foto entera.
+ */
+export interface ToneGrid {
+  columns: number;
+  rows: number;
+  /** Luminancia relativa (0–1) media de cada celda, por filas: de arriba abajo y de izquierda a derecha. */
+  cells: readonly number[];
+  /** Ancho entre alto de la imagen medida. */
+  aspect: number;
+}
+
+/** Lo que se mide de una foto: su tono medio y su tono por zonas. */
+export interface MeasuredTone {
+  /** Gris (#RRGGBB) con la luminancia media de la foto. */
+  mean: string;
+  grid: ToneGrid;
+}
+
+/** Celdas por lado de la rejilla de tonos. */
+export const TONE_GRID_SIZE = 8;
 
 /**
  * Contraste exigido: WCAG AA para texto grande (3:1) sobre un color liso o una
@@ -75,6 +101,7 @@ export function backdropAt(
   below: readonly Layer[],
   box: { x: number; y: number; width: number; height: number },
   tones?: ReadonlyMap<string, string>,
+  zones?: ReadonlyMap<string, ToneGrid>,
 ): Backdrop {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
@@ -82,9 +109,17 @@ export function backdropAt(
     const layer = below[i]!;
     if (!shown(layer) || !containsPoint(layer, cx, cy)) continue;
     if (layer.type === 'image') {
-      const tone = layer.source.kind === 'asset' ? tones?.get(layer.source.assetId) : undefined;
+      const assetId = layer.source.kind === 'asset' ? layer.source.assetId : undefined;
+      // Primero, el tono de la zona de la foto que cae bajo la caja; si no se sabe, el medio de la foto.
+      const grid = assetId ? zones?.get(assetId) : undefined;
+      const tone = (grid ? toneUnder(grid, layer, box) : null) ?? (assetId ? tones?.get(assetId) : undefined);
       const blurred = (layer.blur ?? 0) >= BLURRED_FROM;
-      return { hex: tone ?? ASSUMED_PHOTO_TONE, kind: 'photo', required: requiredOver('photo', Boolean(tone), blurred) };
+      return {
+        hex: tone ?? ASSUMED_PHOTO_TONE,
+        kind: 'photo',
+        required: requiredOver('photo', Boolean(tone), blurred),
+        ...(assetId ? { assetId } : {}),
+      };
     }
     if (layer.type === 'shape' && layer.fill) {
       return { hex: layer.fill.toUpperCase(), kind: 'color', required: requiredOver('color', true, false) };
@@ -146,7 +181,11 @@ export function toneOfPalette(palette: readonly { hex: string; weight?: number }
     sum += relativeLuminance(rgb) * weight;
   }
   if (total <= 0) return null;
-  const luminance = sum / total;
+  return toneOfLuminance(sum / total);
+}
+
+/** Gris (#RRGGBB) con esa luminancia relativa (0–1): basta para calcular el contraste. */
+export function toneOfLuminance(luminance: number): string {
   // Luminancia lineal → canal sRGB.
   const channel = luminance <= 0.0031308 ? luminance * 12.92 : 1.055 * luminance ** (1 / 2.4) - 0.055;
   const value = Math.round(Math.min(1, Math.max(0, channel)) * 255)
@@ -154,4 +193,75 @@ export function toneOfPalette(palette: readonly { hex: string; weight?: number }
     .padStart(2, '0')
     .toUpperCase();
   return `#${value}${value}${value}`;
+}
+
+/**
+ * Mide el tono de una imagen a partir de sus píxeles RGBA (los de un `canvas`
+ * reducido): el tono medio y una rejilla de `size` × `size` zonas. Los píxeles
+ * transparentes no cuentan; una zona sin píxeles opacos toma el tono medio.
+ * `null` si no hay nada que medir.
+ */
+export function measureTone(pixels: ArrayLike<number>, width: number, height: number, size = TONE_GRID_SIZE): MeasuredTone | null {
+  if (width < 1 || height < 1 || pixels.length < width * height * 4) return null;
+  const columns = Math.min(size, width);
+  const rows = Math.min(size, height);
+  const sums = new Array<number>(columns * rows).fill(0);
+  const counts = new Array<number>(columns * rows).fill(0);
+  let total = 0;
+  let count = 0;
+  for (let y = 0; y < height; y += 1) {
+    const row = Math.min(rows - 1, Math.floor((y * rows) / height));
+    for (let x = 0; x < width; x += 1) {
+      const at = (y * width + x) * 4;
+      if (pixels[at + 3]! < 128) continue;
+      const luminance = relativeLuminance({ r: pixels[at]!, g: pixels[at + 1]!, b: pixels[at + 2]! });
+      const cell = row * columns + Math.min(columns - 1, Math.floor((x * columns) / width));
+      sums[cell]! += luminance;
+      counts[cell]! += 1;
+      total += luminance;
+      count += 1;
+    }
+  }
+  if (count === 0) return null;
+  const mean = total / count;
+  return {
+    mean: toneOfLuminance(mean),
+    grid: { columns, rows, cells: sums.map((sum, cell) => (counts[cell]! > 0 ? sum / counts[cell]! : mean)), aspect: width / height },
+  };
+}
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+/**
+ * Tono de la zona de una foto que queda debajo de una caja. Solo cuando se
+ * sabe qué parte de la foto se ve en la capa: llenando su caja (`cover`),
+ * centrada y sin recortar, girar ni voltear (lo normal en una foto de fondo).
+ * En cualquier otro caso, `null`: quien llama usa el tono medio.
+ */
+export function toneUnder(grid: ToneGrid, layer: Layer, box: { x: number; y: number; width: number; height: number }): string | null {
+  if (layer.type !== 'image' || layer.width <= 0 || layer.height <= 0 || grid.cells.length < grid.columns * grid.rows) return null;
+  if (layer.fit !== 'cover' || layer.crop || layer.turn || layer.flipX || layer.flipY || layer.straighten || layer.rotation) return null;
+  // Con `cover`, de la foto se ve entero el lado que ajusta y una franja centrada del otro.
+  const layerAspect = layer.width / layer.height;
+  const seenX = Math.min(1, layerAspect / grid.aspect);
+  const seenY = Math.min(1, grid.aspect / layerAspect);
+  const offCenter = Math.abs((layer.focus?.x ?? 0.5) - 0.5) > 0.01 || Math.abs((layer.focus?.y ?? 0.5) - 0.5) > 0.01;
+  if (offCenter && (seenX < 0.98 || seenY < 0.98)) return null;
+  const u = (x: number) => (1 - seenX) / 2 + clamp01((x - layer.x) / layer.width) * seenX;
+  const v = (y: number) => (1 - seenY) / 2 + clamp01((y - layer.y) / layer.height) * seenY;
+  const span = (from: number, to: number, cells: number): [number, number] => {
+    const first = Math.min(cells - 1, Math.floor(from * cells));
+    return [first, Math.max(first, Math.min(cells - 1, Math.ceil(to * cells) - 1))];
+  };
+  const [firstColumn, lastColumn] = span(u(box.x), u(box.x + box.width), grid.columns);
+  const [firstRow, lastRow] = span(v(box.y), v(box.y + box.height), grid.rows);
+  let sum = 0;
+  let count = 0;
+  for (let row = firstRow; row <= lastRow; row += 1) {
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      sum += grid.cells[row * grid.columns + column]!;
+      count += 1;
+    }
+  }
+  return count > 0 ? toneOfLuminance(sum / count) : null;
 }

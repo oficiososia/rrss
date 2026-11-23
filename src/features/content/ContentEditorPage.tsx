@@ -1808,7 +1808,15 @@ function Editor({
         </Suspense>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 lg:grid lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-3">
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col gap-2 lg:grid lg:gap-3',
+          // Con el copiloto abierto, su panel va en una columna estrecha junto al lienzo (que sigue a la vista).
+          !readOnly && voiceCopilot && copilotOpen
+            ? 'lg:grid-cols-[17rem_minmax(0,1fr)_21rem]'
+            : 'lg:grid-cols-[minmax(0,1fr)_21rem]',
+        )}
+      >
         <section
           ref={canvasRef}
           tabIndex={0}
@@ -1895,6 +1903,8 @@ function Editor({
             />
           )}
         </section>
+        {/* Hueco del copiloto (se pinta aquí por un portal): columna izquierda en escritorio, hoja baja en móvil. */}
+        <div data-copilot-dock className="min-h-0 empty:hidden max-lg:max-h-[30vh] max-lg:shrink-0 lg:order-first" />
 
         <aside
           className="flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-surface px-3 pt-1 lg:shrink lg:px-4"

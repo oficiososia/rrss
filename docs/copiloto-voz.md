@@ -304,7 +304,9 @@ blanco o carbón sobre granate.
    tono medio si el editor ya lo ha calculado (la paleta dominante de la
    imagen principal, la misma del verificador); una foto recién puesta, sin
    analizar, se supone media oscura (`#5A5A5A`), lo habitual en fotos de
-   ambiente.
+   ambiente. La excepción es el fondo que genera un plan (apartado 15): su
+   tono se mide antes de aplicarlo, el medio y por zonas, y si no se puede
+   medir no se supone nada: los textos llevan un contorno.
 3. **Contraste.** WCAG AA para texto grande (3:1; todos los textos del
    copiloto lo son) sobre un color liso o una foto difuminada (desenfoque ≥ 20)
    de tono conocido; 4,5:1 sobre una foto nítida o de tono desconocido, porque
@@ -511,15 +513,33 @@ Notas:
 El coste no decide nada (la diferencia entre el más barato y el más caro de los
 recomendados es de unos 20 USD al mes): decide la calidad medida y la UE.
 
-## 9 bis. Aviso previo al dictado (`f32/operacion-gasto`)
+## 9 bis. Aviso previo al dictado y panel acoplado
 
-Antes del primer dictado, el copiloto muestra un aviso: el audio lo procesa el servicio de voz del
-navegador (Google o Microsoft, según el navegador), no la aplicación, que solo recibe el texto. Con
-«No volver a mostrar» (`localStorage`, `rrss.voiceNoticeHidden`) no vuelve a salir. Hasta pulsar
-«Entendido, dictar» no se escucha nada. Desde el 22/11/2026 es una franja de una línea (texto más
-corto, casilla y botón), para no quitarle sitio al lienzo; el campo para escribir la orden sigue
-debajo y funciona sin aceptar el aviso. Probado en componentes y en la e2e 19 (sin ejecutar en
-local).
+**Aviso (desde `f32/operacion-gasto`; cambia en `f48/copiloto-ajustes`, 23/11/2026).** Dice adónde va
+el audio con el motor elegido (apartado 12). Con «No volver a mostrar» (`localStorage`,
+`rrss.voiceNoticeHidden` y `rrss.voiceNoticeHidden.transcriber`) no vuelve a salir.
+
+- **Antes:** salía al abrir el copiloto y ocupaba media cabecera aunque solo se fuera a escribir; con
+  el dictado del navegador, al aceptarlo (o si ya estaba aceptado) se empezaba a escuchar nada más
+  abrir.
+- **Ahora:** al abrir no hay aviso ni se escucha nada. El aviso sale **al pulsar el micrófono por
+  primera vez** («Dictar» o «Pulsar para hablar»), con «Entendido, dictar» y «Ahora no»; para escribir
+  órdenes no hace falta. El micrófono solo se abre al pulsarlo, también si el aviso ya estaba
+  aceptado.
+
+**Panel (`f48/copiloto-ajustes`).**
+
+- **Antes:** el panel era un bloque a todo el ancho encima del lienzo: a 1024×768 tapaba la pieza
+  mientras se daban órdenes y no se veía el resultado hasta cerrarlo.
+- **Ahora:** panel estrecho acoplado: una columna de 17 rem a la izquierda del lienzo en escritorio y
+  una hoja baja (30 % del alto como mucho) entre el lienzo y los paneles en móvil. El lienzo sigue
+  siempre a la vista; el panel hace scroll por dentro y la página no. Se ve la última orden; las
+  anteriores quedan plegadas en «Órdenes anteriores (n)». El editor deja el hueco
+  (`data-copilot-dock` en `ContentEditorPage.tsx`) y el copiloto se pinta en él con un portal.
+
+Probado en componentes y, la maquetación, en Chromium real sin Supabase
+(`tests/layout/copiloto-lienzo.spec.ts`: a 375, 1024 y 1366 px el lienzo sigue visible, el panel no
+lo pisa y no hay scroll de página). La e2e 19 está adaptada y sin ejecutar en local.
 
 ## 10. Ruta de herramientas: prompt, caché y razonamiento
 
@@ -882,14 +902,19 @@ orden ──► IA del copiloto ──► operaciones con pasos de plan (generat
 - **Un solo paso de deshacer.** Con los recursos ya creados, el plan se convierte en
   operaciones normales (`composePlan`): `set_background_image` con el fondo generado,
   una `add_image` por foto con la caja que le da `layoutBoxes` (apply.ts admite ahora una caja,
-  un giro y una sombra en `add_image`) y los `add_text`. Se aplican juntas (`replace`): un
-  Ctrl+Z lo quita todo.
+  un giro y una sombra en `add_image`) y los `add_text`; delante de todo, un `move_layer` con
+  su sitio exacto por cada texto que se aparta para dejar el centro a las fotos. Se aplican
+  juntas (`replace`): un Ctrl+Z lo quita todo.
 - **Disposiciones** (`layoutBoxes`, de 1 a 6 fotos): `center` (una grande, o varias agrupadas
   y algo solapadas), `row` (fila), `grid` (rejilla con aire) y `fan` (abanico: giradas hasta
-  ±15°, solapadas y las de los lados más bajas). Las fotos van en la franja más alta que dejan
-  libre los textos y el logotipo (los de la orden y los que ya había), por debajo de ellos y
-  sin salirse del lienzo; cada una, entera y con sus proporciones. Si no queda una franja con
-  sitio, se colocan igualmente y se avisa.
+  ±15°, solapadas y las de los lados más bajas). Las fotos van en el hueco libre más grande
+  que dejan los textos y el logotipo (los de la orden y los que ya había), centradas en él,
+  por debajo de ellos y sin salirse del lienzo; cada una, entera y con sus proporciones. Con
+  `center` el grupo va al centro del lienzo si cabe. Antes, los textos que ya había en el
+  centro se apartan (ver «Ajustes tras la prueba real», más abajo). Si no queda una franja
+  con sitio, se colocan igualmente y se avisa.
+- **Recorte.** Sobre una imagen de fondo las fotos van recortadas por defecto, lo pida o no el
+  modelo; la tarjeta lo dice y deja colocarlas enteras con un interruptor (más abajo).
 - **Si falta material.** Si la búsqueda no encuentra nada («No encuentro fotos de “platos de
   otoño” en la biblioteca»), la tarjeta lo dice y ofrece elegirlas con el selector de fotos de
   siempre («Elegir fotos», una cada vez, hasta el tope); el plan sigue con las elegidas. Las
@@ -911,15 +936,136 @@ orden ──► IA del copiloto ──► operaciones con pasos de plan (generat
   recortada o ya había un recorte suyo en la biblioteca, se usa ese y no se crea otro. La foto
   original no se toca.
 
+### Ajustes tras la prueba real en staging (23/11/2026, `f48/copiloto-ajustes`)
+
+El dueño probó en staging «haz el menú de otoño: crea un fondo que parezca otoñal y pon dos
+platos de carne en el centro» sobre una pieza 1:1 que ya tenía un título «Menú de otoño»
+blanco y centrado. La tarjeta salió bien, encontró las dos fotos y el fondo generado era bueno.
+Salieron dos defectos. Los dos están corregidos en el navegador; **las instrucciones del
+servidor no se han tocado**.
+
+**Defecto 1: las fotos se colocaron sin recortar.**
+
+- **Antes:** el recorte dependía de que el modelo mandase `cutout: true`. Mandó `cutout: false`
+  y quedaron dos rectángulos con el fondo amarillo de cada foto encima del fondo otoñal.
+- **Ahora:** lo decide `buildPlan`, no el modelo. Si las fotos van **sobre una imagen de
+  fondo** —la que crea el plan (`generate_background` con IA de imagen disponible), la foto de
+  fondo que pone la propia orden (`set_background_image`) o la que ya tenía la página (una
+  imagen que cubre todo el lienzo)— el plan lleva `cutout: true` diga lo que diga la respuesta.
+  **Sin imagen de fondo** (lienzo de color liso, incluido el color liso que se propone cuando no
+  hay IA de imagen) **se respeta lo que diga el modelo**. Si aquí no se puede quitar el fondo,
+  se colocan enteras y se dice, como antes.
+- La tarjeta lo dice en el paso («Colocar las fotos en fila, **recortadas, sin su fondo**, con
+  sombra suave») y trae un interruptor, una casilla con su etiqueta: **«Recortar las fotos
+  (quitarles su fondo)»** (`data-testid="copilot-plan-cutout"`). Sale siempre que hay fotos que
+  colocar y aquí se puede recortar; viene marcada cuando toca. Cambiarla antes del «sí»
+  (`setPlanCutout`) cambia el texto del paso («…enteras, con su fondo…»), quita o pone el paso
+  «Quitar el fondo a N fotos», el resumen del coste y el tope de pasos, y lo que se ejecuta:
+  desmarcada, no se llama al recorte. Con el plan en marcha ya no se puede cambiar.
+- **Recortes guardados.** No cambia: `planHost.ts` mira si la foto ya es un recorte o si hay en
+  la biblioteca una edición suya que es solo «la foto sin fondo»; si la hay, usa esa y no
+  recorta de nuevo (ni la cuenta como creada).
+
+**Defecto 2: colocación y legibilidad.** Se pidió «en el centro» y las fotos quedaron en fila
+en el tercio inferior; y el título blanco quedó casi ilegible sobre el fondo nuevo, claro.
+
+*(a) El tono del fondo generado se mide, no se supone.*
+
+- **Antes:** una foto recién puesta se suponía «media oscura» (`#5A5A5A`). Contra ese gris el
+  blanco «pasaba» (6,9:1), así que el título no se tocó; el fondo real era claro.
+- **Ahora:** al terminar de generarse el fondo, y mientras se recortan las fotos, el editor lo
+  mide (`measureTone` de `planHost.ts`, `readImageTone`): carga la imagen con CORS, la dibuja
+  reducida (64 px de lado mayor) en un `canvas` y saca su **tono medio** y una **rejilla de
+  8 × 8 zonas** (`measureTone` de `legibility.ts`; luminancia media de cada zona). Leer no
+  gasta. Se pasa a `applyCopilotOperations` por `imageTones` (medio) e `imageZones` (zonas).
+  Bajo cada texto cuenta **la zona del fondo que tiene debajo** (`toneUnder`), no la media de
+  toda la foto: un fondo puede ser claro arriba y oscuro abajo. Las zonas solo se usan cuando
+  se sabe qué parte de la foto se ve en la capa (llenando su caja, centrada, sin recortar,
+  girar ni voltear: lo normal en un fondo); si no, vale el tono medio.
+- Con ese tono, la regla es la del apartado 7 y ya estaba en `apply.ts` (`keepTextsReadable`):
+  al cambiar el fondo —imagen generada o color liso— cada texto que ya había y deja de leerse
+  (4,5:1 sobre una foto nítida, 3:1 sobre un color o una foto difuminada) pasa al color de la
+  marca por su uso, al más legible de la marca o a blanco o negro, y se dice en la lista de
+  cambios («Texto «Menú de otoño» en #1F3A5F para que se lea sobre el fondo»). Los textos que
+  añade la propia orden eligen su color con el mismo tono. No se tocan los bloqueados.
+- **Si no se puede medir** (el navegador no deja leer los píxeles por CORS, la imagen no carga
+  en 8 s, falla la firma de la dirección o no hay `canvas`): **no se adivina**. Los textos que
+  quedan sobre ese fondo conservan su color y llevan un **contorno fino del color contrario**
+  (blanco o negro; 6 % del cuerpo de letra), y se dice («Texto «…» con contorno: no he podido
+  medir el tono del fondo nuevo y así se lee sobre cualquiera»). Se eligió el contorno y no la
+  sombra porque es lo único que se lee con cualquier fondo en los dos sentidos (texto claro
+  sobre fondo claro y oscuro sobre oscuro; la sombra estándar es oscura y no ayuda a un texto
+  oscuro) y porque no cambia ni el color ni el sitio del texto. No se pone a los bloqueados ni
+  a los que ya llevan contorno o fondo de etiqueta. Es el contorno normal de un texto: se
+  quita o se cambia desde el panel de la capa, y entra en el mismo paso de deshacer.
+
+*(b) Las fotos no pisan los textos, y los textos dejan el centro a las fotos.*
+
+- **Antes:** las fotos iban a «la franja libre más alta». Con un título centrado, las dos
+  franjas (encima y debajo) son pequeñas y están a un lado del centro.
+- **Ahora:** `layoutBoxes` recibe lo ocupado (los textos que había, los que añade la orden y
+  el logotipo) y coloca las fotos en **el hueco libre más grande** (a igualdad, el de abajo),
+  centradas en él a lo ancho y a lo alto. Antes de eso, `clearCenter` aparta los textos que ya
+  había, con una regla fija:
+  1. Cuentan los textos de la página, visibles, cuyo **centro cae en el tercio central** del
+     alto del lienzo. Los que añade la propia orden van donde ella dice; los logotipos no se
+     mueven; lo que la orden ya mueve o quita, tampoco.
+  2. Los **de título** (en negrita, peso 600 o más: como los títulos y subtítulos del copiloto)
+     **suben** a la franja superior, en su orden, desde el margen (5 % del lado menor). El
+     **resto baja** a la inferior, en su orden, hasta el margen. Solo cambia su altura.
+  3. No pisan otro texto ni el logotipo: se apilan con un 2 % de aire.
+  4. Una capa **bloqueada no se mueve**, y tampoco una que no quepa fuera del tercio central:
+     las fotos van en el hueco que quede y se avisa («El texto «…» está bloqueado y no se
+     mueve: las fotos van en el hueco que queda.»).
+  5. Solo se aparta algo **si con ello el hueco para las fotos crece**; si no, todo se queda
+     como estaba.
+  Se dice en la lista de cambios: «He subido el título «Menú de otoño» para dejar el centro a
+  las fotos» (o «He bajado el texto «…»…»). El texto recolocado se revisa otra vez contra lo
+  que tiene debajo en su sitio nuevo.
+
+*(c) Por qué «en el centro» acabó como una fila en el tercio inferior.*
+
+- **Causa.** Dos cosas. El modelo mandó `layout: 'row'` aunque la orden decía «en el centro»
+  (el paso decía «Colocar las fotos en fila»): eso es del modelo y **no se corrige en el
+  navegador**. Y la fila cayó abajo porque el título centrado partía el lienzo en dos franjas
+  y se eligió la de debajo; con `center` habría caído en el mismo sitio.
+- **Ahora:** con el título ya arriba, el hueco libre es casi todo el lienzo. Una **fila**
+  (o una rejilla o un abanico) queda **centrada en ese hueco**. Con **`center`**, el grupo va
+  al **centro exacto del lienzo**: tal cual si cabe ahí sin salirse del hueco; encogido lo
+  justo si con eso cabe sin perder más de un 30 % del alto del hueco; y si no (el hueco queda
+  a un lado del centro, por ejemplo con un texto bloqueado en medio), centrado en el hueco.
+
+Todo sigue entrando como **un solo paso de deshacer**: el movimiento del título, el fondo, el
+cambio de color o el contorno, las fotos y los textos van en la misma sustitución.
+
 **Probado** (todo con simulados): el servidor (`tests/db/ia-copiloto-herramientas.test.ts`:
 las tres herramientas, el saneado y la compatibilidad), `plan.ts` (`plan.test.ts`), la tarjeta
 y la ejecución (`copilotoPlan.test.tsx`), lo que el editor ofrece al plan (`planHost.test.ts`,
 `src/features/ai/generarYEsperar.test.tsx`), el editor entero con Supabase y `ai-media`
 simulados (`src/features/content/editorCopilotoPlan.test.tsx`: precio, fondo, foto real,
-titular y un solo «Deshacer») y el banco (apartado 13).
+titular y un solo «Deshacer») y el banco (apartado 13). De los ajustes del 23/11/2026:
+`plan.test.ts` (recorte por defecto con fondo generado, con foto de fondo ya puesta y sin
+imagen de fondo; el interruptor; `layoutBoxes` con zonas ocupadas; `clearCenter`; la medición
+del tono; y el caso real completo: pieza 1:1 con título blanco centrado, fondo claro y dos
+fotos, con el título legible, sin pisarse y en una sola sustitución), `copilotoPlan.test.tsx`
+(la tarjeta, el interruptor, el recorte guardado que no se repite, el título que sube y cambia
+de color, y el contorno cuando no se puede medir), `planHost.test.ts` (`readImageTone` con una
+imagen y un `canvas` de mentira: bien, con error, sin `canvas`, lienzo «manchado», sin
+respuesta y cancelado), `apply.herramientas.test.ts` y los casos `plan` del banco (los
+recortes cuentan como pasos aunque la respuesta diga `cutout: false`).
 
-**Sin probar:** nada de esto contra servicios reales. Ni que un modelo real devuelva los pasos
-de plan como se espera, ni la calidad de un fondo generado de verdad (ni si respeta «sin
-comida»), ni el recorte de fotos reales dentro de un plan, ni cómo queda la composición a la
-vista (no se ha abierto en un navegador: sin servidor local). La e2e 19 tiene un caso nuevo
-con el camino feliz (sin recorte), **escrito y sin ejecutar en local**.
+**Probado de verdad:** una sola orden, por el dueño, en staging el 23/11/2026 (la de arriba):
+la tarjeta, la búsqueda de las dos fotos y un fondo generado bueno. De ahí salieron los dos
+defectos.
+
+**Sin probar:** los ajustes del 23/11/2026 contra servicios reales ni en un navegador. En
+concreto: que el navegador pueda leer los píxeles del fondo generado desde el almacenamiento
+de staging o de producción (depende de las cabeceras CORS de cada almacenamiento; si no puede,
+sale el contorno, que es el camino previsto, pero no se ha visto); cómo queda a la vista el
+título recolocado y recoloreado sobre un fondo real; el recorte de fotos reales dentro de un
+plan (calidad y tiempos); y que un modelo real devuelva `center` cuando se dice «en el
+centro» (en la prueba mandó `row`). El tono por zonas es una media: sobre un fondo con mucho
+contraste dentro de la misma zona un texto puede seguir leyéndose mal. Sigue sin probarse que
+un modelo real respete «sin comida» en el fondo. La e2e 19 tiene el caso del camino feliz;
+ahora comprueba que el interruptor viene marcado y lo desmarca (sigue siendo el camino sin
+recorte), **escrito y sin ejecutar en local**.

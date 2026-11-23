@@ -865,3 +865,92 @@ describe('copiloto: fotos con el sitio que les da un plan', () => {
     expect(result.skipped).toEqual(Array(3).fill('Ese paso es de un plan: hay que confirmarlo en el copiloto.'));
   });
 });
+
+describe('copiloto: lo que un plan añade para que los textos se lean y no queden pisados', () => {
+  /** Una rejilla de tonos de 1 × 2: la mitad de arriba de la foto y la de abajo. */
+  const zones = (top: number, bottom: number) => new Map([[PHOTO, { columns: 1, rows: 2, cells: [top, bottom], aspect: 0.8 }]]);
+
+  it('`move_layer` con sitio exacto lleva la capa ahí (sin salirse) y lo cuenta con las palabras del plan', () => {
+    const document = menu();
+    const result = apply(document, [
+      { ...op({ op: 'move_layer', target: 'titulo' }), place: { x: 108, y: 54, width: 864, height: 100 }, say: 'He subido el título «Menú del día» para dejar el centro a las fotos' },
+    ]);
+    expect(layerOf(result, 'titulo')).toMatchObject({ x: 108, y: 54, width: 864, height: 100 });
+    expect(result.changes).toEqual(['He subido el título «Menú del día» para dejar el centro a las fotos']);
+    expect(result.touched).toEqual(['titulo']);
+    // Sin frase del plan, la de siempre; fuera del lienzo, al borde.
+    const plain = apply(document, [{ ...op({ op: 'move_layer', target: 'titulo' }), place: { x: -50, y: 5000, width: 864, height: 100 } }]);
+    expect(layerOf(plain, 'titulo')).toMatchObject({ x: 0, y: 1250 });
+    expect(plain.changes).toEqual(['Movida «Menú del día»']);
+    // Bloqueada, o ya en ese sitio: no se toca y se dice.
+    const { x, y, width, height } = layerOf(document, 'titulo');
+    expect(apply(lock(document, 'titulo'), [{ ...op({ op: 'move_layer', target: 'titulo' }), place: { x, y: 54, width, height } }]).skipped).toEqual(['«Menú del día» está bloqueada.']);
+    expect(apply(document, [{ ...op({ op: 'move_layer', target: 'titulo' }), place: { x, y, width, height } }]).skipped).toEqual(['«Menú del día» ya está ahí.']);
+  });
+
+  it('un texto recolocado por un plan se revisa en su sitio nuevo: si ahí no se lee, cambia de color', () => {
+    // El fondo, oscuro arriba y claro abajo; el título blanco baja a la zona clara.
+    const down = { ...op({ op: 'move_layer', target: 'titulo' }), place: { x: 108, y: 1100, width: 864, height: 100 } };
+    const result = apply(menu(), [down], { imageZones: zones(0.02, 0.8) });
+    expect(layerOf<TextLayer>(result, 'titulo')).toMatchObject({ y: 1100, color: '#A3122A' });
+    expect(result.changes).toEqual(['Movida «Menú del día»', 'Texto «Menú del día» en #A3122A para que se lea sobre el fondo']);
+    // Si donde queda se sigue leyendo, no se toca el color; y un «sube el título» normal tampoco lo revisa.
+    const up = { ...op({ op: 'move_layer', target: 'titulo' }), place: { x: 108, y: 54, width: 864, height: 100 } };
+    expect(layerOf<TextLayer>(apply(menu(), [up], { imageZones: zones(0.02, 0.8) }), 'titulo').color).toBe('#FFFFFF');
+    const spoken = apply(menu(), [op({ op: 'move_layer', target: 'titulo', position: 'bottom' })], { imageZones: zones(0.02, 0.8) });
+    expect(layerOf<TextLayer>(spoken, 'titulo').color).toBe('#FFFFFF');
+  });
+
+  it('con el tono por zonas, cada texto se mira contra lo que tiene debajo: al cambiar el fondo y al poner uno nuevo', () => {
+    const NEW = '55555555-5555-4555-8555-555555555555';
+    const extra = {
+      assets: new Map([...context.assets, [NEW, { id: NEW, name: 'fondo nuevo.png', width: 1024, height: 1280 }]]),
+      // Claro arriba (donde está el título blanco), oscuro abajo.
+      imageZones: new Map([[NEW, { columns: 1, rows: 2, cells: [0.8, 0.02], aspect: 0.8 }]]),
+      imageTones: new Map([[NEW, '#A8A8A8']]),
+    };
+    const result = apply(menu(), [
+      op({ op: 'set_background_image', assetId: NEW }),
+      op({ op: 'add_text', text: 'Solo hoy', style: 'subtitle', position: 'bottom' }),
+    ], extra);
+    // El título, sobre la zona clara, deja de ser blanco; el texto nuevo, sobre la oscura, no es el granate de la marca.
+    expect(layerOf<TextLayer>(result, 'titulo').color).toBe('#A3122A');
+    const added = result.document.pages[0]!.layers.find((layer) => layer.type === 'text' && layer.text === 'Solo hoy') as TextLayer;
+    expect(added.color).toBe('#F4E9D8');
+    expect(result.changes).toEqual(['Foto de fondo «fondo nuevo.png»', 'Texto «Menú del día» en #A3122A para que se lea sobre el fondo', 'Texto «Solo hoy»']);
+  });
+
+  it('sobre una foto cuyo tono no se ha podido medir no se adivina: los textos conservan su color y llevan contorno', () => {
+    const NEW = '55555555-5555-4555-8555-555555555555';
+    const extra = {
+      assets: new Map([...context.assets, [NEW, { id: NEW, name: 'fondo nuevo.png', width: 1024, height: 1280 }]]),
+      unmeasuredImages: new Set([NEW]),
+    };
+    const dark = withPageLayers(menu(), 0, menu().pages[0]!.layers.map((layer) => (layer.id === 'titulo' ? { ...layer, color: '#111111' } : layer)));
+    const result = apply(dark, [
+      op({ op: 'set_background_image', assetId: NEW }),
+      op({ op: 'add_text', text: 'Solo hoy', style: 'subtitle', position: 'bottom' }),
+    ], extra);
+    // Antes: al suponer la foto «media oscura», el título oscuro se habría pasado a claro a ciegas.
+    const title = layerOf<TextLayer>(result, 'titulo');
+    expect(title).toMatchObject({ color: '#111111', outline: { color: '#FFFFFF', width: 5 } });
+    const added = result.document.pages[0]!.layers.find((layer) => layer.type === 'text' && layer.text === 'Solo hoy') as TextLayer;
+    expect(added.outline).toEqual({ color: added.color === '#FFFFFF' ? '#000000' : expect.any(String), width: Math.max(2, Math.round(added.fontSize * 0.06)) });
+    expect(result.changes).toEqual([
+      'Foto de fondo «fondo nuevo.png»',
+      'Texto «Solo hoy»',
+      'Texto «Menú del día» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
+      'Texto «Solo hoy» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
+    ]);
+    // No se tocan los bloqueados, los ocultos ni los que ya llevan contorno o fondo de etiqueta.
+    const kept = (change: Partial<TextLayer>) =>
+      withPageLayers(menu(), 0, menu().pages[0]!.layers.map((layer) => (layer.id === 'titulo' ? ({ ...layer, ...change } as TextLayer) : layer)));
+    for (const change of [{ locked: true }, { visible: false }, { outline: { color: '#00FF00', width: 3 } }, { background: { color: '#000000', opacity: 1, padding: 8, radius: 0 } }] as Partial<TextLayer>[]) {
+      const same = apply(kept(change), [op({ op: 'set_background_image', assetId: NEW })], extra);
+      expect(layerOf<TextLayer>(same, 'titulo'), JSON.stringify(change)).toEqual(layerOf(kept(change), 'titulo'));
+      expect(same.changes).toEqual(['Foto de fondo «fondo nuevo.png»']);
+    }
+    // Y sin nada sin medir, ningún contorno.
+    expect(layerOf<TextLayer>(apply(menu(), [op({ op: 'set_background_image', assetId: NEW })], { assets: extra.assets }), 'titulo').outline).toBeUndefined();
+  });
+});

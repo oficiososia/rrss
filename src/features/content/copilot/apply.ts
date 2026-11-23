@@ -28,7 +28,7 @@ import { FILTER_LABEL } from '../editor/imageEffects/filters';
 import { flipPhoto, largestCrop, orientedSize, turnQuarter } from '../editor/imageEffects/imageEdit';
 import { DEFAULT_SHADOW } from '../editor/imageEffects/shadowDefaults';
 import { FALLBACK_FONTS, layerLabel, newImageLayer, newLayerId, newLogoLayer, newShapeLayer } from '../editor/layers';
-import { backdropAt, contrastOf, legibleTextColor, type CopilotBrandColor } from './legibility';
+import { backdropAt, contrastOf, legibleTextColor, type CopilotBrandColor, type ToneGrid } from './legibility';
 import {
   COPILOT_MOVE_STEP,
   COPILOT_SIZE_STEP,
@@ -78,6 +78,19 @@ export interface CopilotApplyContext {
    * foto sin tono conocido se supone media oscura (ver legibility.ts).
    */
   imageTones?: ReadonlyMap<string, string>;
+  /**
+   * Tono POR ZONAS de las fotos medidas así (el fondo que acaba de generar un
+   * plan), por id de recurso: manda sobre el tono medio para saber qué hay
+   * justo debajo de cada texto.
+   */
+  imageZones?: ReadonlyMap<string, ToneGrid>;
+  /**
+   * Fotos cuyo tono se ha intentado medir y NO se ha podido (el navegador no
+   * deja leer sus píxeles, o la carga ha fallado). No se adivina: los textos
+   * que quedan encima conservan su color y llevan un contorno del color
+   * contrario, que se lee sobre cualquier fondo; y se dice.
+   */
+  unmeasuredImages?: ReadonlySet<string>;
   /** Página sobre la que actúa (la activa del editor). Por omisión, la primera. */
   pageIndex?: number;
   /** Capas elegidas en el editor: «esta foto» sin decir cuál. */
@@ -104,8 +117,13 @@ export interface CopilotPlacement {
   shadow?: boolean;
 }
 
-/** Operación del copiloto; `add_image` puede traer el sitio que le ha dado un plan. */
-export type PlacedCopilotOperation = CopilotOperation & { place?: CopilotPlacement };
+/**
+ * Operación del copiloto con lo que le añade un plan (plan.ts) y no viaja por
+ * el contrato del servidor: en `add_image`, el sitio de la foto; en
+ * `move_layer`, el sitio exacto al que va la capa (de `place` solo cuentan `x`
+ * e `y`) y, en `say`, cómo se cuenta ese cambio a la persona.
+ */
+export type PlacedCopilotOperation = CopilotOperation & { place?: CopilotPlacement; say?: string };
 
 /** Flujo del editor que una orden pide abrir para una foto («quita el fondo», «modo retrato»…). */
 export interface CopilotFlowRequest {
@@ -383,12 +401,17 @@ export function applyCopilotOperations(
   /**
    * Tras cambiar el fondo, los textos sin color dictado en esta orden que ya no
    * se leen pasan a un color legible (el de la marca por su uso, el más legible
-   * de la marca, o blanco o negro). Los bloqueados no se tocan.
+   * de la marca, o blanco o negro). Los bloqueados no se tocan. Con `only`, se
+   * revisan solo esas capas (las que un plan acaba de recolocar). Sobre una
+   * foto cuyo tono no se ha podido medir no se adivina el color: esos textos
+   * llevan contorno (`outlineOverUnmeasured`).
    */
-  const keepTextsReadable = () => {
+  const keepTextsReadable = (only?: ReadonlySet<string>) => {
     document.layers.forEach((layer, index) => {
       if (layer.type !== 'text' || layer.locked || dictatedColor.has(layer.id)) return;
-      const backdrop = backdropAt(document.canvas, document.layers.slice(0, index), layer, context.imageTones);
+      if (only && !only.has(layer.id)) return;
+      const backdrop = backdropAt(document.canvas, document.layers.slice(0, index), layer, context.imageTones, context.imageZones);
+      if (backdrop.assetId && context.unmeasuredImages?.has(backdrop.assetId)) return;
       if (contrastOf(layer.color, backdrop.hex) >= backdrop.required) return;
       const color = legibleTextColor(context.brand.palette, looksHeading(layer), backdrop);
       if (color === layer.color.toUpperCase()) return;
@@ -396,6 +419,27 @@ export function applyCopilotOperations(
       changes.push(`Texto ${layerName(layer)} en ${color} para que se lea sobre el fondo`);
     });
   };
+
+  /**
+   * Respaldo cuando el tono de una foto no se ha podido medir: cada texto que
+   * queda encima (los que había y los nuevos) lleva un contorno fino del color
+   * contrario al suyo, que se lee sobre un fondo claro y sobre uno oscuro. Es
+   * lo que menos cambia el diseño: ni el color ni el sitio del texto. No se
+   * tocan los bloqueados ni los que ya llevan contorno o fondo de etiqueta.
+   */
+  const outlineOverUnmeasured = () => {
+    const unmeasured = context.unmeasuredImages;
+    if (!unmeasured || unmeasured.size === 0) return;
+    document.layers.forEach((layer, index) => {
+      if (layer.type !== 'text' || layer.locked || !layer.visible || layer.outline || layer.background) return;
+      const backdrop = backdropAt(document.canvas, document.layers.slice(0, index), layer);
+      if (!backdrop.assetId || !unmeasured.has(backdrop.assetId)) return;
+      patch(layer, { outline: { color: contrasting(layer.color), width: Math.max(2, Math.round(layer.fontSize * 0.06)) } });
+      changes.push(`Texto ${layerName(layer)} con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera`);
+    });
+  };
+  /** Capas que un plan ha recolocado en esta orden: al final se revisa que sigan leyéndose en su sitio nuevo. */
+  const relocated = new Set<string>();
 
   for (const op of operations) {
     switch (op.op) {
@@ -500,7 +544,13 @@ export function applyCopilotOperations(
           legibleTextColor(
             context.brand.palette,
             isHeading(style),
-            backdropAt(document.canvas, document.layers, { x, y, width: box.width, height: box.height }, context.imageTones),
+            backdropAt(
+              document.canvas,
+              document.layers,
+              { x, y, width: box.width, height: box.height },
+              context.imageTones,
+              context.imageZones,
+            ),
           );
         const layer: TextLayer = {
           id: newLayerId(taken()),
@@ -577,10 +627,16 @@ export function applyCopilotOperations(
         const clampY = (y: number) => Math.round(Math.min(Math.max(y, 0), Math.max(0, canvas.height - layer.height)));
         const clampX = (x: number) => Math.round(Math.min(Math.max(x, 0), Math.max(0, canvas.width - layer.width)));
         const change: LayerPatch = {};
-        if (op.position) change.y = clampY(canvas.height * SLOT[op.position]);
-        else if (op.dy) change.y = clampY(layer.y + op.dy * COPILOT_MOVE_STEP * canvas.height);
-        if (op.align) change.x = xFor(canvas, layer.width, op.align);
-        else if (op.dx) change.x = clampX(layer.x + op.dx * COPILOT_MOVE_STEP * canvas.width);
+        if (op.place) {
+          // Sitio exacto que le da un plan al apartar un texto para dejar sitio a las fotos.
+          change.x = clampX(op.place.x);
+          change.y = clampY(op.place.y);
+        } else {
+          if (op.position) change.y = clampY(canvas.height * SLOT[op.position]);
+          else if (op.dy) change.y = clampY(layer.y + op.dy * COPILOT_MOVE_STEP * canvas.height);
+          if (op.align) change.x = xFor(canvas, layer.width, op.align);
+          else if (op.dx) change.x = clampX(layer.x + op.dx * COPILOT_MOVE_STEP * canvas.width);
+        }
         if ((change.y === undefined || change.y === layer.y) && (change.x === undefined || change.x === layer.x)) {
           skipped.push(
             op.dx || op.dy ? `${layerName(layer)} ya está en el borde.` : `${layerName(layer)} ya está ahí.`,
@@ -588,7 +644,8 @@ export function applyCopilotOperations(
           break;
         }
         patch(layer, change);
-        changes.push(`Movida ${layerName(layer)}`);
+        changes.push(op.say ?? `Movida ${layerName(layer)}`);
+        if (op.place) relocated.add(layer.id);
         break;
       }
       case 'remove_layer': {
@@ -1002,6 +1059,11 @@ export function applyCopilotOperations(
       }
     }
   }
+
+  // Lo que un plan ha recolocado tiene que seguir leyéndose donde ha quedado; y sobre un
+  // fondo cuyo tono no se ha podido medir, los textos llevan su respaldo.
+  if (relocated.size > 0) keepTextsReadable(relocated);
+  outlineOverUnmeasured();
 
   flush();
   // Sin cambios en el documento (solo ir a otra página, abrir un flujo…): el mismo, sin tocar.

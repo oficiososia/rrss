@@ -202,6 +202,11 @@ describe('Editor: orden del copiloto que monta una pieza', () => {
     expect(card).toHaveTextContent('Encontrada: «crema-calabaza.jpg»');
     expect(card).not.toHaveTextContent('plato-inventado.png');
     expect(within(card).getByTestId('copilot-plan-detail')).toHaveTextContent(`${PROMPT}. ${BACKGROUND_PROMPT_SUFFIX}`);
+    // Sobre un fondo generado las fotos irían recortadas aunque la IA no lo pida (`cutout: false`); jsdom no
+    // puede quitar el fondo (no tiene procesos en segundo plano): se dice y no se ofrece el interruptor.
+    expect(card).toHaveTextContent('Aquí no se puede quitar el fondo de las fotos: se colocan tal cual.');
+    expect(card).toHaveTextContent('Colocar la foto en el centro, entera, con su fondo, con sombra suave');
+    expect(within(card).queryByTestId('copilot-plan-cutout')).not.toBeInTheDocument();
     const estimates = fake.callsTo('ai-media', 'function').filter((call) => (call.payload as { action: string }).action === 'image.estimate');
     expect(estimates[0]!.payload).toMatchObject({ brandId: BRAND_ID, input: { prompt: '', aspectRatio: '4:5' } });
     // Nada generado ni cambiado todavía.
@@ -224,6 +229,11 @@ describe('Editor: orden del copiloto que monta una pieza', () => {
     const order = screen.getAllByTestId('copilot-order').find((item) => item.textContent?.includes('crea un fondo'))!;
     expect(order).toHaveAttribute('data-status', 'applied');
     expect(within(order).getByTestId('copilot-notes')).toHaveTextContent('En la biblioteca queda lo creado: el fondo «IA · Mesa de madera.png».');
+    // El tono del fondo nuevo no se puede medir aquí (el almacenamiento simulado no firma direcciones):
+    // no se adivina; el titular lleva un contorno que se lee sobre cualquier fondo, y se dice.
+    expect(within(order).getByTestId('copilot-changes')).toHaveTextContent(
+      'Texto «menú de otoño» con contorno: no he podido medir el tono del fondo nuevo y así se lee sobre cualquiera',
+    );
 
     // Un solo «Deshacer» lo quita todo; el fondo generado sigue en la biblioteca.
     await user.click(screen.getByRole('button', { name: 'Deshacer' }));

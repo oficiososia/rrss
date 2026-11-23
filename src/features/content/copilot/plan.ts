@@ -1,4 +1,4 @@
-import { pageView, type AspectRatio, type Canvas, type ContentDocument } from '../document';
+import { pageView, type AspectRatio, type Canvas, type ContentDocument, type Layer, type PageView } from '../document';
 import {
   applyCopilotOperations,
   type CopilotApplyContext,
@@ -6,7 +6,7 @@ import {
   type CopilotPlacement,
   type PlacedCopilotOperation,
 } from './apply';
-import { colorRole, type CopilotBrandColor } from './legibility';
+import { colorRole, type CopilotBrandColor, type MeasuredTone } from './legibility';
 import {
   COPILOT_MAX_PLAN_PHOTOS,
   COPILOT_PLAN_OPS,
@@ -27,7 +27,9 @@ import {
 //
 // Regla del producto: la IA solo crea el FONDO. Los platos y productos son
 // siempre fotos reales de la biblioteca (recortadas y colocadas encima); nunca
-// se genera comida ni producto.
+// se genera comida ni producto. Por eso, sobre una imagen de fondo las fotos
+// van RECORTADAS por defecto (lo decide `buildPlan`, no la IA) y la tarjeta
+// deja colocarlas enteras con un interruptor (`setPlanCutout`).
 //
 // Este módulo es puro (sin React, sin red): qué plan sale de unas operaciones,
 // cómo se dice, sus topes, dónde va cada foto y en qué operaciones normales
@@ -183,6 +185,14 @@ export interface CopilotPlan {
   /** Fotos que se quieren colocar (lo pedido en las búsquedas, con tope); 0 = las elegidas a mano. */
   wanted: number;
   placement: PlanPlacement | null;
+  /**
+   * ¿Van las fotos sobre una IMAGEN de fondo? (la que crea este plan, la foto de
+   * fondo que pone la orden o la que ya tenía la página). Entonces se recortan
+   * por defecto; sobre un lienzo de color liso se respeta lo que diga la IA.
+   */
+  overImage: boolean;
+  /** ¿Se puede quitar el fondo aquí? Sin ello no se ofrece el interruptor de recorte. */
+  canCutout: boolean;
   sequence: PlanSequenceItem[];
   /** Avisos para la persona (lo que no se hará y por qué). */
   notes: string[];
@@ -199,6 +209,8 @@ export interface PlanEnvironment {
   palette: readonly CopilotBrandColor[];
   /** ¿Se puede quitar el fondo aquí (en el navegador o con el servidor)? */
   canCutout: boolean;
+  /** ¿Tiene ya la página una foto de fondo (una imagen que cubre todo el lienzo)? */
+  backgroundImage?: boolean;
 }
 
 /**
@@ -223,6 +235,13 @@ export interface CopilotPlanHost {
    * en la biblioteca (o la foto ya estaba recortada) y se ha usado ese.
    */
   cutout(photo: CopilotAssetInfo, signal: AbortSignal): Promise<{ asset: CopilotAssetInfo; created: boolean }>;
+  /**
+   * Mide el tono de una imagen de la biblioteca (el fondo recién generado): el
+   * medio y por zonas, para que los textos se lean encima. No gasta. `null` si
+   * no se puede medir (el navegador no deja leer sus píxeles, la carga falla o
+   * tarda demasiado): entonces los textos llevan un contorno y se dice.
+   */
+  measureTone?(image: CopilotAssetInfo, signal: AbortSignal): Promise<MeasuredTone | null>;
 }
 
 /** ¿Queda en el plan algo que confirmar? (un fondo o unas fotos; si no, es una orden normal). */
@@ -300,6 +319,12 @@ export function buildPlan(operations: readonly CopilotOperation[], env: PlanEnvi
 
   // Buscar fotos sin decir cómo colocarlas: en el centro, tal cual.
   if (!placement && searches.length > 0) placement = { layout: 'center', cutout: false, shadow: false };
+  // Sobre una IMAGEN de fondo (la que crea este plan, la foto de fondo que pone la orden o la que
+  // ya tiene la página), las fotos van recortadas: es lo predeterminado, diga lo que diga la IA
+  // (una foto entera encima deja ver un rectángulo con su propio fondo). La persona puede
+  // cambiarlo en la tarjeta. Sobre un lienzo de color liso se respeta lo que diga la IA.
+  const overImage = background?.mode === 'ai' || ownPhotoBackground || env.backgroundImage === true;
+  if (placement && overImage) placement = { ...placement, cutout: true };
   if (placement?.cutout && !env.canCutout) {
     placement = { ...placement, cutout: false };
     notes.push('Aquí no se puede quitar el fondo de las fotos: se colocan tal cual.');
@@ -309,12 +334,26 @@ export function buildPlan(operations: readonly CopilotOperation[], env: PlanEnvi
     COPILOT_MAX_PLAN_PHOTOS,
   );
 
-  const plan: CopilotPlan = { background, searches, wanted, placement, sequence, notes, blockers };
+  const plan: CopilotPlan = { background, searches, wanted, placement, overImage, canCutout: env.canCutout, sequence, notes, blockers };
+  return { ...plan, blockers: stepBlockers(plan) };
+}
+
+/** Por qué no se puede ejecutar un plan por su tamaño (vacío = cabe en el tope de pasos). */
+function stepBlockers(plan: CopilotPlan): string[] {
   const steps = planStepCount(plan);
-  if (steps > PLAN_MAX_STEPS) {
-    blockers.push(`El plan tiene ${steps} pasos y el tope es ${PLAN_MAX_STEPS}: pide menos cosas de una vez.`);
-  }
-  return plan;
+  return steps > PLAN_MAX_STEPS ? [`El plan tiene ${steps} pasos y el tope es ${PLAN_MAX_STEPS}: pide menos cosas de una vez.`] : [];
+}
+
+/**
+ * El interruptor de la tarjeta: recortar las fotos (quitarles su fondo) o
+ * colocarlas enteras. Devuelve el plan con ese cambio (los pasos, su texto y
+ * el tope de pasos se recalculan); el mismo plan si no hay fotos que colocar,
+ * si aquí no se puede recortar o si ya estaba así.
+ */
+export function setPlanCutout(plan: CopilotPlan, cutout: boolean): CopilotPlan {
+  if (!plan.placement || plan.placement.cutout === cutout || (cutout && !plan.canCutout)) return plan;
+  const next: CopilotPlan = { ...plan, placement: { ...plan.placement, cutout } };
+  return { ...next, blockers: stepBlockers(next) };
 }
 
 const operationsOf = planOperations;
@@ -413,10 +452,17 @@ export function describePlan(plan: CopilotPlan, photos?: number): PlanStep[] {
         label: count > 0 ? `Quitar el fondo a ${plural(count, 'foto', 'fotos')}` : 'Quitar el fondo a las fotos',
       });
     }
+    // Cómo van: recortadas (se dice siempre) o, si van sobre una imagen de fondo y se ha pedido dejarlas enteras, también.
+    const one = count === 1;
+    const how = plan.placement.cutout
+      ? `, ${one ? 'recortada' : 'recortadas'}, sin su fondo`
+      : plan.overImage
+        ? `, ${one ? 'entera' : 'enteras'}, con su fondo`
+        : '';
     steps.push({
       id: 'place',
       kind: 'place',
-      label: `Colocar ${count === 1 ? 'la foto' : 'las fotos'} ${LAYOUT_LABEL[plan.placement.layout]}${plan.placement.shadow ? ', con sombra suave' : ''}`,
+      label: `Colocar ${one ? 'la foto' : 'las fotos'} ${LAYOUT_LABEL[plan.placement.layout]}${how}${plan.placement.shadow ? ', con sombra suave' : ''}`,
     });
   }
   operationsOf(plan).forEach((operation, index) => {
@@ -436,8 +482,47 @@ export interface Rect {
 
 /** Margen del lienzo que las fotos de un plan no pisan: el 5 % del lado menor. */
 const marginOf = (canvas: Pick<Canvas, 'width' | 'height'>) => Math.round(Math.min(canvas.width, canvas.height) * 0.05);
-/** Una franja libre vale si tiene al menos este alto (parte del alto del lienzo). */
-const MIN_FREE_BAND = 0.28;
+/** Una franja libre vale si tiene al menos este alto (parte del alto del área). */
+const MIN_FREE_BAND = 0.3;
+/** Aire entre lo ocupado (un texto, el logotipo) y las fotos (parte del alto del área). */
+const BAND_GAP = 0.022;
+
+/**
+ * Con «en el centro», el grupo de fotos se encoge para caber centrado en el
+ * lienzo solo si le queda al menos esta parte del alto del hueco libre.
+ */
+const CENTERED_SHARE = 0.7;
+
+/** El lienzo menos su margen: donde pueden ir las fotos de un plan. */
+export function canvasArea(canvas: Pick<Canvas, 'width' | 'height'>): Rect {
+  const margin = marginOf(canvas);
+  return { x: margin, y: margin, width: canvas.width - margin * 2, height: canvas.height - margin * 2 };
+}
+
+/**
+ * El hueco libre más grande de un área: la franja (a todo el ancho) más alta
+ * entre lo ocupado; a igualdad, la de más abajo (el texto encabeza). `fits` es
+ * false si no queda una franja con sitio: entonces vale el área entera y las
+ * fotos pueden pisar algún texto.
+ */
+function freeBand(area: Rect, occupied: readonly Rect[]): Rect & { fits: boolean } {
+  if (occupied.length === 0) return { ...area, fits: true };
+  const gap = Math.round(area.height * BAND_GAP);
+  const top = area.y;
+  const bottom = area.y + area.height;
+  const taken = occupied
+    .map((rect) => ({ from: Math.max(top, rect.y - gap), to: Math.min(bottom, rect.y + rect.height + gap) }))
+    .filter((band) => band.to > band.from)
+    .sort((a, b) => a.from - b.from);
+  let best = { from: top, to: top };
+  let cursor = top;
+  for (const band of [...taken, { from: bottom, to: bottom }]) {
+    if (band.from > cursor && band.from - cursor >= best.to - best.from - 1) best = { from: cursor, to: band.from };
+    cursor = Math.max(cursor, band.to);
+  }
+  if (best.to - best.from < area.height * MIN_FREE_BAND) return { ...area, fits: false };
+  return { x: area.x, y: best.from, width: area.width, height: best.to - best.from, fits: true };
+}
 
 /**
  * La franja del lienzo que queda libre para las fotos: la más alta entre lo
@@ -446,24 +531,7 @@ const MIN_FREE_BAND = 0.28;
  * las fotos pueden pisar algún texto.
  */
 export function freeArea(canvas: Pick<Canvas, 'width' | 'height'>, occupied: readonly Rect[]): Rect & { fits: boolean } {
-  const margin = marginOf(canvas);
-  const gap = Math.round(canvas.height * 0.02);
-  const top = margin;
-  const bottom = canvas.height - margin;
-  const full = { x: margin, y: top, width: canvas.width - margin * 2, height: bottom - top };
-  const taken = occupied
-    .map((rect) => ({ from: Math.max(top, rect.y - gap), to: Math.min(bottom, rect.y + rect.height + gap) }))
-    .filter((band) => band.to > band.from)
-    .sort((a, b) => a.from - b.from);
-  if (taken.length === 0) return { ...full, fits: true };
-  let best = { from: top, to: top };
-  let cursor = top;
-  for (const band of [...taken, { from: bottom, to: bottom }]) {
-    if (band.from - cursor > best.to - best.from) best = { from: cursor, to: band.from };
-    cursor = Math.max(cursor, band.to);
-  }
-  if (best.to - best.from < canvas.height * MIN_FREE_BAND) return { ...full, fits: false };
-  return { x: full.x, y: best.from, width: full.width, height: best.to - best.from, fits: true };
+  return freeBand(canvasArea(canvas), occupied);
 }
 
 /** Columnas que dan las celdas cuadradas más grandes para `count` fotos en un área. */
@@ -517,10 +585,39 @@ const inset = (area: Rect, ratio: number): Rect => ({
  *  - `fan`: en abanico (giradas y solapadas, las de los lados algo más bajas).
  * Cada caja es cuadrada: la foto se encaja dentro con sus proporciones (apply.ts).
  * Ninguna se sale del área, tampoco girada.
+ *
+ * `occupied`: lo que ya ocupa sitio en el área (los textos que había, los que
+ * añade el propio plan, el logotipo). Las fotos van entonces en el hueco libre
+ * más grande (`freeBand`), sin pisar nada, agrupadas y centradas en ese hueco
+ * a lo ancho y a lo alto; si no queda un hueco con sitio, en el área entera.
+ * Con `center` («en el centro») el grupo va al centro exacto del área —el del
+ * lienzo—: tal cual si cabe ahí sin salirse del hueco, o encogido lo justo si
+ * con eso cabe sin perder más de un 30 % del alto del hueco; si no (el hueco
+ * queda a un lado del centro), se queda centrado en el hueco.
  */
-export function layoutBoxes(area: Rect, count: number, layout: CopilotLayout): CopilotPlacement[] {
+export function layoutBoxes(frame: Rect, count: number, layout: CopilotLayout, occupied: readonly Rect[] = []): CopilotPlacement[] {
   const total = Math.min(Math.max(Math.round(count), 0), COPILOT_MAX_PLAN_PHOTOS);
   if (total === 0) return [];
+  const area: Rect = occupied.length > 0 ? freeBand(frame, occupied) : frame;
+  const boxes = boxesIn(area, total, layout);
+  if (layout !== 'center' || area === frame) return boxes;
+  // «En el centro» es el centro del lienzo. Si el grupo cabe ahí sin salirse del hueco libre, va ahí tal cual.
+  const middle = frame.y + frame.height / 2;
+  const top = Math.min(...boxes.map((box) => box.y));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  const shift = Math.round(middle - (top + bottom) / 2);
+  if (top + shift >= area.y && bottom + shift <= area.y + area.height) {
+    return shift === 0 ? boxes : boxes.map((box) => ({ ...box, y: box.y + shift }));
+  }
+  // Si no cabe, se encoge lo justo para caber centrado, siempre que no pierda demasiado (`CENTERED_SHARE`).
+  const half = Math.min(middle - area.y, area.y + area.height - middle);
+  if (half * 2 >= area.height * CENTERED_SHARE) return boxesIn({ ...area, y: middle - half, height: half * 2 }, total, layout);
+  // Y si ni así (el hueco queda a un lado del centro), el grupo se queda centrado en el hueco.
+  return boxes;
+}
+
+/** Las cajas de una disposición dentro de un área ya libre, centradas en ella. */
+function boxesIn(area: Rect, total: number, layout: CopilotLayout): CopilotPlacement[] {
   if (layout === 'row') return cells(area, total, total, 0.06);
   if (layout === 'grid') return cells(area, total, bestColumns(area, total, 0.06), 0.06);
   if (layout === 'fan') {
@@ -575,10 +672,13 @@ export interface PlanResources {
  * Convierte el plan, con sus recursos ya creados, en operaciones normales del
  * editor, en el orden en que se aplican: el fondo (`set_background_image` o
  * `set_background_color`), una `add_image` por foto con su sitio, y el resto
- * de la orden (titular, subtítulo…). Las fotos van en la franja que dejan
- * libre los textos y el logotipo (los que pone la orden y los que ya había) y
- * por debajo de ellos. Quien llama las aplica de una vez
- * (`applyCopilotOperations`): UN paso de deshacer.
+ * de la orden (titular, subtítulo…). Antes de nada, los textos que ya había
+ * en el centro se apartan para dejárselo a las fotos (`clearCenter`); las fotos
+ * van en el hueco libre más grande que dejan los textos y el logotipo (los que
+ * pone la orden y los que ya había), centradas en él y por debajo de ellos.
+ * Quien llama las aplica de una vez (`applyCopilotOperations`): UN paso de
+ * deshacer. Con el tono del fondo nuevo en el contexto (`imageTones`,
+ * `imageZones`), al aplicar se revisa que los textos se lean encima.
  */
 export function composePlan(
   plan: CopilotPlan,
@@ -605,22 +705,125 @@ export function composePlan(
   const photos = plan.placement ? resources.photos.slice(0, COPILOT_MAX_PLAN_PHOTOS) : [];
   if (photos.length === 0 || !plan.placement) return { operations: base, notes };
 
-  // Cómo queda la página sin las fotos: de ahí sale la franja libre (los textos no dependen de ellas).
-  const preview = applyCopilotOperations(document, base, context);
-  const page = preview.ok
-    ? pageView(preview.document, preview.pageIndex)
-    : pageView(document, context.pageIndex ?? 0);
-  const occupied = page.layers.filter((layer) => (layer.type === 'text' || layer.type === 'logo') && layer.visible);
-  const area = freeArea(page.canvas, occupied);
-  if (!area.fits) notes.push('No queda una franja libre entre los textos: las fotos pueden pisar alguno. Muévelas si hace falta.');
-  const boxes = layoutBoxes(area, photos.length, plan.placement.layout);
+  // Cómo queda la página sin las fotos con unas operaciones: de ahí sale el hueco libre (los textos no dependen de ellas).
+  const settled = (operations: PlacedCopilotOperation[]) => {
+    const preview = applyCopilotOperations(document, operations, context);
+    const page = preview.ok ? pageView(preview.document, preview.pageIndex) : pageView(document, context.pageIndex ?? 0);
+    const occupied = page.layers.filter((layer) => (layer.type === 'text' || layer.type === 'logo') && layer.visible);
+    return { canvas: page.canvas, occupied, free: freeArea(page.canvas, occupied) };
+  };
+  let before = base;
+  let layout = settled(base);
+
+  // 1. Los textos que ya había en el centro se apartan (títulos arriba, el resto abajo), pero solo
+  //    si con ello el hueco para las fotos crece. No si la orden cambia de página o de proporción:
+  //    entonces la página de las fotos no es la de ahora.
+  const samePage = !base.some((operation) => operation.op === 'page' || operation.op === 'set_canvas_ratio');
+  if (samePage) {
+    // Lo que la propia orden mueve o quita va donde ella diga.
+    const ownTargets = new Set(
+      base.flatMap((operation) => ((operation.op === 'move_layer' || operation.op === 'remove_layer') && operation.target ? [operation.target] : [])),
+    );
+    const cleared = clearCenter(pageView(document, context.pageIndex ?? 0), ownTargets);
+    notes.push(...cleared.locked);
+    if (cleared.moves.length > 0) {
+      const moved = settled([...cleared.moves, ...base]);
+      if (moved.free.fits && (!layout.free.fits || moved.free.height > layout.free.height)) {
+        before = [...cleared.moves, ...base];
+        layout = moved;
+        notes.push(...cleared.stuck);
+      }
+    }
+  }
+
+  // 2. Las fotos, en el hueco libre más grande que queda, centradas en él.
+  if (!layout.free.fits) {
+    notes.push('No queda una franja libre entre los textos: las fotos pueden pisar alguno. Muévelas si hace falta.');
+  }
+  const boxes = layoutBoxes(canvasArea(layout.canvas), photos.length, plan.placement.layout, layout.occupied);
   const placed: PlacedCopilotOperation[] = photos.map((photo, index) => ({
     ...copilotOp({ op: 'add_image', assetId: photo.id }),
     place: { ...boxes[index]!, ...(plan.placement!.shadow ? { shadow: true } : {}) },
   }));
   // Donde la orden decía colocarlas. Vayan antes o después, quedan por debajo de los textos (apply.ts).
-  const insertAt = photosAt < 0 ? base.length : photosAt;
-  return { operations: [...base.slice(0, insertAt), ...placed, ...base.slice(insertAt)], notes };
+  const insertAt = before.length - base.length + (photosAt < 0 ? base.length : photosAt);
+  return { operations: [...before.slice(0, insertAt), ...placed, ...before.slice(insertAt)], notes };
+}
+
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+const quoted = (text: string) => `«${text.split('\n')[0]!.slice(0, 40)}»`;
+
+/**
+ * Deja el centro del lienzo a las fotos de un plan. Regla, siempre la misma:
+ *
+ *  - Cuentan los textos que YA había en la página, visibles, cuyo centro cae en
+ *    el tercio central del alto del lienzo. Los que añade la propia orden van
+ *    donde ella dice, y los logotipos no se mueven: las fotos los esquivan.
+ *  - Los de título (en negrita, como los títulos y subtítulos del copiloto)
+ *    SUBEN a la franja superior, en su orden y desde el margen; el resto BAJA a
+ *    la inferior, en su orden y hasta el margen. Solo cambia su altura.
+ *  - Ninguno pisa otro texto ni el logotipo: se apilan con aire entre ellos.
+ *  - Una capa bloqueada no se mueve, y tampoco una que no quepa fuera del tercio
+ *    central: las fotos van en el hueco que quede, y se avisa.
+ *
+ * Devuelve los movimientos (operaciones `move_layer` con su sitio exacto y lo
+ * que se le cuenta a la persona) y los avisos: `locked`, por cada texto
+ * bloqueado que se queda en el centro; `stuck`, por cada uno que no cabe fuera.
+ * Quien llama (`composePlan`) solo aplica los movimientos si con ellos el hueco
+ * para las fotos crece.
+ */
+export function clearCenter(
+  page: Pick<PageView, 'canvas' | 'layers'>,
+  keep: ReadonlySet<string> = new Set(),
+): { moves: PlacedCopilotOperation[]; locked: string[]; stuck: string[] } {
+  const { canvas } = page;
+  const margin = marginOf(canvas);
+  const gap = Math.round(canvas.height * 0.02);
+  const third = canvas.height / 3;
+  const central = (layer: Layer) => layer.y + layer.height / 2 >= third && layer.y + layer.height / 2 <= third * 2;
+  const taking = page.layers.filter((layer) => (layer.type === 'text' || layer.type === 'logo') && layer.visible);
+  const inCenter = taking.filter(
+    (layer): layer is Extract<Layer, { type: 'text' }> => layer.type === 'text' && central(layer) && !keep.has(layer.id),
+  );
+  const locked = inCenter
+    .filter((layer) => layer.locked)
+    .map((layer) => `El texto ${quoted(layer.text)} está bloqueado y no se mueve: las fotos van en el hueco que queda.`);
+  const stuck: string[] = [];
+  const movable = inCenter.filter((layer) => !layer.locked);
+  const moving = new Set(movable.map((layer) => layer.id));
+  // Lo que se queda donde está y lo ya recolocado: nada de lo que se mueve lo pisa.
+  const obstacles: Rect[] = taking.filter((layer) => !moving.has(layer.id));
+  const moves: PlacedCopilotOperation[] = [];
+  const settle = (layer: (typeof movable)[number], up: boolean) => {
+    let y = up ? margin : canvas.height - margin - layer.height;
+    for (let guard = 0; guard <= obstacles.length; guard += 1) {
+      const hit = obstacles.find((other) => overlaps({ x: layer.x, y: y - gap, width: layer.width, height: layer.height + gap * 2 }, other));
+      if (!hit) break;
+      y = up ? hit.y + hit.height + gap : hit.y - gap - layer.height;
+    }
+    y = Math.round(y);
+    const center = y + layer.height / 2;
+    const out = up ? y >= 0 && center < third : y + layer.height <= canvas.height && center > third * 2;
+    if (!out || y === layer.y) {
+      // No cabe fuera del centro: se queda donde está y las fotos lo esquivan.
+      obstacles.push(layer);
+      if (!out) stuck.push(`No hay sitio para apartar ${quoted(layer.text)}: se queda donde está y las fotos van en el hueco que queda.`);
+      return;
+    }
+    obstacles.push({ x: layer.x, y, width: layer.width, height: layer.height });
+    moves.push({
+      ...copilotOp({ op: 'move_layer', target: layer.id }),
+      place: { x: layer.x, y, width: layer.width, height: layer.height },
+      say: up
+        ? `He subido el título ${quoted(layer.text)} para dejar el centro a las fotos`
+        : `He bajado el texto ${quoted(layer.text)} para dejar el centro a las fotos`,
+    });
+  };
+  const byHeight = [...movable].sort((a, b) => a.y - b.y);
+  // Los títulos, de arriba abajo desde el margen superior; el resto, de abajo arriba desde el inferior.
+  for (const layer of byHeight.filter((item) => item.fontWeight >= 600)) settle(layer, true);
+  for (const layer of byHeight.filter((item) => item.fontWeight < 600).reverse()) settle(layer, false);
+  return { moves, locked, stuck };
 }
 
 // ── Buscar en la biblioteca ──────────────────────────────────────────────
