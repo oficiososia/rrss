@@ -1475,6 +1475,8 @@ export type MediaMetricDailyRow = {
   brand_id: string;
   organization_id: string;
   publication_id: string | null;
+  /** Reel publicado a mano que se midió (20270125010000). */
+  manual_publication_id: string | null;
   external_media_id: string;
   media_product_type: 'FEED' | 'REELS';
   published_at: string | null;
@@ -1541,6 +1543,8 @@ export type AnalyticsMediaSummaryRow = {
   last_captured_at: string;
   provisional: boolean;
   metrics: Record<string, number | string>;
+  /** Reel publicado a mano (20270125010000): `publication_id` es el de `manual_publications`. */
+  manual: boolean;
 };
 
 // ── Biblioteca con Google Drive (migración 20261122010000) ──────────────────

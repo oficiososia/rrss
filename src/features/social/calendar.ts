@@ -127,15 +127,30 @@ export function rangeTitle(view: CalendarView, anchor: Date): string {
  * Lo que se ve en el calendario: «Programada» solo cuando la base de datos la
  * tiene armada, y «Publicada» solo con el identificador que dio la red.
  * Mientras no está armada, se ve en qué punto está la pieza (idea, borrador,
- * en revisión) o «Detenida» con el motivo.
+ * en revisión) o «Detenida» con el motivo. Un reel terminado a mano en
+ * Instagram («Terminar en Instagram») es «Pendiente en Instagram» hasta que se
+ * sabe que salió, y entonces «Publicada (a mano)».
  */
 export type DisplayState =
-  'idea' | 'draft' | 'in_review' | 'held' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'cancelled';
+  | 'idea'
+  | 'draft'
+  | 'in_review'
+  | 'held'
+  | 'scheduled'
+  | 'publishing'
+  | 'published'
+  | 'failed'
+  | 'cancelled'
+  | 'manual_pending'
+  | 'manual_published';
 
 export function displayState(
-  pub: Pick<ScheduledPublicationRow, 'status' | 'hold_reason' | 'external_id'>,
+  pub: Pick<ScheduledPublicationRow, 'status' | 'hold_reason' | 'external_id'> & {
+    manual?: { status: 'pending' | 'published' };
+  },
   contentStatus: ContentStatus | null,
 ): DisplayState {
+  if (pub.manual) return pub.manual.status === 'published' ? 'manual_published' : 'manual_pending';
   switch (pub.status) {
     case 'published':
       return pub.external_id ? 'published' : 'publishing';
@@ -160,6 +175,8 @@ export const DISPLAY_LABEL: Record<DisplayState, string> = {
   published: 'Publicada',
   failed: 'Falló',
   cancelled: 'Cancelada',
+  manual_pending: 'Pendiente en Instagram',
+  manual_published: 'Publicada (a mano)',
 };
 
 export const DISPLAY_TONE: Record<DisplayState, 'neutral' | 'primary' | 'success' | 'warning' | 'danger'> = {
@@ -172,6 +189,8 @@ export const DISPLAY_TONE: Record<DisplayState, 'neutral' | 'primary' | 'success
   published: 'success',
   failed: 'danger',
   cancelled: 'neutral',
+  manual_pending: 'warning',
+  manual_published: 'success',
 };
 
 export const DISPLAY_STATES: DisplayState[] = [
@@ -184,6 +203,8 @@ export const DISPLAY_STATES: DisplayState[] = [
   'published',
   'failed',
   'cancelled',
+  'manual_pending',
+  'manual_published',
 ];
 
 export const HOLD_REASON_TEXT: Record<PublicationHoldReason, string> = {
@@ -205,6 +226,11 @@ export const HOLD_REASON_TEXT: Record<PublicationHoldReason, string> = {
 /** ¿Se puede mover, cambiar o cancelar? */
 export function isEditable(status: ScheduledPublicationRow['status']): boolean {
   return status === 'planned' || status === 'scheduled' || status === 'failed';
+}
+
+/** ¿Se puede mover, cambiar o cancelar esta fila del calendario? Lo terminado a mano, nunca (se gestiona en el reel). */
+export function isEntryEditable(entry: Pick<ScheduledPublicationRow, 'status'> & { manual?: unknown }): boolean {
+  return !entry.manual && isEditable(entry.status);
 }
 
 /** Cupo de publicación: aviso cuando se acerca (80 %) o se alcanza. Sin cifras de la red, nada. */

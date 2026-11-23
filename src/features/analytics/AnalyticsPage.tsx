@@ -424,6 +424,7 @@ function BestPosts({ analysis, media, brandId }: { analysis: Analysis; media: Me
                   <p className="truncate text-sm font-medium">{p.title}</p>
                   <p className="text-xs text-muted">
                     {p.media_product_type === 'REELS' ? 'Reel' : 'Publicación'} · {dayLabel(p.published_at.slice(0, 10))}
+                    {p.manual && ' · publicada a mano'}
                     {p.external_url && (
                       <>
                         {' · '}
@@ -518,6 +519,7 @@ function PostList({ posts, testId }: { posts: RankedPost[]; testId: string }) {
             <p className="text-xs text-muted">
               {p.media_product_type === 'REELS' ? 'Reel' : 'Imagen o carrusel'} ·{' '}
               {shortDate(p.published_at.slice(0, 10))}
+              {p.manual && ' · publicada a mano'}
               {p.external_url && (
                 <>
                   {' · '}

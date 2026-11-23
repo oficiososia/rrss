@@ -233,6 +233,7 @@ export function LatestPublished({ orgId, brandId, items }: { orgId: string; bran
                 <span className="flex items-center gap-1 text-xs text-muted">
                   <CheckCircle2 className="h-3.5 w-3.5 text-success" aria-hidden />
                   {networkLabel(publication.network)} · {formatDate(publication.published_at ?? publication.scheduled_at)}
+                  {publication.manual && <span data-testid="home-published-manual"> · a mano</span>}
                 </span>
               </span>
               {(figures.reach !== undefined || figures.interactions !== undefined) && (

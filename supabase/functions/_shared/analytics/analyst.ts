@@ -44,6 +44,8 @@ export interface MediaSummary {
   external_url: string | null;
   provisional: boolean;
   metrics: Record<string, number>;
+  /** Reel publicado a mano en Instagram («Terminar en Instagram»); `publication_id` es el de la entrega. */
+  manual?: boolean;
 }
 
 export interface UnavailableEntry {

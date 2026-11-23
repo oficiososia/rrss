@@ -7,7 +7,7 @@ import { translateError } from '@/lib/errors';
 import { useCancelPublication, type CalendarEntry } from './api';
 import { FormatIcon } from './CalendarEntryCard';
 import { formatLabel } from './formatLabel';
-import { DISPLAY_LABEL, DISPLAY_TONE, displayState, fromLocalInput, isEditable, toLocalInput } from './calendar';
+import { DISPLAY_LABEL, DISPLAY_TONE, displayState, fromLocalInput, isEntryEditable, toLocalInput } from './calendar';
 import type { HoldAdvice } from './holdAdvice';
 import { PublicationPreview } from './preview';
 import { formatDateTimeIn, zoneLabel } from './zone';
@@ -55,7 +55,8 @@ export function CalendarQuickView({
   if (!entry) return null;
 
   const state = displayState(entry, entry.content?.status ?? null);
-  const editable = canEdit && isEditable(entry.status);
+  const editable = canEdit && isEntryEditable(entry);
+  const manual = entry.manual;
   const title = entry.content?.title ?? 'Pieza';
 
   return (
@@ -102,9 +103,21 @@ export function CalendarQuickView({
               Publicar ahora
             </Button>
           )}
+          {manual && entry.external_url && (
+            <a
+              href={entry.external_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-10 items-center gap-1 rounded-lg px-3 text-sm font-medium text-primary hover:bg-subtle"
+              data-testid="calendar-quick-instagram"
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden />
+              Ver en Instagram
+            </a>
+          )}
           <Button onClick={() => onOpenFicha(entry)} data-testid="calendar-quick-open">
             <ExternalLink className="h-4 w-4" aria-hidden />
-            Abrir
+            {manual ? 'Abrir el reel' : 'Abrir'}
           </Button>
         </>
       }
@@ -156,8 +169,17 @@ export function CalendarQuickView({
             </Button>
           </div>
         )}
-        {!editable && entry.status === 'published' && (
+        {!editable && entry.status === 'published' && !manual && (
           <p className="text-sm text-muted">Ya está publicada: no se puede mover.</p>
+        )}
+        {manual && (
+          <p className="text-sm text-muted" data-testid="calendar-quick-manual">
+            {manual.status === 'published'
+              ? `Se publicó a mano en Instagram${manual.source === 'import' ? ' (la encontramos en la cuenta)' : ''}.${
+                  entry.external_url ? '' : ' Sin enlace todavía: añádelo desde «Exportar» en el reel.'
+                }`
+              : 'Se mandó al móvil para publicarlo en Instagram y todavía no consta como publicado. Cuando salga, márcalo con «Ya lo publiqué» en «Exportar» del reel.'}
+          </p>
         )}
       </div>
     </Dialog>
