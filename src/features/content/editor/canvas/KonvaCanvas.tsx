@@ -3,7 +3,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent }
 import { hasAssetDrag, hasFileDrag, imageFilesOf, readAssetDrag } from '../assetDrag';
 import { frameAt } from '../frames';
 import { fitScale } from '../geometry';
+import { bleedFor, veilColor } from './bleed';
 import { boundsOf, placeToolbar, TEXT_WEIGHT, type ToolbarObstacle } from '../toolbarPlacement';
+import { loadAppFont } from './appFont';
 import { FrameAdjustOverlay } from './FrameAdjustOverlay';
 import { describeDocument } from './nodes';
 import { cn } from '@/lib/utils';
@@ -73,6 +75,15 @@ export default function KonvaCanvas({
   /** Espacio pulsado: el puntero mueve la vista en vez de las capas. */
   const [hand, setHand] = useState(false);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  /** La letra de la aplicación (reserva de los textos) ya está lista: hasta entonces no se dibujan textos. */
+  const [appFontReady, setAppFontReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadAppFont().then(() => alive && setAppFontReady(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [dropping, setDropping] = useState(false);
 
   useLayoutEffect(() => {
@@ -114,6 +125,8 @@ export default function KonvaCanvas({
   // «Ajustar» nunca agranda por encima de 1; al acercar, sí se puede pasar de ahí.
   const scale = zoom === 1 ? fit : Math.min(2, fit * zoom);
   const zoomed = zoom > 1;
+  // Lo que sobresale del lienzo se ve (velado) en el hueco libre de alrededor, como en Canva.
+  const bleed = bleedFor(document.canvas, scale, available);
   const scaleRef = useRef(scale);
   useLayoutEffect(() => {
     scaleRef.current = scale;
@@ -128,7 +141,7 @@ export default function KonvaCanvas({
       const wheel = event.deltaX === 0 && Math.abs(event.deltaY) >= 40;
       if (!event.ctrlKey && !event.metaKey && !wheel) return;
       event.preventDefault();
-      const stage = stageRef.current?.getBoundingClientRect();
+      const stage = wrapperRef.current?.getBoundingClientRect();
       if (stage) {
         zoomAnchor.current = {
           x: (event.clientX - stage.left) / scaleRef.current,
@@ -215,6 +228,7 @@ export default function KonvaCanvas({
   const framingLayer = framing?.type === 'image' && !readOnly ? framing : null;
 
   useEffect(() => {
+    if (!appFontReady) return;
     sceneRef.current?.render({
       nodes,
       canvas: document.canvas,
@@ -225,8 +239,24 @@ export default function KonvaCanvas({
       readOnly,
       scale,
       dropTargetId,
+      bleed,
+      veil: veilColor(frameRef.current),
     });
-  }, [nodes, document.canvas, selectedIds, editingTextId, safeZone, readOnly, scale, dropTargetId, framingLayer]);
+  }, [
+    nodes,
+    document.canvas,
+    selectedIds,
+    editingTextId,
+    safeZone,
+    readOnly,
+    scale,
+    dropTargetId,
+    framingLayer,
+    appFontReady,
+    // `bleed` se compara por sus números: un objeto nuevo en cada pintado no debe volver a dibujar.
+    bleed.x,
+    bleed.y,
+  ]);
 
   // ── Barra de acciones del elemento elegido ──
   const showBar = Boolean(toolbar) && !gesturing && !editing && !framingLayer && !hand && selectedIds.length > 0;
@@ -302,7 +332,7 @@ export default function KonvaCanvas({
   const accepts = (event: DragEvent) =>
     Boolean(onDrop) && !readOnly && (hasAssetDrag(event.dataTransfer) || hasFileDrag(event.dataTransfer));
   const pointOf = (event: { clientX: number; clientY: number }) => {
-    const stage = stageRef.current?.getBoundingClientRect();
+    const stage = wrapperRef.current?.getBoundingClientRect();
     if (!stage) return null;
     const x = (event.clientX - stage.left) / scale;
     const y = (event.clientY - stage.top) / scale;
@@ -359,8 +389,27 @@ export default function KonvaCanvas({
           data-testid="editor-canvas-frame"
           data-dropping={dropping || undefined}
         >
-          <div ref={wrapperRef} className="relative m-auto shrink-0 shadow-pop ring-1 ring-border">
-            <div ref={stageRef} role="img" aria-label={label} data-testid="editor-stage" />
+          {/* El marco del lienzo (lo que se exporta) mide justo el documento; el escenario de Konva se sale por
+              los lados lo que mida el margen, para enseñar y poder agarrar lo que sobresale. */}
+          <div
+            ref={wrapperRef}
+            className="relative m-auto shrink-0 shadow-pop ring-1 ring-border"
+            style={{
+              width: Math.round(document.canvas.width * scale),
+              height: Math.round(document.canvas.height * scale),
+            }}
+            role="img"
+            aria-label={label}
+            data-testid="editor-stage"
+            // Listo para tocar: medido y con la letra cargada (las pruebas de navegador esperan a esto).
+            data-ready={appFontReady && available.width > 0 ? 'true' : undefined}
+          >
+            <div
+              ref={stageRef}
+              className="absolute"
+              style={{ left: -bleed.x, top: -bleed.y }}
+              data-testid="editor-konva"
+            />
             {editing?.type === 'text' && !readOnly && (
               <TextEditOverlay
                 key={editing.id}

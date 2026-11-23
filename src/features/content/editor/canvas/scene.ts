@@ -51,6 +51,14 @@ export interface SceneInput {
   scale: number;
   /** Marco sobre el que se está arrastrando una foto (se resalta); null si ninguno. */
   dropTargetId?: string | null;
+  /**
+   * Margen alrededor del lienzo, en píxeles de pantalla, en el que se ve lo que sobresale (como en
+   * Canva): velado, con su caja y sus tiradores, y se puede agarrar. Lo que se exporta sigue siendo
+   * solo el lienzo. Sin margen, como antes.
+   */
+  bleed?: { x: number; y: number };
+  /** Color del velo de fuera del lienzo (el del fondo del área), en CSS. */
+  veil?: string;
 }
 
 type AnyNode = Shape;
@@ -107,6 +115,8 @@ export class Scene {
   private bitmaps = new BitmapCache();
   private input: SceneInput | null = null;
   private pendingEmit = false;
+  /** Velo de lo que queda fuera del lienzo: se ve, pero se nota que no sale en la imagen. */
+  private veil: Konva.Shape;
 
   constructor(
     container: HTMLDivElement,
@@ -145,7 +155,28 @@ export class Scene {
       dash: [6, 4],
       listening: false,
     });
-    this.overlay.add(this.transformer, this.dropMark, this.marquee);
+    this.veil = new Konva.Shape({
+      listening: false,
+      sceneFunc: (context) => {
+        const input = this.input;
+        const bleed = input?.bleed;
+        if (!input || !bleed || (bleed.x <= 0 && bleed.y <= 0)) return;
+        const scale = Math.max(input.scale, 0.0001);
+        const bx = bleed.x / scale;
+        const by = bleed.y / scale;
+        const { width, height } = input.canvas;
+        const ctx = context._context;
+        ctx.save();
+        ctx.fillStyle = input.veil ?? 'rgba(241, 243, 246, 0.72)';
+        ctx.beginPath();
+        // Todo el margen menos el lienzo (regla par-impar): queda un marco velado alrededor.
+        ctx.rect(-bx, -by, width + 2 * bx, height + 2 * by);
+        ctx.rect(0, 0, width, height);
+        ctx.fill('evenodd');
+        ctx.restore();
+      },
+    });
+    this.overlay.add(this.veil, this.transformer, this.dropMark, this.marquee);
     this.stage.add(this.content, this.overlay);
 
     // Botón derecho: menú de la capa bajo el puntero (o del lienzo, en el fondo).
@@ -186,8 +217,14 @@ export class Scene {
   render(input: SceneInput): void {
     this.input = input;
     const { canvas, scale } = input;
-    this.stage.size({ width: Math.round(canvas.width * scale), height: Math.round(canvas.height * scale) });
+    const bleed = input.bleed ?? { x: 0, y: 0 };
+    this.stage.size({
+      width: Math.round(canvas.width * scale + 2 * bleed.x),
+      height: Math.round(canvas.height * scale + 2 * bleed.y),
+    });
     this.stage.scale({ x: scale, y: scale });
+    // El lienzo empieza tras el margen: (0, 0) del documento queda en (bleed.x, bleed.y) de la pantalla.
+    this.stage.position({ x: bleed.x, y: bleed.y });
     this.background.setAttrs({ width: canvas.width, height: canvas.height, fill: canvas.backgroundColor });
 
     const seen = new Set<string>();
@@ -229,7 +266,22 @@ export class Scene {
    * navegador para comparar el lienzo con la exportación.
    */
   snapshot(pixelRatio = 1): HTMLCanvasElement {
-    return this.stage.toCanvas({ pixelRatio });
+    const bleed = this.input?.bleed ?? { x: 0, y: 0 };
+    const scale = this.input?.scale ?? 1;
+    const canvas = this.input?.canvas ?? { width: this.stage.width(), height: this.stage.height() };
+    // Solo el lienzo, sin el margen ni su velo.
+    this.veil.visible(false);
+    try {
+      return this.stage.toCanvas({
+        pixelRatio,
+        x: bleed.x,
+        y: bleed.y,
+        width: Math.round(canvas.width * scale),
+        height: Math.round(canvas.height * scale),
+      });
+    } finally {
+      this.veil.visible(true);
+    }
   }
 
   /**
@@ -551,10 +603,9 @@ export class Scene {
   }
 
   private pointer(): { x: number; y: number } | null {
-    const point = this.stage.getPointerPosition();
-    if (!point || !this.input) return null;
-    const scale = Math.max(this.input.scale, 0.0001);
-    return { x: point.x / scale, y: point.y / scale };
+    if (!this.input) return null;
+    // En unidades del documento, descontando el margen y la escala del escenario.
+    return this.stage.getRelativePointerPosition();
   }
 
   private finishMarquee(): void {
