@@ -180,3 +180,94 @@ export function luminanceOfPixels(data: ArrayLike<number>): number | null {
   }
   return weight > 0 ? sum / weight : null;
 }
+
+// ───────────────────── Variante por nombre (sin medir) ─────────────────────
+
+const word = (words: string) => new RegExp(`(^|[^a-záéíóúüñ])(${words})([^a-záéíóúüñ]|$)`);
+/** Nombres de archivo o etiquetas que dicen que un logotipo es la versión clara (o la oscura). */
+const LIGHT_LOGO = word('claro|clara|blanco|blanca|white|light|negativo|negativa|inverso|inversa|reverse|reversed');
+const DARK_LOGO = word('oscuro|oscura|negro|negra|black|dark');
+
+/** Lo que hace falta de un logotipo de la biblioteca para saber su tono por el nombre. */
+export interface NamedLogo {
+  id: string;
+  storage_path: string;
+  file_name?: string;
+  tags?: readonly string[] | null;
+}
+
+/** Lo que dice de su tono el nombre del archivo (o su ruta, que lo lleva) o sus etiquetas. */
+export function namedLogoTone(asset: NamedLogo): 'light' | 'dark' | null {
+  const file = asset.storage_path.slice(asset.storage_path.lastIndexOf('/') + 1);
+  const words = `${asset.file_name ?? ''} ${file} ${(asset.tags ?? []).join(' ')}`.toLocaleLowerCase('es');
+  if (LIGHT_LOGO.test(words)) return 'light';
+  if (DARK_LOGO.test(words)) return 'dark';
+  return null;
+}
+
+/** Por debajo de esta luminancia, un fondo contrasta más con el blanco que con el negro (≈ 0,18). */
+export const DARK_BACKDROP_BELOW = Math.sqrt(1.05 * 0.05) - 0.05;
+
+/**
+ * La variante del kit para un fondo, con la regla del editor y del cierre de los reels:
+ *  - si el logotipo de partida está medido (`tones`), `bestLogoVariant` (la que llega a 3:1 o,
+ *    si ninguna, la que más contrasta);
+ *  - si no, por el nombre o las etiquetas: sobre un fondo oscuro, la que se llama clara («claro»,
+ *    «blanco», «white»…) salvo que la de partida ya lo sea; sobre uno claro, si la de partida se
+ *    llama clara, la que se llama oscura (o, si no hay, una que no se llame clara).
+ * Si nada indica otra cosa, la de partida.
+ */
+export function logoVariantFor(
+  current: string,
+  variants: readonly string[],
+  assets: ReadonlyMap<string, NamedLogo>,
+  tones: LogoTones | undefined,
+  backdrop: number,
+): string {
+  const measured = tones?.get(current);
+  if (tones && measured !== undefined && measured !== null) return bestLogoVariant(current, variants, tones, backdrop);
+  const tone = (id: string) => {
+    const asset = assets.get(id);
+    return asset ? namedLogoTone(asset) : null;
+  };
+  const others = variants.filter((id) => id !== current && assets.has(id));
+  if (backdrop < DARK_BACKDROP_BELOW) {
+    if (tone(current) === 'light') return current;
+    return others.find((id) => tone(id) === 'light') ?? current;
+  }
+  if (tone(current) !== 'light') return current;
+  return others.find((id) => tone(id) === 'dark') ?? others.find((id) => tone(id) === null) ?? current;
+}
+
+/**
+ * Las miniaturas de las plantillas (selector y Marca → Plantillas) con el logotipo que se ve: cada
+ * capa de logotipo del kit de la marca pasa a la variante que contrasta con lo que tiene debajo
+ * (`logoVariantFor`). Lo que no se sabe (una foto debajo) se deja como está. Devuelve el mismo
+ * documento si no cambia nada.
+ */
+export function templateLogos(
+  document: ContentDocument,
+  logoIds: readonly string[],
+  assets: ReadonlyMap<string, NamedLogo>,
+  tones?: LogoTones,
+): ContentDocument {
+  if (logoIds.length < 2) return document;
+  const kit = new Set(logoIds);
+  let changed = false;
+  const pages = document.pages.map((page) => {
+    let pageChanged = false;
+    const layers = page.layers.map((layer) => {
+      if (layer.type !== 'logo' || !kit.has(layer.assetId)) return layer;
+      const backdrop = backdropLuminance(page.layers, layer, document.canvas.backgroundColor);
+      if (backdrop === null) return layer;
+      const next = logoVariantFor(layer.assetId, logoIds, assets, tones, backdrop);
+      if (next === layer.assetId) return layer;
+      pageChanged = true;
+      return { ...layer, assetId: next };
+    });
+    if (!pageChanged) return page;
+    changed = true;
+    return { ...page, layers };
+  });
+  return changed ? { ...document, pages } : document;
+}

@@ -18,7 +18,7 @@
 // este», los reels de las campañas y las pantallas del editor (crear desde una
 // plantilla, selectores de material, aviso de música).
 import type { BrandProfileData } from '@/features/brand/profile';
-import { bestLogoVariant, type LogoTones } from '@/features/content/editor/logoContrast';
+import { logoVariantFor, type LogoTones } from '@/features/content/editor/logoContrast';
 import { OUTRO_SECONDS, TEXT_ROLES, type ReelOutro, type TextRole, type TextStyle } from './editor/project';
 
 // ───────────────────────────── Papeles de los textos ─────────────────────────────
@@ -365,11 +365,6 @@ function pickColor(colors: BrandProfileData['visual']['colors'], words: RegExp, 
  */
 export const REEL_OUTRO_BACKDROP_LUMINANCE = 0.02;
 
-const word = (words: string) => new RegExp(`(^|[^a-záéíóúüñ])(${words})([^a-záéíóúüñ]|$)`);
-/** Nombres de archivo o etiquetas que dicen que un logotipo es la versión clara (o la oscura). */
-const LIGHT_LOGO = word('claro|clara|blanco|blanca|white|light|negativo|negativa|inverso|inversa|reverse|reversed');
-const DARK_LOGO = word('oscuro|oscura|negro|negra|black|dark');
-
 interface LogoAsset {
   id: string;
   kind: string;
@@ -377,15 +372,6 @@ interface LogoAsset {
   mime_type: string;
   file_name?: string;
   tags?: readonly string[];
-}
-
-/** Lo que dice de su tono el nombre del archivo (o su ruta, que lo lleva) o sus etiquetas. */
-function namedTone(asset: LogoAsset): 'light' | 'dark' | null {
-  const file = asset.storage_path.slice(asset.storage_path.lastIndexOf('/') + 1);
-  const words = lower(`${asset.file_name ?? ''} ${file} ${(asset.tags ?? []).join(' ')}`);
-  if (LIGHT_LOGO.test(words)) return 'light';
-  if (DARK_LOGO.test(words)) return 'dark';
-  return null;
 }
 
 /**
@@ -415,18 +401,15 @@ export function reelLogoPath(
   });
   const first = usable[0];
   if (!first) return undefined;
-  const measured = tones?.get(first.id);
-  if (tones && measured !== undefined && measured !== null) {
-    const best = bestLogoVariant(
-      first.id,
-      usable.map((a) => a.id),
-      tones,
-      REEL_OUTRO_BACKDROP_LUMINANCE,
-    );
-    return byId.get(best)!.storage_path;
-  }
-  if (namedTone(first) === 'light') return first.storage_path;
-  return (usable.find((asset) => namedTone(asset) === 'light') ?? first).storage_path;
+  // La misma regla que las plantillas del editor y sus miniaturas, sobre el fondo oscuro del cierre.
+  const best = logoVariantFor(
+    first.id,
+    usable.map((a) => a.id),
+    new Map(usable.map((a) => [a.id, a])),
+    tones,
+    REEL_OUTRO_BACKDROP_LUMINANCE,
+  );
+  return byId.get(best)!.storage_path;
 }
 
 /** Lo que el reel toma del perfil de la marca: colores, logotipo, usuario, dirección y llamada. */
