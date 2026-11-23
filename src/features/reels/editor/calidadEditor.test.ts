@@ -162,11 +162,14 @@ describe('crear desde una plantilla con calidad', () => {
     expect(plan.clips[2]).toMatchObject({ focalPoint: { x: 0.2, y: 0.7 } });
     // Pulsos enteros del tempo medio (120 ppm = 0,5 s).
     expect(plan.clips[0]).toMatchObject({ seconds: 1 });
-    // El gancho y el rótulo del plano sin texto (del nombre del archivo); la llamada pasa al cierre.
+    // El gancho y un rótulo en cada plano sin texto (del nombre del archivo); la llamada pasa al cierre y su
+    // plano se queda con su rótulo, que acaba cuando entra el cierre.
     expect(plan.texts.map((t) => [t.text, t.role])).toEqual([
       ['Lo que sale de la cocina', 'headline'],
       ['Sala', 'label'],
+      ['Flojita', 'label'],
     ]);
+    expect(plan.texts.at(-1)!.end).toBe(outroSpan(plan, planTimeline(plan.clips, style), style)!.start);
     expect(plan.outro).toEqual({
       seconds: 2,
       cta: 'Reserva tu mesa',

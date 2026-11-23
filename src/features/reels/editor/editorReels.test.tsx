@@ -1574,10 +1574,12 @@ describe('editor de reels: desde una plantilla, con la calidad de las muestras (
         '3. Foto local.jpg',
       ]),
     );
-    // El gancho y el rótulo del plato; la llamada de la plantilla pasa al cierre (no sale dos veces).
+    // El gancho y el rótulo de cada plato; la llamada de la plantilla pasa al cierre (no sale dos veces) y su
+    // plano lleva su rótulo, como los demás.
     expect(screen.getAllByTestId('reel-text-block').map((t) => t.textContent)).toEqual([
       'Lo que sale de la cocina',
       'Croquetas caseras',
+      'Local',
     ]);
     // Junto a «Exportar», el aviso de que sale sin música.
     const notice = screen.getByTestId('reel-audio-notice');
@@ -1595,7 +1597,7 @@ describe('editor de reels: desde una plantilla, con la calidad de las muestras (
       subjectMaskPath: path('Sin fondo · arroz.png'),
     });
     expect(plan.clips[2]).toMatchObject({ path: path('local.jpg'), focalPoint: { x: 0.3, y: 0.6 } });
-    expect(plan.texts.map((t) => t.role)).toEqual(['headline', 'label']);
+    expect(plan.texts.map((t) => t.role)).toEqual(['headline', 'label', 'label']);
     // El rótulo va en la caja oscura de la marca.
     expect(plan.texts[1]!.style.box?.color).toBe('#1A1A1A');
     expect(plan.outro).toEqual({

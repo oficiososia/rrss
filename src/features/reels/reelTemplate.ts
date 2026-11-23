@@ -45,6 +45,7 @@ import {
   REEL_PLAN_VERSION,
   REEL_TEXT_MAX_LENGTH,
   TEXT_POSITIONS,
+  outroSpan,
   planTimeline,
   templateTransition,
   textAnimationSchema,
@@ -626,20 +627,36 @@ export function buildBrandReel<T extends SourceAsset & RankableAsset>(
   brand: BrandReelInput = {},
 ): ReelProject {
   const library = brand.library ?? [];
-  const built = buildReelFromTemplate(template, orderForTemplate(template, chosen), style, {
+  const ordered = orderForTemplate(template, chosen);
+  const options: BuildReelOptions = {
     ...(brand.font ? { font: brand.font } : {}),
     ...(brand.kit ? { colors: brand.kit.colors } : {}),
     focalPoints: savedFocalPoints(library),
     subjectMasks: subjectMasks(library),
     captions: true,
     beatSync: true,
-  });
+  };
+  const built = buildReelFromTemplate(template, ordered, style, options);
   if (!brand.kit || built.plan.clips.length === 0) return built;
   const files = new Map(
     chosen.flatMap((a) =>
       a.kind === 'video' && a.duration_ms ? [[a.storage_path, a.duration_ms / 1000] as const] : [],
     ),
   );
-  const { total } = planTimeline(built.plan.clips, style, (clip) => files.get(clip.path) ?? null);
-  return { ...built, plan: withBrandOutro(built.plan, brand.kit, total) };
+  const timeline = planTimeline(built.plan.clips, style, (clip) => files.get(clip.path) ?? null);
+  const closed = withBrandOutro(built.plan, brand.kit, timeline.total);
+  if (!closed.outro) return built;
+  // La llamada de la plantilla pasa al cierre: su plano se queda con su rótulo, como los demás.
+  const moved = built.plan.texts.find((t) => !closed.texts.includes(t));
+  const rest = moved ? template.texts.filter((t) => t.text !== moved.text) : template.texts;
+  const plan =
+    rest.length < template.texts.length
+      ? { ...buildReelFromTemplate({ ...template, texts: rest }, ordered, style, options).plan, outro: closed.outro }
+      : closed;
+  // Los textos acaban cuando entra el cierre (si no, el trabajador los recorta y lo avisa).
+  const until = outroSpan(plan, timeline, style)?.start ?? timeline.total;
+  const texts = plan.texts
+    .map((t) => (t.end > until ? { ...t, end: round(until) } : t))
+    .filter((t) => t.end - t.start >= 0.5);
+  return { ...built, plan: { ...plan, texts } };
 }

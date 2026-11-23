@@ -160,7 +160,7 @@ describe('un reel creado por el camino del editor lo acepta el trabajador', () =
     expect(plan.outro).toMatchObject({ cta: 'Reserva tu mesa', handle: '@casa', logoPath: p('logo.png') });
     const result = reelPlanV2Schema.safeParse(plan);
     expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
-    expect(result.data!.texts.map((t) => t.role)).toEqual(['headline', 'label']);
+    expect(result.data!.texts.map((t) => t.role)).toEqual(['headline', 'label', 'label']);
     expect(result.data!.clips[0]).toMatchObject({ subjectMaskPath: p('mask.png') });
   });
 });

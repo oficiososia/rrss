@@ -625,7 +625,7 @@ function drawOutro(
     const focal = clip.focalPoint ?? { x: 0.5, y: 0.5 };
     const cx = Math.min(Math.max(focal.x * source.width - cw / 2, 0), source.width - cw);
     const cy = Math.min(Math.max(focal.y * source.height - ch / 2, 0), source.height - ch);
-    ctx.filter = `blur(${(W * 0.045).toFixed(1)}px) brightness(0.76) saturate(0.75)`;
+    ctx.filter = `blur(${(W * 0.045).toFixed(1)}px) brightness(0.52) saturate(0.75)`;
     ctx.drawImage(source, cx, cy, cw, ch, -W * 0.03, -H * 0.03, W * 1.06, H * 1.06);
     ctx.filter = 'none';
   } else {
