@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import type { PlayClock } from './clock';
 import { musicGain } from './compose';
 import type { Selection } from './history';
+import { missingLabel } from './missing';
 import { timelineSubtitles, type Clip, type DraftPlan, type Music, type PlanTimeline, type ReelText } from './project';
 import { cachedFrame, FRAME_HEIGHT, FRAME_WIDTH, requestFrame, stripTimes } from './thumbs';
 import { peakAt, useWaveform } from './waveform';
@@ -56,6 +57,8 @@ export interface TimelineProps {
   selection: Selection;
   readOnly: boolean;
   labelOf: (path: string) => string;
+  /** ¿Ya no está este archivo en la biblioteca? Se marca «Falta esta foto / este vídeo / esta música». */
+  isMissing?: (path: string) => boolean;
   /** Duración real del archivo de un clip, si se sabe. */
   fileSecondsOf: (path: string) => number | null;
   /** Dirección firmada del archivo y de su miniatura, para las tiras. */
@@ -404,18 +407,32 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
               const dragging = drag?.kind === 'clip' && drag.index === index;
               const fileSeconds = clip.type === 'video' ? props.fileSecondsOf(clip.path) : null;
               const speed = clip.type === 'video' ? (clip.speed ?? 1) : 1;
+              const missing = props.isMissing?.(clip.path) ?? false;
               return (
                 <div
                   key={clip.id}
                   className={cn(
                     'absolute bottom-1 top-1 overflow-hidden rounded-md border bg-subtle text-xs',
-                    clip.type === 'video' ? 'border-primary/40' : 'border-border',
+                    missing
+                      ? 'border-2 border-dashed border-danger bg-danger-soft'
+                      : clip.type === 'video'
+                        ? 'border-primary/40'
+                        : 'border-border',
                     selected && 'z-10 ring-2 ring-primary',
                     dragging && 'z-20 opacity-80 shadow-pop',
                   )}
                   style={{ left, width: w, transform: dragging ? `translateX(${drag.dx}px)` : undefined }}
                   data-testid="reel-clip"
+                  data-missing={missing || undefined}
                 >
+                  {missing ? (
+                    <span
+                      className="absolute inset-x-1 top-1 truncate text-[11px] font-medium leading-tight text-danger"
+                      data-testid="reel-clip-missing"
+                    >
+                      {missingLabel(clip.type)}
+                    </span>
+                  ) : (
                   <Strip
                     clip={clip}
                     width={w}
@@ -423,6 +440,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                     url={props.urlOf?.(clip.path)}
                     thumb={props.thumbOf?.(clip.path)}
                   />
+                  )}
                   <button
                     type="button"
                     className="absolute inset-0 flex h-full w-full cursor-grab select-none items-end gap-1 p-1 text-left [-webkit-touch-callout:none] active:cursor-grabbing"
@@ -441,7 +459,7 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                     onKeyDown={(e) => onClipKey(e, index)}
                     aria-label={`${index + 1}. ${clip.type === 'video' ? 'Clip' : 'Foto'} ${props.labelOf(clip.path)}, ${fmt(
                       timeline.durations[index]!,
-                    )} s`}
+                    )} s${missing ? `. ${missingLabel(clip.type)}: se ha borrado de la biblioteca` : ''}`}
                     aria-pressed={selected}
                   >
                     <span className="flex max-w-full items-center gap-1 rounded bg-black/60 px-1 py-0.5 text-[10px] leading-none text-white">
@@ -696,13 +714,16 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
               <button
                 type="button"
                 className={cn(
-                  'absolute bottom-0.5 top-0.5 flex items-center gap-1 overflow-hidden rounded-md border border-success/40 bg-success/10 px-2 text-left text-xs',
+                  'absolute bottom-0.5 top-0.5 flex items-center gap-1 overflow-hidden rounded-md border px-2 text-left text-xs',
+                  props.isMissing?.(music.path)
+                    ? 'border-dashed border-danger bg-danger-soft text-danger'
+                    : 'border-success/40 bg-success/10',
                   selection?.kind === 'music' && 'ring-2 ring-primary',
                 )}
                 style={{ left: 0, width: Math.max(16, timeline.total * pps) }}
                 {...quietFocus}
                 onClick={() => props.onSelect({ kind: 'music' })}
-                aria-label={`Música: ${props.labelOf(music.path)}`}
+                aria-label={`Música: ${props.labelOf(music.path)}${props.isMissing?.(music.path) ? '. Falta esta música: se ha borrado de la biblioteca' : ''}`}
                 aria-pressed={selection?.kind === 'music'}
                 data-testid="reel-music-block"
               >
@@ -713,7 +734,9 @@ export const Timeline = memo(function Timeline(props: TimelineProps) {
                   url={props.urlOf?.(music.path)}
                 />
                 <Music2 className="relative h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="relative truncate">{props.labelOf(music.path)}</span>
+                <span className="relative truncate">
+                  {props.isMissing?.(music.path) ? 'Falta esta música' : props.labelOf(music.path)}
+                </span>
               </button>
             )}
             {music &&
