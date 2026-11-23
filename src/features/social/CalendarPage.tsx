@@ -55,6 +55,8 @@ import { countsAsPlanned, daysOfWeek, isPastDay } from './calendarPlan';
 import { CalendarEntryCard } from './CalendarEntryCard';
 import { formatLabel } from './formatLabel';
 import { CalendarQuickView } from './CalendarQuickView';
+import { useConnectedAccount } from './connectedAccount';
+import { NoConnectedAccountNotice } from './NoConnectedAccountNotice';
 import { CalendarTray } from './CalendarTray';
 import { AgendaView, DayPanel, MonthView, PlanStrip, WeekView, type ViewCommon } from './CalendarViews';
 import {
@@ -168,6 +170,7 @@ export function CalendarPage() {
   const reschedule = useReschedulePublication(brand.id);
   const approve = useApproveContents(brand.id);
   const accounts = useSocialAccounts(brand.id);
+  const connection = useConnectedAccount(brand.id);
   const rearm = useSavePublication(brand.id);
   const campaigns = useActiveCampaigns(brand.id);
   const links = useCampaignLinks(brand.id, campaigns.length > 0);
@@ -421,7 +424,8 @@ export function CalendarPage() {
             },
           }
         : {})}
-      onOpen={(entry) => setQuickId(entry.id)}
+      // Lo publicado ya no se mueve ni se cancela: se abre su ficha (con el enlace a la red y «Abrir la pieza»).
+      onOpen={(entry) => (entry.status === 'published' ? setOpenId(entry.id) : setQuickId(entry.id))}
     />
   );
 
@@ -582,6 +586,16 @@ export function CalendarPage() {
           </Button>
         )}
       </div>
+
+      {selecting && publishing && !connection.isLoading && !connection.connected && (
+        <NoConnectedAccountNotice
+          orgId={org.id}
+          brandId={brand.id}
+          state={connection.state}
+          why="Puedes aprobarlas: quedarán en el calendario, pero no se publicará nada hasta que conectes la cuenta."
+          testId="calendar-approve-no-account"
+        />
+      )}
 
       <div className="flex gap-2 overflow-x-auto pb-0.5" role="group" aria-label="Filtros" data-testid="calendar-filters">
         <FilterChip

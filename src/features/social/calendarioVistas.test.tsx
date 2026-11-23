@@ -400,9 +400,11 @@ describe('Calendario: vista rápida y mover', () => {
     const published = await card('Domingo de brasa');
     expect(published).toHaveAttribute('draggable', 'false');
     await user.click(published);
-    expect(await screen.findByText('Ya está publicada: no se puede mover.')).toBeInTheDocument();
+    // Se abre su ficha (no la vista rápida): publicada, sin mover ni cancelar.
+    expect(await screen.findByTestId('publication-published')).toBeInTheDocument();
     expect(screen.queryByLabelText('Mover a')).toBeNull();
     expect(screen.queryByTestId('calendar-quick-cancel')).toBeNull();
+    expect(screen.queryByTestId('publication-cancel')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Cerrar' }));
 
     // Soltar una publicada en otro día no hace nada.
