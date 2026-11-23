@@ -10,6 +10,12 @@
 //
 // `--eleccion` dice qué toca la persona en el selector para cada plantilla, en orden
 // ({ "rest-fotos-con-ritmo": ["a.jpg", …] }); sin él, las primeras que enseña el selector.
+// El selector ordena como en la aplicación: los datos de cada foto y la luz y el fondo de
+// su miniatura (`photoLook`, aquí medido con FFmpeg sobre una copia de 96 × 128).
+// `--medidas` ({ "a.jpg": { "width": 3024, "height": 4032, "bytes": 2900000 } }) da las
+// medidas del original a una foto de la que solo se tiene una copia pequeña (para ordenar
+// como en la biblioteca real; el montaje usa el archivo que hay).
+// `--plantillas rest-oferta-semana,…` monta solo esas.
 //
 // Por cada plantilla deja en <salida>: desde-editor-<clave>.mp4, su hoja de
 // fotogramas (desde-editor-<clave>.jpg, 12 fotogramas repartidos) y
@@ -28,7 +34,14 @@ import { CATALOG_SETS, themeFromProfile } from '../agency/catalogo/index.ts';
 import { emptyProfile, parseProfile, type BrandProfileData } from '../src/features/brand/profile.ts';
 import { fittedTexts } from '../src/features/reels/editor/compose.ts';
 import { buildRenderRequest, finalizeProject, outroSpan, planTimeline } from '../src/features/reels/editor/project.ts';
-import { brandReelKit, rankReelAssets, type RankableAsset } from '../src/features/reels/quality.ts';
+import {
+  brandReelKit,
+  photoLook,
+  rankReelAssets,
+  reelAssetScore,
+  type PhotoLook,
+  type RankableAsset,
+} from '../src/features/reels/quality.ts';
 import { buildBrandReel, reelTemplateNeeds, validateReelTemplate } from '../src/features/reels/reelTemplate.ts';
 import { REEL_TEMPLATES } from '../src/features/reels/templates.ts';
 import { BUNDLED_DISPLAY_FONT, findDefaultFont } from '../worker/src/ffmpeg/fonts.ts';
@@ -45,8 +58,26 @@ const inBrand = (name: string) => `${ORG}/${BRAND}/media/${name}`;
 /** Las dos plantillas del catálogo de restaurante que se montan. */
 const TEMPLATES = ['rest-fotos-con-ritmo', 'rest-oferta-semana'];
 
+/** Lo que el selector mira de cada foto (la luz y el fondo), con FFmpeg en vez de un lienzo. */
+async function lookOf(file: string): Promise<PhotoLook | null> {
+  const { stdout } = await exec(
+    toolsFromEnv().ffmpeg,
+    ['-v', 'error', '-i', file, '-vf', 'scale=96:128:force_original_aspect_ratio=increase,crop=96:128', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'],
+    { encoding: 'buffer', maxBuffer: 1 << 22 },
+  );
+  return photoLook(stdout as unknown as Buffer, 96, 128);
+}
+
 function args() {
-  const out: { fotos: string[]; logo?: string; salida?: string; perfil?: string; eleccion?: string } = { fotos: [] };
+  const out: {
+    fotos: string[];
+    logo?: string;
+    salida?: string;
+    perfil?: string;
+    eleccion?: string;
+    medidas?: string;
+    plantillas?: string;
+  } = { fotos: [] };
   const argv = process.argv.slice(2).filter((a) => a !== '--');
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
@@ -57,6 +88,8 @@ function args() {
     else if (key === '--salida') out.salida = value;
     else if (key === '--perfil') out.perfil = value;
     else if (key === '--eleccion') out.eleccion = value;
+    else if (key === '--medidas') out.medidas = value;
+    else if (key === '--plantillas') out.plantillas = value;
     else continue;
     i += 1;
   }
@@ -109,13 +142,18 @@ async function main() {
 
   // La biblioteca de la marca: las fotos de las carpetas dadas, con sus medidas y su peso (como `useReelSources`).
   const library: Array<RankableAsset & { duration_ms: number | null; created_at: string }> = [];
+  const sizes: Record<string, { width: number; height: number; bytes: number }> = options.medidas
+    ? JSON.parse(await readFile(options.medidas, 'utf8'))
+    : {};
+  const looks = new Map<string, PhotoLook | null>();
   for (const dir of options.fotos) {
     for (const name of (await readdir(dir)).sort()) {
       if (!/\.(jpe?g|webp|png)$/i.test(name) || name.startsWith('_')) continue;
       const file = path.join(dir, name);
       const target = inBrand(name);
       await copyFile(file, path.join(root, target));
-      const size = await probeSize(file);
+      const size = sizes[name] ?? (await probeSize(file));
+      looks.set(name, await lookOf(file));
       library.push({
         id: name,
         kind: 'image',
@@ -140,11 +178,14 @@ async function main() {
   const set = CATALOG_SETS.find((s) => s.id === 'restaurante')!;
   const catalog = set.reels(themeFromProfile(profile));
   // Lo que enseña el selector primero (las que mejor quedan): quien elige toca las primeras.
-  const picker = rankReelAssets(library);
+  const picker = rankReelAssets(library, looks);
+  const order = picker.map((a) => ({ foto: a.file_name, nota: reelAssetScore(a, looks.get(a.id)) }));
+  console.log('Orden del selector:', order.map((o) => `${o.nota} ${o.foto}`).join(' | '));
+  await writeFile(path.join(options.salida!, 'orden-selector.json'), JSON.stringify(order, null, 2));
   const picks: Record<string, string[]> = options.eleccion ? JSON.parse(await readFile(options.eleccion, 'utf8')) : {};
   const report: Record<string, unknown> = {};
 
-  for (const key of TEMPLATES) {
+  for (const key of options.plantillas ? options.plantillas.split(',') : TEMPLATES) {
     const entry = catalog.find((t) => t.key === key)!;
     const parsed = validateReelTemplate(entry.document);
     if (!parsed.ok) throw new Error(`${key}: ${JSON.stringify(parsed.issues)}`);
@@ -160,7 +201,7 @@ async function main() {
         })
       : picker.slice(0, max);
     // El camino del editor: «Desde una plantilla» → buildBrandReel → guardar (finalizeProject) → encargar.
-    const project = buildBrandReel(template, chosen, style, { kit, library });
+    const project = buildBrandReel(template, chosen, style, { kit, library, looks });
     const ready = finalizeProject(project);
     const request = buildRenderRequest(ready, { id: 'pieza-prueba', version: 1 }) as { template: { id: string }; plan: unknown };
     const output = inBrand(`salida/desde-editor-${key}.mp4`);

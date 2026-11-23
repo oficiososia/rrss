@@ -9,8 +9,11 @@
 // y «Crear con IA» (`PickerUpload`) dejan lo nuevo elegido en el acto.
 //
 // Orden: primero lo que mejor queda en un reel vertical (`rankReelAssets`:
-// resolución, nitidez, proporción, vídeos reales; sin repetidos) y, a igualdad,
-// lo más reciente. Lo recién subido o creado aquí, siempre lo primero.
+// resolución, nitidez, proporción, vídeos reales, y la luz y el fondo de la
+// miniatura de cada foto, `useReelLooks`; sin repetidos) y, a igualdad, lo más
+// reciente. Lo recién subido o creado aquí, siempre lo primero. Mientras se miran
+// las miniaturas (2,5 s como mucho) el orden es el de los datos; al terminar se
+// ordena una vez y, en cuanto se elige algo, el orden ya no cambia.
 import { Clapperboard, Film, Image as ImageIcon, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, ErrorState, Input, Skeleton } from '@/components/ui';
@@ -21,6 +24,7 @@ import type { MediaAssetRow } from '@/lib/database.types';
 import { cn } from '@/lib/utils';
 import type { ReelSourceAsset } from '../api';
 import { rankReelAssets } from '../quality';
+import { useReelLooks } from './useReelLooks';
 
 const PAGE = 48;
 type Filter = 'all' | 'image' | 'video';
@@ -113,7 +117,19 @@ export function MediaPicker({
 
   // Se monta al abrirse (ReelEditor), así que siempre parte de cero.
 
-  const ranked = useMemo(() => rankReelAssets(sources), [sources]);
+  const looks = useReelLooks(sources, open);
+  const fresh = useMemo(
+    () => rankReelAssets(sources, looks.settled ? looks.looks : undefined),
+    [sources, looks.settled, looks.looks],
+  );
+  // En cuanto se elige algo, el orden se queda quieto (que no se mueva lo que se está tocando).
+  const [frozen, setFrozen] = useState<string[] | null>(null);
+  if (chosen.length > 0 && !frozen) setFrozen(fresh.map((a) => a.id));
+  const ranked = useMemo(() => {
+    if (!frozen) return fresh;
+    const at = new Map(frozen.map((id, i) => [id, i]));
+    return [...fresh].sort((a, b) => (at.get(a.id) ?? frozen.length) - (at.get(b.id) ?? frozen.length));
+  }, [fresh, frozen]);
   const all = useMemo(() => {
     const fresh = new Set(added.map((a) => a.id));
     return [...added, ...ranked.filter((s) => !fresh.has(s.id))];

@@ -11,6 +11,7 @@ import type {
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import { HOLD_REASON_TEXT } from './calendar';
+import { fetchManualPublications, manualEntriesBetween, type ManualMark } from './manualPublications';
 
 // Acceso a datos de la publicación (Fase 3): cuentas conectadas, calendario,
 // intentos y comentarios de la pieza. Las reglas viven en la base de datos
@@ -149,15 +150,20 @@ export type CalendarContent = Pick<
 
 export interface CalendarEntry extends ScheduledPublicationRow {
   content: CalendarContent | null;
+  /** Reel terminado a mano en Instagram (manualPublications.ts): ni se mueve ni se cancela desde aquí. */
+  manual?: ManualMark;
 }
 
-/** Publicaciones del intervalo, con su pieza. Se refresca sola mientras alguna se está publicando. */
+/**
+ * Publicaciones del intervalo, con su pieza: las de la plataforma y los reels terminados a mano
+ * en Instagram (pendientes o publicados). Se refresca sola mientras alguna se está publicando.
+ */
 export function useCalendar(brandId: string, from: Date, to: Date) {
   return useQuery({
     queryKey: socialKeys.range(brandId, from.toISOString(), to.toISOString()),
     queryFn: async (): Promise<CalendarEntry[]> => {
-      const rows = unwrap(
-        await supabase
+      const [scheduled, manual] = await Promise.all([
+        supabase
           .from('scheduled_publications')
           .select('*')
           .eq('brand_id', brandId)
@@ -165,7 +171,12 @@ export function useCalendar(brandId: string, from: Date, to: Date) {
           .lt('scheduled_at', to.toISOString())
           .order('scheduled_at', { ascending: true })
           .limit(1000),
-      );
+        fetchManualPublications(brandId),
+      ]);
+      const rows: Array<ScheduledPublicationRow & { manual?: ManualMark }> = [
+        ...unwrap(scheduled),
+        ...manualEntriesBetween(manual, from, to),
+      ].sort((a, b) => Date.parse(a.scheduled_at) - Date.parse(b.scheduled_at));
       const ids = [...new Set(rows.map((r) => r.content_id))];
       const contents = ids.length
         ? unwrap(

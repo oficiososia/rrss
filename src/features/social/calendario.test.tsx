@@ -342,4 +342,65 @@ describe('Calendario', () => {
     const chip = await entry('Pieza c-prog');
     await waitFor(() => expect(within(chip).getByTestId('calendar-entry-thumb').querySelector('img')).not.toBeNull());
   });
+
+  it('lo terminado a mano en Instagram sale en su día: «Publicada (a mano)» con su enlace y «Pendiente en Instagram», sin mover ni cancelar', async () => {
+    vi.stubEnv('VITE_SOCIAL_PUBLISHING_ENABLED', 'true');
+    seed();
+    fake.tables.content_items!.push(
+      content('c-mano', { format: 'reel', title: 'Reel a mano' }),
+      content('c-pend', { format: 'reel', title: 'Reel pendiente' }),
+    );
+    const manual = (id: string, contentId: string, patch: Record<string, unknown>) => ({
+      id,
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      content_id: contentId,
+      content_version: 1,
+      media_asset_id: 'video-1',
+      caption: '',
+      handed_off_at: justNow(),
+      published_at: null,
+      match_source: null,
+      imported_media_id: null,
+      external_id: null,
+      external_url: null,
+      created_by: null,
+      created_at: justNow(),
+      updated_at: justNow(),
+      ...patch,
+    });
+    fake.tables.manual_publications = [
+      manual('m-pub', 'c-mano', {
+        status: 'published',
+        published_at: justNow(),
+        match_source: 'manual',
+        external_url: 'https://www.instagram.com/reel/ABC123/',
+      }),
+      manual('m-pend', 'c-pend', { status: 'pending' }),
+      manual('m-canc', 'c-pend', { status: 'cancelled' }),
+    ];
+    const { user } = renderApp(`${BRAND_BASE}/calendario`);
+    const published = await entry('Reel a mano');
+    expect(published).toHaveAttribute('data-state', 'manual_published');
+    expect(published).toHaveTextContent('Publicada (a mano)');
+    expect(published).toHaveAttribute('draggable', 'false');
+    const pending = await entry('Reel pendiente');
+    expect(pending).toHaveAttribute('data-state', 'manual_pending');
+    expect(pending).toHaveTextContent('Pendiente en Instagram');
+    // Lo cancelado no sale.
+    expect((await screen.findAllByTestId('calendar-entry')).filter((e) => e.textContent?.includes('Reel pendiente'))).toHaveLength(1);
+
+    // La vista rápida: el enlace a Instagram y el reel; nada de mover, cancelar ni publicar.
+    await user.click(published);
+    const quick = await screen.findByTestId('calendar-quick');
+    expect(screen.queryByTestId('publication-dialog')).toBeNull();
+    expect(within(quick).getByTestId('calendar-quick-manual')).toHaveTextContent('Se publicó a mano en Instagram');
+    expect(screen.getByTestId('calendar-quick-instagram')).toHaveAttribute('href', 'https://www.instagram.com/reel/ABC123/');
+    expect(screen.getByTestId('calendar-quick-open')).toHaveTextContent('Abrir el reel');
+    expect(screen.queryByTestId('calendar-quick-cancel')).toBeNull();
+    expect(screen.queryByTestId('calendar-quick-publish-now')).toBeNull();
+    expect(screen.queryByTestId('calendar-quick-move')).toBeNull();
+    await user.click(screen.getByTestId('calendar-quick-open'));
+    await waitFor(() => expect(window.location.pathname).toBe(`${BRAND_BASE}/contenidos/c-mano`));
+  });
 });

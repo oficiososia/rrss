@@ -213,6 +213,10 @@ export interface PhotoFraming {
   /** Punto hacia el que va la cámara, en el cuadro ya compuesto (0 a 1). */
   target: FocalPoint;
   source: 'plan' | 'mask' | 'saliency' | 'center';
+  /** Encuadre ceñido sobre el sujeto (1 = la foto a pantalla llena). */
+  tighten?: number;
+  /** Corte a detalle a mitad del plano (×); 0 si no lo hay (plano corto o sin resolución). */
+  detail?: number;
 }
 
 export interface ReelBuild {
@@ -257,12 +261,30 @@ const MIN_FIT_SCALE = 0.8;
 const FIT_WHEN_VISIBLE_BELOW = 0.33;
 /**
  * Corte de cámara dentro de una foto: a partir de esta duración, el plano empieza
- * general y, a mitad, corta a un detalle del sujeto (×1,55), como si hubiera dos
- * cámaras. Solo con fotos de resolución suficiente (lado corto ≥ 900 px).
+ * general y, a mitad, corta a un detalle del sujeto (hasta ×1,55), como si hubiera
+ * dos cámaras. Solo si la foto tiene resolución para ello (ver `MIN_USEFUL_WIDTH`):
+ * si no llega a ×1,25 sin ampliar de más, no hay corte a detalle.
  */
 export const DETAIL_CUT_MIN_SECONDS = 1.6;
 export const DETAIL_ZOOM = 1.55;
-const DETAIL_MIN_SOURCE = 900;
+const DETAIL_MIN_ZOOM = 1.25;
+/**
+ * Lo mínimo que se ve de la foto original a lo ancho en cualquier momento (píxeles de
+ * la foto): unos 1080, el ancho del reel. Ninguna ampliación (encuadre ceñido,
+ * movimiento de cámara ni corte a detalle) baja de ahí: se vería borroso.
+ */
+export const MIN_USEFUL_WIDTH = 1000;
+/**
+ * Encuadre ceñido: con el sujeto localizado (máscara o saliencia), la foto se acerca
+ * hasta que el plato ocupe ~90 % del ancho o ~70 % del alto del cuadro (deja sitio a
+ * los textos), para que no se vea lo que sobra alrededor (la encimera, unos pies…).
+ * Como mucho ×1,8 con máscara y ×1,5 con saliencia (es una estimación).
+ */
+const TIGHT_FILL_W = 0.9;
+const TIGHT_FILL_H = 0.7;
+const TIGHT_MAX: Record<'mask' | 'saliency', number> = { mask: 1.8, saliency: 1.5 };
+/** Movimiento de cámara más golpe de zoom que se deja de margen al ceñir el encuadre. */
+const MOTION_HEADROOM = 1.12;
 /** «Golpe» de zoom al entrar por corte: empieza un 7 % más cerca y se asienta en ~0,25 s. */
 const PUNCH = 0.07;
 const PUNCH_FRAMES = 8;
@@ -538,12 +560,22 @@ export function photoFraming(
   target: FocalPoint;
   source: PhotoFraming['source'];
   fit?: { fgW: number; fgH: number; cropW: number; cropH: number; cropX: number; cropY: number; x: number; y: number };
+  /** Encuadre ceñido sobre el sujeto (×, sobre la foto a pantalla llena); 1 = sin ceñir. */
+  tighten: number;
+  /**
+   * Cuánto más se puede acercar la cámara sin que se vea menos de `MIN_USEFUL_WIDTH` px de la
+   * foto a lo ancho (sobre el cuadro ya compuesto). 0 si no se sabe el tamaño de la foto.
+   */
+  room: number;
+  /** Dónde queda el sujeto en el cuadro compuesto (0 a 1), si se conoce. */
+  subjectBox?: { x: number; y: number; w: number; h: number };
 } {
   const subject = clip.subject ?? null;
   const focal = clip.focalPoint ?? subject?.focal ?? CENTER;
   const source: PhotoFraming['source'] = clip.focalPoint ? 'plan' : subject ? subject.source : 'center';
   const size = clip.sourceSize;
-  if (!size || size.width <= 0 || size.height <= 0) return { mode: 'cover', focal, target: { ...CENTER }, source };
+  if (!size || size.width <= 0 || size.height <= 0)
+    return { mode: 'cover', focal, target: { ...CENTER }, source, tighten: 1, room: 0 };
   const cover = Math.max(w / size.width, h / size.height);
   const contain = Math.min(w / size.width, h / size.height);
   // Lo que debe caber: el sujeto con un 8 % de aire.
@@ -554,16 +586,40 @@ export function photoFraming(
   }
   const placeCrop = (scaled: number, view: number, point: number) =>
     clamp(point * scaled - view / 2, 0, Math.max(0, scaled - view));
+  // Cuánto se puede ampliar una escala sin bajar de MIN_USEFUL_WIDTH px de la foto a lo ancho.
+  const roomAt = (s: number) => w / (s * MIN_USEFUL_WIDTH);
   if (scale >= cover * 0.97) {
-    const sw = size.width * cover;
-    const sh = size.height * cover;
+    // Encuadre ceñido sobre el sujeto (sin pasar de lo que aguanta la resolución).
+    let tighten = 1;
+    if (subject && !clip.focalPoint && subject.box.w > 0 && subject.box.h > 0) {
+      const boxW = (subject.box.w * size.width * cover) / w;
+      const boxH = (subject.box.h * size.height * cover) / h;
+      const wanted = Math.min(TIGHT_FILL_W / boxW, TIGHT_FILL_H / boxH, TIGHT_MAX[subject.source]);
+      tighten = clamp(Math.min(wanted, roomAt(cover) / MOTION_HEADROOM), 1, TIGHT_MAX[subject.source]);
+      if (tighten < 1.04) tighten = 1;
+    }
+    const s = cover * tighten;
+    const sw = size.width * s;
+    const sh = size.height * s;
     const cx = placeCrop(sw, w, focal.x);
     const cy = placeCrop(sh, h, focal.y);
+    const box = subject?.box;
+    let subjectBox: { x: number; y: number; w: number; h: number } | undefined;
+    if (box) {
+      const x0 = clamp((box.x * sw - cx) / w, 0, 1);
+      const y0 = clamp((box.y * sh - cy) / h, 0, 1);
+      const x1 = clamp(((box.x + box.w) * sw - cx) / w, 0, 1);
+      const y1 = clamp(((box.y + box.h) * sh - cy) / h, 0, 1);
+      if (x1 > x0 && y1 > y0) subjectBox = { x: r3(x0), y: r3(y0), w: r3(x1 - x0), h: r3(y1 - y0) };
+    }
     return {
       mode: 'cover',
       focal,
       target: { x: r3(clamp((focal.x * sw - cx) / w, 0, 1)), y: r3(clamp((focal.y * sh - cy) / h, 0, 1)) },
       source,
+      tighten: r3(tighten),
+      room: r3(roomAt(s)),
+      ...(subjectBox ? { subjectBox } : {}),
     };
   }
   const fgW = even(size.width * scale);
@@ -584,6 +640,8 @@ export function photoFraming(
     },
     source,
     fit: { fgW, fgH, cropW, cropH, cropX, cropY, x, y },
+    tighten: 1,
+    room: r3(roomAt(scale)),
   };
 }
 
@@ -679,16 +737,19 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
           : template.photoMotion.type);
       photoCount += 1;
       const frame = photoFraming(item, sw, sh);
-      framing.push({ index, mode: frame.mode, target: frame.target, source: frame.source });
+      const framed: PhotoFraming = { index, mode: frame.mode, target: frame.target, source: frame.source, tighten: frame.tighten };
+      framing.push(framed);
       // La ventana del zoom se centra en el sujeto (sin salirse de la foto).
       const tx = `max(0,min(iw-iw/zoom,${num(frame.target.x, 3)}*iw-iw/zoom/2))`;
       const ty = `max(0,min(ih-ih/zoom,${num(frame.target.y, 3)}*ih-ih/zoom/2))`;
-      // Corte a detalle a mitad del plano (solo acercamientos, con foto de resolución suficiente).
-      const shortSide = item.sourceSize ? Math.min(item.sourceSize.width, item.sourceSize.height) : 0;
+      // Corte a detalle a mitad del plano (solo acercamientos y si la resolución lo aguanta:
+      // nunca menos de MIN_USEFUL_WIDTH px de la foto a lo ancho; si no llega a ×1,25, no hay corte).
+      const detailZoom = Math.min(DETAIL_ZOOM, frame.room / (1 + Number(amount)));
       const detailAt =
-        (kind === 'zoom-in' || kind === 'zoom-out') && seconds >= DETAIL_CUT_MIN_SECONDS && shortSide >= DETAIL_MIN_SOURCE
+        (kind === 'zoom-in' || kind === 'zoom-out') && seconds >= DETAIL_CUT_MIN_SECONDS && detailZoom >= DETAIL_MIN_ZOOM
           ? Math.round(count * 0.5)
           : 0;
+      framed.detail = detailAt ? Number(detailZoom.toFixed(3)) : 0;
       const first = detailAt || count;
       const progress = ease(0, first);
       const motion = {
@@ -706,10 +767,26 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
         `(1+${PUNCH}*pow(max(0,1-${from === 0 ? 'on' : `(on-${from})`}/${PUNCH_FRAMES}),2))`;
       let z = motion.z;
       if (detailAt) {
-        const second = `${DETAIL_ZOOM}+${amount}*${ease(detailAt, count - detailAt)}`;
+        const second = `${num(detailZoom, 3)}+${amount}*${ease(detailAt, count - detailAt)}`;
         z = `if(lt(on,${detailAt}),${z},(${second})*${punch(detailAt)})`;
-        motion.x = tx;
-        motion.y = ty;
+        // El detalle no se sale del sujeto: la ventana queda dentro de su caja (o centrada en
+        // ella si la caja es más pequeña que la ventana).
+        const b = frame.subjectBox;
+        if (b) {
+          const inside = (axis: 'iw' | 'ih', t: number, from: number, size: number) => {
+            const win = `${axis}/zoom`;
+            const lo = `${num(from, 3)}*${axis}`;
+            const hi = `${num(from + size, 3)}*${axis}-${win}`;
+            const wanted = `${num(t, 3)}*${axis}-${win}/2`;
+            const centred = `${num(from + size / 2, 3)}*${axis}-${win}/2`;
+            return `max(0,min(${axis}-${win},if(gt(${win},${num(size, 3)}*${axis}),${centred},max(${lo},min(${hi},${wanted})))))`;
+          };
+          motion.x = `if(lt(on,${detailAt}),${tx},${inside('iw', frame.target.x, b.x, b.w)})`;
+          motion.y = `if(lt(on,${detailAt}),${ty},${inside('ih', frame.target.y, b.y, b.h)})`;
+        } else {
+          motion.x = tx;
+          motion.y = ty;
+        }
       }
       if (transitions[index] === 0 && kind !== 'none') z = `(${z})*${punch(0)}`;
       motion.z = z;
@@ -749,7 +826,8 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
         chains.push(
           `[${nextInput - 1}:v]${[
             ...head,
-            `scale=${sw}:${sh}:force_original_aspect_ratio=increase:flags=lanczos:${scaleColor}`,
+            // A pantalla llena (y, si se ciñe al sujeto, un poco más) y recortado sobre el punto de interés.
+            `scale=${even(sw * frame.tighten)}:${even(sh * frame.tighten)}:force_original_aspect_ratio=increase:flags=lanczos:${scaleColor}`,
             crop(sw, sh, frame.focal),
             ...tail,
           ].join(',')}[v${index}]`,
@@ -1179,7 +1257,8 @@ export function buildReel(input: ReelBuildInput): ReelBuild {
     cursor = items[0]!.laid.extent[1] + Math.round(height * 0.035);
     for (const [value, size, delay] of [
       [outro.handle, 0.05, 0.3],
-      [outro.address, 0.038, 0.4],
+      // Sin signos colgando («…(Alicante),»): los planes guardados antes pueden traerlos.
+      [outro.address?.replace(/^[\s,.;:·]+|[\s,.;:·]+$/g, '') ?? null, 0.038, 0.4],
     ] as const) {
       if (!value) continue;
       const style = legible(smallStyle(size), 'cta');

@@ -282,6 +282,83 @@ describe('ritmo y variedad de encuadre', () => {
   });
 });
 
+describe('encuadre ceñido y detalle con resolución (F67: zapatillas a la vista y tortitas borrosas)', () => {
+  // Foto de móvil vertical con el plato pequeño en el centro y la encimera (y unos pies) alrededor.
+  const plate = { focal: { x: 0.5, y: 0.45 }, box: { x: 0.3, y: 0.32, w: 0.4, h: 0.26 }, source: 'saliency' as const };
+
+  it('con el plato localizado, se acerca a él: lo que sobra alrededor queda fuera', () => {
+    const frame = photoFraming({ sourceSize: { width: 3024, height: 4032 }, subject: plate }, 2160, 3840);
+    expect(frame.mode).toBe('cover');
+    expect(frame.tighten).toBeGreaterThan(1.3);
+    expect(frame.tighten).toBeLessThanOrEqual(1.5);
+    // El plato pasa a ocupar mucho más del cuadro (antes, ~40 % del ancho) y lo de abajo (los pies) sale.
+    expect(frame.subjectBox!.w).toBeGreaterThan(0.55);
+    expect(frame.subjectBox!.y + frame.subjectBox!.h).toBeLessThan(0.8);
+    // Con máscara se puede ceñir más; con el punto que eligió la persona, no se toca.
+    const masked = photoFraming({ sourceSize: { width: 3024, height: 4032 }, subject: { ...plate, source: 'mask' } }, 2160, 3840);
+    expect(masked.tighten).toBeGreaterThanOrEqual(frame.tighten);
+    expect(
+      photoFraming({ sourceSize: { width: 3024, height: 4032 }, subject: plate, focalPoint: { x: 0.5, y: 0.5 } }, 2160, 3840)
+        .tighten,
+    ).toBe(1);
+    // En el filtro: la foto se escala más que a pantalla llena antes del recorte.
+    const build = buildReel({
+      template: corte,
+      plan: { clips: [photo('a.jpg', 1.8, { motion: 'zoom-in', sourceSize: { width: 3024, height: 4032 }, subject: plate })], texts: [] },
+      outputFile: 'r.mp4',
+      outputWidth: 540,
+    });
+    const scale = /scale=(\d+):(\d+):force_original_aspect_ratio=increase:flags=lanczos/.exec(build.filterGraph)!;
+    expect(Number(scale[1])).toBeGreaterThan(1080 * 1.3);
+    expect(build.framing[0]!.tighten).toBe(frame.tighten);
+  });
+
+  it('nunca amplía por debajo de ~1000 px de la foto a lo ancho: con poca resolución, ni se ciñe ni hay corte a detalle', () => {
+    const small = { width: 1200, height: 1600 };
+    const frame = photoFraming({ sourceSize: small, subject: plate }, 2160, 3840);
+    expect(frame.tighten).toBe(1);
+    expect(frame.room).toBeLessThan(1);
+    const medium = { width: 1536, height: 2048 };
+    const build = buildReel({
+      template: corte,
+      plan: {
+        clips: [
+          photo('tortitas.jpg', 1.8, { motion: 'zoom-in', sourceSize: small, subject: plate }),
+          photo('whatsapp.jpg', 1.8, { motion: 'zoom-in', sourceSize: medium }),
+          photo('grande.jpg', 1.8, { motion: 'zoom-in', sourceSize: { width: 3000, height: 4000 } }),
+        ],
+        texts: [],
+      },
+      outputFile: 'r.mp4',
+      outputWidth: 540,
+    });
+    expect(build.framing.map((f) => f.detail)).toEqual([0, 0, 1.55]);
+    const chain = (i: number) => build.filterGraph.split(';\n').find((c) => c.startsWith(`[${i}:v]`))!;
+    expect(chain(0)).not.toContain('if(lt(on');
+    expect(chain(1)).not.toContain('if(lt(on');
+    // Con la foto ceñida, el detalle se queda en lo que aguanta la resolución (menos de ×1,55) o no se hace.
+    const tight = photoFraming({ sourceSize: { width: 3024, height: 4032 }, subject: plate }, 2160, 3840);
+    expect(tight.room).toBeGreaterThanOrEqual(1.1);
+  });
+
+  it('el detalle no se sale del plato: la ventana se queda dentro de su caja', () => {
+    const build = buildReel({
+      template: corte,
+      plan: {
+        clips: [photo('a.jpg', 1.8, { motion: 'zoom-in', sourceSize: { width: 4000, height: 6000 }, subject: plate })],
+        texts: [],
+      },
+      outputFile: 'r.mp4',
+      outputWidth: 540,
+    });
+    const chain = build.filterGraph.split(';\n').find((c) => c.startsWith('[0:v]'))!;
+    expect(build.framing[0]!.detail).toBeGreaterThanOrEqual(1.25);
+    // x e y del detalle: dentro de la caja del sujeto (o centrados en ella si es más pequeña que la ventana).
+    expect(chain).toMatch(/x='if\(lt\(on,27\),[^']*if\(gt\(iw\/zoom,/);
+    expect(chain).toMatch(/y='if\(lt\(on,27\),[^']*if\(gt\(ih\/zoom,/);
+  });
+});
+
 describe('codificación, sonido y cierre', () => {
   it('H.264 High a ~9 Mbps, fotograma clave cada 2 s y +faststart', () => {
     const args = reelVideoArgs(corte);

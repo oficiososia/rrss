@@ -276,3 +276,14 @@ Prueba de punta a punta en staging (`rrss-recursos-comparativa/e2e-calidad/INFOR
 Pruebas: `like/reelLike.test.tsx` (15; nuevas: enlaces cerrados avisados antes, enlace directo,
 vídeo de la biblioteca, el nombre, pieza nueva con la anterior archivada y el pie en la versión
 guardada).
+
+## 14. Papeles y cierre de la marca (`f67/pendientes-reels`, 23/11/2026)
+
+Antes: el borrador salía sin cierre de marca y sus textos sin papel (el trabajador lo deducía). Ahora
+`buildDraft` escribe `role` en cada texto (lo «grande», titular; lo demás, rótulo; la llamada del final,
+`cta`) y, con el perfil de la marca (`BrandLook.kit`, que arma `useDraft` con `brandReelKit` y
+`reelLogoPath`, como el editor), pone `outro` con `withBrandOutro`: la llamada del guion pasa al cierre si
+está en el reel; si no, la del perfil. Al rellenar después el hueco de la llamada, también va al cierre.
+Los textos acaban cuando entra el cierre. El borrador espera al perfil y a sus logotipos, y las fotos
+llevan su punto de interés y su máscara guardados. Pruebas: `like/draft.test.ts` (5 nuevas) y
+`like/reelLike.test.tsx` (perfil con logotipo oscuro y claro: el cierre lleva el claro).

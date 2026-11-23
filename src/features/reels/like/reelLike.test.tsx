@@ -682,6 +682,70 @@ describe('«Hacer un reel como este»: resultado', () => {
     expect(saved.p_data.guide.shots.map((s) => Boolean(s.clipId))).toEqual([true, true, false, true]);
   });
 
+  it('con el perfil de la marca, el borrador lleva el papel de cada texto y el cierre con el logotipo claro', async () => {
+    seed();
+    fake.tables.reel_references = [reference({ status: 'measured', measurement: MEASUREMENT as never })];
+    fake.tables.media_assets!.push(
+      asset('5a0e8b1c-1d2e-4f30-8a41-b52c63d74e01', 'image', 'logo.png', { mime_type: 'image/png' }),
+      asset('5a0e8b1c-1d2e-4f30-8a41-b52c63d74e02', 'image', 'logo-blanco.png', { mime_type: 'image/png' }),
+    );
+    fake.tables.brand_profiles = [
+      {
+        id: 'perfil-1',
+        brand_id: BRAND_ID,
+        organization_id: ORG_ID,
+        status: 'active',
+        version: 1,
+        data: {
+          visual: {
+            colors: [{ name: 'Dorado', role: 'acento', hex: '#C9A227' }],
+            logoAssetIds: ['5a0e8b1c-1d2e-4f30-8a41-b52c63d74e01', '5a0e8b1c-1d2e-4f30-8a41-b52c63d74e02'],
+          },
+          channels: [{ platform: 'Instagram', handle: 'panaderia', url: '' }],
+          voice: { callsToAction: ['Reserva tu mesa'] },
+        },
+      },
+    ];
+    fake.rpc('set_reel_reference_content', (args) => {
+      Object.assign(fake.rows('reel_references')[0]!, { content_id: args.p_content_id });
+      return fake.rows('reel_references')[0];
+    });
+    fake.rpc('save_content_version', (args) => ({
+      id: 'v-1',
+      content_id: args.p_content_id,
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      version: 1,
+      schema_version: 2,
+      data: args.p_data,
+      change_note: '',
+      restored_from: null,
+      created_by: ME.id,
+      created_at: '2026-11-22T10:10:00Z',
+    }));
+    renderApp(`${START}/${REF}`);
+    await screen.findByTestId('reel-like-result');
+    fireEvent.click(screen.getByTestId('reel-like-open-editor'));
+    await screen.findByTestId('reel-editor');
+    await chooseMoreAction(userEvent.setup(), 'reel-more', 'reel-history');
+    fireEvent.click(await screen.findByTestId('reel-save'));
+    const dialog = await screen.findByRole('dialog', { name: /Guardar/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Guardar/ }));
+    await waitFor(() => expect(fake.callsTo('save_content_version', 'rpc')).toHaveLength(1));
+    const { p_data } = fake.callsTo('save_content_version', 'rpc')[0]!.payload as {
+      p_data: { plan: { texts: Array<{ role?: string }>; outro?: Record<string, unknown> } };
+    };
+    // Como los reels hechos desde una plantilla: papel en cada texto y cierre de la marca.
+    expect(p_data.plan.texts.length).toBeGreaterThan(0);
+    expect(p_data.plan.texts.every((t) => t.role)).toBe(true);
+    expect(p_data.plan.outro).toMatchObject({
+      cta: 'Reserva tu mesa',
+      handle: '@panaderia',
+      logoPath: path('logo-blanco.png'),
+      accent: '#C9A227',
+    });
+  });
+
   it('quien solo ve la marca ve el resultado, pero no gasta, ni guarda, ni abre el editor', async () => {
     seed({ role: 'member', brandRole: 'viewer' });
     fake.tables.reel_references = [

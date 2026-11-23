@@ -94,6 +94,7 @@ export function useMediaSummary(brandId: string, period: Period) {
         external_url: r.external_url,
         provisional: r.provisional,
         metrics: Object.fromEntries(Object.entries(r.metrics ?? {}).map(([k, v]) => [k, num(v)])),
+        ...(r.manual ? { manual: true } : {}),
       }));
     },
   });
@@ -217,6 +218,14 @@ export function usePostMedia(brandId: string, publicationIds: string[]) {
         await supabase.from('scheduled_publications').select('id, media_asset_ids').in('id', publicationIds),
       ) as Array<{ id: string; media_asset_ids: string[] | null }>;
       const firstOf = new Map(pubs.flatMap((p) => (p.media_asset_ids?.[0] ? [[p.id, p.media_asset_ids[0]] as const] : [])));
+      // Los reels publicados a mano: el vídeo que se mandó al móvil.
+      const byHand = publicationIds.filter((id) => !firstOf.has(id));
+      if (byHand.length > 0) {
+        const manual = unwrap(
+          await supabase.from('manual_publications').select('id, media_asset_id').in('id', byHand),
+        ) as Array<{ id: string; media_asset_id: string }>;
+        for (const m of manual) firstOf.set(m.id, m.media_asset_id);
+      }
       const ids = [...new Set(firstOf.values())];
       if (ids.length === 0) return new Map();
       const assets = unwrap(

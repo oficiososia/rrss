@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { useMediaSummary } from '@/features/analytics/api';
+import { fetchManualPublications, manualAsPublication } from '@/features/social/manualPublications';
 import type { ContentItemRow, ScheduledPublicationRow } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
@@ -14,9 +15,24 @@ export type PieceRef = Pick<ContentItemRow, 'id' | 'title' | 'current_version' |
 export type HomePublication = Pick<
   ScheduledPublicationRow,
   'id' | 'content_id' | 'network' | 'format' | 'scheduled_at' | 'published_at' | 'status' | 'hold_reason' | 'external_url'
->;
+> & {
+  /** Reel terminado a mano en Instagram («Publicada (a mano)»); `id` es el de `manual_publications`. */
+  manual?: boolean;
+};
 
 const COLUMNS = 'id, content_id, network, format, scheduled_at, published_at, status, hold_reason, external_url';
+
+const pickHome = (p: ScheduledPublicationRow): HomePublication => ({
+  id: p.id,
+  content_id: p.content_id,
+  network: p.network,
+  format: p.format,
+  scheduled_at: p.scheduled_at,
+  published_at: p.published_at,
+  status: p.status,
+  hold_reason: p.hold_reason,
+  external_url: p.external_url,
+});
 const PIECE_COLUMNS = 'id, title, current_version, network, format';
 
 async function piecesOf(ids: string[]): Promise<Map<string, PieceRef>> {
@@ -60,20 +76,30 @@ export interface PublishedWithFigures extends WithPiece {
   figures: { reach?: number; interactions?: number };
 }
 
-/** Las últimas publicaciones salidas, con sus cifras si la analítica ya las tiene. */
+/**
+ * Las últimas publicaciones salidas, con sus cifras si la analítica ya las tiene: las de la
+ * plataforma y los reels publicados a mano en Instagram (lo pendiente de publicar a mano, no).
+ */
 export function useLatestPublished(brandId: string, now = new Date()) {
   const published = useQuery({
     queryKey: ['brand', brandId, 'home', 'published'] as const,
     queryFn: async (): Promise<WithPiece[]> => {
-      const rows = unwrap(
-        await supabase
+      const [scheduled, manual] = await Promise.all([
+        supabase
           .from('scheduled_publications')
           .select(COLUMNS)
           .eq('brand_id', brandId)
           .eq('status', 'published')
           .order('published_at', { ascending: false })
           .limit(3),
-      ) as HomePublication[];
+        fetchManualPublications(brandId),
+      ]);
+      const byHand: HomePublication[] = manual.flatMap((row) => {
+        const entry = row.status === 'published' ? manualAsPublication(row) : null;
+        return entry ? [{ ...pickHome(entry), manual: true }] : [];
+      });
+      const when = (p: HomePublication) => Date.parse(p.published_at ?? p.scheduled_at);
+      const rows = [...(unwrap(scheduled) as HomePublication[]), ...byHand].sort((a, b) => when(b) - when(a)).slice(0, 3);
       const pieces = await piecesOf([...new Set(rows.map((r) => r.content_id))]);
       return rows.map((publication) => ({ publication, piece: pieces.get(publication.content_id) ?? null }));
     },

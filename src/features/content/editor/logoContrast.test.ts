@@ -8,7 +8,10 @@ import {
   faintLogos,
   fixLogoContrast,
   LOGO_MIN_CONTRAST,
+  logoVariantFor,
   luminanceOfPixels,
+  namedLogoTone,
+  templateLogos,
 } from './logoContrast';
 
 // Logotipo legible sobre su fondo (F65): la historia «Tapa del día» pone el primer logotipo del kit
@@ -127,5 +130,45 @@ describe('logotipo legible sobre su fondo', () => {
     expect(luminanceOfPixels(pixels)).toBe(0);
     expect(luminanceOfPixels([255, 255, 255, 255])).toBeCloseTo(1);
     expect(luminanceOfPixels([0, 0, 0, 0])).toBeNull();
+  });
+});
+
+// Miniaturas de las plantillas (selector y Marca → Plantillas): la misma regla que el editor y que
+// el cierre de los reels. Antes pintaban siempre el primer logotipo del kit.
+describe('miniaturas de plantillas: el logotipo que se ve', () => {
+  const named = new Map([
+    [DARK, { id: DARK, storage_path: 'org/marca/media/logo.png', file_name: 'logo.png' }],
+    [LIGHT, { id: LIGHT, storage_path: 'org/marca/media/logo-blanco.png', file_name: 'logo-blanco.png' }],
+  ]);
+
+  it('con los tonos medidos: Tapa del día lleva el claro sobre su cabecera oscura', () => {
+    const document = tapaDelDia();
+    expect(logoOf(templateLogos(document, [DARK, LIGHT], named, TONES)).assetId).toBe(LIGHT);
+  });
+
+  it('sin poder medir, por el nombre del archivo: claro sobre oscuro y oscuro sobre claro', () => {
+    const document = tapaDelDia();
+    expect(logoOf(templateLogos(document, [DARK, LIGHT], named, new Map())).assetId).toBe(LIGHT);
+    expect(logoOf(templateLogos(document, [DARK, LIGHT], named)).assetId).toBe(LIGHT);
+    // Sobre un fondo claro, el que se llama claro pasa al oscuro (o al que no se llama claro).
+    expect(logoVariantFor(LIGHT, [LIGHT, DARK], named, undefined, 0.9)).toBe(DARK);
+    expect(logoVariantFor(DARK, [LIGHT, DARK], named, undefined, 0.9)).toBe(DARK);
+    // Por las etiquetas también.
+    expect(namedLogoTone({ id: 'x', storage_path: 'a/b/logo-2.png', tags: ['Blanco'] })).toBe('light');
+    expect(namedLogoTone({ id: 'x', storage_path: 'a/b/logo_black.png' })).toBe('dark');
+    expect(namedLogoTone({ id: 'x', storage_path: 'a/b/logotipo.png' })).toBeNull();
+  });
+
+  it('sin nombres que lo digan, con un solo logotipo o sin saber lo que hay debajo, no cambia', () => {
+    const document = tapaDelDia();
+    const unnamed = new Map([
+      [DARK, { id: DARK, storage_path: 'org/marca/media/a.png' }],
+      [LIGHT, { id: LIGHT, storage_path: 'org/marca/media/b.png' }],
+    ]);
+    expect(templateLogos(document, [DARK, LIGHT], unnamed)).toBe(document);
+    expect(templateLogos(document, [DARK], named, TONES)).toBe(document);
+    // Un logotipo que no es del kit (puesto a mano) no se toca.
+    const other = '55555555-5555-4555-8555-555555555555';
+    expect(templateLogos(tapaDelDia(other), [DARK, LIGHT], named, TONES)).toEqual(tapaDelDia(other));
   });
 });

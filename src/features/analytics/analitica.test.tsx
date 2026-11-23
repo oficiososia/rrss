@@ -362,6 +362,49 @@ describe('Resultados de un vistazo', () => {
     expect(items[1]!.querySelector('img')).toBeNull();
   });
 
+  it('un reel publicado a mano en Instagram sale con sus cifras, «publicada a mano» y su enlace', async () => {
+    seed();
+    fake.rpc('analytics_media_summary', () => [
+      {
+        publication_id: 'm1',
+        title: 'Reel terminado a mano',
+        format: 'reel',
+        network: 'instagram',
+        media_product_type: 'REELS',
+        published_at: `${day(-3)}T10:00:00Z`,
+        external_url: 'https://www.instagram.com/reel/ABC123/',
+        provisional: false,
+        metrics: { 'instagram.media.total_interactions': 90 },
+        manual: true,
+      },
+    ]);
+    fake.tables.scheduled_publications = [];
+    fake.tables.manual_publications = [{ id: 'm1', media_asset_id: 'video-1' }];
+    fake.tables.media_assets = [
+      ...(fake.tables.media_assets ?? []),
+      {
+        id: 'video-1',
+        brand_id: BRAND_ID,
+        storage_path: `${ORG_ID}/${BRAND_ID}/media/reel.mp4`,
+        thumb_path: null,
+        mime_type: 'video/mp4',
+        file_name: 'reel.mp4',
+      },
+    ];
+    renderApp(`${BRAND_BASE}/analitica`);
+    const top = await screen.findByTestId('analytics-top-posts');
+    const [item] = within(top).getAllByRole('listitem');
+    expect(item).toHaveTextContent('Reel terminado a mano');
+    expect(item).toHaveTextContent('publicada a mano');
+    expect(item).toHaveTextContent('90 interacciones');
+    expect(within(item!).getByRole('link', { name: 'Ver en Instagram' })).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/reel/ABC123/',
+    );
+    // Es un vídeo: icono, no una imagen inventada.
+    expect(item!.querySelector('img')).toBeNull();
+  });
+
   it('con la cuenta conectada pero sin cifras, lo dice y explica cuándo llegan', async () => {
     seed();
     fake.tables.account_metrics_daily = [];

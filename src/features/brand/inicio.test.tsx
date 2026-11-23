@@ -206,4 +206,69 @@ describe('Inicio de la marca', () => {
     expect(external.closest('a[href^="/"]')).toBeNull();
     expect(within(items[1]!).queryByTestId('home-published-link')).toBeNull();
   });
+
+  it('lo publicado a mano en Instagram cuenta en la semana y sale en lo último publicado con su enlace y sus cifras; lo pendiente, no', async () => {
+    seed();
+    fake.tables.content_items = [
+      piece(),
+      piece({ id: 'c2', title: 'Reel a mano', format: 'reel' }),
+      piece({ id: 'c3', title: 'Reel pendiente', format: 'reel' }),
+    ];
+    fake.tables.scheduled_publications = [publication()];
+    const manual = (patch: Record<string, unknown>) => ({
+      brand_id: BRAND_ID,
+      organization_id: ORG_ID,
+      content_version: 1,
+      media_asset_id: 'video-1',
+      caption: '',
+      match_source: null,
+      imported_media_id: null,
+      external_id: null,
+      external_url: null,
+      published_at: null,
+      created_by: ME.id,
+      created_at: soon(),
+      updated_at: soon(),
+      ...patch,
+    });
+    fake.tables.manual_publications = [
+      manual({
+        id: 'm1',
+        content_id: 'c2',
+        status: 'published',
+        handed_off_at: soon(),
+        published_at: soon(),
+        match_source: 'manual',
+        external_url: 'https://www.instagram.com/reel/ABC123/',
+      }),
+      manual({ id: 'm2', content_id: 'c3', status: 'pending', handed_off_at: soon() }),
+      manual({ id: 'm3', content_id: 'c3', status: 'cancelled', handed_off_at: soon() }),
+    ];
+    fake.rpc('analytics_media_summary', () => [
+      {
+        publication_id: 'm1',
+        title: 'Reel a mano',
+        format: 'reel',
+        network: 'instagram',
+        media_product_type: 'REELS',
+        published_at: soon(),
+        external_url: 'https://www.instagram.com/reel/ABC123/',
+        provisional: true,
+        metrics: { 'instagram.media.reach': 321 },
+        manual: true,
+      },
+    ]);
+    renderApp(`${BRAND_BASE}/inicio`);
+    // Programada + publicada a mano + pendiente a mano: sale una de tres (pendiente no es publicado).
+    expect(await screen.findByTestId('home-week-count')).toHaveTextContent('1 de 3 publicadas');
+    const items = await screen.findAllByTestId('home-published-item');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent('Reel a mano');
+    expect(within(items[0]!).getByTestId('home-published-manual')).toHaveTextContent('a mano');
+    expect(within(items[0]!).getByRole('link', { name: 'Ver en Instagram' })).toHaveAttribute(
+      'href',
+      'https://www.instagram.com/reel/ABC123/',
+    );
+    await waitFor(() => expect(within(items[0]!).getByTestId('home-published-figures')).toHaveTextContent('321'));
+  });
 });

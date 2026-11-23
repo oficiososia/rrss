@@ -12,6 +12,13 @@
 //   3. `fillGuideShot` rellena un hueco con un recurso elegido a mano: lo pone
 //      en su sitio y recoloca los textos del guion.
 //
+// Calidad (docs/reels-calidad.md), como los reels que salen de una plantilla
+// (`buildBrandReel`): cada texto lleva su papel (`role`: titular, rótulo,
+// llamada) y, con el perfil de la marca, el reel acaba con el cierre de la
+// marca (`outro`: logotipo, llamada, usuario y dirección). La llamada final del
+// guion pasa al cierre en vez de salir dos veces y los textos acaban cuando
+// entra el cierre.
+//
 // Todo es puro: sin red ni React. Del vídeo de referencia no llega nada aquí:
 // solo la estructura (duraciones, tipos de plano) y los textos ya escritos
 // para la marca.
@@ -22,6 +29,7 @@ import {
   type TransitionKind,
 } from '../../../../supabase/functions/_shared/reels/like';
 import {
+  outroSpan,
   PHOTO_SECONDS,
   planTimeline,
   PROJECT_KIND,
@@ -39,7 +47,15 @@ import {
   type Transition,
 } from '../editor/project';
 import type { ReelTemplateSummary } from '../templates';
-import { reelAssetScore, roleTextStyle, separateTexts, type ReelTextRole } from '../quality';
+import {
+  isCallToAction,
+  reelAssetScore,
+  roleTextStyle,
+  separateTexts,
+  withBrandOutro,
+  type BrandReelKit,
+  type ReelTextRole,
+} from '../quality';
 
 /** Lo que se necesita de un recurso de la biblioteca para saber si encaja. */
 export interface LibraryAsset {
@@ -56,6 +72,8 @@ export interface LibraryAsset {
   width?: number | null;
   height?: number | null;
   bytes?: number | null;
+  /** De dónde sale (recortes y «Quitar el fondo»): da el punto de interés y la máscara guardados. */
+  provenance?: unknown;
 }
 
 export interface ShotMatch {
@@ -168,6 +186,11 @@ export interface BrandLook {
   colors?: string[];
   /** Tipografía .ttf/.otf de la marca que puede usar el trabajador. */
   font?: { path: string; family: string };
+  /**
+   * Logotipo, llamada, usuario, dirección y colores del perfil (`brandReelKit`): con él, el
+   * borrador acaba con el cierre de la marca. Sin él (o sin llamada), sin cierre.
+   */
+  kit?: BrandReelKit | null;
 }
 
 /** Tamaño pedido por el análisis → papel del texto en el vídeo (quality.ts). */
@@ -208,10 +231,6 @@ export function guideTextStyle(
   }
   return style;
 }
-
-/** ¿El texto es una llamada a la acción? */
-const CALL_TO_ACTION =
-  /\b(reserva|reservar|pide|pídelo|llama|llámanos|visítanos|ven|venid|encarga|compra|apúntate|escríbenos|enlace|bio)\b/i;
 
 // ───────────────────────────── Borrador ─────────────────────────────
 
@@ -326,22 +345,42 @@ function placeGuideTexts(
     if (at) texts.push({ ...existing, ...at });
   }
   const placed = new Set(texts.map((t) => t.id));
+  let outro = project.plan.outro;
   for (const text of guide.texts) {
     if (placed.has(text.id) || !add(text)) continue;
     const at = span(text);
     if (!at) continue;
     const isLast = at.end >= timeline.total - 0.05;
-    const role: ReelTextRole = isLast && CALL_TO_ACTION.test(text.text) ? 'cta' : SIZE_ROLE[text.size];
+    const role: ReelTextRole = isLast && isCallToAction(text.text) ? 'cta' : SIZE_ROLE[text.size];
+    // Con el cierre de la marca, la llamada final es la del cierre: no sale dos veces.
+    if (outro && role === 'cta') {
+      outro = { ...outro, cta: text.text.trim().slice(0, 60) };
+      continue;
+    }
     texts.push({
       id: text.id,
       text: text.text.slice(0, REEL_TEXT_MAX_LENGTH),
       ...at,
       position: role === 'cta' && text.position === 'top' ? 'bottom' : text.position,
       style: guideTextStyle(text.size, template, look, role),
+      // El papel va al trabajador: tamaño mínimo, líneas y animación por defecto.
+      role,
     });
   }
   // Dos textos nunca a la vez en la misma franja.
-  return { ...project, plan: { ...project.plan, texts: separateTexts(texts) } };
+  const next = { ...project, plan: { ...project.plan, texts: separateTexts(texts), ...(outro ? { outro } : {}) } };
+  return endTextsAtOutro(next, template);
+}
+
+/** Los textos acaban cuando entra el cierre (si no, el trabajador los recorta y lo avisa). */
+function endTextsAtOutro(project: ReelProject, template: ReelTemplateSummary): ReelProject {
+  if (!project.plan.outro || project.plan.clips.length === 0) return project;
+  const until = outroSpan(project.plan, planTimeline(project.plan.clips, template), template)?.start;
+  if (until === undefined) return project;
+  const texts = project.plan.texts
+    .map((t) => (t.end > until ? { ...t, end: Math.floor(until * 100) / 100 } : t))
+    .filter((t) => t.end - t.start >= 0.3);
+  return { ...project, plan: { ...project.plan, texts } };
 }
 
 export interface DraftOptions {
@@ -423,12 +462,25 @@ export function buildDraft(result: ReelLikeResult, matches: ShotMatch[], options
   project = withGuideTransitions(project);
   project = placeGuideTexts(project, template, options.look ?? {}, () => true);
 
+  // El cierre con la marca, como los reels de una plantilla (`buildBrandReel`): la llamada
+  // final del guion (si está en el reel) pasa al cierre; si no, la del perfil.
+  const kit = options.look?.kit;
+  if (kit) {
+    const total = project.plan.clips.length > 0 ? planTimeline(project.plan.clips, template).total : 0;
+    const closed = withBrandOutro(project.plan, kit, total);
+    if (closed.outro) project = endTextsAtOutro({ ...project, plan: closed }, template);
+  }
+
   // Portada: el fotograma que dice la plantilla, si su plano ya tiene material.
   const coverShot = [...result.template.shots].reverse().find((s) => {
-    const start = result.template.shots.slice(0, result.template.shots.indexOf(s)).reduce((sum, x) => sum + x.seconds, 0);
+    const start = result.template.shots
+      .slice(0, result.template.shots.indexOf(s))
+      .reduce((sum, x) => sum + x.seconds, 0);
     return start <= result.template.cover.at + 1e-6;
   });
-  const coverClip = project.plan.clips.findIndex((clip) => clip.id === shots.find((s) => s.id === coverShot?.id)?.clipId);
+  const coverClip = project.plan.clips.findIndex(
+    (clip) => clip.id === shots.find((s) => s.id === coverShot?.id)?.clipId,
+  );
   if (coverClip >= 0) {
     const timeline = planTimeline(project.plan.clips, template);
     project = {
@@ -442,7 +494,10 @@ export function buildDraft(result: ReelLikeResult, matches: ShotMatch[], options
 
   const filled = clips.length;
   const gaps = shots.length - filled;
-  if (filled === 0) notes.push('En la biblioteca no hay nada que encaje todavía: el borrador empieza con el guion de lo que hay que grabar.');
+  if (filled === 0)
+    notes.push(
+      'En la biblioteca no hay nada que encaje todavía: el borrador empieza con el guion de lo que hay que grabar.',
+    );
   return { project, template, filled, gaps, notes };
 }
 

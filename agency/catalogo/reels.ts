@@ -487,7 +487,12 @@ export function antesYDespues(
   });
 }
 
-/** Oferta o novedad con fecha: qué es, cuánto y hasta cuándo. */
+/**
+ * Oferta o novedad con fecha: qué es, cuánto y hasta cuándo. Un solo texto en
+ * cada plano (antes, el precio, la condición y la llamada salían apilados en el
+ * mismo plano): el precio en su plano, la condición en el siguiente y la llamada
+ * en el último (que, con el cierre de la marca, pasa al cierre).
+ */
 export function ofertaDeLaSemana(
   theme: Theme,
   w: { purpose: string; when: string; hook: string; product: string; price: string; terms: string; cta: string },
@@ -506,15 +511,33 @@ export function ofertaDeLaSemana(
         motion: 'zoom-in',
         motionAmount: 0.12,
       },
-      { id: 'detalle', label: w.product, seconds: 1.8, motion: 'zoom-in', transition: cut },
+      { id: 'detalle', label: w.product, seconds: 1.6, motion: 'zoom-in', transition: cut, optional: true },
       { id: 'detalle2', label: 'Otro ángulo', seconds: 1.3, transition: slide(), optional: true },
       {
         id: 'precio',
         label: 'Plano tranquilo para el precio',
-        hint: 'Aquí se lee: movimiento lento.',
-        seconds: 3,
+        hint: 'Aquí se lee el precio: movimiento lento.',
+        seconds: 2.2,
         motion: 'zoom-in',
         motionAmount: 0.08,
+        transition: cut,
+      },
+      {
+        id: 'condiciones',
+        label: 'Plano para las condiciones',
+        hint: 'Cuándo vale la oferta: otro plano tranquilo.',
+        seconds: 2.2,
+        motion: 'zoom-in',
+        motionAmount: 0.08,
+        transition: cut,
+      },
+      {
+        id: 'cierre',
+        label: 'El plato servido',
+        hint: 'Para la llamada final (con el cierre de la marca, lleva el nombre del plato).',
+        seconds: 1.8,
+        motion: 'zoom-in',
+        motionAmount: 0.1,
         transition: cut,
       },
     ],
@@ -542,18 +565,18 @@ export function ofertaDeLaSemana(
         id: 'condiciones',
         role: 'detail',
         text: w.terms,
-        from: 'precio',
-        offset: 0.6,
-        position: 'top',
+        from: 'condiciones',
+        offset: 0.15,
+        position: 'center',
         style: e.rotulo,
-        animation: FADE,
+        animation: RISE,
       },
       {
         id: 'cierre',
         role: 'cta',
         text: w.cta,
-        from: 'precio',
-        offset: 1.1,
+        from: 'cierre',
+        offset: 0.15,
         position: 'bottom',
         style: e.pie,
         animation: RISE,

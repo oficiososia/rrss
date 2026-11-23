@@ -1,10 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { previewPath, useSignedUrls } from '@/features/library/api';
+import { useActiveProfile } from '@/features/brand/api';
+import { parseProfile } from '@/features/brand/profile';
+import { previewPath, useAssetsByIds, useSignedUrls } from '@/features/library/api';
 import { unwrap } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 import type { ContentDocument } from '../document';
 import type { ImageLookup } from '../editor/canvas/nodes';
+import { templateLogos } from '../editor/logoContrast';
+import { useLogoTones } from '../editor/useLogoContrast';
 import type { BrandTemplate } from './api';
 import {
   cachedPreview,
@@ -47,18 +51,31 @@ function logoIdsOf(document: ContentDocument | null): string[] {
 
 /**
  * Vistas previas reales de las plantillas (mismo motor que el lienzo), con las fotos más recientes
- * de la biblioteca en los huecos de foto. No bloquea: cada plantilla pasa de `loading` a `ready`
+ * de la biblioteca en los huecos de foto y, como en el editor, la variante del logotipo del kit que
+ * se ve sobre su fondo (`templateLogos`: medida si se puede; si no, por su nombre o sus etiquetas). No bloquea: cada plantilla pasa de `loading` a `ready`
  * (o `error`, y entonces quien la pinta usa el esquema de siempre).
  */
 export function useTemplatePreviews(brandId: string, templates: BrandTemplate[]) {
   const usable = useMemo(() => templates.filter((t) => t.document), [templates]);
+  // Logotipos del kit de la marca, su tono medido y sus nombres: la regla de contraste del editor.
+  const profileRow = useActiveProfile(brandId);
+  const kitIds = useMemo(
+    () => (profileRow.data ? parseProfile(profileRow.data.data).visual.logoAssetIds : []),
+    [profileRow.data],
+  );
+  const kitAssets = useAssetsByIds(brandId, kitIds);
+  const tones = useLogoTones(brandId, kitIds);
+  const documents = useMemo(() => {
+    const named = new Map((kitAssets.data ?? []).map((a) => [a.id, a]));
+    return new Map(usable.map((t) => [t.id, templateLogos(t.document!, kitIds, named, tones)]));
+  }, [usable, kitIds, kitAssets.data, tones]);
   const samples = useSamplePhotos(brandId, usable.length > 0);
   const sampleAssets = useMemo(() => samples.data ?? [], [samples.data]);
   const paths = useMemo(() => sampleAssets.map(previewPath), [sampleAssets]);
   const signed = useSignedUrls(paths);
   const logos = useImageLookup(
     brandId,
-    useMemo(() => usable.flatMap((t) => logoIdsOf(t.document)), [usable]),
+    useMemo(() => [...usable.flatMap((t) => logoIdsOf(t.document)), ...kitIds], [usable, kitIds]),
   );
 
   // Fotos de ejemplo con dirección ya firmada, en orden de más reciente.
@@ -77,9 +94,13 @@ export function useTemplatePreviews(brandId: string, templates: BrandTemplate[])
   }, [logos, sampleAssets, signed.data]);
 
   // Hasta saber qué fotos hay (o que no hay) no se dibuja nada: así no se dibuja dos veces.
-  const ready = !samples.isPending && (paths.length === 0 || !signed.isPending);
+  const ready =
+    !samples.isPending &&
+    (paths.length === 0 || !signed.isPending) &&
+    !profileRow.isPending &&
+    (kitIds.length === 0 || !kitAssets.isPending);
   const signature = usable
-    .map((t, i) => `${t.id}:${hashOf(JSON.stringify(t.document))}:${i}`)
+    .map((t, i) => `${t.id}:${hashOf(JSON.stringify(documents.get(t.id)))}:${i}`)
     .join('|')
     .concat(`#${sampleIds.join(',')}#${[...logos.keys()].sort().join(',')}`);
 
@@ -89,7 +110,7 @@ export function useTemplatePreviews(brandId: string, templates: BrandTemplate[])
     if (!ready) return;
     let cancelled = false;
     usable.forEach((template, index) => {
-      const document = template.document!;
+      const document = documents.get(template.id) ?? template.document!;
       const sampled = withSamplePhotos(document, sampleIds, index);
       const key = `${brandId}|${template.id}|${hashOf(JSON.stringify(sampled))}|${[...logos.keys()].sort().join(',')}`;
       void cachedPreview(key, () => renderPreview(sampled, lookup)).then((url) => {
@@ -114,7 +135,7 @@ export function useTemplatePreviews(brandId: string, templates: BrandTemplate[])
 
   /** Lo necesario para el esquema de reserva: la primera página con las fotos de ejemplo. */
   function fallbackOf(template: BrandTemplate) {
-    const document = template.document!;
+    const document = documents.get(template.id) ?? template.document!;
     const index = usable.findIndex((t) => t.id === template.id);
     const sampled = withSamplePhotos(document, sampleIds, Math.max(0, index));
     return { canvas: sampled.canvas, layers: sampled.pages[0]!.layers, images: lookup };

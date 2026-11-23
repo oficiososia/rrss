@@ -6,6 +6,7 @@ import { readLocal, writeLocal } from '@/lib/localStore';
 import { supabase } from '@/lib/supabase';
 import { socialKeys, useSchedulableContents, type CalendarContent } from './api';
 import { isCalendarView, type CalendarView } from './calendar';
+import { fetchManualPublications } from './manualPublications';
 import { clampGoal, DEFAULT_WEEKLY_GOAL, type BandCampaign } from './calendarPlan';
 
 // Datos que solo usa el calendario para planificar: campañas activas (solo
@@ -79,15 +80,17 @@ export function useUnscheduled(brandId: string, enabled: boolean) {
     queryKey: [...socialKeys.calendar(brandId), 'in-use'] as const,
     enabled,
     queryFn: async (): Promise<Set<string>> => {
-      const rows = unwrap(
-        await supabase
+      const [rows, manual] = await Promise.all([
+        supabase
           .from('scheduled_publications')
           .select('content_id, status')
           .eq('brand_id', brandId)
           .in('status', ['planned', 'scheduled', 'publishing', 'published'])
           .limit(2000),
-      );
-      return new Set(rows.map((r) => r.content_id));
+        // Lo terminado (o por terminar) a mano en Instagram tampoco se programa: saldría dos veces.
+        fetchManualPublications(brandId),
+      ]);
+      return new Set([...unwrap(rows).map((r) => r.content_id), ...manual.map((m) => m.content_id)]);
     },
   });
   const list: CalendarContent[] = [];

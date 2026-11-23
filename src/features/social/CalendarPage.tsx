@@ -53,6 +53,7 @@ import {
   dayKey,
   displayState,
   isEditable,
+  isEntryEditable,
   isPast,
   moveToDay,
   rangeTitle,
@@ -407,6 +408,7 @@ export function CalendarPage() {
 
   /** Mover una publicación a otro día y hora, con «Deshacer». No se mueve lo ya publicado ni al pasado. */
   const moveEntry = (entry: CalendarEntry, scheduledAt: string) => {
+    if (entry.manual) return void toast.error('Lo terminado en Instagram no se mueve desde aquí.');
     if (!isEditable(entry.status)) return void toast.error('Lo ya publicado no se puede mover.');
     if (isPast(scheduledAt)) return void toast.error('No se puede mover al pasado.');
     const previous = entry.scheduled_at;
@@ -476,7 +478,7 @@ export function CalendarPage() {
       zone={zone}
       thumb={thumbs.get(e.media_asset_ids[0] ?? '')}
       reason={adviceFor(e)?.short}
-      draggable={canEdit && isEditable(e.status)}
+      draggable={canEdit && isEntryEditable(e)}
       layout={layout}
       {...(selecting && e.content?.status === 'in_review'
         ? {
@@ -493,7 +495,10 @@ export function CalendarPage() {
           }
         : {})}
       // Lo publicado ya no se mueve ni se cancela: se abre su ficha (con el enlace a la red y «Abrir la pieza»).
-      onOpen={(entry) => (entry.status === 'published' ? setOpenId(entry.id) : setQuickId(entry.id))}
+      // Lo terminado a mano no tiene ficha de publicación: su vista rápida dice cómo está y lleva al reel.
+      onOpen={(entry) =>
+        entry.status === 'published' && !entry.manual ? setOpenId(entry.id) : setQuickId(entry.id)
+      }
     />
   );
 
@@ -831,7 +836,8 @@ export function CalendarPage() {
         onClose={() => setQuickId(null)}
         onOpenFicha={(e) => {
           setQuickId(null);
-          setOpenId(e.id);
+          if (e.manual) navigate(contentPaths(org.id, brand.id).item(e.content_id));
+          else setOpenId(e.id);
         }}
         onPublishNow={(e) => {
           setQuickId(null);

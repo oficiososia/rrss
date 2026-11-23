@@ -6,7 +6,8 @@ import {
   type ReelLikeResult,
 } from '../../../../supabase/functions/_shared/reels/like';
 import { removeClip, removeText, updateText } from '../editor/ops';
-import { buildRenderRequest, finalizeProject, planTimeline, type ReelProject } from '../editor/project';
+import { buildRenderRequest, finalizeProject, outroSpan, planTimeline, type ReelProject } from '../editor/project';
+import type { BrandReelKit } from '../quality';
 import { REEL_TEMPLATES } from '../templates';
 import {
   baseTemplate,
@@ -258,6 +259,74 @@ describe('el borrador del reel', () => {
     expect(draft.notes.join(' ')).toMatch(/90 s\): el borrador se queda con sus 9 primeros planos/);
     // El texto de un plano que no entra tampoco.
     expect(draft.project.guide!.texts).toEqual([]);
+  });
+});
+
+describe('papeles y cierre de la marca (como los reels de una plantilla)', () => {
+  const kit: BrandReelKit = {
+    colors: { accent: '#B5842E', dark: '#1A1A1A' },
+    logoPath: `${P}/logo-claro.png`,
+    handle: '@panaderia',
+    address: 'Calle Mayor 1',
+    cta: 'Reserva tu mesa',
+  };
+
+  it('cada texto lleva su papel y el reel acaba con el cierre de la marca; los textos acaban al entrar el cierre', () => {
+    const { project, template } = buildDraft(result, matchShots(result, library()), { ...options, look: { kit } });
+    expect(project.plan.texts.map((t) => [t.id, t.role])).toEqual([
+      ['gt1', 'headline'],
+      ['gt2', 'label'],
+    ]);
+    // La llamada del guion está en un hueco: el cierre lleva la del perfil.
+    expect(project.plan.outro).toMatchObject({
+      cta: 'Reserva tu mesa',
+      logoPath: kit.logoPath,
+      handle: '@panaderia',
+      address: 'Calle Mayor 1',
+      accent: '#B5842E',
+    });
+    const timeline = planTimeline(project.plan.clips, template);
+    const until = outroSpan(project.plan, timeline, template)!.start;
+    expect(Math.max(...project.plan.texts.map((t) => t.end))).toBeLessThanOrEqual(until + 1e-6);
+    // Es un plan válido y el papel y el cierre llegan al trabajador.
+    const request = buildRenderRequest(finalizeProject(project), { id: 'pieza', version: 1 }) as {
+      plan: { outro?: unknown; texts: Array<{ role?: string }> };
+    };
+    expect(request.plan.outro).toMatchObject({ cta: 'Reserva tu mesa' });
+    expect(request.plan.texts.map((t) => t.role)).toEqual(['headline', 'label']);
+  });
+
+  it('si la llamada del guion está en el reel, pasa al cierre en vez de salir dos veces', () => {
+    const assets = [...library(), asset('image', 'escaparate.jpg', { tags: ['escaparate'] })];
+    const { project } = buildDraft(result, matchShots(result, assets), { ...options, look: { kit } });
+    expect(project.plan.outro!.cta).toBe('Te esperamos');
+    expect(project.plan.texts.some((t) => t.text === 'Te esperamos')).toBe(false);
+  });
+
+  it('al rellenar el hueco de la llamada, la llamada va al cierre', () => {
+    const { project, template } = buildDraft(result, matchShots(result, library()), { ...options, look: { kit } });
+    const filled = fillGuideShot(project, 's4', asset('image', 'escaparate.jpg'), template);
+    expect(filled.plan.outro!.cta).toBe('Te esperamos');
+    expect(filled.plan.texts.map((t) => t.id)).toEqual(['gt1', 'gt2']);
+    const until = outroSpan(filled.plan, planTimeline(filled.plan.clips, template), template)!.start;
+    expect(Math.max(...filled.plan.texts.map((t) => t.end))).toBeLessThanOrEqual(until + 1e-6);
+    expect(() => finalizeProject(filled)).not.toThrow();
+  });
+
+  it('sin perfil (o sin llamada) no hay cierre, pero sí papeles; sin cierre, la llamada es el último texto', () => {
+    const { project, template } = buildDraft(result, matchShots(result, library()), options);
+    expect(project.plan.outro).toBeUndefined();
+    expect(project.plan.texts.every((t) => t.role)).toBe(true);
+    const filled = fillGuideShot(project, 's4', asset('image', 'escaparate.jpg'), template);
+    expect(filled.plan.texts.find((t) => t.id === 'gt3')).toMatchObject({ text: 'Te esperamos', role: 'cta' });
+    const noCall = buildDraft(result, matchShots(result, library()), { ...options, look: { kit: { colors: {} } } });
+    expect(noCall.project.plan.outro).toBeUndefined();
+  });
+
+  it('sin material todavía, el cierre ya queda puesto para cuando se rellene', () => {
+    const draft = buildDraft(result, [], { ...options, look: { kit } });
+    expect(draft.project.plan.clips).toEqual([]);
+    expect(draft.project.plan.outro).toMatchObject({ cta: 'Reserva tu mesa' });
   });
 });
 

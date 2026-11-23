@@ -38,7 +38,7 @@ function measureLogoLuminance(image: CanvasImageSource & { width: number; height
 }
 
 /** Luminancia de cada logotipo (el archivo original: la miniatura puede no tener transparencia). */
-function useLogoTones(brandId: string, ids: string[]): LogoTones {
+export function useLogoTones(brandId: string, ids: string[]): LogoTones {
   const assets = useAssetsByIds(brandId, ids);
   const paths = useMemo(() => (assets.data ?? []).map((a) => a.storage_path).sort(), [assets.data]);
   const signed = useSignedUrls(paths);
