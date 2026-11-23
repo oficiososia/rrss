@@ -18,7 +18,7 @@ function preconnectSupabase(url: string | undefined): Plugin {
       } catch {
         return [];
       }
-      return [{ tag: 'link', attrs: { rel: 'preconnect', href: origin, crossorigin: '' }, injectTo: 'head-prepend' }];
+      return [{ tag: 'link', attrs: { rel: 'preconnect', href: origin, crossorigin: '' }, injectTo: 'head' }];
     },
   };
 }

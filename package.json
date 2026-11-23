@@ -10,6 +10,7 @@
     "dev": "vite",
     "dev:staging": "node scripts/dev-staging.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
+    "check:initial-js": "node scripts/check-initial-js.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint .",

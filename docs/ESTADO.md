@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f60/arranque-rapido`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1389,3 +1389,54 @@ sin tocar el recorte ni el servidor. Detalle en `docs/edicion-fotos.md` §15.
   «libre» (F4) y lo repetido del panel del editor de piezas (P3). «Ampliar con IA» sigue ofreciéndose
   (en Recortar): si «la IA solo crea fondos» vale también para él, se oculta añadiéndolo a
   `HIDDEN_AI_OPERATIONS`.
+
+## Arranque rápido (rama `f60/arranque-rapido`, 23/11/2026)
+
+El dueño veía 8–10 s al entrar por una dirección directa en staging: «Cargando…» y después
+siluetas varios segundos. Zona: arranque y carga; sin cambiar lo que se ve salvo que sale antes.
+
+- **Causas medidas.** (1) Cascada de tres viajes a Supabase antes del menú: lo legal y si se
+  administra la plataforma (LegalGate, con «Cargando…» a pantalla completa) → organizaciones,
+  marcas y permisos (OrgLayout) → la pantalla. (2) La precarga de las 4 secciones principales
+  (la Biblioteca arrastra el editor de fotos) salía durante el arranque, también en «Entrar»:
+  88 trozos de JS antes del menú. (3) El menú «Crear» metía en el primer paquete el módulo de
+  «Hacer un reel como este» con zod, plantillas de reels y la API de IA. (4) En staging los
+  recursos con huella se servían con `max-age=0, must-revalidate`: cada visita, ~90 respuestas 304.
+- **Implementado.**
+  - `src/features/orgs/startup.ts` (`prefetchStartup`): en cuanto RequireAuth sabe la sesión,
+    lanza a la vez lo legal, administración de la plataforma, organizaciones, marcas y permisos de
+    la organización de la dirección (en «/», la última visitada) y la disponibilidad de la IA de
+    texto. Las consultas pasan a `queryOptions` (`myOrganizationsQuery`, `platformAdminQuery`,
+    `brandsQuery`, `myBrandRolesQuery`, `legalAcceptancesQuery`): misma clave, nada se pide dos
+    veces. LegalGate pinta el armazón con siluetas mientras comprueba. RootRedirect decide igual
+    que antes al entrar en frío por «/» (`isColdRootEntry`), llegue antes o no la lista.
+  - Precarga de secciones (`PreloadMainSections` en `src/App.tsx`): solo dentro de una marca,
+    tras 1 s sin consultas en marcha y con el navegador libre.
+  - `src/layout/ReelLikeProbe.tsx`: la disponibilidad de «Hacer un reel como este» se pregunta
+    desde un trozo que el menú carga bajo demanda (sin tocar `src/features/reels/`). El trozo
+    fijo `ui` ya no lleva Dialog ni Tabs de Radix.
+  - `vercel.json`: `/assets/*` con `public, max-age=31536000, immutable`.
+  - `vite.config.ts`: `<link rel="preconnect">` al proyecto de Supabase (si hay `VITE_SUPABASE_URL`).
+  - Control de tamaño: `npm run check:initial-js` (tras `npm run build`; `scripts/check-initial-js.mjs`)
+    falla si el JS inicial pasa de **229 KB gzip** (208 conseguidos + 10 %). No va dentro de
+    `build`: hay que ejecutarlo aparte (o añadirlo al CI).
+- **Medidas** (build local con `vite preview` y un Supabase simulado que responde a los 250 ms
+  —600 ms las funciones—; Chromium con red limitada por CDP: 100 ms de latencia, 4 Mbit/s;
+  entrada directa a `/o/:org/m/:marca/inicio` con sesión; mediana de 8 vueltas alternadas):
+
+  | | Antes | Ahora |
+  | --- | --- | --- |
+  | JS inicial (gzip, 5 archivos) | 239,7 KB | 208,2 KB |
+  | Peticiones antes de ver el menú | 102 (88 de JS) | 51 (37 de JS) |
+  | Olas de peticiones a Supabase | 3 | 2 |
+  | Menú pintado | 3,28 s | 2,01 s |
+  | Pantalla con sus datos | 3,33 s | 2,46 s |
+  | Con la CPU 4× más lenta (6 vueltas): menú / pantalla | 2,79 / 2,86 s | 1,71 / 2,42 s |
+
+  La máquina estaba cargada (otros agentes): las cifras absolutas varían ±1 s entre tandas; las
+  vueltas alternadas mantienen la comparación. Staging (solo lectura, sin sesión en el navegador
+  integrado): «Entrar» pedía 90 trozos y precargaba secciones; los recursos, sin caché larga.
+- **Sin probar.** El arranque con sesión en staging tras desplegar (no había sesión en el
+  navegador integrado y no se despliega desde esta rama); la caché larga y la preconexión solo
+  se verán en Vercel. Queda una ola: las consultas de la pantalla (perfil, publicaciones…) esperan
+  a las marcas porque viven en carpetas de otros agentes; adelantarlas sería el siguiente paso.
