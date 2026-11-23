@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f61/historias-tapas-menu`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -17,7 +17,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
 | Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
-| Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
+| Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, historia de una imagen, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
 | Alojamiento | Staging en Supabase gratuito y Vercel; trabajador en Fly (modo `drain`, `worker-gateway`); R2 y Drive escritos | Trabajador y gateway en staging con recortes y un reel; R2 solo con MinIO; Drive con Drive simulado | Producción (Supabase Pro, dominio, Vercel Pro) | Cuentas de Cloudflare y Google; tarjeta en Fly |
 | Modo de trabajo de la organización | «Lo llevamos nosotros» (autogestión) o «Nos lo lleva una agencia» por organización; en autogestión toda la IA a mano, sin Encargos ni textos de agencia; «Cargar plantillas del catálogo» desde la app; gasto propio para el propietario (`docs/modo-de-trabajo.md`) | Base de datos (PGlite) y componentes; el modo agencia sigue pasando sus pruebas | Aplicar `20261227010000` en staging; verlo en un navegador real; «Tareas» internas en vez de Encargos | — |
@@ -662,6 +662,45 @@ sin migraciones, sin tocar el plan v2 ni el trabajador.
 - **Sin probar:** móvil y Safari reales; publicar y programar contra Supabase y Meta reales; la e2e 29 (adaptada, sin
   ejecutar); «Redactar con IA» con proveedor real. Una aserción de `src/features/content/contenidos.test.tsx` se cambió
   porque miraba la cabecera vieja del editor de reels (`reel-version`).
+
+### Historias de tapas y menú del día, y publicar historias (rama `f61/historias-tapas-menu`, 23/11/2026)
+
+El dueño de Casa Tomás sube historias de **tapas** y del **menú**: que solo tenga que poner la foto. Se copiaron y
+mejoraron las suyas (capturas en `instagram-studio/propuesta/referencias-actuales/`: lista «Jueves de tapas» sobre una
+foto de sala, póster «Jueves de tapas y cóctel» y rótulo de plato). Comparativa y vistas previas en
+`rrss-recursos-comparativa/historias/comparativa.html`.
+
+- **Plantillas de historia (9:16, 1080 × 1920) en el juego `restaurante` del catálogo** (`agency/catalogo/historias.ts`):
+  «Tapa del día» (un marco grande, nombre, precio en un sello y «Te esperamos en la barra»), «Tapas de la semana»
+  (4 marcos en cuadrícula, cada uno con nombre y precio), «Dos tapas», «Menú del día» (primeros, segundos, postre,
+  precio, «Bebida y postre incluidos» y cuándo; foto de fondo opcional bajo un velo: vacía, no sale) y «Menú del día
+  con foto» (foto grande arriba y el menú en una franja clara). Colores y tipografías por papeles desde el perfil de la
+  marca, como el resto del catálogo, y ahora también el **logotipo**: el tema toma el primero de
+  `visual.logoAssetIds` (capa `logo`, que la base de datos exige que sea de la marca); sin logotipo salen sin él.
+  Nada que leer en los 250 px de arriba ni en los 340 px de abajo (lo comprueban las pruebas de `agency/`).
+- **Carga:** «Cargar plantillas del catálogo» (y `cargar-catalogo`) entregan las historias en una **segunda** llamada a
+  `deliver_design_templates`, porque cada entrega admite 12 como mucho (10 publicaciones + 5 historias). Toca
+  `src/features/brand/CatalogDialog.tsx` (entrega aparte y texto del recuento).
+- **Zona segura de las historias** (`src/features/content/networks.ts`): 250 px arriba y 340 px abajo (fuente secundaria,
+  orientativa), en vez de la caja de los reels (35 % abajo), que en una historia no tiene pie que tapar.
+- **Publicar historias:** antes el formato «Historia» se preparaba pero «no se publica solo». Ahora el publicador
+  (`supabase/functions/_shared/social/publisher.ts`) crea el contenedor con `media_type=STORIES` e `image_url`, sin pie
+  ni texto alternativo, y lo publica con `media_publish`; si la respuesta se pierde, lo busca en
+  `GET /{ig-user-id}/stories` y solo lo da por publicado si hay **una** historia en la ventana (si no,
+  «published_unconfirmed», sin repetir). Programar y «Publicar ahora» funcionan igual que con una publicación de una
+  imagen (una exportación JPEG de un documento de una página). Solo imagen: la historia de vídeo sigue sin publicarse
+  sola. Migración `20270119010000_instagram_stories` (con su vuelta atrás) y `PUBLISHABLE_TARGETS` en
+  `src/features/social/calendar.ts`; en `ScheduleDialog.tsx` y `PublishNowDialog.tsx` la historia se trata como una
+  publicación de una imagen.
+- **Probado:** `agency/` (catálogo, zonas seguras, logotipo, entrega en dos llamadas), base de datos (programar, publicar
+  con la Graph API simulada, recuperar sin duplicar, ambigüedad, vuelta atrás, entrega de las plantillas con el
+  logotipo de la marca y rechazo con uno ajeno), componentes (carga del catálogo) y `test:layout`
+  (`tests/layout/historias.spec.ts`: cada historia sale a 1080 × 1920 con el exportador real).
+- **Sin probar / pendiente:** publicar una historia contra Instagram real (no hay aplicación de Meta); verlas en el
+  editor de staging. **En el editor** (`ContentEditorPage.tsx`, rama f53) la imagen que se publica solo se prepara sola
+  para `post` y `carousel` (líneas de `exportVersion` de `ScheduleDialog` y `PublishNowDialog`): hay que añadir `story`
+  allí al integrar; mientras tanto una historia se programa tras «Exportar imagen» en JPEG. Qué logotipo sale depende
+  del orden en el perfil (el primero); para historias oscuras conviene que sea el blanco.
 
 ## Sin probar contra el servicio real
 
