@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f59/inicio-resultados`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -632,6 +632,16 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
+
+### Inicio y Resultados más limpios (rama `f59/inicio-resultados`, 23/11/2026)
+
+Cambios H1 y A1 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa/simplificacion/`, apartado 11).
+
+- **Inicio:** sin «Tu rol: Gestor» bajo el nombre de la marca (solo el sector). La semana va ahora **de lunes a domingo** (antes: hoy y los seis días siguientes), con los días pasados atenuados, y lleva la ficha **«N de M publicadas»** (en móvil, «N de M»): M = lo programado esta semana sin contar lo cancelado; N = lo que de verdad salió (programado no cuenta como publicado). Sin nada en la semana no hay ficha. «Abrir el calendario» pasa a «Ver calendario». Lo último publicado enseña su **enlace a Instagram** («Ver en Instagram», icono en móvil) cuando la publicación tiene `external_url`, aparte del enlace a la pieza. Las cuatro tarjetas de crear ya no estaban (`f50`). El aviso del perfil de marca incompleto no se ha tocado (lo cambia `f55`).
+- **Resultados** (antes «Analítica»; la ruta sigue siendo `/analitica`): **tres cifras grandes** (Personas alcanzadas, Interacciones, Seguidores) en tres columnas también en móvil; cada una solo lleva la flecha con el porcentaje si hay con qué comparar. Ya no se repite «sin comparación», «sin periodo anterior», «frente al periodo anterior», «Provisional», «Estimación de Meta» ni «17 de 28 días»: **una nota al pie** dice solo lo que aplica («Cifras de Meta. Las de los últimos días pueden cambiar. Algunas son estimaciones. Los días sin cifra no cuentan como cero. Los porcentajes comparan con…»). «Lo que mejor funcionó» enseña **las tres mejores** del periodo (antes, como mucho la mitad de las publicaciones con cifra: con 2 o 3, solo una), con «Ver en Instagram». **«Veces que te han visto»** y las **cifras día a día** (antes, «Ver las cifras día a día» bajo el gráfico) pasan a «Más detalle». Textos fijos acortados: sin cuenta («Conecta Instagram: las primeras cifras llegan al día siguiente.»), sin cifras, sin publicaciones, resumen del analista y capturas.
+- **Autogestión:** ninguna de las dos pantallas habla de cupos ni de planes (lo parado del Inicio ya se explicaba sin planes en modo `self` desde `f50`).
+- **Probado:** unitarias (`week.test.ts`, `resumen.test.ts`), componentes (`inicio.test.tsx`, `analitica.test.tsx`) y `test:layout` en Chromium real a 375, 768 y 1366 px (`inicio-contenidos`, `biblioteca-analitica`, con una vista nueva `?vista=pocas`: cuenta recién conectada con tres días de cifras y una publicación): sin scroll lateral ni de página.
+- **Sin probar:** a mano en un navegador y un móvil reales contra la demo; con cifras reales de Meta.
 
 ## Sin probar contra el servicio real
 
