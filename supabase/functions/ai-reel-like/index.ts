@@ -86,7 +86,7 @@ const handlerFor = memoByEnv((effective) => {
       if (!brandAccess) {
         return { visible: false, profile: null, aiMode: 'api', agencyStaff: false, library: { folders: [], tags: [] } };
       }
-      const [profile, assets] = await Promise.all([
+      const [profile, assets, basics] = await Promise.all([
         client.from('brand_profiles').select('data').eq('brand_id', brandId).eq('status', 'active').maybeSingle(),
         client
           .from('media_assets')
@@ -95,8 +95,10 @@ const handlerFor = memoByEnv((effective) => {
           .in('kind', ['image', 'video'])
           .order('created_at', { ascending: false })
           .limit(500),
+        client.from('brands').select('name, sector, website').eq('id', brandId).maybeSingle(),
       ]);
       if (profile.error || assets.error) throw new Error('No se ha podido leer la marca');
+      const row = (basics.data ?? null) as { name?: string; sector?: string; website?: string } | null;
       const folders = new Map<string, number>();
       const tags = new Map<string, number>();
       for (const row of (assets.data ?? []) as Array<{ folder: string | null; tags: string[] | null }>) {
@@ -108,6 +110,7 @@ const handlerFor = memoByEnv((effective) => {
         visible: true,
         profile: (profile.data?.data as Json | undefined) ?? null,
         aiMode: brandAccess.ai_mode === 'agency' ? 'agency' : 'api',
+        ...(row ? { basics: { name: row.name ?? '', sector: row.sector ?? '', website: row.website ?? '' } } : {}),
         agencyStaff: brandAccess.agency_staff === true,
         library: { folders: top(folders), tags: top(tags) },
       };

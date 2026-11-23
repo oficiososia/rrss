@@ -17,7 +17,8 @@ export type AiAction =
   | 'profile.proposal'
   | 'analytics.summary'
   | 'editor.copilot'
-  | 'campaign.brief';
+  | 'campaign.brief'
+  | 'cost.estimate';
 
 /** Interpretación de la analítica (Fase 5): solo hipótesis, cada una con los datos en que se apoya. */
 export interface AnalyticsSummaryResult {
@@ -110,6 +111,7 @@ export type AiErrorCode =
   | 'forbidden'
   | 'brand_not_found'
   | 'brand_profile_missing'
+  | 'brand_basics_missing'
   | 'agency_mode'
   | 'refused'
   | 'provider_failed'
@@ -130,6 +132,7 @@ const KNOWN_CODES = new Set<string>([
   'forbidden',
   'brand_not_found',
   'brand_profile_missing',
+  'brand_basics_missing',
   'agency_mode',
   'refused',
   'provider_failed',
@@ -159,6 +162,7 @@ const MESSAGES: Record<AiErrorCode, string> = {
   forbidden: 'No tienes permiso para usar la IA en esta marca: hace falta poder crear contenido en ella.',
   brand_not_found: 'No existe esa marca o no tienes acceso a ella.',
   brand_profile_missing: 'Esta marca todavía no tiene perfil. Complétalo antes de usar la IA.',
+  brand_basics_missing: 'Para escribir sobre la marca, la IA necesita saber al menos a qué se dedica. Dilo en una línea y sigue.',
   agency_mode:
     'Esta marca redacta por encargo a la agencia, no con el servicio de IA. Pide la pieza desde «Encargos» o, si gestionas la marca, cambia el modo en su página.',
   unauthenticated: 'Tu sesión ha caducado. Vuelve a iniciar sesión.',
@@ -178,11 +182,13 @@ export class AiRequestError extends Error {
   readonly retryable: boolean;
   readonly status: number | null;
   readonly generationId: string | undefined;
+  /** `false`: la respuesta no servía y no se ha cobrado. `undefined`: el servidor no lo dice. */
+  readonly charged: boolean | undefined;
 
   constructor(
     code: AiErrorCode,
     message: string,
-    extra: { retryable?: boolean; status?: number | null; generationId?: string } = {},
+    extra: { retryable?: boolean; status?: number | null; generationId?: string; charged?: boolean } = {},
   ) {
     super(message);
     this.name = 'AiRequestError';
@@ -190,6 +196,7 @@ export class AiRequestError extends Error {
     this.retryable = extra.retryable ?? false;
     this.status = extra.status ?? null;
     this.generationId = extra.generationId;
+    this.charged = extra.charged;
   }
 }
 
@@ -220,7 +227,9 @@ export async function toAiError(error: unknown): Promise<AiRequestError> {
       body = null;
     }
     const payload = (
-      body as { error?: { code?: unknown; message?: unknown; retryable?: unknown; generationId?: unknown } } | null
+      body as {
+        error?: { code?: unknown; message?: unknown; retryable?: unknown; generationId?: unknown; charged?: unknown };
+      } | null
     )?.error;
     const raw = typeof payload?.code === 'string' ? payload.code : '';
     const code: AiErrorCode = KNOWN_CODES.has(raw)
@@ -229,11 +238,15 @@ export async function toAiError(error: unknown): Promise<AiRequestError> {
         ? 'unauthenticated'
         : 'internal';
     const serverMessage = typeof payload?.message === 'string' ? payload.message.trim() : '';
-    const message = code === 'invalid_request' && serverMessage ? serverMessage : MESSAGES[code];
+    const charged = typeof payload?.charged === 'boolean' ? payload.charged : undefined;
+    const base = code === 'invalid_request' && serverMessage ? serverMessage : MESSAGES[code];
+    // Una respuesta que no servía y no se ha cobrado se dice: así nadie piensa que ha pagado por nada.
+    const message = charged === false ? `${base} No se ha descontado nada.` : base;
     return new AiRequestError(code, message, {
       retryable: payload?.retryable === true,
       status: context.status,
       generationId: typeof payload?.generationId === 'string' ? payload.generationId : undefined,
+      ...(charged !== undefined ? { charged } : {}),
     });
   }
   if (name === 'FunctionsFetchError') {
@@ -275,6 +288,44 @@ export async function invokeAiGenerate<T extends { action: AiAction }>(
 
 export function generatePostCaption(brandId: string, input: PostCaptionInput): Promise<PostCaptionResult> {
   return invokeAiGenerate<PostCaptionResult>('post.caption', brandId, input);
+}
+
+/** Acciones cuyo coste máximo se puede saber antes de pulsar. */
+export type EstimableAction = 'post.caption' | 'campaign.brief' | 'campaign.plan';
+
+/**
+ * Coste máximo (millonésimas) de una petición, sin gastar: lo que se reservaría
+ * (`cost.estimate` de ai-generate). El coste real suele ser menor.
+ */
+export async function estimateAiCost(brandId: string, action: EstimableAction, input: unknown): Promise<number> {
+  const result = await invokeAiGenerate<{ action: 'cost.estimate'; costMicros: number }>('cost.estimate', brandId, {
+    action,
+    input,
+  });
+  if (typeof result.costMicros !== 'number' || !Number.isFinite(result.costMicros)) {
+    throw new AiRequestError('internal', MESSAGES.internal, { retryable: true });
+  }
+  return result.costMicros;
+}
+
+/**
+ * Coste máximo de una petición, para enseñarlo antes de pulsar. `input` null =
+ * todavía no hay nada que calcular. Se recalcula solo cuando cambia lo que
+ * cambia el coste (quien llama decide qué entra en `key`).
+ */
+export function useAiCostEstimate(
+  brandId: string,
+  action: EstimableAction,
+  key: readonly unknown[],
+  input: (() => Promise<unknown>) | null,
+) {
+  return useQuery({
+    queryKey: ['ai', 'estimate', brandId, action, ...key],
+    enabled: input !== null,
+    staleTime: 5 * 60_000,
+    retry: false,
+    queryFn: async () => estimateAiCost(brandId, action, await input!()),
+  });
 }
 
 export function checkBrandWithAi(brandId: string, text: string): Promise<BrandCheckResult> {
@@ -321,9 +372,11 @@ export const aiKeys = {
   platformCost: (from: string) => ['platform', 'ai-cost', from] as const,
 };
 
-export function useGeneratePostCaption(brandId: string): AsyncMutation<PostCaptionResult, PostCaptionInput> {
+export function useGeneratePostCaption(
+  brandId: string,
+): AsyncMutation<PostCaptionResult, PostCaptionInput & { brandSector?: string }> {
   return withoutMutate(
-    useMutation<PostCaptionResult, AiRequestError, PostCaptionInput>({
+    useMutation<PostCaptionResult, AiRequestError, PostCaptionInput & { brandSector?: string }>({
       mutationFn: (input) => generatePostCaption(brandId, input),
     }),
   );

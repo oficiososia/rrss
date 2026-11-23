@@ -3,11 +3,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   apportion,
+  countsInText,
   formatsAsked,
+  mixFromText,
   parsePerWeek,
   resolveFormat,
   resolveNetwork,
   sanitizeBrief,
+  whyMatchesMix,
 } from '../../supabase/functions/_shared/ai/text/tasks/campaign-brief.ts';
 
 const TARGETS = [
@@ -150,5 +153,47 @@ describe('reparto de respaldo cuando el del modelo no sirve de nada', () => {
       { network: 'instagram', format: 'post', weight: 1 },
     ]);
     expect(formatsAsked('nada en particular', TARGETS, ['instagram'])).toEqual([]);
+  });
+});
+
+// Prueba de calidad del 23/11/2026, fallo 15: «dos de ellas reels» con un ritmo de 3 × reel.
+describe('el texto de la propuesta cuadra con el ritmo', () => {
+  it('lee las cifras del texto, por formato y en total', () => {
+    expect(countsInText('Te propongo 5 semanas, dos de ellas reels y 1 carrusel').byGroup.size).toBe(2);
+    expect(countsInText('tres publicaciones a la semana').total).toBe(3);
+    expect(countsInText('Te propongo 3 semanas porque el menú se anuncia').byGroup.size).toBe(0);
+  });
+
+  it('si el texto da otras cifras que el ritmo, se rehace con las del ritmo y conserva el porqué', () => {
+    const { proposal } = run({
+      perWeek: 3,
+      mix: [{ network: 'instagram', format: 'reel', perWeek: 3 }],
+      why: 'Te propongo 5 semanas, dos de ellas reels, porque diciembre da para mucho.',
+    });
+    expect(proposal.why).toMatch(/^Te propongo 5 semanas con 3 reels a la semana\./);
+    expect(proposal.why).not.toMatch(/dos de ellas/);
+    expect(whyMatchesMix(proposal.why, proposal.mix, proposal.perWeek)).toBe(true);
+    // «tres publicaciones» con un ritmo de 4 a la semana.
+    const total = run({
+      perWeek: 4,
+      mix: [{ network: 'instagram', format: 'post', perWeek: 2 }, { network: 'instagram', format: 'reel', perWeek: 2 }],
+      why: 'Te propongo una semana con tres publicaciones para captar gente nueva.',
+    });
+    expect(total.proposal.why).toMatch(/2 publicaciones y 2 reels a la semana/);
+  });
+
+  it('un texto coherente se deja tal cual', () => {
+    const { proposal } = run({
+      perWeek: 3,
+      mix: [{ network: 'instagram', format: 'reel', perWeek: 2 }, { network: 'instagram', format: 'post', perWeek: 1 }],
+      why: 'Te propongo 5 semanas con dos reels y una publicación a la semana.',
+    });
+    expect(proposal.why).toBe('Te propongo 5 semanas con dos reels y una publicación a la semana.');
+  });
+
+  it('sin reparto utilizable, si el texto lo dice con cifras, se usa el del texto (y cuadran)', () => {
+    const { proposal } = run({ mix: [], perWeek: 0, why: 'Te propongo 5 semanas con dos reels y una publicación a la semana.' });
+    expect(byFormat(proposal.mix)).toEqual({ reel: 2, post: 1 });
+    expect(mixFromText('3 carruseles', TARGETS, ['instagram'])).toEqual([{ network: 'instagram', format: 'carousel', perWeek: 3 }]);
   });
 });

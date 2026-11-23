@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f54/reels-calidad`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 23/11/2026 (ramas `f54/reels-calidad`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -15,7 +15,7 @@ nada se da por funcionando contra un servicio real que no se haya llamado.
 | Núcleo multiempresa (Fase 1) | Sesión, organizaciones, marcas, perfil versionado, biblioteca, equipo y roles, aislamiento | Unitarias, componentes, base de datos y e2e 01–08 en CI | Correo propio para invitaciones y recuperación | SMTP propio (hoy 2 correos por hora) |
 | Editor de piezas | Capas, documento v6 (marcos de foto), páginas (carrusel), plantillas, atajos, menú plegable, sin scroll de página, móvil con hoja inferior, copiloto por voz, guardado automático del borrador, barra de acciones sobre lo elegido, «Publicar o compartir», copiar y pegar entre páginas, pegar y soltar fotos, panel de fotos | Unitarias, componentes, base de datos, `test:layout` en Chromium real (marcos, barra, encuadre, Esc, zoom, menú) y e2e 09, 19, 27, 28 | Revisión a mano en navegador y móvil reales; migraciones `20261220010000` y `20270103010000` sin aplicar en staging | Dictado real y proveedor de IA real |
 | Editar foto | Pantalla completa en tres pestañas (Ajustar, Recortar, Fondo: Quitar / Desenfocar / Cambiar con IA), hoja baja en móvil, mejora automática (intensidad), recortes, fondos, sombra, quitar el fondo (BEN2 con WebGPU, IS-Net, servidor de respaldo), modo retrato con vista previa y pincel de retoque de la selección, cambiar el fondo con IA; «Mejorar con IA» oculto | Unitarias, componentes, base de datos, `test:layout` (tres pestañas a 375 y 1366 px), e2e 22, 25 y 26 | BEN2 con WebGPU real; el pincel con teclado y el guardado en worker, a mano en un navegador real | Clave de OpenAI / ComfyUI real |
-| Reels | Plantillas, editor con línea de tiempo, subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, e2e 11 y 29; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
+| Reels | Plantillas, editor como CapCut (una barra que cambia con lo elegido, un solo «Exportar» que monta, descarga, abre en la biblioteca y publica o programa con pie y hashtags; a pantalla completa en móvil), subtítulos automáticos, música, pantalla de salida de tres pasos, «Hacer un reel como este» (estudiar un vídeo de referencia y rehacerlo para la marca; solo en local, con IA simulada) | Trabajador con FFmpeg real (CI), componentes, `test:layout` (acciones contadas a 375 y 1366 px), e2e 11; la 29 adaptada sin ejecutar; un reel real por plantilla salió en staging el 21/11 | Ver el editor nuevo y la pantalla de salida en staging; redesplegar `media-storage` y `ai-transcribe` | Tarjeta en Fly; clave de OpenAI para subtítulos |
 | IA (texto e imagen) | Adaptadores, cupo, coste, perfil de voz, campañas | Con proveedores simulados (e2e 09, 10, 14) | Elegir proveedor y precios reales | Cuenta y claves del proveedor |
 | Publicación en Instagram y analítica | OAuth, token pegado, publicar, programar, publicar ahora, carrusel, reel, importar histórico, métricas, informe | Contra la Graph API **simulada** (e2e 13, 15, 18, 23, 24, 27) | Probar con una cuenta real | Aplicación de Meta y su revisión |
 | Facturación y planes | Planes como datos, límites en la base de datos, margen, Stripe (Checkout, portal, webhook) | Planes y límites en base de datos y e2e 16; Stripe solo simulado | Precios, desplegar funciones | Cuenta de Stripe |
@@ -632,6 +632,36 @@ Cambio 4 de la propuesta de simplificación aceptada (`rrss-recursos-comparativa
 - **Autogestión sin planes:** en modo `self`, la importación de publicaciones dice «Ocupan espacio en la biblioteca» (no «de tu plan») y una publicación detenida por el plan se explica sin hablar de planes y sin «Cambiar de plan» (calendario, ficha e Inicio). En modo `agency`, igual que antes.
 - **Probado:** componentes (`permisosMenu`, `baseRobusta`, `inicio`, `campanas`, `avisosResolubles`…) y `test:layout` en Chromium real (`tests/layout/menu.spec.ts`: a 375, 1024 y 1366 px el menú se ve, «＋ Crear» y lo que abre caben en pantalla y no hay scroll de página en el calendario). E2E adaptadas (`irAAjuste` en `tests/e2e/apoyo.ts`; 03, 05, 14 y 15) **sin ejecutar** (necesitan Supabase local).
 - **Pendiente de la propuesta (otras tandas):** quitar el pie legal de cada página (pasaría al menú de la cuenta), editores a pantalla completa en móvil, «Cambiar de marca» dentro del menú de la cuenta, el botón «Nueva idea» de Contenidos (zona de otro agente: ahora duplica a «＋ Crear») y el «⋯» del Calendario con filtros y objetivo.
+
+### Editor de reels como CapCut, con un solo «Exportar» (rama `f52/reels-capcut`, 23/11/2026)
+
+Cambio 1 de la propuesta de simplificación aceptada, más los fallos 4, 9, 10, 11, 12 y 24 de la prueba de punta a punta
+del 23/11 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`). Detalle en `docs/editor-reels.md` §11. Solo interfaz:
+sin migraciones, sin tocar el plan v2 ni el trabajador.
+
+- **Pantalla:** vídeo grande, línea de tiempo debajo y una sola barra que cambia con lo elegido (con un clip: Dividir,
+  Duración, Velocidad o Movimiento, Filtro, Sustituir y «Más»). Cada herramienta abre solo su ajuste (panel estrecho al
+  lado o hoja en móvil). Cabecera: volver, nombre, guardado, deshacer, «⋯» y **«Exportar»**. Plantilla dentro de
+  «Estilo». En móvil, a pantalla completa, por encima de la barra de la aplicación.
+- **Acciones a la vista con un clip elegido:** 52 → 13 (1366 px) y 22 → 12 (375 px; antes, además, las 7 de la app).
+- **«Exportar»:** monta si hace falta (guardando antes la versión) y abre una hoja con Descargar, Guardar en la
+  biblioteca y Publicar o programar, más portada, vídeos anteriores y avisos en una línea sin jerga. El vídeo se
+  reconoce por su montaje: cambiar solo el pie no pide montar otra vez. Con un archivo borrado no se monta y lleva a él.
+- **Publicar o programar:** pie y hashtags (se guardan en `copy` del reel, que es lo que lee el publicador: los reels
+  dejan de salir sin texto), «Redactar con IA» si está configurado, el pie de «Hacer un reel como este» si lo hay,
+  «Ahora» o «Programar…» con el vídeo recién montado sin elegirlo, aviso de cuenta sin conectar **antes** de aprobar,
+  y «Publicada» con fecha y enlace a Instagram («Publicar otra vez» hace una copia, porque la base de datos publica
+  cada pieza una vez). Sin texto alternativo: Instagram no lo admite en reels.
+- **Aprobación:** en autogestión no se ve; «Publicar o programar» aprueba por debajo con los pasos de
+  `set_content_status`. En modo agencia, el flujo de siempre (el siguiente paso en la hoja; los demás en «⋯»). Sin
+  textos de «cupo» en autogestión (reel como este y subtítulos).
+- **Avisos flotantes** en móvil por debajo de la cabecera (no tapan «Exportar» ni la barra). «Nuevo reel → Desde una
+  plantilla» va directo a pedir las fotos, sin volver a enseñar la galería.
+- **Probado:** unitarias y componentes (`exportFlow`, `editorPro`, `editorReels`, `mediosBorrados`, `reelLike`) y
+  `test:layout` en Chromium real. La prueba intermitente del guardado al salir espera a lo que de verdad hace falta.
+- **Sin probar:** móvil y Safari reales; publicar y programar contra Supabase y Meta reales; la e2e 29 (adaptada, sin
+  ejecutar); «Redactar con IA» con proveedor real. Una aserción de `src/features/content/contenidos.test.tsx` se cambió
+  porque miraba la cabecera vieja del editor de reels (`reel-version`).
 
 ## Sin probar contra el servicio real
 
@@ -1389,6 +1419,70 @@ sin tocar el recorte ni el servidor. Detalle en `docs/edicion-fotos.md` §15.
   «libre» (F4) y lo repetido del panel del editor de piezas (P3). «Ampliar con IA» sigue ofreciéndose
   (en Recortar): si «la IA solo crea fondos» vale también para él, se oculta añadiéndolo a
   `HIDDEN_AI_OPERATIONS`.
+
+## IA sin perfil, planes que no fallan ni cobran y reels de campaña listos (rama `f55/ia-campanas`, 23/11/2026)
+
+Arreglos de la prueba de calidad en staging del 23/11/2026 (`rrss-recursos-comparativa/e2e-calidad/INFORME.md`,
+fallos 1, 2, 3, 15, 16 y 23). Migración nueva `20270115010000_ia_inservible_y_piezas_de_plan` (con su vuelta atrás).
+
+- **IA sin perfil (fallo 1).** `ai-generate` y `ai-reel-like` ya no responden «Esta marca todavía no tiene perfil»: sin
+  perfil, la IA trabaja con el nombre, el sector y la web de la marca (`_shared/ai/text/tasks/brand-context.ts`, con una
+  nota para que no invente datos); con perfil, recibe además el nombre de la marca (los lugares, como en el perfil: fallo 23).
+  Solo si no hay perfil NI sector, `post.caption`, `campaign.brief`, `campaign.plan` y `brand.check` responden 409
+  `brand_basics_missing` antes de reservar cupo, y los diálogos piden «¿A qué se dedica la marca?» (se manda como
+  `brandSector` y, si la persona gestiona la marca, se guarda en `brands.sector`). Con un perfil incompleto, «Redactar
+  con IA» y «Preparar un plan» avisan en una línea con enlace a completarlo. El copiloto del editor recibe el perfil tal
+  cual si existe (no cambia nada más). Inicio ya no presenta el perfil como requisito. «Hacer un reel como este» sin
+  perfil responde `available: true, profileMissing: true` (la pantalla de reels/like no se ha tocado: su aviso
+  «profile_missing» ya no sale).
+- **Plan con «Detalles» a mano (fallo 2). Causa:** el servicio validaba la respuesta con el esquema completo y lo
+  único que el proveedor no garantiza (longitudes) tiraba el plan entero; con una descripción detallada el modelo
+  escribe ideas de más de 300 caracteres, fechas con hora o en «24/11/2026», «Instagram»/«Publicación», el nombre de la
+  foto en lugar de su id… y con 1.500 + 700 tokens por pieza un modelo que razona se cortaba. El camino de «Que la IA
+  proponga» tenía más piezas (más margen) y fases que acortaban las ideas. Además, lo inservible se cobraba (se cerraba
+  con `ai_complete_generation`). **Arreglo:** `campaign.plan` valida solo la forma (`AiOutputSchema.localSchema`: campos
+  y tipos; un campo no previsto sigue invalidando) y sanea el resto (`sanitizePlan`: recorta, normaliza red, formato,
+  fecha y hora, mapea nombres de foto), con `3000 + 800 × piezas` tokens de salida. Lo que no sirve (esquema roto,
+  cortado o un plan sin ninguna pieza válida, vía `AiGenerateParams.accept`) se cierra con `ai_waive_generation`:
+  reserva devuelta, nada en el libro de la organización y el coste real en `ai_generations.waived_cost_micros`, que
+  sí cuenta para el tope de gasto de la plataforma (`private.ai_global_committed`). La respuesta lleva `charged: false`
+  y la interfaz dice «No se ha descontado nada». Si la migración no está, se cobra como antes (no se rompe nada). El
+  diálogo enseña «Preparando el plan…» mientras espera. **No reproducido contra el modelo real**: la causa se ha
+  deducido del código y de lo que cuenta el informe; los registros `brief_mix_normalized` de staging no se han leído.
+- **Reels de campaña (fallo 3).** Al aceptar un plan, cada pieza en formato reel se guarda como versión 2 con un
+  proyecto de reel construido por el mismo camino que «Desde una plantilla» (`buildReelFromTemplate`, sin tocar el
+  montaje ni el plan v2): la plantilla de reel de la marca que sugiere la ficha (o la menos usada en la campaña; sin
+  plantillas, una sencilla sobre el primer estilo), y fotos o vídeos de la biblioteca elegidos por el tema de la pieza
+  (primero los que sugiere el plan), sin repetir dentro del reel y repartidos entre reels, sin exportaciones, montajes,
+  portadas, imágenes de IA ni recortes. El titular del plan sustituye al gancho de la plantilla y se quitan los textos
+  de muestra de planos concretos; el pie y los hashtags del plan van en `copy`. Con trabajador
+  (`VITE_MEDIA_WORKER_ENABLED`), el diálogo de aceptar ofrece montar los vídeos al momento, diciendo antes que no gasta
+  cupo de IA y cuántos montajes cuenta. Como el reel ya tiene material, el aviso de «diseño por capas» no sale. La IA
+  ya no debe proponer reels tipográficos sin imágenes (instrucciones de `campaign.plan` y `campaign.brief`).
+  Código: `src/features/campaigns/reelPieces.ts` y `prepareCampaignReels` en `api.ts`.
+- **Lo que promete el plan (fallo 15).** Las piezas del plan tienen cuatro campos opcionales (`title`, `time`, `aspect`,
+  `headline`; DB: `private.campaign_plan_problem`; cliente: `plan.ts`). El motor usa la proporción del plan si la red la
+  admite (4:5 es 4:5), pone el titular en una franja con el color y la tipografía de la marca, y llama a la pieza con
+  su título corto. «Programar» propone el día y la hora del plan (`usePlannedSlot`; sin hora, a las 10:00). El texto de
+  la propuesta se rehace si sus cifras no cuadran con el ritmo final y, si el reparto del modelo no sirve pero el texto
+  lo dice con cifras, se usa ese. Los pies terminan con la llamada a la acción de la marca (instrucción).
+- **Coste antes de pulsar (fallo 16).** Acción nueva `cost.estimate` de `ai-generate` (`post.caption`,
+  `campaign.brief`, `campaign.plan`): ejecuta la tarea con un servicio que no genera y devuelve lo que se reservaría,
+  sin cupo ni proveedor. «Redactar con IA» y «Preparar un plan» enseñan «Coste máximo de …» antes de pulsar.
+- **La IA en la biblioteca para el plan** ya no recibe exportaciones ni montajes (fallo 17, de paso).
+- **Pruebas nuevas:** `tests/db/ia-generate.test.ts` (sin perfil: sector, nombre, coste máximo, no cobrar),
+  `tests/db/campanas.test.ts` («plan con detalles a mano»: respuesta realista saneada, sin piezas no cobra, cortada no
+  cobra, la base de datos acepta los campos nuevos), `tests/db/ia-campanas-reparto.test.ts` (texto frente a ritmo),
+  `src/features/campaigns/reelPieces.test.ts` (material, plantilla, titular, 4:5, título corto) y
+  `src/features/campaigns/campanasCalidad.test.tsx` (sector en el diálogo, coste, indicador, «no se ha cobrado»,
+  reels guardados con plantilla y fotos, fecha y hora al programar). El simulador de Supabase de las pruebas responde
+  solo a `cost.estimate` y no lo cuenta como llamada.
+- **Para desplegar en staging** (en este orden): la migración `20270115010000` (antes que lo demás: sin ella, la base de
+  datos rechaza los planes con `title`/`time`/`aspect`/`headline`); las funciones `ai-generate` y `ai-reel-like`; la web.
+- **Sin probar:** nada contra un modelo real (calidad de títulos, horas y titulares, si el modelo real sigue mandando un
+  reparto inservible en `campaign.brief`); los reels preparados al aceptar no se han montado de verdad ni visto en un
+  navegador; el aviso de «diseño por capas» que seguía tras montar a mano un reel vacío es del editor de reels (zona de
+  otra rama) y no se ha tocado.
 
 ## Reels con acabado profesional (rama `f54/reels-calidad`, 23/11/2026)
 

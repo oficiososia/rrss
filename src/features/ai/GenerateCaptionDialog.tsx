@@ -5,7 +5,9 @@ import type { PostCopy } from '@/features/content/document';
 import { LENGTH_UNIT_NOTE } from '@/features/content/textUnits';
 import { cn } from '@/lib/utils';
 import { AiErrorNotice } from './AiErrorNotice';
-import { useGeneratePostCaption, type PostCaptionResult, type PostCaptionVariant } from './api';
+import { useAiCostEstimate, useGeneratePostCaption, type PostCaptionResult, type PostCaptionVariant } from './api';
+import { MaxCostLine, ProfileHint, SectorField } from './BrandAiReadiness';
+import { useBrandAiReadiness, useRememberSector, useSettled } from './brandReadiness';
 import {
   captionLimits,
   variantFits,
@@ -116,15 +118,41 @@ function CaptionGenerator({
   const [brief, setBrief] = useState('');
   const [variants, setVariants] = useState(3);
   const [result, setResult] = useState<PostCaptionResult | null>(null);
+  const readiness = useBrandAiReadiness(brandId);
+  const rememberSector = useRememberSector();
+  const [sector, setSector] = useState('');
 
   const trimmed = brief.trim();
-  const canSubmit = trimmed.length > 0 && brief.length <= MAX_BRIEF_CHARS && !generate.isPending;
+  const sectorOk = !readiness.needsSector || sector.trim().length > 0;
+  const canSubmit = trimmed.length > 0 && brief.length <= MAX_BRIEF_CHARS && sectorOk && !generate.isPending;
+  // Coste máximo antes de pulsar: depende del encargo y del número de propuestas.
+  const settledBrief = useSettled(trimmed);
+  const estimate = useAiCostEstimate(
+    brandId,
+    'post.caption',
+    [settledBrief, variants, limits.request.id, limits.request.maxChars],
+    () =>
+      Promise.resolve({
+        brief: settledBrief || 'Publicación',
+        network: limits.request,
+        variants,
+        ...(sector.trim() ? { brandSector: sector.trim() } : {}),
+      }),
+  );
 
   function run() {
     setResult(null);
-    generate.mutateAsync({ brief: trimmed, network: limits.request, variants }).then(setResult, () => {
-      // El error queda en `generate.error` y se enseña abajo.
-    });
+    if (sector.trim()) rememberSector(sector);
+    generate
+      .mutateAsync({
+        brief: trimmed,
+        network: limits.request,
+        variants,
+        ...(readiness.needsSector && sector.trim() ? { brandSector: sector.trim() } : {}),
+      })
+      .then(setResult, () => {
+        // El error queda en `generate.error` y se enseña abajo.
+      });
   }
 
   function submit(event: FormEvent) {
@@ -135,7 +163,9 @@ function CaptionGenerator({
   return (
     <div className="space-y-4">
       <LimitsNotice limits={limits} />
+      <ProfileHint readiness={readiness} />
       <form onSubmit={submit} className="space-y-4">
+        {readiness.needsSector && <SectorField value={sector} onChange={setSector} />}
         <Field
           label="Encargo"
           hint={`De qué va la publicación, en pocas frases. ${number.format(brief.length)} / ${number.format(MAX_BRIEF_CHARS)}`}
@@ -179,6 +209,7 @@ function CaptionGenerator({
             Cada generación descuenta del cupo de IA de la organización.
           </p>
         )}
+        <MaxCostLine micros={estimate.data} testId="ai-caption-cost" what="estas propuestas" />
       </form>
 
       {generate.isPending && <Spinner label="Redactando propuestas…" />}
