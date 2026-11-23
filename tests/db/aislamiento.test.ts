@@ -1092,7 +1092,8 @@ describe('IA y cola de trabajos', () => {
         pattern,
       );
     const sinPermiso = /No tienes permiso/;
-    const rutaAjena = /no es un recurso de esta marca/;
+    // Sin la ruta en el mensaje y sin decir si el archivo ajeno existe (20270107010000).
+    const rutaAjena = /^Pieza 1: el archivo no es un recurso de esta marca$/;
     // Marca de otra organización, con fotos propias o ajenas.
     await encargar(ana, marcaB1, fotoA1, sinPermiso);
     await encargar(ana, marcaB1, fotoB1, sinPermiso);

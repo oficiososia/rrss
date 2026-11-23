@@ -320,13 +320,13 @@ describe('encargar desde la aplicación', () => {
     // Foto de otra organización y de otra marca de la misma organización.
     await rejected(editor, marcaA, 'media.reel.template', reelWith({ type: 'photo', path: fotoB }), noEs);
     await rejected(ana, marcaA, 'media.reel.template', reelWith({ type: 'photo', path: fotoA2 }), noEs);
-    // Ruta con la forma de la marca pero sin recurso detrás, o trucada.
+    // Ruta con la forma de la marca pero sin recurso detrás (se borró de la biblioteca), o trucada.
     await rejected(
       editor,
       marcaA,
       'media.reel.template',
       reelWith({ type: 'photo', path: `${orgA}/${marcaA}/media/no-existe.jpg` }),
-      noEs,
+      /^La foto 1 ya no está en la biblioteca$/,
     );
     await rejected(
       editor,
