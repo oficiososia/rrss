@@ -44,7 +44,7 @@ interface DraftLayer {
 }
 /** Capas del borrador que el editor ha guardado solo (se espera a que exista). */
 async function draftLayers(page: Page): Promise<DraftLayer[]> {
-  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved', { timeout: 15_000 });
+  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved');
   return page.evaluate(() => {
     const rows = (window as unknown as { drafts: () => { data: { pages: { layers: unknown[] }[] } }[] }).drafts();
     return rows[0]!.data.pages[0]!.layers as never;
