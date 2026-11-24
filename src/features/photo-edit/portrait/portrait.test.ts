@@ -171,7 +171,10 @@ describe('modo retrato: el desenfoque', () => {
     expect(maxStep).toBeLessThan(220 - 20);
   });
 
-  it('vista previa y archivo guardado salen igual: la misma foto a dos tamaños da el mismo resultado', () => {
+  // Desenfoca de verdad una foto de 900×900 (y otra de 300×300) en JavaScript: con la máquina libre,
+  // un segundo; con la máquina cargada se ha medido más de 5 s, el límite por defecto. Es cálculo,
+  // no una espera: límite propio.
+  it('vista previa y archivo guardado salen igual: la misma foto a dos tamaños da el mismo resultado', { timeout: 60_000 }, () => {
     const bg = (u: number, v: number): RGB => [
       Math.round(60 + 140 * u),
       Math.round(200 - 120 * v),
