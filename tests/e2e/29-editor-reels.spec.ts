@@ -95,16 +95,23 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
 
   // 3. Foto y clip a la línea de tiempo; un texto.
   await page.getByTestId('reel-starter-pick').click();
+  const selector = page.getByRole('dialog', { name: 'Elige fotos y clips' });
+  // Se buscan por nombre: el selector enseña una página de la biblioteca y ordena primero las fotos limpias.
+  await selector.getByRole('textbox', { name: 'Buscar' }).fill(vez);
   for (const nombre of [foto, clip]) {
-    await page.getByRole('button', { name: `Elegir «${nombre}»` }).click();
+    await selector.getByRole('button', { name: `Elegir «${nombre}»` }).click();
   }
   await page.getByTestId('reel-media-confirm').click();
   await expect(page.getByTestId('reel-clip')).toHaveCount(2);
+  // Al montarlo queda elegido el primer clip: «Volver» suelta lo elegido y la barra ofrece «Texto».
+  await page.getByTestId('reel-bar-back').click();
   await page.getByTestId('reel-bar-text').click();
   await page.getByTestId('reel-text-content').fill('Pan recién hecho');
 
-  // 4. Subtítulos automáticos del clip (transcripción simulada), con su coste antes.
-  await page.getByTestId('reel-clip').nth(1).getByRole('button').first().click();
+  // 4. Subtítulos automáticos del clip (transcripción simulada), con su coste antes. Están en «Más → Subtítulos» del clip.
+  await page.getByRole('button', { name: /^2\. Clip / }).click();
+  await page.getByTestId('reel-bar-more').click();
+  await page.getByRole('menu').getByTestId('reel-bar-clip-subtitles').click();
   await page.getByTestId('reel-auto-subtitles').click();
   await expect(page.getByTestId('reel-auto-subtitles-cost')).toContainText('Coste máximo');
   await page.getByTestId('reel-auto-subtitles-confirm').click();

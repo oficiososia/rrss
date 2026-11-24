@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, dato, sinErrores, sql } from './apoyo';
+import { abrir, dato, elegirCarpeta, sinErrores, sql } from './apoyo';
 
 // «Importar publicaciones de la cuenta» de extremo a extremo, contra el Supabase
 // LOCAL y la Graph API de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts):
@@ -48,10 +48,12 @@ test('Ana importa el histórico de la cuenta y copia las imágenes a la bibliote
 
   // Las fotos se ven en la biblioteca, en su carpeta.
   await page.goto(`${marca()}/biblioteca`);
-  await page.getByTestId('library-folder-Instagram / Publicadas').click();
+  // Las subcarpetas van plegadas: «Instagram» y luego «Instagram / Publicadas».
+  await elegirCarpeta(page, 'Instagram / Publicadas');
   await expect(page.getByTestId('library-asset').first()).toBeVisible();
   expect(await page.getByTestId('library-asset').count()).toBeGreaterThan(0);
-  await expect(page.getByTestId('library-asset').first()).toContainText('instagram-');
+  // La tarjeta enseña un nombre legible; el del archivo («instagram-<id>-1.jpg») va en su `title`.
+  await expect(page.getByTestId('library-asset').first()).toHaveAttribute('title', /^instagram-/);
   await expect(page.getByTestId('library-asset').first().locator('img')).toBeVisible();
 
   sinErrores(s);

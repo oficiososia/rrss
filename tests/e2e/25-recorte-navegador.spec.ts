@@ -1,5 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
+import { expect, test } from '@playwright/test';
+import { abrir, archivoPng, dato, png, sinErrores, sql, tarjetaDeArchivo as tarjeta } from './apoyo';
 
 // Quitar el fondo EN EL NAVEGADOR, de punta a punta (docs/edicion-fotos.md, §7):
 // una foto de la biblioteca, «Editar foto» → Fondo → «Quitar el fondo» (sin IA,
@@ -20,10 +20,6 @@ test.describe.configure({ mode: 'serial' });
 const marcaA = () => `/o/${dato('orgA')}/m/${dato('marcaA')}`;
 const FOTO = png(640, 480, [90, 160, 110]);
 const NOMBRE = 'tarta-para-recortar.png';
-
-function tarjeta(page: Page, nombre: string) {
-  return page.getByTestId('library-asset').filter({ hasText: nombre });
-}
 
 test.beforeAll(async () => {
   // Al relanzar solo este archivo, la foto de la pasada anterior se tomaría por un duplicado.
