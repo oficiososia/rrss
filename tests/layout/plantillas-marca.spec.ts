@@ -62,9 +62,29 @@ for (const size of MOBILE) {
     await expect(more).toBeVisible();
 
     // Miniatura y nombre en la misma franja de arriba; el «⋯», a la derecha y dentro de la pantalla.
-    const thumb = (await first.locator('[aria-hidden]').first().boundingBox())!;
-    const nameBox = (await first.getByTestId('brand-template-name').boundingBox())!;
-    const moreBox = (await more.boundingBox())!;
+    // Las tres cajas se miden de una vez y con la tarjeta ya quieta (igual en dos fotogramas seguidos):
+    // medidas una tras otra, con la máquina cargada la página seguía colocándose entre una y otra y
+    // salían de momentos distintos (el nombre, 124 px por debajo de la miniatura).
+    type Box = { x: number; y: number; width: number; height: number };
+    const [thumb, nameBox, moreBox] = await first.evaluate(async (card): Promise<[Box, Box, Box]> => {
+      const box = (el: Element | null): Box => {
+        const { x, y, width, height } = el!.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const measure = (): [Box, Box, Box] => [
+        box(card.querySelector('[aria-hidden]')),
+        box(card.querySelector('[data-testid="brand-template-name"]')),
+        box(card.querySelector('[data-testid="brand-template-more"]')),
+      ];
+      let last = measure();
+      for (let frame = 0; frame < 120; frame++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const now = measure();
+        if (JSON.stringify(now) === JSON.stringify(last)) return now;
+        last = now;
+      }
+      return last;
+    });
     expect(nameBox.y).toBeLessThan(thumb.y + thumb.height);
     expect(nameBox.x).toBeGreaterThan(thumb.x + thumb.width - 1);
     expect(moreBox.x).toBeGreaterThan(nameBox.x);
