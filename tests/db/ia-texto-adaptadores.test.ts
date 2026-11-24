@@ -47,11 +47,17 @@ function fakeFetch(...replies: Reply[]): { fetch: FetchLike; calls: Call[] } {
     }
     calls.push({ url, headers: init.headers, body, rawBody: init.body });
     const reply = replies[Math.min(calls.length - 1, replies.length - 1)]!;
+    const aborted = () => new DOMException('aborted', 'AbortError');
+    // Como el fetch de verdad: con la señal ya cancelada, rechaza en el acto. Sin esto, en Vertex
+    // (que antes firma el JWT y pide el token) la cancelación podía llegar ANTES de esta llamada:
+    // el «abort» ya había pasado, nadie lo volvía a emitir y la prueba se quedaba colgada hasta
+    // agotar el tiempo (pasaba con la máquina cargada, cuando firmar tarda más de 20 ms).
+    if (init.signal.aborted) return Promise.reject(aborted());
     if (reply instanceof Error) return Promise.reject(reply);
     if (reply === 'hang') {
       // No responde nunca; solo termina si se cancela.
       return new Promise((_, reject) => {
-        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        init.signal.addEventListener('abort', () => reject(aborted()), { once: true });
       });
     }
     return Promise.resolve(
@@ -122,8 +128,15 @@ const MISTRAL_OK = {
   usage: { prompt_tokens: 1013, completion_tokens: 30, total_tokens: 1043, prompt_tokens_details: { cached_tokens: 1008 } },
 };
 
-/** Par de claves RSA de usar y tirar, con la privada en el PEM PKCS#8 de una cuenta de servicio. */
-async function serviceAccount() {
+/**
+ * Par de claves RSA de usar y tirar, con la privada en el PEM PKCS#8 de una cuenta de servicio.
+ * Se genera una sola vez por archivo: crear una clave de 2048 bits cuesta CPU de verdad (con la
+ * máquina cargada, segundos) y a las pruebas les da igual cuál sea.
+ */
+let sharedAccount: ReturnType<typeof createServiceAccount> | undefined;
+const serviceAccount = () => (sharedAccount ??= createServiceAccount());
+
+async function createServiceAccount() {
   const pair = await crypto.subtle.generateKey(
     { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
     true,
