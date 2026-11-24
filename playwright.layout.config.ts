@@ -22,6 +22,9 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 30_000 },
   retries: process.env.CI ? 2 : 0,
+  // Abre cada banco una vez antes de empezar: la primera transformación de Vite no cuenta en el
+  // límite de ninguna prueba (ver tests/layout/global-setup.ts).
+  globalSetup: './tests/layout/global-setup.ts',
   reporter: [['list']],
   use: { baseURL: `http://127.0.0.1:${PORT}`, locale: 'es-ES', ...devices['Desktop Chrome'] },
   webServer: {
