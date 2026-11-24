@@ -1,7 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { BrandRole, ContentItemRow, ContentStatus, ContentVersionRow, OrgRole } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
+import { preloadReelEditor, PRELOAD_TIMEOUT_MS } from '@/test/preload';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION, type ContentDocument } from './document';
 import { addFromDrawer } from './editorTestKit';
@@ -152,9 +153,10 @@ const EDITOR = `${CONTENT}/content-1`;
 /**
  * Lo que llega tras guardar una versión o cambiar el estado (aviso, llamada a la base) se espera por
  * lo que de verdad se espera, sin pausas fijas, y con margen: con la máquina cargada, el segundo de
- * siempre no basta (fallaba de vez en cuando).
+ * siempre no basta (fallaba de vez en cuando). Ojo: este límite SUSTITUYE al global de
+ * setup.components.ts (10 s); con 5 s era más corto que el de las demás esperas y fallaba antes.
  */
-const SLOW = { timeout: 5000 };
+const SLOW = { timeout: 15_000 };
 
 async function openEditor(
   role: { orgRole: OrgRole; brandRole?: BrandRole },
@@ -317,6 +319,9 @@ describe('Lista de contenidos', () => {
 });
 
 describe('Crear una idea', () => {
+  // Una prueba abre el editor de reels, que se carga aparte: se paga aquí (ver src/test/preload.ts).
+  beforeAll(preloadReelEditor, PRELOAD_TIMEOUT_MS);
+
   it('elige el formato con una tarjeta y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
@@ -328,7 +333,7 @@ describe('Crear una idea', () => {
     await user.click(dialog.getByTestId('create-content-submit'));
 
     // Un reel se abre en el editor de reels (línea de tiempo y vista previa), no en el de imagen.
-    expect(await screen.findByTestId('reel-editor', {}, { timeout: 20_000 })).toHaveTextContent('Reel del vermut');
+    expect(await screen.findByTestId('reel-editor', {}, SLOW)).toHaveTextContent('Reel del vermut');
     expect(fake.callsTo('content_items', 'insert')[0]?.payload).toEqual({
       brand_id: BRAND_ID,
       organization_id: ORG_ID,

@@ -602,7 +602,10 @@ describe('función del servidor: autorización y límites', () => {
     expect(res.headers.get('WWW-Authenticate')).toBe('Bearer');
   });
 
-  it('el diagnóstico GET dice si están el modelo y los motores', async () => {
+  // El diagnóstico carga de verdad onnxruntime-node y sharp (dos módulos nativos grandes): con la
+  // máquina libre tarda un segundo, pero con la máquina cargada se ha medido más de 7 s y se pasaba de
+  // los 5 s por defecto. Es lento por lo que hace, no por una espera mal puesta: límite propio.
+  it('el diagnóstico GET dice si están el modelo y los motores', { timeout: 60_000 }, async () => {
     const res = await GET();
     const json = (await res.json()) as { ok: boolean; model: boolean };
     expect(typeof json.ok).toBe('boolean');

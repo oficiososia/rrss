@@ -4,6 +4,7 @@ import { chooseMoreAction, openMoreMenu } from '@/test/moreMenu';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ContentItemRow, ContentVersionRow } from '@/lib/database.types';
 import { fake } from '@/test/fakeSupabase';
+import { preloadReelEditor, PRELOAD_TIMEOUT_MS } from '@/test/preload';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/test/fixtures';
 import { buildReelLikeResult, parseMeasurement } from '../../../../supabase/functions/_shared/reels/like';
 import { buildRenderRequest, parseProject } from './project';
@@ -26,6 +27,9 @@ beforeAll(() => {
     window.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;
   }
 });
+
+// El editor de reels se carga aparte: se paga aquí, no en la primera prueba (ver src/test/preload.ts).
+beforeAll(preloadReelEditor, PRELOAD_TIMEOUT_MS);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -943,7 +947,7 @@ describe('editor de reels: guardado automático', () => {
     fireEvent.click(clipButton(0));
     fireEvent.change(screen.getByTestId('reel-photo-seconds'), { target: { value: '3' } });
     expect(screen.getByTestId('reel-autosave')).toHaveTextContent('Guardando…');
-    await waitFor(() => expect(draftCalls()).toHaveLength(1), { timeout: 5000 });
+    await waitFor(() => expect(draftCalls()).toHaveLength(1), SLOW);
     expect(savedDraft()).toMatchObject({ p_content_id: 'reel-1', p_base_version: 1 });
     expect(savedDraft().p_data.plan.clips[0]).toMatchObject({ id: 'c1', seconds: 3 });
     await waitFor(() => expect(autosaveState()).toBe('saved'));
@@ -1018,9 +1022,7 @@ describe('editor de reels: guardado automático', () => {
     const first = await open();
     fireEvent.click(clipButton(0));
     fireEvent.change(screen.getByTestId('reel-photo-seconds'), { target: { value: '4' } });
-    await waitFor(() => expect(screen.getByTestId('reel-autosave')).toHaveAttribute('data-state', 'error'), {
-      timeout: 5000,
-    });
+    await waitFor(() => expect(screen.getByTestId('reel-autosave')).toHaveAttribute('data-state', 'error'), SLOW);
     expect(screen.getByTestId('reel-autosave')).toHaveTextContent('Sin guardar');
     // Salir por un enlace pregunta; con «Cancelar» se sigue en el editor.
     fireEvent.click(screen.getByRole('link', { name: 'Volver a Contenidos' }));
@@ -1367,7 +1369,8 @@ describe('editor de reels: «Publicar o programar» desde «Exportar»', () => {
     expect(fake.callsTo('set_content_status', 'rpc')).toHaveLength(0);
   });
 
-  it('el pie que propuso «Hacer un reel como este» llega solo al abrir «Publicar o programar»', async () => {
+  /** Un reel que sale de «Hacer un reel como este», con el análisis (y su pie propuesto) en la base. */
+  function seedFromReference() {
     const REF = '0b1c2d3e-4f50-4a61-8b72-9c8d7e6f5a41';
     const data = {
       ...project,
@@ -1406,11 +1409,30 @@ describe('editor de reels: «Publicar o programar» desde «Exportar»', () => {
       },
       { transcriptUsed: false },
     );
-    fake.tables.reel_references = [
-      { id: REF, brand_id: BRAND_ID, organization_id: ORG_ID, status: 'ready', result },
-    ];
+    const row = { id: REF, brand_id: BRAND_ID, organization_id: ORG_ID, status: 'ready', result };
+    fake.tables.reel_references = [row];
+    return row;
+  }
+
+  it('el pie que propuso «Hacer un reel como este» llega solo al abrir «Publicar o programar»', async () => {
+    seedFromReference();
     await open();
     const panel = await openPublish();
+    await waitFor(() => expect(within(panel).getByTestId('reel-caption')).toHaveValue('Así se hace nuestra hogaza.'), SLOW);
+    expect(within(panel).getByTestId('reel-hashtags')).toHaveValue('#pan');
+  });
+
+  it('si el análisis llega con «Publicar o programar» ya abierto, el pie propuesto se pone igual', async () => {
+    // Antes solo se miraba al abrir la hoja: si el análisis aún no estaba (red lenta, máquina cargada o
+    // el análisis terminando), el pie se quedaba vacío para siempre. Aquí el análisis termina DESPUÉS.
+    const row = seedFromReference();
+    const { result } = row;
+    Object.assign(row, { status: 'analyzing', result: null });
+    await open();
+    const panel = await openPublish();
+    expect(within(panel).getByTestId('reel-caption')).toHaveValue('');
+    // Termina el análisis: la aplicación lo vuelve a mirar sola cada pocos segundos (REFERENCE_POLL_MS).
+    Object.assign(row, { status: 'ready', result });
     await waitFor(() => expect(within(panel).getByTestId('reel-caption')).toHaveValue('Así se hace nuestra hogaza.'), SLOW);
     expect(within(panel).getByTestId('reel-hashtags')).toHaveValue('#pan');
   });
