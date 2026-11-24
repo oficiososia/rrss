@@ -1157,6 +1157,14 @@ function Editor({
     }
   }
 
+  // Si el pie propuesto llega con «Publicar o programar» o «Terminar en Instagram» ya abiertos (el
+  // análisis terminaba o la red iba lenta), se pone igual: antes solo se miraba al abrir y el pie se
+  // quedaba vacío. Lo escrito a mano nunca se pisa (solo se rellena si no hay pie).
+  useEffect(() => {
+    if (exportOpen !== 'publish' && exportOpen !== 'instagram') return;
+    if (!project.copy && suggestedCopy && !readOnly) apply((p) => (p.copy ? p : { ...p, copy: suggestedCopy }));
+  }, [exportOpen, suggestedCopy, project.copy, readOnly, apply]);
+
   /** Al abrir «Publicar o programar» sin pie, el que propuso «Hacer un reel como este», si lo hay. */
   function openPublish() {
     if (!project.copy && suggestedCopy && !readOnly) apply((p) => ({ ...p, copy: suggestedCopy }));

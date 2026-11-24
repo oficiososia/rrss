@@ -236,6 +236,15 @@ export interface CopyFieldsProps {
 /** El pie y los hashtags del reel (con «Redactar con IA»): en «Publicar o programar» y en «Terminar en Instagram». */
 export function CopyFields(props: CopyFieldsProps) {
   const [tagsText, setTagsText] = useState(() => props.copy.hashtags.map((t) => `#${t}`).join(' '));
+  // Si los hashtags cambian desde fuera con la hoja abierta (el pie propuesto que llega tarde,
+  // deshacer), el campo los enseña. Lo que se está escribiendo no se toca: solo se reescribe si dice
+  // otra cosa que lo guardado.
+  const tagsKey = props.copy.hashtags.join(' ');
+  const [seenTags, setSeenTags] = useState(tagsKey);
+  if (tagsKey !== seenTags) {
+    setSeenTags(tagsKey);
+    if (parseHashtags(tagsText).join(' ') !== tagsKey) setTagsText(props.copy.hashtags.map((t) => `#${t}`).join(' '));
+  }
   const [aiOpen, setAiOpen] = useState(false);
   const length = [...props.copy.caption].length;
   return (
