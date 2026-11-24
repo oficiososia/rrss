@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, nuevaIdea, png, sinErrores, sql } from './apoyo';
+import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, crearPieza } from './apoyo';
 
 // Editor de reels de punta a punta contra el Supabase LOCAL: una pieza de
 // formato reel, una foto y un clip con voz en la línea de tiempo, un texto,
@@ -89,11 +89,7 @@ test('montar un reel en el editor: línea de tiempo, subtítulos automáticos, v
 
   // 2. Pieza de formato reel: se abre el editor de reels.
   await page.goto(`${base()}/contenidos`);
-  await nuevaIdea(page);
-  const alta = page.getByRole('dialog', { name: 'Nueva idea' });
-  await alta.getByTestId('create-content-title').fill(`Reel del editor ${vez}`);
-  await alta.getByTestId('create-content-format-reel').click();
-  await alta.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'reel', `Reel del editor ${vez}`);
   await expect(page.getByTestId('reel-editor')).toBeVisible();
   const contentId = page.url().split('/contenidos/')[1]!.split('?')[0]!;
 

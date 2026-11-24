@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 24/11/2026 (ramas `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -984,6 +984,55 @@ Ocho fallos: cuatro de la lista de pendientes y cuatro del reel real de «Fotos 
 - **Para llevarlo a staging:** migración `20270125010000_publicadas_a_mano_analitica.sql`; redesplegar el trabajador
   (`worker-fly.yml`); la aplicación; volver a cargar el catálogo de plantillas en las marcas (`agency/`, en seco
   primero). `social-insights` no cambia de código (sigue igual: la migración le da la lista nueva de publicaciones).
+
+### Contenidos, «¿Qué quieres crear?» y Copiloto más sencillos (rama `f69/contenidos-copiloto`, 24/11/2026)
+
+Apartados 6 y 7 de la simplificación aceptada (`rrss-recursos-comparativa/simplificacion/CAMBIOS.md`). Se cuentan
+las acciones a la vista con `tests/layout/contenidos-copiloto.spec.ts` (375 px táctil y 1366 px, sin abrir menús,
+sin el pie legal ni los enlaces que abren cada pieza).
+
+- **Contenidos** (`ContentListPage.tsx`, `lista/ContentCard.tsx`, `lista/stage.ts`). Antes: cinco pestañas (Ideas,
+  En preparación, Listas, Programadas, Publicadas), desplegable de formato, cambio miniaturas/lista, casilla en cada
+  pieza y, en el móvil, Duplicar y Archivar siempre a la vista (375 px: 9 de la pantalla + 3 por pieza; 1366 px:
+  10 + la casilla). Ahora: buscar, «⋯», tres pestañas (En marcha = ideas, en preparación y listas, con el estado en
+  la tarjeta; Programadas; Publicadas) y fichas de formato (Todo, Reels, Publicaciones, Carruseles, Historias); cada
+  pieza, un «⋯» (siempre a la vista en el móvil, al pasar el ratón en el ordenador; también con pulsación larga) con
+  Programar, Publicar otra vez, Duplicar, Elegir y Archivar (Recuperar en las archivadas). Miniaturas en pantallas
+  anchas y lista en el móvil, sin botón. «Elegir varias», «Ver las archivadas» y «Archivar las vacías» en el «⋯» de
+  la cabecera; al elegir, tocar la pieza la marca. Se quita el aviso fijo «Hay N piezas vacías…» (está en «⋯»).
+  Contadas: 375 px, 10 de la pantalla (las fichas que caben) + 1 por pieza; 1366 px, 10 + 0.
+- **«¿Qué quieres crear?»** (`CreateContentDialog.tsx`, `useStartPiece.ts`). Antes: «Nueva idea» con formato,
+  nombre, «En blanco / Desde una plantilla», «Cancelar» y «Crear y abrir» (10 controles). Ahora un paso: Reel,
+  «Reel como este» (si el servidor puede, con su coste), Publicación, Carrusel, Historia y, en el móvil, «Subir
+  fotos»; al tocar el formato sale su galería con «En blanco» la primera y las plantillas de la marca de ese formato
+  (para Reel, las de reel); al tocar una tarjeta se crea la pieza («Formato · día») y se abre su editor. Desde
+  «＋ Crear» del menú se abre directamente la galería del formato. Una plantilla destacada de la pantalla vacía crea
+  la pieza con un toque. Contados: 6 controles a 375 px (con «Subir fotos») y 5 a 1366 px. «Nueva idea» solo sigue
+  en la pantalla vacía de Contenidos.
+- **Copiloto** (`copilot/VoiceCopilot.tsx`, `PlanCard.tsx`, `voiceEngine.ts`; sin cambios en el servidor ni en el
+  editor). Se mantiene el panel acoplado que no tapa el lienzo, el aviso solo al pulsar el micrófono, las notas de lo
+  que no se hizo y la tarjeta del plan con su coste. Antes: 6 controles (selector «Transcriptor (OpenAI) / Dictado del
+  navegador», cerrar, micrófono, «Elegir foto», campo, enviar), una línea fija de estado y un aviso de 64 palabras
+  con «No volver a mostrar», «Entendido, dictar» y «Ahora no». Ahora: 4 controles (campo, un botón al lado —el
+  micrófono sin texto escrito, enviar con texto—, «⋯» y cerrar); «Elegir foto» y la voz a usar, en «⋯»; el estado
+  solo mientras escucha; el aviso, de una línea (24 palabras con el transcriptor) con «Más» a la política, «Dictar»
+  y «Ahora no», y una vez leído no vuelve con ese motor. La tarjeta del plan, con textos más cortos (el estado de
+  cada paso queda para el lector de pantalla; el coste, «Hasta que digas “sí” no se gasta…» y «lo ya creado queda en
+  la biblioteca» siguen).
+- **Pruebas:** las que comprobaban lo que ya no existe se han borrado (cambio miniaturas/lista, barra «Cancelar /
+  Crear y abrir», campo Nombre, «No volver a mostrar», selector de motor, el aviso «De la agencia» y el «Ver más» del
+  selector de plantillas dentro de «Nueva idea»); las demás, al flujo nuevo. Las e2e crean las piezas con
+  `crearPieza` de `tests/e2e/apoyo.ts` (formato, «En blanco» o la plantilla y, en el editor, «Nombre y red» o
+  «Cambiar el nombre» del reel) **sin ejecutar** (no hay Docker en el PC).
+- **Resultado en local (24/11/2026):** `typecheck` bien; `lint` 0 errores (35 avisos, ninguno de esta
+  rama); `npm test` 2274 de 2276 en la tanda completa: los 2 que fallaron (`cutout/chain.test.ts`, tiempo agotado,
+  y uno de `editorReels.test.tsx`) pasan solos, con el PC cargado por otras ramas; `build` bien; `test:layout`
+  (`--workers=2`) 188 pasan y 2 omitidas. `test:db` no se ha ejecutado (no hay cambios de base de datos).
+- **Sin probar:** la pulsación larga con un dedo de verdad (en Chromium simulado solo se ve el «⋯» sin «hover»); la
+  e2e (CI); el aviso del transcriptor en un navegador real.
+- **Pendiente de la propuesta:** el selector del transcriptor debía pasar a Configuración → Integraciones (K2); queda
+  en el «⋯» del copiloto porque `IntegrationsPage` no entraba en esta rama. K1 a medias: el micrófono flotante ya abre
+  el copiloto, pero el resultado sigue en el panel acoplado (no como aviso corto con «Deshacer»), como se pidió.
 
 ## Sin probar contra el servicio real
 

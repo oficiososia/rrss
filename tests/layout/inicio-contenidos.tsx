@@ -6,8 +6,7 @@ import { fake } from '@/test/fakeSupabase';
 import { BRAND_BASE, BRAND_ID, ME, ORG_ID, seedWorkspace } from '@/test/fixtures';
 
 // Banco de maquetación del Inicio de la marca y de la lista de Contenidos: la aplicación real con el
-// Supabase simulado. Parámetros: ?vista=inicio|contenidos|vacia   &lista=1 (vista de lista)
-//   &largos=1 (títulos larguísimos)
+// Supabase simulado. Parámetros: ?vista=inicio|contenidos|vacia   &largos=1 (títulos larguísimos)
 const params = new URLSearchParams(window.location.search);
 const view = params.get('vista') ?? 'inicio';
 const long = params.get('largos') === '1';
@@ -190,12 +189,5 @@ fake.rpc('analytics_media_summary', () => [
 ]);
 
 const path = view === 'inicio' ? `${BRAND_BASE}/inicio` : `${BRAND_BASE}/contenidos`;
-if (params.get('lista') === '1') {
-  try {
-    localStorage.setItem('rrss.contenidos.vista', JSON.stringify('list'));
-  } catch {
-    // Sin almacenamiento, se ve la rejilla.
-  }
-}
 window.history.pushState({}, '', path);
 createRoot(document.getElementById('root')!).render(<App />);

@@ -170,9 +170,11 @@ describe('Contenidos: una pieza publicada dice «Publicada» con su enlace', () 
     expect(card).toHaveTextContent('Publicada el 23 nov');
     expect(card).not.toHaveTextContent('Aprobada');
     expect(within(card).getByTestId('content-published-link')).toHaveAttribute('href', URL);
-    expect(within(card).queryByTestId('content-schedule')).toBeNull();
+    await user.click(within(card).getByTestId('content-menu'));
+    const menu = within(await screen.findByRole('menu'));
+    expect(menu.queryByTestId('content-schedule')).toBeNull();
 
-    await user.click(within(card).getByTestId('content-republish'));
+    await user.click(menu.getByTestId('content-republish'));
     expect(await screen.findByTestId('republish-warning')).toHaveTextContent(
       'Ya está publicada en Instagram. Si la publicas otra vez, saldrá repetida.',
     );

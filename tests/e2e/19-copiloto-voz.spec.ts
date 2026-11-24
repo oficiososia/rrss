@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, accionDelMenu, archivoPng, asignarPlan, dato, png, sinErrores, sql, nuevaIdea } from './apoyo';
+import { abrir, accionDelMenu, archivoPng, asignarPlan, dato, png, sinErrores, sql, crearPieza } from './apoyo';
 
 // Copiloto del editor, por voz y por teclado (docs/copiloto-voz.md), contra el
 // Supabase local, con `ai-generate` servida en local y el proveedor SIMULADO de
@@ -84,11 +84,7 @@ async function generacionesCopiloto(orgId: string): Promise<number> {
 /** Pieza nueva de Instagram (post) y su editor abierto. */
 async function piezaNueva(page: Page, titulo: string) {
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(titulo);
-  // La red ya no se pregunta (solo Instagram se publica) y el formato es una tarjeta, no un desplegable.
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', titulo);
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
 }
 
@@ -139,10 +135,7 @@ test('el copiloto por voz monta el menú de Navidad (fondo difuminado, logotipo 
 
   // Pieza nueva: Instagram · carrusel.
   await page.goto(`/o/${orgA}/m/${marcaA}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill('Menú Navidad');
-  await page.getByTestId('create-content-format-carousel').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'carousel', 'Menú Navidad');
   await expect(page.getByTestId('editor-title')).toHaveText('Menú Navidad');
   const pieza = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())![1]!;
 
@@ -241,10 +234,7 @@ test('lo que no se ha dictado no llega al diseño', async ({ browser }) => {
   const { page } = s;
   await s.context.addInitScript(SPEECH_FAKE);
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill('Prueba de inyección');
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', 'Prueba de inyección');
   await page.getByTestId('copilot-open').click();
   // Aviso previo al dictado: hasta aceptarlo no se escucha.
   await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
@@ -334,13 +324,10 @@ test('sin Web Speech API ni grabación, el copiloto se abre y funciona por tecla
   // El botón sale aunque el navegador no pueda dictar.
   await page.getByTestId('copilot-open').click();
   await expect(page.getByTestId('copilot-panel')).toBeVisible();
-  await expect(page.getByTestId('copilot-voice-status')).toContainText(
-    'Este navegador no puede dictar: escribe la orden.',
-  );
-  // Sin voz no hay aviso de voz, ni micrófono, ni selector de motor.
+  await expect(page.getByTestId('copilot-text-input')).toHaveAttribute('placeholder', 'Escribe una orden');
+  // Sin voz no hay aviso de voz ni micrófono: al lado del campo, «Enviar».
   await expect(page.getByTestId('copilot-voice-notice')).toHaveCount(0);
   await expect(page.getByTestId('copilot-mic')).toHaveCount(0);
-  await expect(page.getByTestId('copilot-voice-engine')).toHaveCount(0);
   const antes = await generacionesCopiloto(orgA);
 
   // Con el botón «Enviar» (Enter ya se prueba arriba).
@@ -398,7 +385,7 @@ test('una orden que monta la pieza enseña el plan con su coste, no gasta hasta 
 
   // Una foto REAL del plato en la biblioteca (se sube desde «Elegir foto» y se quita de las del copiloto:
   // el plan tiene que encontrarla él, buscando en la biblioteca).
-  await page.getByTestId('copilot-pick-photo').click();
+  await accionDelMenu(page, 'copilot-more', 'copilot-pick-photo');
   await page
     .getByRole('dialog', { name: 'Foto para el copiloto' })
     .getByTestId('picker-upload-input')

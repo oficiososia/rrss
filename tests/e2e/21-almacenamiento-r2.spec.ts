@@ -9,7 +9,7 @@ import {
   sql,
   accionDelMenu,
   guardarVersion,
-  nuevaIdea,
+  crearPieza,
   tarjetaDeArchivo,
 } from './apoyo';
 import { arrancarMinio, MINIO, objetoEnMinio, pararMinio } from './minio';
@@ -123,10 +123,7 @@ test('usar la foto de R2 en el editor y exportar la pieza: la exportación tambi
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill('Pieza con foto en R2');
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', 'Pieza con foto en R2');
   await expect(page.getByTestId('editor-title')).toHaveText('Pieza con foto en R2');
   const contenido = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
 

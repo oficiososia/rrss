@@ -80,8 +80,8 @@ describe('Inicio de la marca', () => {
     await user.click(await screen.findByTestId('create-menu'));
     expect(screen.queryByTestId('create-menu-reel-like')).toBeNull();
     await user.click(await screen.findByTestId('create-menu-reel'));
-    const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByTestId('create-content-format-reel').querySelector('input')).toBeChecked();
+    const dialog = within(await screen.findByRole('dialog', { name: 'Reel' }));
+    expect(dialog.getByTestId('create-content-reel-templates')).toBeInTheDocument();
   });
 
   it('quien solo mira no tiene «＋ Crear»', async () => {

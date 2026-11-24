@@ -12,7 +12,7 @@ import {
   abrirCompartir,
   cerrarCompartir,
   cajon,
-  nuevaIdea,
+  crearPieza,
 } from './apoyo';
 
 // Aceptación de la Fase 2 (docs/04-plan-por-fases.md) contra el Supabase local,
@@ -87,10 +87,7 @@ async function rellenarPerfil(page: Page, lado: 'A' | 'B') {
 /** Crea una pieza de Instagram y deja abierto su editor. Devuelve su id. */
 async function nuevaPieza(page: Page, lado: 'A' | 'B', titulo: string): Promise<string> {
   await page.goto(`${marca(lado)}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', titulo);
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);

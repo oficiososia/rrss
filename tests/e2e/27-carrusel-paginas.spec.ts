@@ -9,7 +9,7 @@ import {
   abrirCompartir,
   guardarVersion,
   cajon,
-  nuevaIdea,
+  crearPieza,
 } from './apoyo';
 
 // Carrusel de varias páginas de extremo a extremo, contra el Supabase LOCAL y la
@@ -36,10 +36,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   const { page } = s;
 
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(TITULO);
-  await page.getByTestId('create-content-format-carousel').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'carousel', TITULO);
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, accionDelMenu, aviso, dato, sinErrores, sql, abrirCompartir, guardarVersion, nuevaIdea } from './apoyo';
+import { abrir, accionDelMenu, aviso, dato, sinErrores, sql, abrirCompartir, guardarVersion, crearPieza } from './apoyo';
 
 // «Publicar ahora» de extremo a extremo, contra el Supabase LOCAL y la Graph API
 // de Meta SIMULADA (supabase/functions/_shared/social/local-test.ts, activada
@@ -23,10 +23,7 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   const { page } = s;
 
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(TITULO);
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', TITULO);
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
