@@ -79,6 +79,14 @@ export function useAutosave(options: AutosaveOptions): Autosave {
   const timer = useRef<number | null>(null);
   const inFlight = useRef(false);
   const save = useRef<() => void>(() => undefined);
+  /** El editor sigue abierto. Al salir no queda nadie que espere: nada de relojes que le sobrevivan. */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const clearTimer = useCallback(() => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -105,15 +113,20 @@ export function useAutosave(options: AutosaveOptions): Autosave {
           stored.current = sent;
           dropLocalDraft(current.contentId);
           setRemote({ stored: sent, saving: false, failed: false });
-          // Se siguió editando mientras se guardaba: otra vuelta.
-          if (latest.current.dirty && latest.current.snapshot !== sent) later(AUTOSAVE_DELAY_MS);
+          // Se siguió editando mientras se guardaba: otra vuelta. Si ya se ha salido del editor, en el
+          // acto: un reloj que sobreviviera al editor podía pisar el borrador al volver a abrir el reel.
+          if (latest.current.dirty && latest.current.snapshot !== sent) {
+            if (alive.current) later(AUTOSAVE_DELAY_MS);
+            else save.current();
+          }
         },
         () => {
           inFlight.current = false;
           // No ha llegado al servidor: al menos queda en este navegador.
           keepLocalDraft(current.contentId, current.project, current.baseVersion);
           setRemote((r) => ({ ...r, saving: false, failed: true }));
-          later(AUTOSAVE_RETRY_MS);
+          // Fuera del editor no se reintenta: la copia del navegador se usa al volver.
+          if (alive.current) later(AUTOSAVE_RETRY_MS);
         },
       );
     };
