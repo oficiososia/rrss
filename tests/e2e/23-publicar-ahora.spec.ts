@@ -80,9 +80,9 @@ test('una pieza aprobada se exporta y se publica al momento desde el editor', as
   const chip = page.getByTestId('calendar-entry').filter({ hasText: TITULO });
   await expect(chip).toHaveAttribute('data-state', 'published');
   await chip.click();
-  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
-  await page.getByTestId('calendar-quick-open').click();
-  await expect(page.getByTestId('publication-link')).toHaveAttribute('href', fila!.external_url);
+  // Lo ya publicado no pasa por la vista rápida: abre su ficha directamente (CalendarPage, `onOpen`).
+  await expect(page.getByTestId('publication-dialog')).toBeVisible();
+  await expect(page.getByTestId('publication-published-link')).toHaveAttribute('href', fila!.external_url);
 
   // Repetir «ahora» sobre lo publicado no publica otra vez (la ficha ya no ofrece el botón).
   await expect(page.getByTestId('publication-publish-now')).toHaveCount(0);

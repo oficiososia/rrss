@@ -17,6 +17,7 @@ import {
   sql,
   type Alias,
   irAAjuste,
+  tarjetaDeArchivo,
 } from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
@@ -181,7 +182,8 @@ test('editora: sube a la biblioteca, pero no toca el perfil, el equipo ni la org
     .getByTestId('library-file-input')
     .setInputFiles(archivoPng('foto-de-carla.png', png(120, 80, [90, 30, 140])));
   await expect(page.getByTestId('upload-item-done')).toContainText('foto-de-carla.png');
-  await expect(page.getByTestId('library-asset').filter({ hasText: 'foto-de-carla.png' })).toBeVisible();
+  // La tarjeta enseña un nombre legible («Foto de carla»); el nombre del archivo va en su `title`.
+  await expect(tarjetaDeArchivo(page, 'foto-de-carla.png')).toBeVisible();
 
   await irAAjuste(page, 'nav-marca');
   await expect(page.getByTestId('profile-description')).toBeDisabled();
@@ -223,16 +225,18 @@ test('cliente: ve la marca y su biblioteca, pero no puede subir, editar ni borra
   await expect(page.getByTestId(`brand-card-${dato('marcaA')}`)).toContainText('Cliente');
 
   await page.goto(`${marca()}/biblioteca`);
-  await expect(page.getByTestId('library-asset').filter({ hasText: 'escaparate.png' })).toBeVisible();
+  await expect(tarjetaDeArchivo(page, 'escaparate.png')).toBeVisible();
   await expect(page.getByTestId('library-upload-toggle')).toHaveCount(0);
-  await page.getByTestId('library-asset').filter({ hasText: 'escaparate.png' }).click();
-  const ficha = page.getByRole('dialog');
+  await tarjetaDeArchivo(page, 'escaparate.png').click();
+  // La ficha es un panel al lado de la rejilla.
+  const ficha = page.getByTestId('asset-panel');
   await expect(ficha.getByTestId('asset-name')).toBeDisabled();
   await expect(ficha.getByTestId('asset-delete')).toHaveCount(0);
   await expect(ficha.getByTestId('asset-save')).toHaveCount(0);
   // Sí puede ver el archivo (URL firmada del cubo privado).
   await expect(ficha.locator('img')).toHaveJSProperty('naturalWidth', 200);
-  await ficha.getByRole('button', { name: 'Cerrar' }).last().click();
+  await ficha.getByTestId('asset-close').click();
+  await expect(ficha).toHaveCount(0);
 
   await irAAjuste(page, 'nav-marca');
   await expect(page.getByTestId('profile-description')).toBeDisabled();
@@ -291,7 +295,7 @@ test('la propietaria cambia el rol de la editora a revisora y esta deja de poder
 
   const carla = await abrir(browser, 'carla');
   await carla.page.goto(`${marca()}/biblioteca`);
-  await expect(carla.page.getByTestId('library-asset').filter({ hasText: 'foto-de-carla.png' })).toBeVisible();
+  await expect(tarjetaDeArchivo(carla.page, 'foto-de-carla.png')).toBeVisible();
   await expect(carla.page.getByTestId('library-upload-toggle')).toHaveCount(0);
   sinErrores(carla);
   await carla.context.close();

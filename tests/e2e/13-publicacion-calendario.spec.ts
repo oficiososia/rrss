@@ -156,11 +156,12 @@ test('una pieza aprobada y exportada se programa y el publicador la publica', as
   await page.reload();
   await expect(chip).toHaveAttribute('data-state', 'published');
   await chip.click();
-  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
-  await page.getByTestId('calendar-quick-open').click();
+  // Lo ya publicado no pasa por la vista rápida: abre su ficha directamente (CalendarPage, `onOpen`).
+  await expect(page.getByTestId('publication-dialog')).toBeVisible();
   await expect(page.getByTestId('publication-state')).toHaveText('Publicada');
   await expect(page.getByTestId('publication-external-id')).toHaveText(fila!.external_id);
-  await expect(page.getByTestId('publication-link')).toHaveAttribute('href', fila!.external_url);
+  // «Ver en Instagram» del aviso de publicada (PublishedNotice con testId «publication-published»).
+  await expect(page.getByTestId('publication-published-link')).toHaveAttribute('href', fila!.external_url);
   await expect(page.getByTestId('publication-attempts')).toContainText('Publicada');
 
   // Otra pasada del reloj no la publica dos veces.
@@ -199,7 +200,7 @@ test('una pieza programada sin aprobar no se publica aunque llegue su hora', asy
 
   await page.reload();
   await chip.click();
-  // Pulsar la pieza abre la vista rápida; «Abrir» lleva a la ficha completa.
+  // Una por salir abre la vista rápida; «Abrir» lleva a la ficha completa.
   await page.getByTestId('calendar-quick-open').click();
   await expect(page.getByTestId('publication-state')).toHaveText('Borrador');
   await expect(page.getByTestId('publication-hold')).toContainText('no está aprobada');

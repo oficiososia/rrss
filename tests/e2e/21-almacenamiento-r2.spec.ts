@@ -10,6 +10,7 @@ import {
   accionDelMenu,
   guardarVersion,
   nuevaIdea,
+  tarjetaDeArchivo,
 } from './apoyo';
 import { arrancarMinio, MINIO, objetoEnMinio, pararMinio } from './minio';
 
@@ -110,7 +111,7 @@ test('subir una foto a la biblioteca: va a R2, no a Supabase Storage, y se ve', 
 
   // La miniatura llega de R2 con una URL firmada de corta duración.
   await page.reload();
-  const tarjeta = page.getByTestId('library-asset').filter({ hasText: FOTO });
+  const tarjeta = tarjetaDeArchivo(page, FOTO);
   const imagen = tarjeta.locator('img');
   await expect(imagen).toHaveAttribute('src', new RegExp(`^${MINIO.publico}/${MINIO.cubo}/.+X-Amz-Expires=3600`));
   await expect(imagen).toHaveJSProperty('naturalWidth', 320);
@@ -167,10 +168,10 @@ test('borrar la foto de la biblioteca la borra de R2', async ({ browser }) => {
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/biblioteca`);
-  await page.getByTestId('library-asset').filter({ hasText: FOTO }).click();
+  await tarjetaDeArchivo(page, FOTO).click();
   await page.getByTestId('asset-delete').click();
   await page.getByTestId('confirm-action').click();
-  await expect(page.getByTestId('library-asset').filter({ hasText: FOTO })).toHaveCount(0);
+  await expect(tarjetaDeArchivo(page, FOTO)).toHaveCount(0);
   await expect.poll(() => objetoEnMinio(fila!.ruta)).toBeNull();
   const [cola] = await sql<{ n: string }>(
     `select count(*)::text as n from public.storage_cleanup_queue where storage_path = $1`,

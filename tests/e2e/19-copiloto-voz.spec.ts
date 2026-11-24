@@ -86,8 +86,8 @@ async function piezaNueva(page: Page, titulo: string) {
   await page.goto(`/o/${dato('orgA')}/m/${dato('marcaA')}/contenidos`);
   await nuevaIdea(page);
   await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-network').selectOption('instagram');
-  await page.getByTestId('create-content-format').selectOption('post');
+  // La red ya no se pregunta (solo Instagram se publica) y el formato es una tarjeta, no un desplegable.
+  await page.getByTestId('create-content-format-post').click();
   await page.getByTestId('create-content-submit').click();
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
 }

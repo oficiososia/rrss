@@ -2,7 +2,18 @@ import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, png, sinErrores, sql, accionDelMenu } from './apoyo';
+import {
+  abrir,
+  archivoPng,
+  aviso,
+  dato,
+  elegirCarpeta,
+  png,
+  sinErrores,
+  sql,
+  accionDelMenu,
+  tarjetaDeArchivo,
+} from './apoyo';
 
 // Reels de punta a punta contra el Supabase LOCAL: subir dos fotos, encargar
 // un reel desde la biblioteca, arrancar el trabajador de medios de verdad
@@ -184,8 +195,9 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   await expect(ventana.getByTestId('asset-name')).toHaveValue(recurso!.file_name);
   await expect(ventana.locator('video')).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByTestId('library-folder-Reels').click();
-  await expect(page.getByTestId('library-asset').filter({ hasText: recurso!.file_name })).toBeVisible();
+  // «Reels» va plegada dentro de «Hechas aquí»; la tarjeta enseña un nombre legible y el del archivo en su título.
+  await elegirCarpeta(page, 'Reels');
+  await expect(tarjetaDeArchivo(page, recurso!.file_name)).toBeVisible();
 
   sinErrores(s);
   await s.context.close();
@@ -194,7 +206,8 @@ test('subir dos fotos, encargar un reel, el trabajador lo monta y aparece en la 
   const b = await abrir(browser, 'bruno');
   await b.page.goto(biblioteca('B'));
   await expect(b.page.getByRole('heading', { name: 'Biblioteca', exact: true })).toBeVisible();
-  await expect(b.page.getByText(recurso!.file_name)).toHaveCount(0);
+  await expect(b.page.getByTestId('library-count')).not.toHaveText('Cargando…');
+  await expect(tarjetaDeArchivo(b.page, recurso!.file_name)).toHaveCount(0);
   sinErrores(b);
   await b.context.close();
 });

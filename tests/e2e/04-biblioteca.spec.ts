@@ -1,5 +1,18 @@
-import { expect, test, type Page } from '@playwright/test';
-import { abrir, archivoPng, aviso, dato, guardarEstado, png, proxyLento, sinErrores, sql } from './apoyo';
+import { expect, test } from '@playwright/test';
+import {
+  abrir,
+  accionDelMenu,
+  archivoPng,
+  aviso,
+  dato,
+  elegirCarpeta,
+  guardarEstado,
+  png,
+  proxyLento,
+  sinErrores,
+  sql,
+  tarjetaDeArchivo as tarjeta,
+} from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -9,10 +22,6 @@ const FOTO_GRANDE = png(1700, 1700, [7, 77, 177], true);
 
 function rutaBiblioteca(): string {
   return `/o/${dato('orgA')}/m/${dato('marcaA')}/biblioteca`;
-}
-
-function tarjeta(page: Page, nombre: string) {
-  return page.getByTestId('library-asset').filter({ hasText: nombre });
 }
 
 async function rutaEnStorage(nombre: string): Promise<string> {
@@ -61,7 +70,7 @@ test('subir un archivo, verlo en la rejilla y abrir el original', async ({ brows
 
   // Ficha del archivo: dimensiones leídas en el navegador y original descargable.
   await tarjeta(page, 'escaparate.png').click();
-  const ficha = page.getByRole('dialog');
+  const ficha = page.getByTestId('asset-panel');
   await expect(ficha).toContainText('200 × 150 px');
   const enlace = await ficha.getByRole('link', { name: 'Abrir el archivo original' }).getAttribute('href');
   const original = await s.context.request.get(enlace!);
@@ -69,7 +78,7 @@ test('subir un archivo, verlo en la rejilla y abrir el original', async ({ brows
   expect(original.headers()['content-type']).toBe('image/png');
   expect((await original.body()).equals(FOTO)).toBe(true);
   await page.getByTestId('asset-close').click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(ficha).toHaveCount(0);
 
   guardarEstado({ rutaArchivoA: await rutaEnStorage('escaparate.png') });
   sinErrores(s);
@@ -138,7 +147,7 @@ test('la subida muestra el porcentaje real y llega íntegra a Storage', async ({
 
   // Y lo que se descarga es, byte a byte, lo que se subió.
   await tarjeta(page, 'foto-grande.png').click();
-  const ficha = page.getByRole('dialog');
+  const ficha = page.getByTestId('asset-panel');
   await expect(ficha).toContainText('1700 × 1700 px');
   const enlace = await ficha.getByRole('link', { name: 'Abrir el archivo original' }).getAttribute('href');
   // Con `fetch` de Node y no con el navegador: la URL firmada no necesita sesión (ni pasar por el proxy).
@@ -155,14 +164,18 @@ test('los filtros de etiqueta y carpeta salen de asset_facets', async ({ browser
   const { page } = s;
   const primeras = page.waitForResponse((r) => r.url().includes('/rest/v1/rpc/asset_facets'));
   await page.goto(rutaBiblioteca());
-  // Sin etiquetas ni carpetas, la función devuelve listas vacías y los filtros están apagados.
+  // Sin etiquetas ni carpetas, la función devuelve listas vacías y el menú «⋯» no ofrece filtrar por etiqueta.
   expect(await (await primeras).json()).toEqual([{ tags: [], folders: [] }]);
-  await expect(page.getByLabel('Filtrar por etiqueta')).toBeDisabled();
+  await page.getByTestId('library-more').click();
+  await expect(page.getByRole('menu').getByTestId('library-sort-date')).toBeVisible();
+  await expect(page.getByRole('menu').getByTestId('library-tag-filter')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
   // Sin carpetas, el árbol solo tiene «Toda la biblioteca».
   await expect(page.getByTestId('library-folders').getByRole('treeitem')).toHaveCount(1);
 
   await tarjeta(page, 'escaparate.png').click();
-  const ficha = page.getByRole('dialog');
+  const ficha = page.getByTestId('asset-panel');
   await ficha.getByLabel('Carpeta').fill('Campaña otoño');
   await ficha.getByTestId('asset-tag-input').fill('Escaparate');
   await ficha.getByTestId('asset-tag-input').press('Enter');
@@ -171,13 +184,19 @@ test('los filtros de etiqueta y carpeta salen de asset_facets', async ({ browser
   await aviso(page, 'Cambios guardados');
   expect(await (await nuevas).json()).toEqual([{ tags: ['escaparate'], folders: ['Campaña otoño'] }]);
 
-  const porEtiqueta = page.getByLabel('Filtrar por etiqueta');
-  await expect(porEtiqueta).toBeEnabled();
+  // Con etiquetas, «⋯ → Filtrar por etiqueta…» abre una ventana con la lista; elegir una la aplica y la cierra.
+  await accionDelMenu(page, 'library-more', 'library-tag-filter');
+  const ventana = page.getByRole('dialog', { name: 'Filtrar por etiqueta' });
+  const porEtiqueta = ventana.getByTestId('library-tag-select');
   await expect(porEtiqueta.locator('option')).toHaveText(['Todas las etiquetas', 'escaparate']);
   await porEtiqueta.selectOption('escaparate');
+  await expect(ventana).toHaveCount(0);
+  await expect(page.getByTestId('library-extra-filters')).toContainText('Etiqueta: escaparate');
   await expect(page.getByTestId('library-asset')).toHaveCount(1);
   await expect(tarjeta(page, 'escaparate.png')).toBeVisible();
-  await porEtiqueta.selectOption('');
+  // La píldora del filtro lo quita.
+  await page.getByTestId('library-extra-filters').click();
+  await expect(page.getByTestId('library-extra-filters')).toHaveCount(0);
 
   // La carpeta nueva sale en el árbol, con su contador, y filtra la rejilla.
   const carpeta = page.getByTestId('library-folder-Campaña otoño');
@@ -205,7 +224,7 @@ test('borrar un recurso quita la fila, el archivo de Storage y la anotación de 
   expect(await rastro(ruta, 'foto-grande.png')).toEqual({ fila: 1, objeto: 1, cola: 0 });
 
   await tarjeta(page, 'foto-grande.png').click();
-  const ficha = page.getByRole('dialog');
+  const ficha = page.getByTestId('asset-panel');
   const enlace = await ficha.getByRole('link', { name: 'Abrir el archivo original' }).getAttribute('href');
   await page.getByTestId('asset-delete').click();
   await expect(page.getByText('«foto-grande.png» se borrará de la biblioteca de forma definitiva.')).toBeVisible();
@@ -258,7 +277,9 @@ test('elegir varios archivos, moverlos a una carpeta nueva y pasar de uno a otro
   await page.goto(rutaBiblioteca());
   await expect(tarjeta(page, 'escaparate.png')).toBeVisible();
 
-  // Casilla de «escaparate.png» y barra de acciones.
+  // Las casillas solo salen al «Elegir varias» (menú «⋯»); luego, la de «escaparate.png» y la barra de acciones.
+  await accionDelMenu(page, 'library-more', 'library-select-mode');
+  await expect(page.getByTestId('library-select-hint')).toBeVisible();
   await page.getByRole('checkbox', { name: 'Elegir escaparate.png' }).click();
   await expect(page.getByTestId('library-selection-bar')).toContainText('1 elegido');
   await page.getByTestId('bulk-move').click();
@@ -271,9 +292,10 @@ test('elegir varios archivos, moverlos a una carpeta nueva y pasar de uno a otro
     [dato('marcaA'), 'escaparate.png'],
   );
   expect(fila!.folder).toBe('Archivo / Escaparates');
-  // El árbol muestra los dos niveles con su contador.
+  // El árbol muestra los dos niveles con su contador (la subcarpeta, al pulsar la madre).
   await expect(page.getByTestId('library-folder-Archivo')).toContainText('1');
-  await page.getByTestId('library-folder-Archivo / Escaparates').click();
+  await elegirCarpeta(page, 'Archivo / Escaparates');
+  await expect(page.getByTestId('library-folder-Archivo / Escaparates')).toContainText('1');
   await expect(page.getByTestId('library-asset')).toHaveCount(1);
   await page.getByTestId('library-folder-all').click();
 
@@ -285,7 +307,9 @@ test('elegir varios archivos, moverlos a una carpeta nueva y pasar de uno a otro
   await page.getByTestId('asset-next').click();
   await expect(panel).not.toContainText('escaparate.png');
   await page.keyboard.press('ArrowLeft');
-  await expect(panel.getByRole('heading', { name: 'escaparate.png' })).toBeVisible();
+  // El título de la ficha es el nombre legible; el del archivo va debajo.
+  await expect(panel.getByRole('heading', { name: 'Escaparate' })).toBeVisible();
+  await expect(panel.getByTestId('asset-file-name')).toHaveText('escaparate.png');
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
 

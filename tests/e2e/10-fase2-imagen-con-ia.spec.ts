@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { expect, test, type Page } from '@playwright/test';
-import { abrir, dato, LOCAL, sinErrores, sql, cajon } from './apoyo';
+import { abrir, dato, LOCAL, sinErrores, sql, cajon, tarjetaDeArchivo } from './apoyo';
 
 // Imágenes generadas con IA, de punta a punta, contra el Supabase local con
 // `ai-media` y `ai-media-poll` servidas en local y la imagen SIMULADA de
@@ -68,7 +68,8 @@ test('generar una imagen síncrona: coste antes, capa que se deshace y recurso e
   await ventana.getByTestId('ai-image-prompt').fill('Hogaza de calabaza sobre una tabla de madera, luz de mañana');
   await ventana.getByTestId('ai-image-generate').click();
   await expect(ventana).toBeHidden();
-  expect(await capas(page)).toBe(antes + 1);
+  // La capa entra en cuanto se lee la fila de la biblioteca (justo después de cerrarse la ventana).
+  await expect.poll(() => capas(page)).toBe(antes + 1);
   await expect(page.getByTestId('editor-dirty')).toBeVisible();
 
   // En la biblioteca, con su procedencia, y la generación con su coste real.
@@ -88,12 +89,19 @@ test('generar una imagen síncrona: coste antes, capa que se deshace y recurso e
 
   // Deshacer quita la capa; la imagen sigue en la biblioteca.
   await page.getByTestId('undo').click();
-  expect(await capas(page)).toBe(antes);
+  await expect.poll(() => capas(page)).toBe(antes);
   await page.getByTestId('redo').click();
-  expect(await capas(page)).toBe(antes + 1);
+  await expect.poll(() => capas(page)).toBe(antes + 1);
 
+  // Antes de salir, que el borrador automático lo haya guardado (si no, el aviso de «cambios sin guardar» frena la navegación).
+  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved');
+  const [archivo] = await sql<{ file_name: string }>(`select file_name from public.media_assets where id = $1`, [
+    recursos[0]!.id,
+  ]);
+  expect(archivo!.file_name).toMatch(/^IA · Hogaza de calabaza/);
   await page.goto(`${marcaA()}/biblioteca`);
-  await expect(page.getByText(/IA · Hogaza de calabaza/)).toBeVisible();
+  // La tarjeta enseña un nombre legible; el nombre exacto del archivo va en su título.
+  await expect(tarjetaDeArchivo(page, archivo!.file_name)).toBeVisible();
   sinErrores(s);
   await s.context.close();
 });
@@ -141,9 +149,9 @@ test('generar una imagen asíncrona: queda en curso y la cierra ai-media-poll', 
     )
     .toBe('completed');
 
-  // La interfaz lo ve sola (consulta cada 3 s) y añade la capa.
-  await expect(page.getByText('Imagen generada y añadida al diseño')).toBeVisible({ timeout: 30_000 });
-  expect(await capas(page)).toBe(antes + 1);
+  // La interfaz lo ve sola (consulta cada 3 s): cierra la ventana y añade la capa.
+  await expect(ventana).toBeHidden({ timeout: 30_000 });
+  await expect.poll(() => capas(page)).toBe(antes + 1);
   const recursos = await recursosGenerados();
   expect(recursos.at(-1)!.provenance).toMatchObject({
     provider: 'simulated-image-async',
@@ -170,7 +178,8 @@ test('con el cupo agotado, la imagen no se genera y se explica', async ({ browse
   const ventana = page.getByRole('dialog');
   await ventana.getByTestId('ai-image-prompt').fill('Pan de centeno');
   await ventana.getByTestId('ai-image-generate').click();
-  await expect(ventana.getByTestId('ai-quota-error')).toContainText('El cupo de IA de este mes está agotado');
+  // La organización A trabaja en autogestión: el límite se explica como tope de gasto, no como cupo.
+  await expect(ventana.getByTestId('ai-quota-error')).toContainText('Se ha llegado al tope de gasto de IA de este mes');
   expect((await recursosGenerados()).length).toBe(generados);
 
   // Se devuelve el cupo que dejó 09.

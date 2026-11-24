@@ -74,6 +74,9 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   await accionDelMenu(page, 'editor-share', 'editor-export');
   await expect(page.getByTestId('export-pages-notice')).toContainText('3 páginas');
   await page.getByTestId('export-download').uncheck();
+  // «Guardar en la biblioteca» ya no viene marcado (se recuerda por navegador y uno nuevo empieza sin él):
+  // sin descargar ni guardar, «Exportar» queda deshabilitado (ExportImageDialog).
+  await page.getByTestId('export-library').check();
   await page.getByTestId('export-confirm').click();
   await expect(page.getByTestId('export-done')).toContainText('3 imágenes', { timeout: 60_000 });
   await page.getByTestId('export-close').click();

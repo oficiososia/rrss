@@ -40,11 +40,20 @@ async function pedirPlan(
   instruccion: string,
   opciones: { hasta?: (desde: string) => string; fuentes: boolean; facebook?: boolean },
 ): Promise<void> {
-  await page.goto(`${marca()}/campanas`);
+  // Campañas es una vista del Calendario (`/calendario/campanas`); la dirección de antes redirige.
+  await page.goto(`${marca()}/calendario/campanas`);
   await page.getByTestId('campaign-new').click();
   const dialogo = page.getByRole('dialog');
   await dialogo.getByTestId('campaign-instruction').fill(instruccion);
-  if (opciones.facebook) await dialogo.getByTestId('campaign-network-facebook').check();
+  // Redes, fechas y fuentes van plegadas en «Detalles» (NewCampaignDialog).
+  const detalles = dialogo.getByTestId('campaign-details-toggle');
+  if ((await detalles.getAttribute('aria-expanded')) !== 'true') await detalles.click();
+  if (opciones.facebook) {
+    // Solo salen a la vista las redes de la marca; las demás, tras «Otras redes».
+    const facebook = dialogo.getByTestId('campaign-network-facebook');
+    if (!(await facebook.isVisible())) await dialogo.getByTestId('campaign-more-networks').click();
+    await facebook.check();
+  }
   if (opciones.hasta) {
     const desde = await dialogo.getByTestId('campaign-starts').inputValue();
     await dialogo.getByTestId('campaign-ends').fill(opciones.hasta(desde));

@@ -17,6 +17,11 @@ test('la superadministradora ve el margen por organización y asigna un plan a m
   await page.goto('/plataforma');
 
   const margen = page.getByTestId('billing-overview');
+  // En uso interno (todas las organizaciones de quien mira en autogestión), lo comercial va plegado
+  // en «Opciones avanzadas»; con alguna en modo agencia (La Espiga, desde 12) se ve directamente.
+  const plegado = page.getByTestId('platform-commercial');
+  await expect(margen.or(plegado)).toBeVisible();
+  if (!(await margen.isVisible())) await plegado.locator('summary').click();
   await expect(margen).toBeVisible();
   // Por su botón (con el id), no por el nombre: en una base local con tandas
   // anteriores hay varias «Agencia Faro».

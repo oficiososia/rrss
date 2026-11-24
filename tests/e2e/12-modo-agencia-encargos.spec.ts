@@ -3,7 +3,19 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { abrir, aviso, dato, enlaceDelCorreo, leerEstado, LOCAL, sinErrores, sql, abrirCompartir } from './apoyo';
+import {
+  abrir,
+  aviso,
+  dato,
+  enlaceDelCorreo,
+  leerEstado,
+  LOCAL,
+  sinErrores,
+  sql,
+  abrirCompartir,
+  cerrarCompartir,
+} from './apoyo';
+import { LEGAL_VERSIONS } from '../../src/features/legal/legal';
 
 // Modo agencia de extremo a extremo, contra el Supabase LOCAL: una clienta pide
 // un encargo en la aplicación; la herramienta de la agencia (agency/),
@@ -50,12 +62,21 @@ function anonKey(): string {
   return key;
 }
 
-/** Alta por la API pública de autenticación y confirmación con el enlace del buzón local. */
+/** Alta por la API pública de autenticación (aceptando las condiciones) y confirmación con el enlace del buzón local. */
 async function crearCuenta(correo: string, nombre: string): Promise<void> {
   const alta = await fetch(`${LOCAL.api}/auth/v1/signup`, {
     method: 'POST',
     headers: { apikey: anonKey(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: correo, password: CLAVE, data: { full_name: nombre } }),
+    // Con las versiones legales vigentes, como el alta de la aplicación: sin ellas, la aplicación
+    // enseña «Antes de seguir, lee y acepta» (LegalGate) en vez del menú de la marca.
+    body: JSON.stringify({
+      email: correo,
+      password: CLAVE,
+      data: {
+        full_name: nombre,
+        legal: { terms_version: LEGAL_VERSIONS.terms, privacy_version: LEGAL_VERSIONS.privacy },
+      },
+    }),
   });
   expect(alta.ok, await alta.clone().text()).toBe(true);
   const confirmacion = await fetch(await enlaceDelCorreo(correo, 'signup'), { redirect: 'manual' });
@@ -170,7 +191,11 @@ test('la clienta pide un encargo desde la sección Encargos', async ({ browser }
   await entrarComoClienta(s.page);
   const { page } = s;
   await page.goto(`${marca()}/inicio`);
-  await page.getByRole('link', { name: 'Encargos' }).first().click();
+  // Menú lateral de escritorio (AppShell): cinco secciones y, con la marca en modo agencia, «Encargos».
+  // Primero que el menú de la marca está a la vista, para que un fallo diga si falta la marca o solo Encargos.
+  await expect(page.getByTestId('nav-inicio')).toBeVisible();
+  await page.getByTestId('nav-encargos').click();
+  await expect(page).toHaveURL(/\/encargos$/);
   await page.getByTestId('request-new').click();
   await page.getByTestId('request-title').fill(TITULO);
   await page.getByTestId('request-brief').fill('Queremos anunciar la hogaza de otoño. Tono formal, de usted.');
@@ -248,6 +273,8 @@ test('la clienta revisa el borrador y pide un cambio', async ({ browser }) => {
   await expect(page.getByTestId('editor-request-link')).toContainText(TITULO);
   await abrirCompartir(page);
   await expect(page.getByTestId('copy-caption')).toHaveValue(/hogaza de otoño/);
+  // La hoja «Compartir» es modal: se cierra antes de volver al encargo por el enlace de la cabecera.
+  await cerrarCompartir(page);
   await page.getByTestId('editor-request-link').click();
 
   await page.getByTestId('request-changes').click();
