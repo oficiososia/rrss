@@ -6,7 +6,7 @@ import { BRAND_BASE, BRAND_ID, ME, ORG_ID, renderApp, seedWorkspace } from '@/te
 import { createEmptyDocument, DOCUMENT_SCHEMA_VERSION } from './document';
 import { PieceThumbView } from './lista/PieceThumb';
 
-// Lista de Contenidos: miniaturas, acciones rápidas de la tarjeta y pantalla vacía con plantillas.
+// Lista de Contenidos: miniaturas, «⋯» de la tarjeta y pantalla vacía con plantillas.
 
 const CONTENT = `${BRAND_BASE}/contenidos`;
 
@@ -79,7 +79,14 @@ describe('Miniaturas de las piezas', () => {
   });
 });
 
-describe('Acciones rápidas de la tarjeta', () => {
+/** Abre el «⋯» de la pieza con ese título. */
+async function openPieceMenu(user: ReturnType<typeof renderApp>['user'], title: string) {
+  const card = (await screen.findAllByTestId('content-card')).find((c) => c.textContent?.includes(title))!;
+  await user.click(within(card).getByTestId('content-menu'));
+  return within(await screen.findByRole('menu'));
+}
+
+describe('«⋯» de la tarjeta', () => {
   it('duplica una pieza con su diseño y la copia nace como borrador sin fecha', async () => {
     seed([item()]);
     const saved: Record<string, unknown>[] = [];
@@ -88,7 +95,11 @@ describe('Acciones rápidas de la tarjeta', () => {
       return version(String(args.p_content_id));
     });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-duplicate'));
+    // Duplicar y Archivar no están a la vista: van en el «⋯» de la pieza.
+    await screen.findByTestId('content-card');
+    expect(screen.queryByTestId('content-duplicate')).not.toBeInTheDocument();
+    const menu = await openPieceMenu(user, 'Menú de otoño');
+    await user.click(menu.getByTestId('content-duplicate'));
     await waitFor(() => expect(saved).toHaveLength(1));
     const inserted = fake.callsTo('content_items', 'insert')[0]!.payload as { title: string; format: string };
     expect(inserted.title).toBe('Copia de Menú de otoño');
@@ -100,10 +111,12 @@ describe('Acciones rápidas de la tarjeta', () => {
     seed([item({ id: 'a', title: 'Aprobada', status: 'approved' }), item({ id: 'b', title: 'En borrador' })]);
     const { user } = renderApp(CONTENT);
     await screen.findByTestId('content-list');
-    // Se abre en «En preparación»: el borrador no se puede programar.
-    expect(screen.queryByTestId('content-schedule')).toBeNull();
-    await user.click(screen.getByTestId('content-tab-ready'));
-    expect(await screen.findByTestId('content-schedule')).toHaveAccessibleName('Programar «Aprobada»');
+    // Las dos están «En marcha»: el borrador no se puede programar; la aprobada, sí.
+    let menu = await openPieceMenu(user, 'En borrador');
+    expect(menu.queryByTestId('content-schedule')).toBeNull();
+    await user.keyboard('{Escape}');
+    menu = await openPieceMenu(user, 'Aprobada');
+    expect(menu.getByTestId('content-schedule')).toHaveTextContent('Programar');
   });
 
   it('archivar una pieza ofrece deshacer', async () => {
@@ -114,14 +127,15 @@ describe('Acciones rápidas de la tarjeta', () => {
       return row;
     });
     const { user } = renderApp(CONTENT);
-    await user.click(await screen.findByTestId('content-archive'));
+    const menu = await openPieceMenu(user, 'Menú de otoño');
+    await user.click(menu.getByTestId('content-archive'));
     await waitFor(() => expect(fake.callsTo('archive_content_item', 'rpc')).toHaveLength(1));
     expect(fake.callsTo('archive_content_item', 'rpc')[0]!.payload).toMatchObject({ p_archived: true });
   });
 });
 
 describe('Lista de contenidos vacía', () => {
-  it('invita a «Nueva idea» y destaca las plantillas de la marca', async () => {
+  it('invita a «Nueva idea» y una plantilla destacada crea la pieza con un toque', async () => {
     seed([]);
     fake.tables.brand_design_templates = [
       {
@@ -145,11 +159,16 @@ describe('Lista de contenidos vacía', () => {
     expect(screen.getByTestId('content-empty-new')).toBeInTheDocument();
     const featured = await screen.findByTestId('featured-template');
     expect(featured).toHaveTextContent('Plato del día');
+    const saved: Record<string, unknown>[] = [];
+    fake.rpc('save_content_version', (args) => {
+      saved.push(args);
+      return version(String(args.p_content_id));
+    });
     await user.click(featured);
-    const dialog = within(await screen.findByRole('dialog'));
-    // Con la plantilla ya elegida: el formato es el suyo y no se puede cambiar.
-    expect(await dialog.findByTestId('create-content-templates')).toBeInTheDocument();
-    expect(dialog.getByTestId('create-content-format-post').querySelector('input')).toBeDisabled();
+    // Sin ventana de por medio: se crea con su diseño y se abre.
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(fake.callsTo('content_items', 'insert')[0]!.payload).toMatchObject({ format: 'post' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
 
@@ -180,7 +199,7 @@ describe('Nueva idea con formato Reel', () => {
     },
   };
 
-  it('ya no dice que el vídeo llegará más adelante y ofrece las plantillas de reel de la marca', async () => {
+  it('al tocar «Reel» salen las plantillas de reel de la marca, y una crea el reel con ella elegida', async () => {
     seed([]);
     fake.tables.brand_reel_templates = [reelTemplateRow];
     const { user } = renderApp(CONTENT);
@@ -188,15 +207,11 @@ describe('Nueva idea con formato Reel', () => {
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-format-reel'));
     expect(dialog.queryByText(/llegará más adelante/)).toBeNull();
-    await user.click(await dialog.findByTestId('create-content-from-template'));
     const card = await dialog.findByTestId('create-content-reel-template');
     expect(card).toHaveTextContent('Así se hace');
     expect(dialog.getByTestId('reel-template-sample')).toBeInTheDocument();
-    // Sin elegir ninguna, no se crea.
-    await user.click(dialog.getByTestId('create-content-submit'));
-    expect(await dialog.findByText(/Elige una plantilla/)).toBeInTheDocument();
+    expect(dialog.getByTestId('create-content-blank')).toBeInTheDocument();
     await user.click(card);
-    await user.click(dialog.getByTestId('create-content-submit'));
     await waitFor(() => expect(fake.callsTo('content_items', 'insert')).toHaveLength(1));
     expect(fake.callsTo('content_items', 'insert')[0]!.payload).toMatchObject({ format: 'reel' });
     await waitFor(() => expect(window.location.search).toContain('plantilla=asi-se-hace'));
@@ -224,8 +239,7 @@ describe('Nueva idea con formato Reel', () => {
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.queryByTestId('create-content-reel-like')).toBeNull();
-    await user.click(dialog.getByTestId('create-content-format-reel'));
+    // Junto a «Reel», en el mismo paso.
     const like = await dialog.findByTestId('create-content-reel-like');
     expect(like).toHaveAttribute('href', `${BRAND_BASE}/biblioteca/reels/como-este`);
     await waitFor(() => expect(like).toHaveTextContent('Gasta como mucho un 1 % del cupo de este mes.'));
@@ -255,7 +269,6 @@ describe('Nueva idea con formato Reel', () => {
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
-    await user.click(dialog.getByTestId('create-content-format-reel'));
     const cost = await dialog.findByTestId('create-content-reel-like-cost');
     // 0,052 de coste máximo: sin moneda fijada se cuenta en créditos; nada de porcentajes ni cupos.
     expect(cost.textContent?.replace(/\s/g, ' ').trim()).toBe('Cuesta unos 0,05 créditos.');

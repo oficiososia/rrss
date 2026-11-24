@@ -2,21 +2,30 @@ import type { ContentItemRow, PublicationHoldReason, PublicationStatus } from '@
 
 // En qué punto está una pieza, en palabras de la persona y no de la base de datos.
 // El estado de la pieza (idea, borrador, en revisión, aprobada) y el de su
-// publicación (programada, publicada…) se juntan en cinco etapas:
+// publicación (programada, publicada…) se juntan en cinco etapas, que salen en
+// la tarjeta:
 //
-//   Ideas · En preparación · Listas · Programadas · Publicadas
+//   Idea · En preparación · Lista · Programada · Publicada
+//
+// La lista de Contenidos las agrupa en tres pestañas (simplificación aceptada, N2):
+// En marcha (idea, en preparación y lista) · Programadas · Publicadas.
 //
 // Sin dependencias de React: se prueba aparte.
 
 export type ContentStage = 'idea' | 'preparing' | 'ready' | 'scheduled' | 'published';
 
-export const STAGES: { id: ContentStage; label: string; hint: string }[] = [
-  { id: 'idea', label: 'Ideas', hint: 'Apuntadas, todavía sin diseñar.' },
-  { id: 'preparing', label: 'En preparación', hint: 'Se están diseñando o esperan revisión.' },
-  { id: 'ready', label: 'Listas', hint: 'Aprobadas, falta ponerles fecha.' },
+export type ContentTab = 'active' | 'scheduled' | 'published';
+
+export const CONTENT_TABS: { id: ContentTab; label: string; hint: string }[] = [
+  { id: 'active', label: 'En marcha', hint: 'Ideas y piezas a medio hacer.' },
   { id: 'scheduled', label: 'Programadas', hint: 'Con día y hora para salir.' },
   { id: 'published', label: 'Publicadas', hint: 'Ya están en la red.' },
 ];
+
+/** Pestaña de la lista en la que sale una pieza según su etapa. */
+export function tabOf(stage: ContentStage): ContentTab {
+  return stage === 'scheduled' || stage === 'published' ? stage : 'active';
+}
 
 type Tone = 'neutral' | 'primary' | 'warning' | 'success' | 'danger';
 

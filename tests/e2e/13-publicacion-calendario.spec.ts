@@ -11,7 +11,7 @@ import {
   abrirCompartir,
   guardarVersion,
   aprobarPieza,
-  nuevaIdea,
+  crearPieza,
 } from './apoyo';
 
 // Publicación de extremo a extremo (Fase 3), contra el Supabase LOCAL y la
@@ -60,10 +60,7 @@ async function pasaElReloj(): Promise<{ results: { publicationId: string | null;
 /** Crea una pieza de Instagram con su texto, guarda la versión 1 y deja abierto el editor. */
 async function piezaConTexto(page: Page, titulo: string, texto: string): Promise<string> {
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', titulo);
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);

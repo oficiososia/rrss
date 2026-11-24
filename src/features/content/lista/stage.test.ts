@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultTitle, isEmptyPiece, needsFix, pickPublications, stageBadge, stageOf, type PublicationLite } from './stage';
+import { defaultTitle, isEmptyPiece, needsFix, pickPublications, stageBadge, stageOf, tabOf, type PublicationLite } from './stage';
 
 const pub = (patch: Partial<PublicationLite> = {}): PublicationLite => ({
   content_id: 'c1',
@@ -60,5 +60,15 @@ describe('etapa de una pieza', () => {
   it('el nombre por defecto es el formato y el día', () => {
     expect(defaultTitle('Reel', new Date(2026, 10, 22))).toBe('Reel · 22 nov');
     expect(defaultTitle('Carrusel', new Date(2026, 11, 3))).toBe('Carrusel · 3 dic');
+  });
+});
+
+describe('pestañas de la lista', () => {
+  it('idea, en preparación y lista van a «En marcha»; programada y publicada, a la suya', () => {
+    expect(tabOf('idea')).toBe('active');
+    expect(tabOf('preparing')).toBe('active');
+    expect(tabOf('ready')).toBe('active');
+    expect(tabOf('scheduled')).toBe('scheduled');
+    expect(tabOf('published')).toBe('published');
   });
 });

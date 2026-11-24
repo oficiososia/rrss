@@ -1,14 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { abrir, dato, sinErrores, sql, abrirCompartir, nuevaIdea } from './apoyo';
+import { abrir, dato, sinErrores, sql, abrirCompartir, crearPieza } from './apoyo';
 
 // Crear una pieza a partir de una plantilla de la marca, de extremo a extremo
 // contra el Supabase LOCAL. Las plantillas las entrega la agencia (no hay
 // pantalla para crearlas), así que aquí se siembran por SQL en La Espiga
 // Obrador, como lo haría `deliver_design_templates`.
 //
-// Ana abre «Nueva idea», marca «Empezar desde una plantilla», ve la plantilla con
-// su análisis, la elige y crea la pieza: nace con el documento de la plantilla
-// en la versión 1. La plantilla es de las antiguas (documento v3, con la foto
+// Ana abre «¿Qué quieres crear?», toca «Publicación» y, en su galería, la
+// plantilla: la pieza nace con el documento de la plantilla en la versión 1 (el
+// nombre se lo pone después en el editor). La plantilla es de las antiguas (documento v3, con la foto
 // como una forma llamada «Foto (sustituir)» y la indicación en el pie): al
 // leerla, el marcador pasa a ser un marco de foto vacío y el pie, un pie de
 // ejemplo que no se publica.
@@ -79,19 +79,8 @@ test('Ana crea una pieza desde una plantilla de la marca y nace con su documento
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  const dialogo = page.getByRole('dialog');
-  await dialogo.getByTestId('create-content-title').fill(TITULO);
-  await dialogo.getByTestId('create-content-from-template').check();
-
-  const opcion = dialogo.getByTestId('template-option').filter({ hasText: 'Titular sobre foto' });
-  await expect(opcion).toBeVisible();
-  await expect(opcion).toContainText('Instagram · Publicación');
-  await expect(opcion).toContainText('Titular grande sobre una foto a sangre.');
-  await expect(opcion).toContainText('en 9 de 30 publicaciones');
-  await opcion.click();
-  await expect(dialogo.getByTestId('create-content-format-post').locator('input')).toBeDisabled();
-  await dialogo.getByTestId('create-content-submit').click();
+  // «¿Qué quieres crear?» → Publicación: la galería trae la plantilla de la marca detrás de «En blanco».
+  await crearPieza(page, 'post', TITULO, 'Titular sobre foto');
 
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
