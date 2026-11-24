@@ -88,7 +88,9 @@ for (const size of SIZES) {
       await page.getByTestId('create-menu-carousel').click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      await expect(page.getByTestId('create-content-format-carousel').locator('input')).toBeChecked();
+      // Se abre directamente la galería del carrusel, con «En blanco» la primera.
+      await expect(dialog.getByRole('heading', { name: 'Carrusel' })).toBeVisible();
+      await expect(page.getByTestId('create-content-blank')).toBeVisible();
       const box = (await dialog.boundingBox())!;
       expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
     });

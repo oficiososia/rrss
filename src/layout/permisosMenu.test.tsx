@@ -65,14 +65,14 @@ describe('Menú de una marca', () => {
     ]);
   });
 
-  it('«Crear → Reel» abre «Nueva idea» con el reel elegido', async () => {
+  it('«Crear → Reel» abre directamente la galería del reel («En blanco» y sus plantillas)', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(`${BRAND_BASE}/inicio`);
     await user.click(await screen.findByTestId('create-menu'));
     await user.click(await screen.findByTestId('create-menu-reel'));
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByRole('heading', { name: 'Nueva idea' })).toBeInTheDocument();
-    expect(dialog.getByTestId('create-content-format-reel').querySelector('input')).toBeChecked();
+    expect(dialog.getByRole('heading', { name: 'Reel' })).toBeInTheDocument();
+    expect(dialog.getByTestId('create-content-blank')).toBeInTheDocument();
   });
 
   it('«Crear → Subir fotos» lleva a la Biblioteca', async () => {

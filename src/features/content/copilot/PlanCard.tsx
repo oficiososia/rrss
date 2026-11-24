@@ -92,7 +92,7 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
       data-phase={phase}
     >
       <p className="font-semibold">
-        {phase === 'running' ? 'Haciendo el plan' : 'Esto es lo que voy a hacer'}{' '}
+        {phase === 'running' ? 'Haciendo el plan' : 'Plan'}{' '}
         <span className="font-normal text-muted">para «{pending.transcript}»</span>
       </p>
       <ol className="space-y-1.5">
@@ -103,7 +103,7 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
               <StatusIcon status={status} />
               <div className="min-w-0 flex-1">
                 <p>
-                  {step.label} <span className="text-xs text-muted">· {STATUS_TEXT[status]}</span>
+                  {step.label} <span className="sr-only">· {STATUS_TEXT[status]}</span>
                 </p>
                 {step.detail && (
                   <p className="text-xs text-muted" data-testid="copilot-plan-detail">
@@ -166,9 +166,7 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
             {typeof pending.backgroundMicros === 'number' && ` (≈ ${formatMicros(pending.backgroundMicros)})`}
           </label>
           <p id="copilot-plan-ai-hint" className="pl-[1.375rem] text-xs text-muted">
-            {plan.aiAlternative.active
-              ? 'Se crea un fondo con IA (sin comida ni productos) y tus fotos van encima, recortadas.'
-              : 'Sin marcar, no se gasta nada: una foto tuya llena el lienzo de borde a borde.'}
+            {plan.aiAlternative.active ? 'Sin comida ni productos; tus fotos van encima, recortadas.' : 'Sin marcar, no se gasta nada.'}
           </p>
         </div>
       )}
@@ -190,10 +188,10 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
           </label>
           <p id="copilot-plan-cutout-hint" className="pl-[1.375rem] text-xs text-muted" data-testid="copilot-plan-cutout-hint">
             {plan.placement.cutout
-              ? 'Se colocan recortadas, sin su fondo. Si ya hay un recorte de una foto en la biblioteca, se usa ese. Desmárcalo para colocarlas enteras.'
+              ? 'Si ya hay un recorte en la biblioteca, se usa ese.'
               : plan.overImage
-                ? 'Se colocan enteras: sobre el fondo se verá un rectángulo con el fondo de cada foto.'
-                : 'Se colocan enteras, tal como están en la biblioteca.'}
+                ? 'Enteras: se verá el fondo de cada foto.'
+                : 'Enteras, como están en la biblioteca.'}
           </p>
         </div>
       )}
@@ -238,10 +236,7 @@ export function PlanCard({ pending, onConfirm, onCancel, onPick, onRemovePhoto, 
           {phase === 'running' ? (pending.cancelling ? 'Cancelando…' : 'Cancelar') : 'No, descartar'}
         </Button>
         {phase !== 'running' && (
-          <span className="text-xs text-muted">
-            También vale decir o escribir «sí» o «no». Cualquier otra orden descarta este plan. Hasta que digas que sí no
-            se gasta ni se cambia nada.
-          </span>
+          <span className="text-xs text-muted">Hasta que digas «sí» no se gasta ni se cambia nada; otra orden lo descarta.</span>
         )}
         {phase === 'running' && (
           <span className="text-xs text-muted">Si cancelas, el diseño no cambia; lo ya creado queda en la biblioteca.</span>
