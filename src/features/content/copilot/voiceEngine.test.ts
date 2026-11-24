@@ -60,32 +60,26 @@ describe('motor de voz', () => {
     expect(resolveVoiceEngine(BOTH)).toBe('transcriber');
   });
 
-  it('el aviso del navegador dice que el audio lo procesa el servicio de voz del navegador', () => {
+  it('el aviso del navegador, en una línea: quién pasa el audio a texto y qué no dictar', () => {
     const text = voiceNoticeText('browser');
     expect(text).toContain('servicio de voz de tu navegador');
     expect(text).toContain('Google');
     expect(text).toContain('Microsoft');
-    // La aplicación no recibe el audio: solo el texto.
-    expect(text).toContain('no esta aplicación');
-    expect(text).toContain('aquí solo llega el texto');
-    expect(text).toContain('No dictes datos personales de terceros');
+    expect(text).toContain('No dictes datos de otras personas');
     expect(text).not.toContain('OpenAI');
+    expect(text.split(/\s+/).length).toBeLessThanOrEqual(25);
   });
 
-  it('el aviso del transcriptor dice adónde va el audio, qué se guarda y que cuenta para el cupo', () => {
+  it('el aviso del transcriptor, en una línea: va a OpenAI y cuenta para el cupo', () => {
     const text = voiceNoticeText('transcriber');
-    expect(text).toContain('se graba en tu dispositivo');
-    expect(text).toContain('nuestro servidor');
     expect(text).toContain('OpenAI');
-    expect(text).toContain('No guardamos el audio');
-    // Lo que sí se guarda se dice: el texto, en el registro de uso de IA.
-    expect(text).toContain('el texto queda en el registro de uso de IA');
     expect(text).toContain('cada dictado cuenta para el cupo');
-    expect(text).toContain('No dictes datos personales de terceros');
+    expect(text).toContain('No dictes datos de otras personas');
     expect(text).not.toContain('Google');
+    expect(text.split(/\s+/).length).toBeLessThanOrEqual(25);
   });
 
-  it('el «no volver a mostrar» es de cada motor', () => {
+  it('el aviso leído es de cada motor', () => {
     expect(VOICE_NOTICE_KEYS.browser).toBe('rrss.voiceNoticeHidden');
     expect(VOICE_NOTICE_KEYS.transcriber).not.toBe(VOICE_NOTICE_KEYS.browser);
     expect(voiceNoticeHidden('browser')).toBe(false);

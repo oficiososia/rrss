@@ -73,8 +73,17 @@ describe('aviso previo al dictado', () => {
     await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
     expect(screen.queryByTestId('copilot-voice-notice')).not.toBeInTheDocument();
     expect(starts).toHaveBeenCalledTimes(1);
-    // Sin «No volver a mostrar», la próxima vez se avisa otra vez.
-    expect(window.localStorage.getItem(VOICE_NOTICE_KEY)).toBeNull();
+    // Leído una vez, no vuelve a salir.
+    expect(window.localStorage.getItem(VOICE_NOTICE_KEY)).toBe('true');
+  });
+
+  it('el aviso cabe en una línea: sin casilla de «No volver a mostrar» y con «Más» a la política', async () => {
+    renderCopilot();
+    await userEvent.click(screen.getByTestId('copilot-mic'));
+    const notice = screen.getByTestId('copilot-voice-notice');
+    expect(notice.textContent!.split(/\s+/).length).toBeLessThanOrEqual(26);
+    expect(screen.queryByLabelText('No volver a mostrar')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Política de privacidad' })).toHaveTextContent('Más');
   });
 
   it('«Ahora no» cierra el aviso sin escuchar; se puede seguir escribiendo', async () => {
@@ -86,16 +95,7 @@ describe('aviso previo al dictado', () => {
     expect(screen.getByTestId('copilot-text-input')).toBeInTheDocument();
   });
 
-  it('con «No volver a mostrar» no vuelve a salir', async () => {
-    renderCopilot();
-    await userEvent.click(screen.getByTestId('copilot-mic'));
-    await userEvent.click(screen.getByTestId('copilot-voice-notice-hide'));
-    await userEvent.click(screen.getByTestId('copilot-voice-notice-ok'));
-    expect(window.localStorage.getItem(VOICE_NOTICE_KEY)).toBe('true');
-    expect(starts).toHaveBeenCalledTimes(1);
-  });
-
-  it('si ya se pidió no volver a mostrarlo, el micrófono dicta sin aviso (y solo al pulsarlo)', async () => {
+  it('si ya se leyó, el micrófono dicta sin aviso (y solo al pulsarlo)', async () => {
     window.localStorage.setItem(VOICE_NOTICE_KEY, 'true');
     renderCopilot();
     expect(starts).not.toHaveBeenCalled();

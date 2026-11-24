@@ -271,8 +271,8 @@ describe('plan del copiloto: antes de confirmar', () => {
     const cost = screen.getByTestId('copilot-plan-cost');
     expect(cost).toHaveTextContent('Coste máximo: 0,14 créditos (el fondo con IA; lo demás es gratis).');
     expect(cost).toHaveTextContent('1 fondo con IA ≈ 0,14 créditos · 2 recortes gratis · 1 texto');
-    expect(card).toHaveTextContent('Cualquier otra orden descarta este plan.');
-    expect(card).toHaveTextContent('Hasta que digas que sí no se gasta ni se cambia nada.');
+    expect(card).toHaveTextContent('otra orden lo descarta.');
+    expect(card).toHaveTextContent('Hasta que digas «sí» no se gasta ni se cambia nada');
     expect(screen.getByTestId('copilot-plan-confirm')).toHaveAccessibleName('Sí, hazlo');
     expect(screen.getByTestId('copilot-plan-confirm')).toBeEnabled();
     expect(screen.getByTestId('copilot-plan-cancel')).toHaveAccessibleName('No, descartar');
@@ -531,7 +531,7 @@ describe('plan del copiloto: las fotos van recortadas sobre una imagen de fondo'
     expect(cutoutSwitch()).toBeChecked();
     expect(cutoutSwitch()).toBeEnabled();
     expect(screen.getByRole('checkbox', { name: 'Recortar las fotos (quitarles su fondo)' })).toBe(cutoutSwitch());
-    expect(cutoutSwitch()).toHaveAccessibleDescription(/Se colocan recortadas, sin su fondo\. Si ya hay un recorte de una foto en la biblioteca, se usa ese\./);
+    expect(cutoutSwitch()).toHaveAccessibleDescription('Si ya hay un recorte en la biblioteca, se usa ese.');
     expect(screen.getByTestId('copilot-plan-cost')).toHaveTextContent('2 recortes gratis');
     expect(plan.cutout).not.toHaveBeenCalled();
 
@@ -551,7 +551,7 @@ describe('plan del copiloto: las fotos van recortadas sobre una imagen de fondo'
     expect(cutoutSwitch()).not.toBeChecked();
     expect(screen.getAllByTestId('copilot-plan-step').map((item) => item.getAttribute('data-step'))).toEqual(['background', 'find-0', 'place']);
     expect(step('place')).toHaveTextContent('Colocar las fotos en fila, enteras, con su fondo, con sombra suave');
-    expect(screen.getByTestId('copilot-plan-cutout-hint')).toHaveTextContent('Se colocan enteras: sobre el fondo se verá un rectángulo con el fondo de cada foto.');
+    expect(screen.getByTestId('copilot-plan-cutout-hint')).toHaveTextContent('Enteras: se verá el fondo de cada foto.');
     expect(screen.getByTestId('copilot-plan-cost')).toHaveTextContent('2 fotos de la biblioteca');
     expect(screen.getByTestId('copilot-plan-cost')).not.toHaveTextContent('recorte');
     // Cambiarlo no gasta ni toca nada, y se puede volver atrás.
@@ -613,7 +613,7 @@ describe('plan del copiloto: las fotos van recortadas sobre una imagen de fondo'
     await planReady();
     expect(cutoutSwitch()).not.toBeChecked();
     expect(step('place')).toHaveTextContent('Colocar las fotos en fila · Pendiente');
-    expect(screen.getByTestId('copilot-plan-cutout-hint')).toHaveTextContent('Se colocan enteras, tal como están en la biblioteca.');
+    expect(screen.getByTestId('copilot-plan-cutout-hint')).toHaveTextContent('Enteras, como están en la biblioteca.');
     expect(screen.queryByText(/Quitar el fondo a/)).not.toBeInTheDocument();
     // Marcarlo las recorta.
     await userEvent.click(cutoutSwitch());

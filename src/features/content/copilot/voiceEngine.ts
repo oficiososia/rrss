@@ -20,9 +20,8 @@ export const VOICE_ENGINES: readonly VoiceEngine[] = ['transcriber', 'browser'];
 export const VOICE_ENGINE_KEY = 'rrss.voiceEngine';
 
 /**
- * «No volver a mostrar» del aviso previo, uno por motor: el audio no va al
- * mismo sitio, así que haber leído uno no vale para el otro. La del navegador
- * es la que ya existía.
+ * Aviso previo ya leído, uno por motor: el audio no va al mismo sitio, así que
+ * haber leído uno no vale para el otro. La del navegador es la que ya existía.
  */
 export const VOICE_NOTICE_KEYS: Record<VoiceEngine, string> = {
   browser: 'rrss.voiceNoticeHidden',
@@ -90,22 +89,22 @@ export function voiceEngineHint(engine: VoiceEngine): string {
     : 'Escucha de seguido y cada frase es una orden. No cuenta para el cupo de IA.';
 }
 
+// Una línea (simplificación aceptada, K2): adónde va el audio y qué no dictar. El detalle, en la
+// política de privacidad, que el componente enlaza al lado («Más»).
 const NOTICE: Record<VoiceEngine, string> = {
-  browser:
-    'El dictado lo hace el servicio de voz de tu navegador (Google o Microsoft), no esta aplicación: el audio sale de tu dispositivo y aquí solo llega el texto. No dictes datos personales de terceros.',
-  transcriber:
-    'Lo que dictas se graba en tu dispositivo, va a nuestro servidor y de ahí a OpenAI, que lo pasa a texto (con algunos nombres de la marca y de la pieza como pista). No guardamos el audio; el texto queda en el registro de uso de IA y cada dictado cuenta para el cupo. No dictes datos personales de terceros.',
+  browser: 'Lo pasa a texto el servicio de voz de tu navegador (Google o Microsoft). No dictes datos de otras personas.',
+  transcriber: 'Lo que dictes va a OpenAI para pasarlo a texto y cada dictado cuenta para el cupo. No dictes datos de otras personas.',
 };
 
 /**
- * Aviso previo al primer dictado: adónde va el audio con cada motor. El enlace
- * a la política de privacidad lo pone el componente al lado.
+ * Aviso previo al primer dictado con cada motor: sale una vez y, al aceptarlo, no
+ * vuelve. El enlace a la política de privacidad lo pone el componente al lado.
  */
 export function voiceNoticeText(engine: VoiceEngine): string {
   return NOTICE[engine];
 }
 
-/** ¿Pidió la persona no volver a ver el aviso de este motor? */
+/** ¿Ha leído ya la persona el aviso de este motor (en este navegador)? */
 export function voiceNoticeHidden(engine: VoiceEngine): boolean {
   return readLocal<boolean>(VOICE_NOTICE_KEYS[engine], false) === true;
 }
