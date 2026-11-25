@@ -61,6 +61,7 @@ describe('Menú de una marca', () => {
       'Carrusel',
       'Reel',
       'Historia',
+      'Menú o carta del restaurante',
       'Subir fotos',
     ]);
   });

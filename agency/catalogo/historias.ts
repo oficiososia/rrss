@@ -45,7 +45,7 @@ function logoLayer(theme: Theme, id: string, y: number, height: number, width = 
 
 /** Precio en una píldora del color de acento: cabe «00,00 €» en una línea. */
 function priceSeal(theme: Theme, look: Look, id: string, value: string, x: number, y: number) {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const [w, h] = [300, 140];
   return [
     t.rect('sello', x, y, w, h, theme.accent, { radius: h / 2, label: 'Sello del precio' }),
@@ -64,7 +64,7 @@ function priceSeal(theme: Theme, look: Look, id: string, value: string, x: numbe
 /** Franja de arriba, lisa y del color oscuro, con el logotipo (solo si la marca lo tiene). Devuelve dónde acaba. */
 function logoBar(theme: Theme, look: Look, id: string): { bottom: number; layers: LayerInput[] } {
   if (!theme.logo) return { bottom: 0, layers: [] };
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   return {
     bottom: 430,
     layers: [t.rect('cabecera', 0, 0, STORY_W, 430, theme.dark, { label: 'Cabecera' }), ...logoLayer(theme, id, 270, 140)],
@@ -84,7 +84,7 @@ export function tapaDelDia(
   words: { kicker: string; name: string; price: string; cta: string },
   id = 'h1',
 ): DocumentPageInput {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const panelTop = 1200;
   const bar = logoBar(theme, look, id);
   return page(id, 'Tapa del día', [
@@ -115,7 +115,7 @@ export function tapaDelDia(
       size: 38,
       color: theme.accentOnDark,
       font: theme.headline,
-      italic: true,
+      italic: false,
       align: 'left',
       name: 'Llamada final',
       anchorY: 'top',
@@ -127,7 +127,7 @@ export function tapaDelDia(
 
 /** Cabecera de una historia: logotipo (si hay), antetítulo y titular, todo dentro de la zona segura. */
 function header(theme: Theme, look: Look, id: string, words: { kicker: string; title: string }, top = 262) {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const shift = theme.logo ? 110 : 0;
   return {
     bottom: top + shift + 170,
@@ -165,7 +165,7 @@ export function tapasDeLaSemana(
   words: { kicker: string; title: string; items: Array<{ name: string; price: string }> },
   id = 'h1',
 ): DocumentPageInput {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const items = words.items.slice(0, 4);
   const head = header(theme, look, id, words);
   const layers: LayerInput[] = [t.rect('fondo', 0, 0, STORY_W, STORY_H, theme.dark, { label: 'Fondo' }), ...head.layers];
@@ -253,7 +253,7 @@ export interface MenuWords {
  * detrás del texto; si se deja vacío, no sale (el fondo es el color oscuro).
  */
 export function menuDelDia(theme: Theme, look: Look, words: MenuWords, id = 'h1'): DocumentPageInput {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const head = header(theme, look, id, words);
   const sections = words.sections.slice(0, 3);
   const layers: LayerInput[] = [
@@ -307,7 +307,7 @@ export function menuDelDia(theme: Theme, look: Look, words: MenuWords, id = 'h1'
     t.text('cuando', M, priceTop + 168, STORY_W - 2 * M, 44, words.when, {
       size: 32,
       color: theme.onDark,
-      italic: true,
+      italic: false,
       name: 'Cuándo',
       anchorY: 'top',
     }),
@@ -321,7 +321,7 @@ export function menuDelDia(theme: Theme, look: Look, words: MenuWords, id = 'h1'
  * se lee bien en el móvil, con el precio y qué incluye al final.
  */
 export function menuConFoto(theme: Theme, look: Look, words: MenuWords, id = 'h1'): DocumentPageInput {
-  const t = tools(theme, look, id);
+  const t = tools(theme, { ...look, italic: false }, id);
   const head = header(theme, look, id, words);
   const photoTop = head.bottom + 16;
   const bandTop = 1050;

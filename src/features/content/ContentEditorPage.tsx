@@ -132,6 +132,9 @@ import { PublishNowDialog } from '@/features/social/PublishNowDialog';
 import { ScheduleDialog } from '@/features/social/ScheduleDialog';
 import { useContentPublication, useSocialAccounts } from '@/features/social/api';
 import { connectedAccountsPath, EXPORT_PARAM } from '@/features/social/links';
+
+/** `?compartir=1`: abre el editor ya en la hoja «Compartir» (lo usan las plantillas de menús). */
+const SHARE_PARAM = 'compartir';
 import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
 import { ExportImageDialog } from './export/ExportImageDialog';
 import { exportForPublishing } from './export/exportForPublishing';
@@ -321,7 +324,7 @@ function Editor({
   const [settingsFor, setSettingsFor] = useState<string | null>(null);
   const wide = useWideScreen();
   /** Hoja «Compartir»: el único camino para sacar la pieza. */
-  const [shareOpen, setShareOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(() => searchParams.has(SHARE_PARAM));
   /** Lo subido (o creado con IA) desde el cajón «Subidas» en esta sesión, lo último primero. */
   const [uploadedIds, setUploadedIds] = useState<string[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -329,7 +332,7 @@ function Editor({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(() => searchParams.has(EXPORT_PARAM));
   useEffect(() => {
-    if (searchParams.has(EXPORT_PARAM)) setSearchParams({}, { replace: true });
+    if (searchParams.has(EXPORT_PARAM) || searchParams.has(SHARE_PARAM)) setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
   const [publishNowOpen, setPublishNowOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
