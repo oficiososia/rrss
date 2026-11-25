@@ -385,13 +385,20 @@ function StateLine({
       );
     case 'rendering':
       return (
-        <p className="flex items-center gap-2 text-sm" role="status" data-testid="reel-render-state">
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
-          <span>
-            {state.label === 'Montando' ? 'Montando el vídeo' : `Montando el vídeo (${state.label.toLowerCase()})`}…
-            Puedes cerrar esto y seguir editando.
-          </span>
-        </p>
+        <div className="space-y-1" role="status" data-testid="reel-render-state">
+          <p className="flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden />
+            <span>
+              {state.label === 'Montando' ? 'Montando el vídeo' : `Montando el vídeo (${state.label.toLowerCase()})`}…
+              Puedes cerrar esto y seguir editando.
+            </span>
+          </p>
+          {state.detail && (
+            <p className="pl-6 text-xs text-muted" data-testid="reel-render-detail">
+              {state.detail}
+            </p>
+          )}
+        </div>
       );
     case 'failed':
       return (

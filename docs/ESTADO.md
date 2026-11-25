@@ -1034,6 +1034,37 @@ sin el pie legal ni los enlaces que abren cada pieza).
   en el «⋯» del copiloto porque `IntegrationsPage` no entraba en esta rama. K1 a medias: el micrófono flotante ya abre
   el copiloto, pero el resultado sigue en el panel acoplado (no como aviso corto con «Deshacer»), como se pidió.
 
+### Reels fiables tras la segunda prueba de calidad (rama `f73/reels-fiables`, 25/11/2026)
+
+Arreglos de los fallos de reels del informe `e2e-calidad-2` (24/11/2026).
+
+- **«El vídeo todavía no tiene los últimos cambios» recién montado.** Causa: `renderOfPlan` comparaba el plan
+  del editor con el del trabajo guardado, pero `request_media_job` pasa el encargo por `jsonb_strip_nulls` y un
+  texto sin franja ni contorno (`box: null`, `outline: null`, casi todos) llegaba sin esas claves: nunca
+  coincidía, «Publicar o programar» quedaba desactivado y al reabrir «Exportar» se volvía a montar. Ahora la
+  comparación quita los null como la base de datos (`exportFlow.ts`) y, además, sin cambios vale el vídeo de la
+  versión vigente (`ReelEditor.tsx`). Prueba en `exportFlow.test.ts` (fallaba antes).
+- **Material del reel con IA que no casa con el guion.** `matchShots` (`like/draft.ts`) busca ahora frente al
+  texto de la escena (qué tiene que verse y los rótulos de ese plano) además de las palabras de búsqueda: lo que
+  dicen a la vez la escena y la búsqueda es el protagonista; lo que encaja solo por una palabra de contexto
+  («marisco») vale a medias y nunca si su nombre dice que es otra cosa («Ostras.jpg» para unas zamburiñas). Lo que
+  no encaja queda como hueco y el borrador lo dice («En la biblioteca no hay nada que case con el plano …»). El
+  encargo a la IA (`tasks/reel-like.ts`) pide que la primera palabra de búsqueda sea lo que tiene que verse y que no
+  use una etiqueta parecida ni una categoría.
+- **Errores en crudo.** `jobFailureMessage` (`reels/plan.ts`) traduce los fallos del trabajador y de la cola
+  (carga inválida por un trabajador sin actualizar —el «Unrecognized key: role»—, cortes, tiempo agotado,
+  tipografía, archivos ilegibles o que faltan, FFmpeg, red) a una frase con qué hacer, sin rutas. Lo usan el
+  editor, la lista de reels, «Quitar el fondo» y el análisis de «Hacer un reel como este».
+- **Trabajador cortado (Fly en prueba apaga a los 5 min).** «El trabajador dejó de responder y no quedan intentos»
+  se cuenta como «se cortó a medias… El reel está guardado: pulsa «Probar otra vez»», que vuelve a encargar la
+  misma versión sin rehacer nada. Mientras se reintenta solo, lo dice sin pedir nada. Un montaje que lleva más de
+  10 min en cola sin empezar lo avisa en «Exportar» («esperando al servicio de montaje»). No se ha tocado Fly.
+- **Para llevarlo a staging:** solo la aplicación y la función `ai-reel-like` (por el cambio del encargo). Sin
+  migraciones ni cambios en el trabajador. El «Unrecognized key: role» se arregla del todo desplegando en Fly el
+  trabajador al día (el de la rama ya admite `role`).
+- **Probado:** `typecheck`, `lint` (0 errores), `npm test` (2283) y `build` en verde. **Sin probar:** en staging con
+  el trabajador real; `test:db` y e2e no se han ejecutado en esta rama (no hay cambios de base de datos).
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
