@@ -16,8 +16,8 @@ export type ExportState =
   | { kind: 'problems'; problems: string[] }
   /** En esta instalación no se monta vídeo. */
   | { kind: 'unavailable' }
-  /** Guardando la versión o montando el vídeo. */
-  | { kind: 'rendering'; label: string }
+  /** Guardando la versión o montando el vídeo; `detail`, si tarda más de la cuenta en empezar. */
+  | { kind: 'rendering'; label: string; detail?: string }
   /** El último montaje de esta versión falló. */
   | { kind: 'failed'; detail: string | null }
   /** Hay cambios que el vídeo todavía no tiene; `first`: nunca se ha montado lo que se ve. */
@@ -38,6 +38,8 @@ export interface ExportInput {
   rendering: boolean;
   /** Etiqueta del montaje en marcha («En cola», «Montando»…). */
   renderLabel?: string | null;
+  /** Qué pasa con el montaje en marcha, si hay algo que contar (lleva mucho en cola, se reintenta…). */
+  renderDetail?: string | null;
   /** Lo que se ve tiene cambios que no están en la versión vigente. */
   dirty: boolean;
   /** ¿Se ha montado alguna vez algún vídeo de esta pieza? */
@@ -55,7 +57,12 @@ export function exportState(input: ExportInput): ExportState {
   if (input.problems.length > 0) return { kind: 'problems', problems: input.problems };
   if (!input.worker) return { kind: 'unavailable' };
   if (input.checking) return { kind: 'checking' };
-  if (input.busy || input.rendering) return { kind: 'rendering', label: input.renderLabel ?? 'Montando' };
+  if (input.busy || input.rendering)
+    return {
+      kind: 'rendering',
+      label: input.renderLabel ?? 'Montando',
+      ...(input.renderDetail && !input.busy ? { detail: input.renderDetail } : {}),
+    };
   // Cambiar solo el pie no pide otro vídeo: vale el que ya tiene ese mismo montaje.
   if (input.render) return { kind: 'ready', assetId: input.render };
   if (input.failed && !input.dirty && input.version > 0) return { kind: 'failed', detail: input.failed.detail };
@@ -87,12 +94,16 @@ export function selfApprovalSteps(status: ContentStatus): ContentStatus[] {
   }
 }
 
-/** JSON con las claves ordenadas: la base de datos (jsonb) no conserva el orden. */
+/**
+ * JSON con las claves ordenadas: la base de datos (jsonb) no conserva el orden. Las claves con valor null
+ * se quitan, como hace `request_media_job` (jsonb_strip_nulls) al guardar el encargo: un texto sin franja
+ * (`box: null`) llega al trabajo sin esa clave, y es el mismo montaje.
+ */
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
+      .filter(([, v]) => v !== undefined && v !== null)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(',')}}`;
   }

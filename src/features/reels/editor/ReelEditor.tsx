@@ -553,10 +553,17 @@ function Editor({
   const render = renderOfVersion(jobs.data ?? [], expectedVersion);
   // Montando: hay un trabajo en marcha de la versión vigente, o se acaba de encargar y aún no ha llegado a la lista.
   const versionJob = (jobs.data ?? []).find((j) => jobContentVersion(j) === expectedVersion && expectedVersion > 0);
-  const versionView = versionJob ? describeJob(versionJob) : null;
   const rendering =
     (jobs.data ?? []).some((j) => isActive(j) && jobContentVersion(j) === expectedVersion) ||
     (requestedVersion === expectedVersion && !versionJob);
+  // Mientras se monta, la hora avanza cada medio minuto: un montaje que no empieza lo dice (describeJob).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!rendering) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [rendering]);
+  const versionView = versionJob ? describeJob(versionJob, now) : null;
 
   // Guardado automático: el borrador de la pieza, un momento después de cada cambio.
   const autosaveOn = boot.autosave && !readOnly;
@@ -1043,10 +1050,12 @@ function Editor({
     busy: saveReel.isPending || request.isPending,
     rendering,
     renderLabel: versionView?.label,
+    renderDetail: versionView?.tone === 'progress' ? versionView.detail : null,
     dirty,
     anyRender: (jobs.data ?? []).some((j) => describeJob(j).assetId),
     version: expectedVersion,
-    render: planRender,
+    // Sin cambios, el vídeo de la versión vigente es el de lo que se ve aunque el plan no se reconozca.
+    render: planRender ?? (dirty ? null : render),
     failed: versionView?.tone === 'danger' ? { detail: versionView.detail } : null,
   });
   /** «Exportar»: abre la hoja y monta el vídeo si lo que se ve todavía no lo tiene. */

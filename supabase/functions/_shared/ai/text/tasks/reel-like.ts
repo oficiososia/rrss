@@ -89,7 +89,7 @@ export const REEL_LIKE_INSTRUCTIONS = [
   '',
   'Parte 2 · El reel de la marca (con SUS palabras):',
   '- «title» e «idea»: de qué va el reel de la marca. Si hay material «idea de la marca para su reel», parte de él; si no, proponlo a partir de su perfil.',
-  '- Para cada plano: «what» (qué grabar o qué foto usar, concreto para esta marca), «tip» (un consejo práctico para grabarlo: encuadre, luz, movimiento, duración) y «search» (de 2 a 5 palabras sueltas en minúsculas para buscar ese material en su biblioteca; si alguna carpeta o etiqueta del material «biblioteca de la marca» encaja, úsala tal cual).',
+  '- Para cada plano: «what» (qué grabar o qué foto usar, concreto para esta marca), «tip» (un consejo práctico para grabarlo: encuadre, luz, movimiento, duración) y «search» (de 2 a 5 palabras sueltas en minúsculas para buscar ese material en su biblioteca: la primera es lo que tiene que verse, con el mismo nombre que en «what» —«zamburiñas», no «marisco»—, y las demás, otras formas de llamar a eso mismo; usa una carpeta o etiqueta del material «biblioteca de la marca» solo si nombra eso mismo, nunca una parecida ni una categoría).',
   '- «value» de cada rótulo: el texto que pondría la marca, corto, parecido en longitud al de la referencia.',
   '- «hook»: la frase de arranque. «caption»: el pie de foto completo. «hashtags»: sin almohadilla dentro del pie.',
   '- «coverShot»: el plano que mejor sirve de portada y «coverNote»: qué debe verse en ella.',
