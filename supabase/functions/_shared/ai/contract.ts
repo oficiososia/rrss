@@ -276,6 +276,11 @@ export interface AiGenerateParams {
    * que cumple el esquema sirve.
    */
   accept?: (value: Json) => string | null;
+  /**
+   * Tiempo máximo de ESTA llamada al proveedor, si la tarea necesita otro que el
+   * general (un plan de campaña largo tarda más que un pie de foto). Sin él, el del servicio.
+   */
+  timeoutMs?: number;
 }
 
 export interface AiGenerateResult {

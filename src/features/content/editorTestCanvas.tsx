@@ -49,7 +49,11 @@ export function CanvasStub(props: CanvasViewProps) {
         {props.footerEnd}
       </div>
       {editing?.type === 'text' && (
-        <TextEditOverlay layer={editing} scale={1} onCommit={(text) => props.onTextCommit(editing.id, text)} />
+        <TextEditOverlay
+          layer={editing}
+          scale={1}
+          onCommit={(text, next) => props.onTextCommit(editing.id, text, next)}
+        />
       )}
     </div>
   );

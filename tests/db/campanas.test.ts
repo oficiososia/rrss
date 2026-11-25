@@ -926,3 +926,141 @@ describe('plan con detalles a mano (fallo 2)', () => {
     }
   });
 });
+
+// ── Prueba de calidad del 24/11/2026: «Preparar el plan», 0 planes en 15 intentos ──
+// Causas, sacadas de `ai_generations` de staging: las 10 respuestas «que no se pueden
+// usar» traían `network: "instagram/post"` en todas las piezas (copiado del destino del
+// prompt), y los planes de un mes se pasaban del tiempo máximo de 60 s.
+
+describe('«Preparar el plan» fiable (prueba del 24/11)', () => {
+  /** Una pieza como las de staging: la red con el formato pegado. */
+  const stagingPiece = (date: string, format = 'post') => ({
+    network: `instagram/${format}`,
+    format,
+    date,
+    time: '12:00',
+    title: 'Arroz meloso de bogavante',
+    idea: 'Post limpio con una foto real del arroz meloso de bogavante, sin texto.',
+    headline: '',
+    aspect: '4:5',
+    caption: 'Nuestro arroz meloso de bogavante. Reserva tu mesa.',
+    hashtags: [],
+    assetIds: [],
+    why: 'El martes abre la semana del arroz.',
+  });
+  const answer = (pieces: unknown[]) =>
+    JSON.stringify({
+      objective: 'Dar a conocer los arroces y que reserven.',
+      summary: 'Propuesta de la semana.',
+      observed: ['La carta tiene arroces melosos.'],
+      dataBacked: [],
+      hypotheses: ['Publicar a mediodía puede funcionar.'],
+      pieces,
+    });
+  const datesOf = (prompt: string) => /Fechas: del (\d{4}-\d{2}-\d{2}) al (\d{4}-\d{2}-\d{2})/.exec(prompt)!;
+
+  it('la respuesta real de staging («instagram/post» en la red) da un plan, sin repetir la llamada', async () => {
+    const t = await setup({
+      respond: () => answer([stagingPiece('2026-11-24'), { ...stagingPiece('2026-11-26', 'carousel'), format: '' }]),
+    });
+    const result = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t));
+    expect(result.plan.pieces.map((p) => `${p.network}/${p.format}`)).toEqual(['instagram/post', 'instagram/carousel']);
+    expect(result.discarded).toEqual([]);
+    expect(t.provider.calls).toHaveLength(1);
+    // El prompt ya da red y formato por separado, y las instrucciones lo piden así.
+    expect(t.provider.calls[0]!.input.prompt).toContain('- Destino: network=instagram format=post');
+    expect(CAMPAIGN_PLAN_INSTRUCTIONS).toMatch(/nunca «instagram\/reel»/);
+  });
+
+  it('si la primera respuesta no sirve, se pide otra vez diciendo qué falló; la que no sirvió no se cobra', async () => {
+    let call = 0;
+    const t = await setup({
+      respond: () => {
+        call += 1;
+        return call === 1
+          ? answer([{ ...stagingPiece('2026-11-24'), network: 'tiktok', format: 'video' }])
+          : answer([stagingPiece('2026-11-24')]);
+      },
+    });
+    const result = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t));
+    expect(result.plan.pieces).toHaveLength(1);
+    expect(t.provider.calls).toHaveLength(2);
+    expect(t.provider.calls[1]!.input.prompt).toMatch(/Tu respuesta anterior no se pudo usar: .*«network» debe ser solo el nombre de la red/);
+    const gens = await db.query<Row>(
+      `select status, cost_micros from public.ai_generations where brand_id = $1 order by created_at`,
+      [t.brand],
+    );
+    expect(gens.map((g) => g.status)).toEqual(['failed', 'succeeded']);
+    expect(gens[0]!.cost_micros).toBeNull();
+  });
+
+  it('si tampoco sirve al segundo intento, el error lo dice claro y no se cobra nada', async () => {
+    const t = await setup({ respond: () => answer([stagingPiece('2027-03-01')]) });
+    const error = await planCampaign(t.service, { userId: t.editor.id, brandId: t.brand }, request(t)).catch((e) => e);
+    expect(error).toBeInstanceOf(AiError);
+    expect((error as AiError).code).toBe('invalid_output');
+    expect((error as AiError).message).toMatch(/ni al segundo intento.*No se ha consumido cupo.*menos semanas/);
+    expect(t.provider.calls).toHaveLength(2);
+    expect(t.provider.calls[1]!.input.prompt).toMatch(/«date» debe ser solo el día AAAA-MM-DD, entre el 2026-11-23 y el 2026-11-29/);
+    const [{ spent }] = (await db.query<{ spent: string }>(
+      `select coalesce(sum(u.cost_delta_micros), 0)::text as spent from public.ai_usage u
+       join public.ai_generations g on g.id = u.generation_id where g.brand_id = $1`,
+      [t.brand],
+    )) as [{ spent: string }];
+    expect(Number(spent)).toBe(0);
+  });
+
+  it('un mes se prepara por semanas a la vez y se junta en un plan, con las fases de cada semana', async () => {
+    const t = await setup({
+      respond: (req) => {
+        const [, from] = datesOf(req.input.prompt);
+        const day = (offset: number) => new Date(Date.parse(`${from}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+        return answer([0, 2, 4, 6].map((offset, i) => stagingPiece(day(offset), i % 2 ? 'carousel' : 'post')));
+      },
+    });
+    const phases = ['Arroces', 'Mariscos', 'Postres', 'Navidad'].map((title) => ({ title, focus: title }));
+    const result = await planCampaign(
+      t.service,
+      { userId: t.editor.id, brandId: t.brand },
+      request(t, { startDate: '2026-11-30', endDate: '2026-12-27', agreement: { perWeek: 4, phases } }),
+    );
+    // 16 piezas en 4 llamadas de una semana (4 piezas cada una), no una de 16.
+    expect(t.provider.calls).toHaveLength(4);
+    const ranges = t.provider.calls.map((c) => datesOf(c.input.prompt).slice(1).join('→'));
+    expect(ranges).toEqual([
+      '2026-11-30→2026-12-06',
+      '2026-12-07→2026-12-13',
+      '2026-12-14→2026-12-20',
+      '2026-12-21→2026-12-27',
+    ]);
+    for (const c of t.provider.calls) expect(c.input.prompt).toContain('Máximo de piezas: 4.');
+    // Cada semana recibe solo su fase.
+    const agreements = t.provider.calls.map(
+      (c) => JSON.parse(c.input.context!.find((part) => part.label === 'acuerdo previo')!.content) as { phases: { title: string }[] },
+    );
+    expect(agreements.map((a) => a.phases.map((p) => p.title))).toEqual([['Arroces'], ['Mariscos'], ['Postres'], ['Navidad']]);
+    expect(result.plan.pieces).toHaveLength(16);
+    expect(result.plan.pieces.map((p) => p.date)).toEqual([...result.plan.pieces.map((p) => p.date)].sort());
+    expect(result.gaps).toBeUndefined();
+    expect(campaignPlanSchema.safeParse(result.plan).success).toBe(true);
+  });
+
+  it('si una semana falla, el plan sale con las demás y dice qué días faltan', async () => {
+    const t = await setup({
+      respond: (req) => {
+        const from = datesOf(req.input.prompt)[1]!;
+        if (from === '2026-12-07') return answer([stagingPiece('2027-03-01')]);
+        return answer([stagingPiece(from), stagingPiece(from), stagingPiece(from), stagingPiece(from)]);
+      },
+    });
+    const result = await planCampaign(
+      t.service,
+      { userId: t.editor.id, brandId: t.brand },
+      request(t, { startDate: '2026-11-30', endDate: '2026-12-27', agreement: { perWeek: 4 } }),
+    );
+    expect(result.plan.pieces).toHaveLength(12);
+    expect(result.gaps).toEqual([
+      { startDate: '2026-12-07', endDate: '2026-12-13', reason: 'La IA no ha dado piezas utilizables para estos días.' },
+    ]);
+  });
+});

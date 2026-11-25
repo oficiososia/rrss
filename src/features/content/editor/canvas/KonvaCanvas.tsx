@@ -415,7 +415,7 @@ export default function KonvaCanvas({
                 key={editing.id}
                 layer={editing}
                 scale={scale}
-                onCommit={(text) => onTextCommit(editing.id, text)}
+                onCommit={(text, next) => onTextCommit(editing.id, text, next)}
               />
             )}
             {framingLayer && (
@@ -425,7 +425,7 @@ export default function KonvaCanvas({
                 scale={scale}
                 imageAspect={() => sceneRef.current?.imageAspect(framingLayer.id) ?? null}
                 onChange={(patch) => onFrameChange?.(framingLayer.id, patch)}
-                onDone={() => onFramingEnd?.()}
+                onDone={(next) => onFramingEnd?.(next)}
               />
             )}
           </div>

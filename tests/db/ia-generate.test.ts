@@ -315,6 +315,29 @@ describe('las tres acciones', () => {
       expect((await t.call(t.token, { action: 'cost.estimate', brandId: t.brand, input })).status).toBe(400);
     }
   });
+  it('cost.estimate de un plan largo suma todos sus tramos (se piden por semanas)', async () => {
+    const t = await setup();
+    const planInput = (endDate: string) => ({
+      instruction: 'Plan del mes',
+      startDate: '2026-11-30',
+      endDate,
+      targets: [{ network: 'instagram', format: 'post' }],
+      agreement: { perWeek: 4 },
+    });
+    const estimate = async (endDate: string) =>
+      (
+        await t.call(t.token, {
+          action: 'cost.estimate',
+          brandId: t.brand,
+          input: { action: 'campaign.plan', input: planInput(endDate) },
+        })
+      ).body.costMicros as number;
+    const week = await estimate('2026-12-06');
+    const month = await estimate('2026-12-27');
+    // Cuatro semanas son cuatro llamadas como la de una: el máximo enseñado es su suma.
+    expect(month).toBeGreaterThanOrEqual(4 * week * 0.9);
+    expect(t.provider.calls).toEqual([]);
+  });
 });
 
 describe('permisos y cupo', () => {
@@ -696,8 +719,12 @@ describe('campaign.brief (rellenar el formulario de Campañas con IA)', () => {
       },
     });
     expect(response.status).toBe(200);
+    // 9 piezas en tres semanas: se piden por semanas, 3 en cada una y a la vez (las semanas en
+    // las que la respuesta fija de esta prueba cae fuera de fecha se piden una segunda vez).
+    const weeks = new Set(t.provider.calls.map((c) => /Fechas: del (\S+) al (\S+),/.exec(c.input.prompt)!.slice(1).join('→')));
+    expect([...weeks].sort()).toEqual(['2026-11-30→2026-12-06', '2026-12-07→2026-12-13', '2026-12-14→2026-12-20']);
+    for (const c of t.provider.calls) expect(c.input.prompt).toMatch(/Máximo de piezas: 3\./);
     const call = t.provider.calls[0]!;
-    expect(call.input.prompt).toMatch(/Máximo de piezas: 9\./);
     expect(call.input.prompt).toMatch(/Ritmo acordado: 3 piezas por semana\./);
     const agreement = JSON.parse(call.input.context!.find((part) => part.label === 'acuerdo previo')!.content);
     // Lo que no es de los destinos pedidos se descarta.
