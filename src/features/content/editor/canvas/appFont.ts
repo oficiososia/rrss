@@ -2,6 +2,8 @@ import latinExtItalic from '@fontsource-variable/inter/files/inter-latin-ext-wgh
 import latinExtNormal from '@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2?url';
 import latinItalic from '@fontsource-variable/inter/files/inter-latin-wght-italic.woff2?url';
 import latinNormal from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import baskervilleLatinExt from '@fontsource-variable/libre-baskerville/files/libre-baskerville-latin-ext-wght-normal.woff2?url';
+import baskervilleLatin from '@fontsource-variable/libre-baskerville/files/libre-baskerville-latin-wght-normal.woff2?url';
 
 // Letra de pantalla de la aplicación para los diseños: Inter (licencia SIL Open
 // Font License 1.1, paquete @fontsource-variable/inter), incluida en la propia
@@ -11,6 +13,12 @@ import latinNormal from '@fontsource-variable/inter/files/inter-latin-wght-norma
 // defecto del navegador (Times). Se registra con FontFace bajo el nombre «Inter».
 
 export const APP_FONT = 'Inter';
+
+/**
+ * Libre Baskerville (SIL OFL 1.1, `@fontsource-variable/libre-baskerville`), la letra de las plantillas de
+ * menús (`features/menus`). Solo en normal: las plantillas de menús no llevan cursivas.
+ */
+export const MENU_FONT = 'Libre Baskerville';
 
 /** Las familias genéricas de CSS: ya son una reserva, no se les añade otra. */
 const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui']);
@@ -68,9 +76,21 @@ export function loadAppFont(): Promise<void> {
         unicodeRange: LATIN_EXT,
       }),
     ];
-    for (const face of faces) window.document.fonts.add(face);
+    const menuFaces = [
+      new FontFace(MENU_FONT, `url(${baskervilleLatin}) format("woff2")`, {
+        weight: '400 700',
+        style: 'normal',
+        unicodeRange: LATIN,
+      }),
+      new FontFace(MENU_FONT, `url(${baskervilleLatinExt}) format("woff2")`, {
+        weight: '400 700',
+        style: 'normal',
+        unicodeRange: LATIN_EXT,
+      }),
+    ];
+    for (const face of [...faces, ...menuFaces]) window.document.fonts.add(face);
     // Lo básico (latín, normal y cursiva) antes de dibujar; el resto se carga si hace falta.
-    await Promise.allSettled([faces[0]!.load(), faces[1]!.load()]);
+    await Promise.allSettled([faces[0]!.load(), faces[1]!.load(), menuFaces[0]!.load()]);
   })().catch(() => undefined);
   return registered;
 }

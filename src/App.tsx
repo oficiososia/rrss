@@ -42,6 +42,7 @@ const ContentListPage = lazyRoute(() => import('@/features/content/ContentListPa
 const ContentEditorPage = lazyRoute(() =>
   import('@/features/content/ContentEditorPage').then((m) => m.ContentEditorPage),
 );
+const MenusPage = lazyRoute(() => import('@/features/menus/MenusPage').then((m) => m.MenusPage));
 const RequestListPage = lazyRoute(() => import('@/features/requests/RequestListPage').then((m) => m.RequestListPage));
 const RequestDetailPage = lazyRoute(() =>
   import('@/features/requests/RequestDetailPage').then((m) => m.RequestDetailPage),
@@ -243,6 +244,7 @@ export function App() {
                           <Route path="inicio" element={<BrandHomePage />} />
                           <Route path="contenidos" element={<ContentListPage />} />
                           <Route path="contenidos/:contentId" element={<ContentEditorPage />} />
+                          <Route path="menus" element={<MenusPage />} />
                           <Route
                             path="encargos"
                             element={

@@ -1,4 +1,4 @@
-import { CalendarRange, Images, Plus, Sparkles, type LucideIcon } from 'lucide-react';
+import { CalendarRange, Images, Plus, Sparkles, UtensilsCrossed, type LucideIcon } from 'lucide-react';
 import { lazy, Suspense, useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '@/components/ui';
@@ -62,6 +62,12 @@ function useCreateEntries(
         onSelect: () => navigate(`${base}/biblioteca/reels/como-este`),
       });
     }
+    entries.push({
+      id: 'menus',
+      label: 'Menú o carta del restaurante',
+      icon: UtensilsCrossed,
+      onSelect: () => navigate(`${base}/menus`),
+    });
     entries.push({ id: 'upload', label: 'Subir fotos', icon: Images, onSelect: () => navigate(`${base}/biblioteca`) });
   }
   if (canAskPlan) {

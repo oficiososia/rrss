@@ -62,7 +62,7 @@ for (const size of SIZES) {
       await create.click();
       const items = page.getByTestId('create-menu-items');
       await expect(items).toBeVisible();
-      for (const id of ['post', 'carousel', 'reel', 'story', 'upload', 'plan'])
+      for (const id of ['post', 'carousel', 'reel', 'story', 'menus', 'upload', 'plan'])
         await expect(page.getByTestId(`create-menu-${id}`)).toBeVisible();
       for (const item of await items.getByRole('menuitem').all()) await expectReachable(item, size);
       await page.keyboard.press('Escape');

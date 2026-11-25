@@ -2012,3 +2012,27 @@ Detalle, antes y después por punto, en `docs/editor-reels.md` §12. Sin migraci
 - **Sin probar**: la vista previa en un navegador real con la letra de la marca (las medidas se acercan, no son las
   del archivo de la tipografía); móvil y Safari reales.
 - **Para staging**: lo de f54 (migración `20270113010000` y trabajador nuevo) antes que esta aplicación.
+
+### Plantillas de menús del restaurante (rama `f74/plantillas-menus`, 25/11/2026)
+
+«＋ Crear → Menú o carta del restaurante» (ruta `…/m/:brand/menus`, `src/features/menus/`). Escribir los platos → elegir la
+foto de la biblioteca (o subirla) → vista previa real (mismo motor que la exportación) → «Publicar o programar», que crea la
+pieza (historia, publicación o carrusel) y abre el editor ya en «Compartir» (`?compartir=1`) con el pie escrito.
+
+- **Diarias:** menú del día (primeros, segundos, postre, precio, qué incluye), menú de tapas (foto, nombre y precio por tapa),
+  tapa de la semana, carta o vinos destacados («Nombre | 3,50 €» por línea). **Eventos** (grupo aparte, un solo diseño con
+  marco dorado doble, precio en pastilla y fondo opcional de foto o IA velado): Nochevieja, Navidad, San Valentín y otro.
+  Cada una en historia (1080 × 1920) y publicación (1080 × 1350). Partieron de las historias de tapas y menú del catálogo.
+- **Reglas de diseño:** Libre Baskerville (`@fontsource-variable/libre-baskerville`, SIL OFL, registrada en `appFont.ts`), sin
+  cursivas; todas las líneas de un plato con el mismo color y peso; foto de fondo siempre bajo un velo; nombres propios y
+  cantidades con espacios duros (`medir.ts`); cada plato con su caja medida (lienzo del navegador; estimación en pruebas).
+  Menú largo: la publicación se reparte en carrusel (hasta 10 páginas); la historia, al ser una imagen, avisa y no se publica.
+- **Catálogo (`agency/catalogo/historias.ts`):** quitadas las cursivas de las historias de tapas y menú.
+- **Menú del día automático:** en este repositorio NO hay publicación automática del menú del día; el único automático que
+  existe es la story del jueves de tapas del panel de Casa Tomás (sección Instagram antigua, programada por
+  `instagram-programador`). El menú del día se sube solo a la web (`menus_diarios`), no a Instagram. La plantilla es una
+  función pura (`construirMenu(tipo, datos, formato, tema)`) lista para que una automatización la llame con esos datos.
+- **Probado:** unitarias (`disenos.test.ts`: reglas, sin solapes, zona segura, carrusel), `test:layout` (`menus.spec.ts`: cada
+  plantilla en historia y publicación, corto y largo, textos medidos con Konva real, flujo por la interfaz hasta «Compartir»;
+  `menu.spec.ts`), componentes de `layout/`. **Sin probar:** contra el Supabase de staging (la sesión pide contraseña); publicar
+  de verdad. Capturas en `rrss-recursos-comparativa/plantillas-menus/`.
