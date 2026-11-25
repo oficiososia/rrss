@@ -12,7 +12,7 @@
 //   · La IA solo crea fondos; las fotos de platos son las reales de la biblioteca de la marca.
 //
 // Las fotos son marcos con la foto elegida (`frame`), así se pueden cambiar o reencuadrar en el editor.
-import type { Theme } from '../../../agency/catalogo/tema.ts';
+import { contrast, mix, type Theme } from '../../../agency/catalogo/tema.ts';
 import {
   DOCUMENT_SCHEMA_VERSION,
   type ContentDocumentInput,
@@ -21,6 +21,7 @@ import {
 } from '../content/document/schema';
 import {
   FUENTE_MENU,
+  NBSP,
   alturaDe,
   medidorDeLienzo,
   medidorEstimado,
@@ -43,8 +44,8 @@ interface Paleta {
   fondo: string;
   texto: string;
   acento: string;
-  pastilla: string;
-  sobrePastilla: string;
+  /** Dorado de los filetes y del marco. */
+  filete: string;
 }
 
 interface Ctx {
@@ -58,6 +59,8 @@ interface Ctx {
   aw: number;
   top: number;
   bottom: number;
+  /** Alto de la foto de arriba (0 si no hay foto). */
+  fotoH: number;
 }
 
 interface Unidad {
@@ -69,20 +72,28 @@ interface Unidad {
 const LH = 1.3;
 const FUENTE = FUENTE_MENU;
 
-function contexto(formato: FormatoMenu, theme: Theme, estilo: 'oscuro' | 'claro', medir: Medidor): Ctx {
+function contexto(formato: FormatoMenu, theme: Theme, estilo: 'oscuro' | 'claro', medir: Medidor, conFoto: boolean): Ctx {
   const story = formato === 'story';
   const oscuro = estilo === 'oscuro';
+  // El dorado del texto se oscurece sobre fondo claro hasta que se lee (contraste ≥ 4,5).
+  let dorado = oscuro ? theme.accentOnDark : theme.accent;
+  for (let k = 0; k < 10 && contrast(dorado, oscuro ? theme.dark : theme.light) < 4.5; k++) {
+    dorado = mix(dorado, oscuro ? theme.onDark : theme.onLight, 0.15);
+  }
   const p: Paleta = {
     fondo: oscuro ? theme.dark : theme.light,
     texto: oscuro ? theme.onDark : theme.onLight,
-    acento: oscuro ? theme.accentOnDark : theme.accent,
-    pastilla: theme.accent,
-    sobrePastilla: theme.onAccent,
+    acento: dorado,
+    filete: oscuro ? theme.accentOnDark : theme.accent,
   };
-  // Zona segura de las historias: 250 px arriba y 340 abajo. En la publicación, margen de 96 px.
-  return story
-    ? { theme, p, w: 1080, h: 1920, story, medir, x: 100, aw: 880, top: 262, bottom: 1580 }
-    : { theme, p, w: 1080, h: 1350, story, medir, x: 100, aw: 880, top: 100, bottom: 1250 };
+  // Zona segura de las historias: 250 px arriba y 340 abajo. En la publicación, margen de 100 px.
+  // Con foto, la parte de arriba (≈ 36 %) es de la foto, nítida, y el texto empieza debajo, sobre el panel.
+  const base = story
+    ? { theme, p, w: 1080, h: 1920, story, medir, x: 100, aw: 880, top: 262, bottom: 1580, fotoH: 0 }
+    : { theme, p, w: 1080, h: 1350, story, medir, x: 100, aw: 880, top: 100, bottom: 1250, fotoH: 0 };
+  if (!conFoto) return base;
+  const fotoH = story ? 700 : 480;
+  return { ...base, top: fotoH + 50, bottom: story ? 1580 : 1290, fotoH };
 }
 
 // ───────────────────────────── Capas ─────────────────────────────
@@ -184,27 +195,53 @@ function altoTexto(ctx: Ctx, valor: string, w: number, size: number, weight: num
 
 // ───────────────────────────── Fondo y marco ─────────────────────────────
 
-function fondoDePagina(ctx: Ctx, pid: string, d: DatosMenu, velo: number): LayerInput[] {
+type ModoFoto = 'ninguna' | 'banda' | 'completa';
+
+/** Alto del degradado entre la foto y el panel de texto. */
+const DEGRADADO = 144;
+
+function fondoDePagina(ctx: Ctx, pid: string, d: DatosMenu, modo: ModoFoto): LayerInput[] {
   const { p, w, h } = ctx;
   const layers: LayerInput[] = [rect(`${pid}-fondo`, 0, 0, w, h, p.fondo, { name: 'Fondo' })];
-  if (d.foto) {
-    layers.push(
-      foto(`${pid}-foto-fondo`, 0, 0, w, h, d.foto, 'Foto de fondo'),
-      // El velo: el texto nunca va directamente sobre la foto.
-      rect(`${pid}-velo`, 0, 0, w, h, p.fondo, { opacity: velo, name: 'Velo' }),
-    );
+  if (modo === 'completa' && d.foto) {
+    // Eventos: la foto o el fondo de IA, a sangre y nítido; el texto va en una tarjeta lisa (ver `ensamblar`).
+    layers.push(foto(`${pid}-foto-fondo`, 0, 0, w, h, d.foto, 'Fondo'));
+    return layers;
   }
-  // Doble filete en el color de acento, dentro de la zona segura de la historia.
+  if (modo === 'banda' && d.foto) {
+    // La foto, nítida y a sangre; el texto va en un panel liso debajo (ver `panelDeTexto`).
+    layers.push(foto(`${pid}-foto-fondo`, 0, 0, w, ctx.fotoH + DEGRADADO, d.foto, 'Foto'));
+    return layers;
+  }
+  // Sin foto: doble filete dorado, dentro de la zona segura de la historia.
   const fy = ctx.story ? 210 : 40;
   const fh = ctx.story ? 1420 : h - 80;
   layers.push(
-    rect(`${pid}-marco`, 40, fy, w - 80, fh, null, { stroke: { color: p.acento, width: 3 }, name: 'Marco' }),
+    rect(`${pid}-marco`, 40, fy, w - 80, fh, null, { stroke: { color: p.filete, width: 3 }, name: 'Marco' }),
     rect(`${pid}-marco-int`, 54, fy + 14, w - 108, fh - 28, null, {
-      stroke: { color: p.acento, width: 1.5 },
+      stroke: { color: p.filete, width: 1.5 },
       opacity: 0.6,
       name: 'Marco interior',
     }),
   );
+  return layers;
+}
+
+/** Panel liso de marca bajo el texto, con un degradado suave hacia la foto (tiras con opacidad creciente). */
+function panelDeTexto(ctx: Ctx, pid: string, top: number): LayerInput[] {
+  const strips = 24;
+  const step = DEGRADADO / strips;
+  const layers: LayerInput[] = [];
+  for (let i = 0; i < strips; i++) {
+    layers.push(
+      rect(`${pid}-degradado-${i + 1}`, 0, top - (strips - i) * step, ctx.w, step, ctx.p.fondo, {
+        opacity: (i + 1) / (strips + 1),
+        name: 'Degradado',
+      }),
+    );
+  }
+  layers.push(rect(`${pid}-panel`, 0, top, ctx.w, ctx.h - top, ctx.p.fondo, { name: 'Panel del texto' }));
+  layers.push(rect(`${pid}-panel-filete`, ctx.w / 2 - 60, top + 18, 120, 3, ctx.p.filete, { name: 'Filete' }));
   return layers;
 }
 
@@ -222,7 +259,7 @@ function cabecera(
   maxTitulo: number,
 ): Bloque {
   const { p, theme, x, aw } = ctx;
-  const logo = !compacta && theme.logo ? { assetId: theme.logo, h: 80, gap: 14 } : null;
+  const logo = !compacta && theme.logo && ctx.fotoH === 0 ? { assetId: theme.logo, h: 80, gap: 14 } : null;
   const kicker = compacta ? `${compacta.pagina} / ${compacta.total}` : d.kicker.trim();
   const kickerSize = ctx.story ? 28 : 26;
   const kickerH = kicker ? altoTexto(ctx, kicker, aw, kickerSize, 700, true) + 8 : 0;
@@ -233,7 +270,7 @@ function cabecera(
     while (titleSize > 36 && partirLineas(sinPartirNombres(titulo), aw, titleSize, 400, ctx.medir).length > 2) titleSize -= 4;
   }
   const titleH = titulo ? altoTexto(ctx, titulo, aw, titleSize, 400) : 0;
-  const rombo = compacta ? 0 : 32;
+  const rombo = compacta || ctx.fotoH > 0 ? 0 : 32;
   const h = (logo ? logo.h + logo.gap : 0) + kickerH + titleH + rombo;
   return {
     h,
@@ -270,7 +307,7 @@ function cabecera(
         out.push(t.layer);
         y += titleH;
       }
-      if (!compacta) out.push(rect(uid('rombo'), ctx.w / 2 - 7, y + 10, 14, 14, p.acento, { rotation: 45, name: 'Adorno' }));
+      if (!compacta && ctx.fotoH === 0) out.push(rect(uid('rombo'), ctx.w / 2 - 7, y + 10, 14, 14, p.acento, { rotation: 45, name: 'Adorno' }));
       return out;
     },
   };
@@ -279,38 +316,22 @@ function cabecera(
 function pie(ctx: Ctx, precio: string, lineas: string[]): Bloque {
   const { p, aw, x } = ctx;
   const size = ctx.story ? 30 : 28;
-  const pillSize = 48;
-  const pillH = 88;
+  // El precio, sin pastilla: texto dorado en negrita, algo mayor que los platos.
+  const priceSize = ctx.story ? 56 : 52;
   const precioTxt = sinPartirNombres(precio.trim());
-  const pillW = precioTxt ? Math.min(aw, Math.max(260, Math.ceil(ctx.medir(precioTxt, pillSize, 700)) + 110)) : 0;
-  const pillBlock = precioTxt ? pillH + 20 + 18 : 0;
+  const priceH = precioTxt ? altoTexto(ctx, precioTxt, aw, priceSize, 700) : 0;
+  const priceBlock = precioTxt ? priceH + 14 : 0;
   const alturas = lineas.map((l) => altoTexto(ctx, l, aw, size, 400));
   const gap = 8;
-  const h = pillBlock + alturas.reduce((s, a) => s + a, 0) + Math.max(0, lineas.length - 1) * gap;
+  const h = priceBlock + alturas.reduce((s, a) => s + a, 0) + Math.max(0, lineas.length - 1) * gap;
   return {
     h,
     colocar: (y0, uid) => {
       const out: LayerInput[] = [];
       let y = y0;
       if (precioTxt) {
-        const px = (ctx.w - pillW) / 2;
-        const py = y + 10;
-        out.push(
-          rect(uid('pastilla'), px, py, pillW, pillH, p.pastilla, { radius: pillH / 2, name: 'Precio (fondo)' }),
-          rect(uid('anillo'), px - 10, py - 10, pillW + 20, pillH + 20, null, {
-            stroke: { color: p.acento, width: 3 },
-            radius: pillH / 2 + 10,
-            name: 'Precio (anillo)',
-          }),
-        );
-        const t = texto(ctx, uid('precio'), px, py + (pillH - pillSize * LH) / 2, pillW, precioTxt, {
-          size: pillSize,
-          weight: 700,
-          color: p.sobrePastilla,
-          name: 'Precio',
-        });
-        out.push(t.layer);
-        y += pillBlock;
+        out.push(texto(ctx, uid('precio'), x, y, aw, precioTxt, { size: priceSize, weight: 700, color: p.acento, name: 'Precio' }).layer);
+        y += priceBlock;
       }
       lineas.forEach((l, i) => {
         const t = texto(ctx, uid(`pie-${i + 1}`), x, y, aw, l, { size, color: p.texto, name: 'Pie' });
@@ -363,8 +384,8 @@ interface Plan {
   /** Escala con la que se reparte en carrusel si no cabe en una página. */
   paginar: number;
   unidades: (escala: number) => Unidad[];
-  evento: boolean;
-  velo: number;
+  /** Hay foto de fondo: el texto va en un panel liso en la parte de abajo. */
+  modoFoto: ModoFoto;
   maxTitulo: number;
   pie: string[];
   precio: string;
@@ -414,14 +435,17 @@ function ensamblar(ctx: Ctx, d: DatosMenu, plan: Plan): { paginas: DocumentPageI
     const bloque = cab.h + GAP_CABECERA + cuerpo + (ultima && foot.h ? GAP_PIE + foot.h : 0);
     // Una sola página con poco texto: el bloque se centra en la zona libre (un poco hacia arriba).
     const libre = rango - bloque;
-    const y0 = ctx.top + (total === 1 ? Math.max(0, libre * 0.45) : 0);
-    const layers: LayerInput[] = [...fondoDePagina(ctx, pid, d, plan.velo)];
-    if (plan.evento) {
+    // Con foto, el texto va abajo y la foto se ve entera arriba.
+    const y0 = ctx.top + (total === 1 ? Math.max(0, libre * (plan.modoFoto === 'banda' ? 0.3 : 0.45)) : 0);
+    const layers: LayerInput[] = [...fondoDePagina(ctx, pid, d, plan.modoFoto)];
+    if (plan.modoFoto === 'banda') layers.push(...panelDeTexto(ctx, pid, ctx.fotoH));
+    if (plan.modoFoto === 'completa') {
       layers.push(
-        rect(uid('panel'), ctx.x - 36, y0 - 30, ctx.aw + 72, bloque + 60, ctx.p.fondo, {
-          opacity: 0.55,
-          radius: 44,
-          name: 'Velo del texto',
+        rect(uid('tarjeta'), ctx.x - 50, y0 - 46, ctx.aw + 100, bloque + 92, ctx.p.fondo, {
+          opacity: 0.97,
+          radius: 36,
+          stroke: { color: ctx.p.filete, width: 3 },
+          name: 'Tarjeta del texto',
         }),
       );
     }
@@ -440,6 +464,19 @@ function ensamblar(ctx: Ctx, d: DatosMenu, plan: Plan): { paginas: DocumentPageI
 
 // ───────────────────────────── Listas (menú del día, vinos, eventos) ─────────────────────────────
 
+/**
+ * Título de sección en versalitas espaciadas (como la minuta): mayúsculas con un espacio fino entre letras y
+ * un hueco más ancho entre palabras. El texto del documento ya lleva el espaciado (no hay interletraje en el esquema).
+ */
+export function espaciar(titulo: string): string {
+  return titulo
+    .toLocaleUpperCase('es')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((palabra) => [...palabra].join('\u2009'))
+    .join(`${NBSP}${NBSP}`);
+}
+
 interface SeccionLista {
   titulo: string;
   platos: PlatoMenu[];
@@ -449,13 +486,14 @@ function unidadesLista(ctx: Ctx, secciones: SeccionLista[], s: number): Unidad[]
   const { p, aw, x } = ctx;
   const unidades: Unidad[] = [];
   const conPrecio = secciones.some((sec) => sec.platos.some((pl) => pl.precio));
-  const labelSize = Math.round(s * 0.7);
+  const labelSize = Math.round(s * 0.66);
   const labelH = Math.ceil(labelSize * LH) + 2;
-  const gapLabel = Math.round(s * 0.3);
+  const gapLabel = Math.round(s * 0.5);
+  const precioSize = Math.round(s * 1.1);
   const priceW = conPrecio
     ? Math.min(
         aw * 0.4,
-        Math.max(0, ...secciones.flatMap((sec) => sec.platos.map((pl) => (pl.precio ? ctx.medir(sinPartirNombres(pl.precio), s, 400) : 0)))) + 8,
+        Math.max(0, ...secciones.flatMap((sec) => sec.platos.map((pl) => (pl.precio ? ctx.medir(sinPartirNombres(pl.precio), precioSize, 700) : 0)))) + 8,
       )
     : 0;
   const nameW = conPrecio ? aw - priceW - 28 : aw;
@@ -474,8 +512,9 @@ function unidadesLista(ctx: Ctx, secciones: SeccionLista[], s: number): Unidad[]
         const out = [t.layer];
         if (pl.precio) {
           const pr = texto(ctx, uid(`precio-${si + 1}-${pi + 1}`), x + aw - priceW, y, priceW, pl.precio, {
-            size: s,
-            color: p.texto,
+            size: precioSize,
+            weight: 700,
+            color: p.acento,
             align: 'right',
             name: 'Precio del plato',
           });
@@ -484,23 +523,23 @@ function unidadesLista(ctx: Ctx, secciones: SeccionLista[], s: number): Unidad[]
         return out;
       };
       if (!conEtiqueta) {
-        unidades.push({ h: nameH, gap: Math.round(s * 0.42), emit: itemEmit });
+        unidades.push({ h: nameH, gap: Math.round(s * 0.75), emit: itemEmit });
         return;
       }
       unidades.push({
         h: labelH + gapLabel + nameH,
-        gap: si === 0 ? 0 : Math.round(s * 0.9),
+        gap: si === 0 ? 0 : Math.round(s * 1.25),
         emit: (y, uid) => {
           const out: LayerInput[] = [];
-          const label = sinPartirNombres(sec.titulo.trim().toLocaleUpperCase('es'));
-          const lw = Math.min(aw - 200, ctx.medir(label, labelSize, 700));
+          const label = espaciar(sec.titulo.trim());
+          const lw = Math.min(aw - 120, ctx.medir(label, labelSize, 700) + 6);
           const lx = ctx.w / 2 - lw / 2;
           const lineY = y + labelH / 2;
           const side = (aw - lw) / 2 - 22;
           if (side > 30) {
             out.push(
-              rect(uid(`filete-${si + 1}a`), x, lineY, side, 2, p.acento, { opacity: 0.75, name: 'Filete' }),
-              rect(uid(`filete-${si + 1}b`), x + aw - side, lineY, side, 2, p.acento, { opacity: 0.75, name: 'Filete' }),
+              rect(uid(`filete-${si + 1}a`), x, lineY, side, 2, p.filete, { opacity: 0.75, name: 'Filete' }),
+              rect(uid(`filete-${si + 1}b`), x + aw - side, lineY, side, 2, p.filete, { opacity: 0.75, name: 'Filete' }),
             );
           }
           out.push(
@@ -526,15 +565,14 @@ function planLista(ctx: Ctx, d: DatosMenu, evento: boolean): Plan {
     .filter((s) => s.platos.length > 0);
   const tamanos: number[] = [];
   const max = ctx.story ? 42 : 38;
-  const min = evento ? 26 : 28;
+  const min = evento || ctx.fotoH > 0 ? 26 : 28;
   for (let s = max; s >= min; s -= 2) tamanos.push(s);
   return {
     escalas: tamanos,
     paginar: evento ? 28 : 32,
     unidades: (s) => unidadesLista(ctx, secciones, s),
-    evento,
-    velo: evento ? 0.68 : 0.86,
-    maxTitulo: ctx.story ? 80 : 68,
+    modoFoto: ctx.fotoH > 0 ? 'banda' : evento && Boolean(d.foto) ? 'completa' : 'ninguna',
+    maxTitulo: ctx.fotoH > 0 ? (ctx.story ? 64 : 56) : ctx.story ? 80 : 68,
     pie: lineasDe(d.pie),
     precio: d.precio,
   };
@@ -554,9 +592,11 @@ function planTapas(ctx: Ctx, d: DatosMenu): Plan {
     return filas.map((fila, fi) => {
       const tarjetas = fila.map((t) => {
         const fotoH = t.foto ? Math.round(cw * aspecto) : 0;
-        const linea = t.precio.trim() ? `${t.nombre.trim()}\n${t.precio.trim()}` : t.nombre.trim();
+        const linea = t.nombre.trim();
+        const precio = t.precio.trim();
         const th = altoTexto(ctx, linea, cw, s, 400);
-        return { t, fotoH, linea, th, h: fotoH + (fotoH ? 14 : 0) + th };
+        const ph = precio ? altoTexto(ctx, precio, cw, s + 4, 700) : 0;
+        return { t, fotoH, linea, precio, th, ph, h: fotoH + (fotoH ? 14 : 0) + th + (ph ? 4 + ph : 0) };
       });
       const h = Math.max(...tarjetas.map((c) => c.h));
       return {
@@ -576,6 +616,17 @@ function planTapas(ctx: Ctx, d: DatosMenu): Plan {
                 name: `Tapa ${n}`,
               }).layer,
             );
+            if (c.precio) {
+              out.push(
+                texto(ctx, uid(`precio-${n}`), cx, y + c.fotoH + (c.fotoH ? 14 : 0) + c.th + 4, cw, c.precio, {
+                  size: s + 4,
+                  weight: 700,
+                  color: ctx.p.acento,
+                  align: 'center',
+                  name: `Precio de la tapa ${n}`,
+                }).layer,
+              );
+            }
           });
           return out;
         },
@@ -586,8 +637,7 @@ function planTapas(ctx: Ctx, d: DatosMenu): Plan {
     escalas: [1.15, 1.05, 0.95, 0.85, 0.78, 0.7, 0.62, 0.55, 0.48, 0.42],
     paginar: 0.7,
     unidades,
-    evento: false,
-    velo: 0.8,
+    modoFoto: 'ninguna',
     maxTitulo: ctx.story ? 80 : 68,
     pie: lineasDe(d.pie),
     precio: d.precio,
@@ -611,7 +661,7 @@ function paginaTapaSemana(ctx: Ctx, d: DatosMenu): { paginas: DocumentPageInput[
   const desborda = Boolean(d.foto) && rango - fijo - 24 < 240;
   const bloque = fijo + (fotoH ? fotoH + 24 : 0);
   const y0 = ctx.top + Math.max(0, (rango - bloque) * 0.4);
-  const layers: LayerInput[] = [...fondoDePagina(ctx, pid, { ...d, foto: null }, 0), ...head.colocar(y0, uid)];
+  const layers: LayerInput[] = [...fondoDePagina(ctx, pid, d, 'ninguna'), ...head.colocar(y0, uid)];
   let y = y0 + head.h + GAP_CABECERA;
   if (d.foto) {
     layers.push(foto(uid('foto'), ctx.x, y, ctx.aw, fotoH, d.foto, 'Foto de la tapa'));
@@ -643,7 +693,8 @@ export function construirMenu(
   theme: Theme,
   medir: Medidor = medidorDeMenus(),
 ): ResultadoMenu {
-  const ctx = contexto(formato, theme, datos.estilo, medir);
+  const conFoto = Boolean(datos.foto) && (tipo === 'menu-dia' || tipo === 'vinos');
+  const ctx = contexto(formato, theme, datos.estilo, medir, conFoto);
   const r =
     tipo === 'tapa-semana'
       ? paginaTapaSemana(ctx, datos)

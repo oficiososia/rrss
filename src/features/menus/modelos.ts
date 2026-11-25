@@ -227,7 +227,8 @@ export function datosIniciales(tipo: TipoMenu, preset = 'nochevieja'): DatosMenu
       };
     case 'evento': {
       const p = PRESETS_EVENTO.find((e) => e.id === preset) ?? PRESETS_EVENTO[0]!;
-      return { ...base, ...p.datos, secciones: p.datos.secciones.map((s) => ({ ...s })) };
+      // Los eventos salen en claro (marfil y oro), como la minuta; el oscuro se elige a mano.
+      return { ...base, ...p.datos, secciones: p.datos.secciones.map((s) => ({ ...s })), estilo: 'claro' };
     }
   }
 }

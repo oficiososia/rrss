@@ -365,6 +365,32 @@ export function MenusPage() {
             <Field label="Líneas de abajo" hint="Una por línea: qué incluye, cuándo, el lema, la hora…" optional>
               {(p) => <Textarea {...p} rows={2} value={datos.pie} onChange={(e) => cambiar({ pie: e.target.value })} maxLength={400} />}
             </Field>
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-fg">Color del diseño</span>
+              <div className="flex items-center gap-2" role="radiogroup" aria-label="Color del diseño">
+                {(
+                  [
+                    ['claro', 'Claro'],
+                    ['oscuro', 'Oscuro'],
+                  ] as const
+                ).map(([e, nombre]) => (
+                  <button
+                    key={e}
+                    type="button"
+                    role="radio"
+                    aria-checked={datos.estilo === e}
+                    data-testid={`menus-estilo-${e}`}
+                    onClick={() => cambiar({ estilo: e })}
+                    className={cn(
+                      'rounded-full border px-3 py-1.5 text-sm',
+                      datos.estilo === e ? 'border-primary bg-primary/5' : 'border-border hover:bg-subtle',
+                    )}
+                  >
+                    {nombre}
+                  </button>
+                ))}
+              </div>
+            </div>
           </Card>
 
           {info.foto !== 'por-tapa' && (
@@ -378,25 +404,6 @@ export function MenusPage() {
                 onElegir={() => setEligiendo({ tipo: 'general' })}
                 onQuitar={() => cambiar({ foto: null })}
               />
-              {tipo !== 'tapa-semana' && tipo !== 'tapas' && (
-                <div className="flex items-center gap-2" role="radiogroup" aria-label="Color del diseño">
-                  {(['oscuro', 'claro'] as const).map((e) => (
-                    <button
-                      key={e}
-                      type="button"
-                      role="radio"
-                      aria-checked={datos.estilo === e}
-                      onClick={() => cambiar({ estilo: e })}
-                      className={cn(
-                        'rounded-full border px-3 py-1.5 text-sm',
-                        datos.estilo === e ? 'border-primary bg-primary/5' : 'border-border hover:bg-subtle',
-                      )}
-                    >
-                      Fondo {e}
-                    </button>
-                  ))}
-                </div>
-              )}
             </Card>
           )}
         </div>

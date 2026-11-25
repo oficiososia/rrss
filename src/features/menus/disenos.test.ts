@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { NEUTRAL_THEME } from '../../../agency/catalogo/tema.ts';
+import { NEUTRAL_THEME, contrast } from '../../../agency/catalogo/tema.ts';
 import { validateDocument } from '../content/document';
-import { construirMenu } from './disenos';
+import { construirMenu, espaciar } from './disenos';
 import { NBSP, medidorEstimado, sinPartirNombres } from './medir';
 import { datosIniciales, PRESETS_EVENTO, TIPOS, type DatosMenu, type FormatoMenu, type TipoMenu } from './modelos';
 
@@ -108,16 +108,56 @@ describe('plantillas de menús: reglas de diseño', () => {
     expect(new Set(platos.map((t) => `${t.color}/${t.fontWeight}`)).size).toBe(1);
   });
 
-  it('con foto de fondo hay un velo entre la foto y el texto', () => {
+  it('con foto, la foto va nítida y el texto sobre un panel liso (sin velo gris sobre ella)', () => {
     const d = { ...datosIniciales('menu-dia'), foto: FOTO };
     const r = construirMenu('menu-dia', d, 'story', THEME, medidorEstimado);
-    const capas = r.document.pages![0]!.layers as Array<{ id: string; type: string }>;
-    const iFoto = capas.findIndex((c) => c.type === 'image');
-    const iVelo = capas.findIndex((c) => c.id.endsWith('-velo'));
-    const iTexto = capas.findIndex((c) => c.type === 'text');
-    expect(iFoto).toBeGreaterThanOrEqual(0);
-    expect(iVelo).toBeGreaterThan(iFoto);
-    expect(iTexto).toBeGreaterThan(iVelo);
+    const capas = r.document.pages![0]!.layers as Array<{ id: string; type: string; opacity?: number; y: number; height: number }>;
+    const foto = capas.find((c) => c.type === 'image')!;
+    expect(foto.opacity ?? 1).toBe(1);
+    // Ninguna capa cubre la foto entera.
+    expect(capas.filter((c) => c.type === 'shape' && c.id !== 'p1-fondo' && c.height >= 1900)).toHaveLength(0);
+    const panel = capas.find((c) => c.id.endsWith('-panel'))!;
+    const iFoto = capas.indexOf(foto);
+    const iPanel = capas.indexOf(panel);
+    const primerTexto = capas.findIndex((c) => c.type === 'text');
+    expect(iPanel).toBeGreaterThan(iFoto);
+    expect(primerTexto).toBeGreaterThan(iPanel);
+    // La foto se ve por encima del panel (al menos un tercio de la historia).
+    expect(panel.y).toBeGreaterThanOrEqual(640);
+    expect(r.paginas).toBe(1);
+    expect(r.desborda).toBe(false);
+    // Todos los textos están dentro del panel.
+    for (const t of capas.filter((c) => c.type === 'text')) expect(t.y).toBeGreaterThanOrEqual(panel.y);
+  });
+
+  it('el precio es texto dorado en negrita y mayor que los platos, sin pastilla', () => {
+    for (const tipo of ['menu-dia', 'evento', 'tapa-semana'] as const) {
+      const d = datosIniciales(tipo);
+      d.precio = '14,50 €';
+      const r = construirMenu(tipo, d, 'post', THEME, medidorEstimado);
+      const capas = r.document.pages!.flatMap((p) => p.layers as Array<{ id: string; type: string; fontWeight?: number; fontSize?: number; color?: string; cornerRadius?: number }>);
+      const precio = capas.find((c) => c.id.endsWith('-precio'))!;
+      const plato = capas.find((c) => c.type === 'text' && c.id.includes('-plato-'))
+        ?? capas.find((c) => c.id.endsWith('-descripcion'))!;
+      expect(precio.fontWeight).toBe(700);
+      expect(precio.fontSize!).toBeGreaterThan(plato.fontSize!);
+      expect(capas.some((c) => c.id.includes('pastilla') || c.id.includes('anillo'))).toBe(false);
+      expect(capas.every((c) => !(c.type === 'shape' && (c.cornerRadius ?? 0) >= 40))).toBe(true);
+    }
+  });
+
+  it('el tema claro usa el fondo claro de la marca y un dorado legible; los eventos salen en claro', () => {
+    expect(datosIniciales('evento').estilo).toBe('claro');
+    const d = { ...datosIniciales('menu-dia'), estilo: 'claro' as const };
+    const r = construirMenu('menu-dia', d, 'post', THEME, medidorEstimado);
+    expect(r.document.canvas!.backgroundColor).toBe(THEME.light);
+    const kicker = (r.document.pages![0]!.layers as Array<{ id: string; color?: string }>).find((c) => c.id.endsWith('-antetitulo'))!;
+    expect(contrast(kicker.color!, THEME.light)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('las etiquetas de sección van en versalitas espaciadas', () => {
+    const fino = '\u2009';
+    expect(espaciar('Platos fuertes')).toBe(`${[...'PLATOS'].join(fino)}${NBSP}${NBSP}${[...'FUERTES'].join(fino)}`);
   });
 
   it('sin logotipo en la marca, no hay capa de logotipo; con él, sí', () => {
