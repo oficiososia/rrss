@@ -186,6 +186,15 @@ const COPY_FIELD: Partial<Record<FindingTarget['part'], string>> = {
 const isTypingTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement && Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
 
+/**
+ * ¿Se lleva el foco lo que se ha pulsado para salir de escribir en el lienzo o de encuadrar
+ * (un campo como el del copiloto, un botón…)? Entonces el foco no vuelve al lienzo: antes se lo
+ * quitaba y el primer toque en el campo del copiloto no servía (prueba del 24/11/2026, fallo 6).
+ */
+const takesFocus = (next: Element | null | undefined): boolean =>
+  next instanceof HTMLElement &&
+  Boolean(next.closest('input, textarea, select, button, a[href], [contenteditable="true"], [tabindex]:not([tabindex="-1"])'));
+
 export function ContentEditorPage() {
   const { org } = useOrg();
   const { brand } = useBrand();
@@ -637,12 +646,12 @@ function Editor({
     dispatch({ type: 'select', id, exact: true });
     if (!readOnly) setEditingTextId(id);
   };
-  const onTextCommit: CanvasViewProps['onTextCommit'] = (id, text) => {
+  const onTextCommit: CanvasViewProps['onTextCommit'] = (id, text, next) => {
     setEditingTextId(null);
     const layer = layers.find((l) => l.id === id);
     if (layer?.type === 'text' && layer.text !== text) dispatch({ type: 'update', id, patch: { text } });
-    // El foco vuelve al lienzo, para seguir con el teclado.
-    canvasRef.current?.focus();
+    // El foco vuelve al lienzo, para seguir con el teclado; salvo si se ha pulsado otro campo o botón.
+    if (!takesFocus(next)) canvasRef.current?.focus();
   };
   const onTextCancel = () => {
     setEditingTextId(null);
@@ -740,10 +749,10 @@ function Editor({
     run({ type: 'checkpoint' });
     setFramingId(id);
   };
-  const endFraming = () => {
+  const endFraming = (next?: Element | null) => {
     setFramingId(null);
     dispatch({ type: 'checkpoint' });
-    canvasRef.current?.focus();
+    if (!takesFocus(next)) canvasRef.current?.focus();
   };
   // Si la foto que se encuadraba deja de estar a la vista (otra página, deshacer, borrarla), no hay encuadre.
   const activeFramingId =
@@ -1631,14 +1640,15 @@ function Editor({
       )}
     </>
   );
-  const footerEnd = copilotOn ? (
+  // Con el panel abierto, el botón redondo no sale: era un segundo micrófono junto al del panel (que ya
+  // tiene su micrófono y su «cerrar»), y tapaba una esquina del lienzo.
+  const footerEnd = copilotOn && !copilotOpen ? (
     <Button
-      variant={copilotOpen ? 'primary' : 'secondary'}
+      variant="secondary"
       size="icon"
       className="h-10 w-10 rounded-full shadow-pop"
-      aria-pressed={copilotOpen}
       aria-label="Copiloto"
-      onClick={() => setCopilotOpen((open) => !open)}
+      onClick={() => setCopilotOpen(true)}
       data-testid="copilot-open"
       title="Copiloto: dicta o escribe lo que quieres cambiar (textos, fotos, capas, páginas…)"
     >

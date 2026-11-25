@@ -886,13 +886,17 @@ export function VoiceCopilot({
       data-status={order.status}
       data-source={order.local ? 'local' : 'ai'}
     >
-      <p className="flex flex-wrap items-start gap-x-2 gap-y-0.5">
+      {/* Siempre igual, en cualquier ancho: arriba lo dicho; debajo, cómo ha ido y si ha usado IA. */}
+      <p className="flex items-start gap-2">
         {order.status === 'sending' || order.status === 'pending' || order.status === 'running' ? (
           <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
         ) : order.status === 'applied' ? (
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
         ) : null}
-        <span className="min-w-0 flex-1 basis-40 break-words">«{order.transcript}»</span>
+        <span className="min-w-0 flex-1 break-words">«{order.transcript}»</span>
+      </p>
+      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted" data-testid="copilot-order-meta">
+        <span>{STATUS_LABEL[order.status]}</span>
         {order.spentMicros !== undefined ? (
           // Ha gastado IA de pago (el fondo de un plan): se dice cuánto, nunca «Sin IA».
           <span
@@ -922,7 +926,6 @@ export function VoiceCopilot({
             </span>
           )
         )}
-        <span className="shrink-0 text-xs text-muted">{STATUS_LABEL[order.status]}</span>
       </p>
       {order.changes && order.changes.length > 0 && (
         <ul className="mt-1 list-disc pl-5 text-xs" data-testid="copilot-changes">

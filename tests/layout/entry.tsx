@@ -98,5 +98,12 @@ fake.tables.content_versions = [
     created_at: '2026-11-11T09:00:00Z',
   },
 ];
+// Para las pruebas del copiloto: responder `ai-generate` (editor.copilot) con lo que diga la prueba.
+(window as unknown as { answerAi: (reply: unknown, delayMs?: number) => void }).answerAi = (reply, delayMs = 0) =>
+  fake.fn('ai-generate', async () => {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return { status: 200, body: reply as Record<string, unknown> };
+  });
+(window as unknown as { fakeTables: typeof fake.tables }).fakeTables = fake.tables;
 window.history.pushState({}, '', `${BRAND_BASE}/contenidos/content-1${window.location.search}`);
 createRoot(document.getElementById('root')!).render(<App />);

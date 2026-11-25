@@ -54,7 +54,8 @@ export interface CanvasViewProps {
   /** Texto que se está editando sobre el lienzo; null si ninguno. */
   editingTextId: string | null;
   /** Terminar la edición sobre el lienzo conservando lo escrito (Intro, Escape o clic fuera). */
-  onTextCommit: (id: string, text: string) => void;
+  /** `next`: adónde se va el foco al terminar con un clic fuera (otro campo, un botón), o null. */
+  onTextCommit: (id: string, text: string, next?: Element | null) => void;
   /** Cerrar la edición sin cambiar nada (ya no la usa el teclado: Escape también conserva lo escrito). */
   onTextCancel: () => void;
   /** Zona segura de la red que se dibuja encima; null para no dibujarla. */
@@ -73,7 +74,8 @@ export interface CanvasViewProps {
   /** Cambio del encuadre mientras se arrastra o se amplía (un solo paso de deshacer por sesión). */
   onFrameChange?: (id: string, patch: LayerPatch) => void;
   /** Termina el encuadre (Intro, Escape, «Listo» o clic fuera). */
-  onFramingEnd?: () => void;
+  /** `next`: lo que se ha pulsado fuera para terminar, si lo hay. */
+  onFramingEnd?: (next?: Element | null) => void;
   /** Barra de acciones del elemento elegido: el lienzo la coloca encima sin taparlo ni salirse. */
   toolbar?: ReactNode;
   /** Botón derecho sobre una capa (`id`) o sobre el fondo (null), en coordenadas de la ventana. */

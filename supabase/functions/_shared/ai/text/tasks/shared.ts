@@ -84,6 +84,8 @@ export interface StructuredTaskRequest {
   params?: Record<string, string | number | boolean>;
   /** Por qué no sirve un JSON que sí cumple el esquema, o null (ver `AiGenerateParams.accept`): no se cobra. */
   accept?: (value: Json) => string | null;
+  /** Tiempo máximo de esta llamada al proveedor (ver `AiGenerateParams.timeoutMs`). */
+  timeoutMs?: number;
 }
 
 /** Llama al servicio (reservar → generar → registrar) y devuelve el JSON ya validado. */
@@ -105,6 +107,7 @@ export async function runStructuredTask(
       params: { max_output_tokens: request.maxOutputTokens, ...request.params },
     },
     ...(request.accept ? { accept: request.accept } : {}),
+    ...(request.timeoutMs !== undefined ? { timeoutMs: request.timeoutMs } : {}),
   });
   const data = result.output.json;
   if (data === undefined) {

@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 24/11/2026 (ramas `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 25/11/2026 (ramas `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1033,6 +1033,38 @@ sin el pie legal ni los enlaces que abren cada pieza).
 - **Pendiente de la propuesta:** el selector del transcriptor debía pasar a Configuración → Integraciones (K2); queda
   en el «⋯» del copiloto porque `IntegrationsPage` no entraba en esta rama. K1 a medias: el micrófono flotante ya abre
   el copiloto, pero el resultado sigue en el panel acoplado (no como aviso corto con «Deshacer»), como se pidió.
+
+### «Preparar el plan» fiable y copiloto que no pierde lo escrito (rama `f72/campanas-copiloto`, 25/11/2026)
+
+Fallos 1, 6, 8 (en parte) y 9 de la segunda prueba real (`rrss-recursos-comparativa/e2e-calidad-2/INFORME.md`).
+
+- **Causa de «respuesta que no se puede usar»** (10 de 10 en `ai_generations` de staging, 24/11): el modelo copiaba el
+  destino del prompt tal cual y ponía `network: "instagram/post"` en todas las piezas; ninguna casaba con los destinos,
+  el plan quedaba vacío y se rechazaba (sin cobrar). Ahora el prompt da red y formato por separado
+  (`- Destino: network=instagram format=post`), las instrucciones lo piden y el saneado entiende «instagram/post» en la
+  red o en el formato (`tasks/targets.ts`). Reprocesadas en local las 10 respuestas reales de staging: salen los 10 planes.
+- **Causa de «ha tardado demasiado»** (3 de 3): un mes de 16–20 piezas son ~7.000 tokens de salida (más de dos minutos
+  a ~55 tokens/s) y el tope era 60 s. Ahora `campaign.plan` se pide por **tramos** de hasta 5 piezas (semanas enteras
+  si el ritmo lo permite), todos a la vez, cada uno con sus fases del acuerdo, y se juntan (`planChunks`). Tope por
+  llamada 80 s (`AiGenerateParams.timeoutMs`, nuevo) y 125 s en total; la aplicación espera 140 s.
+- **Un segundo intento**: si un tramo no sirve (sin piezas válidas o JSON roto), se pide una vez más diciendo qué
+  corregir; la respuesta mala no se cobra. Si tampoco sirve: «No ha salido un plan utilizable ni al segundo intento…
+  No se ha consumido cupo… Prueba con menos semanas o cuéntalo de otra forma». Si falla un tramo y los demás no, el
+  plan sale con esos días vacíos (`gaps`) y un aviso que los nombra.
+- **Coste máximo**: `cost.estimate` suma todos los tramos.
+- **Error viejo en pantalla** (fallo 9): al pedir otra propuesta se borra el error de «Preparar el plan».
+- **Copiloto: el primer toque no enfocaba el campo** (fallo 6). Causa reproducida en Chromium real: si se estaba
+  escribiendo en un texto del lienzo (o encuadrando una foto), tocar el campo del copiloto terminaba esa edición y el
+  editor devolvía el foco al lienzo, quitándoselo al campo; lo tecleado iba al lienzo. Ahora el foco solo vuelve al
+  lienzo si no se ha pulsado otro campo o botón. Prueba: `tests/layout/copiloto-foco.spec.ts` (falla antes, pasa
+  después, a 1366 px con ratón y a 375 px táctil). **No se ha reproducido** el caso exacto «justo después de una orden»
+  sin tocar el lienzo (ni con órdenes locales, ni con IA simulada, ni con un plan).
+- **Copiloto, diseño**: con el panel abierto ya no sale el botón redondo del micrófono sobre el lienzo (era un segundo
+  micrófono junto al del panel); cada orden se ve igual en cualquier ancho (lo dicho arriba; debajo, estado y «Sin
+  IA»/«Con IA»).
+- **Probado**: `test:db` de campañas, `ai-generate`, servicio y simulado local; componentes de contenidos y campañas;
+  `test:layout` del copiloto y del editor. **Sin probar con el modelo real** (no hay clave en local y no se despliega
+  desde esta rama). **Para llevarlo a staging:** redesplegar `ai-generate` y la aplicación; sin migraciones.
 
 ## Sin probar contra el servicio real
 
