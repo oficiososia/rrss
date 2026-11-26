@@ -43,6 +43,8 @@ export interface AiServiceConfig {
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+/** Tope del tiempo por llamada que puede pedir una tarea (el mismo que admite AI_TIMEOUT_MS). */
+const MAX_TIMEOUT_MS = 390_000;
 /** Margen entre el tiempo máximo de la llamada y la caducidad de su reserva. */
 const RESERVATION_MARGIN_SECONDS = 60;
 
@@ -125,6 +127,10 @@ export function createAiService(config: AiServiceConfig): AiService {
 
   async function generate(params: AiGenerateParams): Promise<AiGenerateResult> {
     const { spec, provider, request, reserveMicros } = plan(params);
+    const callTimeoutMs =
+      params.timeoutMs !== undefined && Number.isFinite(params.timeoutMs)
+        ? Math.min(MAX_TIMEOUT_MS, Math.max(1000, Math.round(params.timeoutMs)))
+        : timeoutMs;
 
     // 1. Reservar cupo. Si no hay, aquí se acaba: no se llama a nadie.
     const reservation = await rpc('ai_reserve_generation', {
@@ -135,7 +141,7 @@ export function createAiService(config: AiServiceConfig): AiService {
       p_provider: provider.id,
       p_model: spec.model,
       p_reserve_micros: reserveMicros,
-      p_ttl_seconds: Math.ceil(timeoutMs / 1000) + RESERVATION_MARGIN_SECONDS,
+      p_ttl_seconds: Math.ceil(callTimeoutMs / 1000) + RESERVATION_MARGIN_SECONDS,
     });
     if (reservation.error) {
       const { code, message, details } = reservation.error;
@@ -165,7 +171,7 @@ export function createAiService(config: AiServiceConfig): AiService {
         timer = setTimeout(() => {
           controller.abort();
           reject(new AiProviderFailure('timeout', 'El proveedor no respondió a tiempo', { retryable: true }));
-        }, timeoutMs);
+        }, callTimeoutMs);
       });
       const call = provider.generate({ ...request, signal: controller.signal });
       // Si gana el tiempo máximo, el fallo tardío del proveedor ya no interesa.

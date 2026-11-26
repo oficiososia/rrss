@@ -825,7 +825,7 @@ export function CalendarPage() {
       </div>
 
       <CalendarQuickView
-        key={quick ? `${quick.id}:${quick.scheduled_at}` : 'cerrada'}
+        key={quick ? `vista:${quick.id}:${quick.scheduled_at}` : 'vista-cerrada'}
         brandId={brand.id}
         entry={quick}
         zone={zone}
@@ -847,7 +847,7 @@ export function CalendarPage() {
         moving={reschedule.isPending}
       />
       <PublicationDialog
-        key={open ? `${open.id}:${open.scheduled_at}` : 'cerrada'}
+        key={open ? `ficha:${open.id}:${open.scheduled_at}` : 'ficha-cerrada'}
         orgId={org.id}
         brandId={brand.id}
         entry={open}

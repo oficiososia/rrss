@@ -188,29 +188,23 @@ describe('Lista de contenidos', () => {
 
     await user.click(nav.getByRole('link', { name: 'Contenidos' }));
     const list = await screen.findByTestId('content-list');
-    // Se abre en la primera pestaña con algo: la idea sin diseño, marcada como vacía.
-    const ideas = within(list).getAllByTestId('content-card');
-    expect(ideas).toHaveLength(1);
-    expect(ideas[0]).toHaveTextContent('Vídeo de la terraza');
-    expect(ideas[0]).toHaveTextContent('Idea');
-    expect(ideas[0]).toHaveTextContent('Vacía');
-    expect(screen.getByTestId('content-count-idea')).toHaveTextContent('1');
-    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
-
-    await user.click(screen.getByTestId('content-tab-preparing'));
-    const cards = within(await screen.findByTestId('content-list')).getAllByTestId('content-card');
-    expect(cards).toHaveLength(1);
-    expect(cards[0]).toHaveTextContent('Menú de otoño');
-    expect(cards[0]).toHaveTextContent('Publicación');
-    expect(cards[0]).toHaveTextContent('En preparación');
-    expect(cards[0]).not.toHaveTextContent('Vacía');
-    // Con la vista de lista, la misma pieza en una fila compacta.
-    await user.click(screen.getByTestId('content-view-list'));
-    expect(within(screen.getByTestId('content-list')).getAllByTestId('content-row')).toHaveLength(1);
-    // Solo lectura: no puede crear, ni elegir, ni archivar.
+    // Tres pestañas; «En marcha» junta ideas, en preparación y listas, y el estado sale en la tarjeta.
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['En marcha2', 'Programadas0', 'Publicadas0']);
+    const cards = within(list).getAllByTestId('content-card');
+    expect(cards).toHaveLength(2);
+    const idea = cards.find((card) => card.textContent?.includes('Vídeo de la terraza'))!;
+    expect(idea).toHaveTextContent('Idea');
+    expect(idea).toHaveTextContent('Vacía');
+    const draft = cards.find((card) => card.textContent?.includes('Menú de otoño'))!;
+    expect(draft).toHaveTextContent('Publicación');
+    expect(draft).toHaveTextContent('En preparación');
+    expect(draft).not.toHaveTextContent('Vacía');
+    // Sin cambio entre miniaturas y lista: miniaturas en pantallas anchas, lista en el móvil.
+    expect(screen.queryByTestId('content-view-list')).not.toBeInTheDocument();
+    // Solo lectura: no puede crear, ni elegir, ni archivar (ni hay «⋯» en las piezas).
     expect(screen.queryByTestId('create-menu')).not.toBeInTheDocument();
     expect(screen.queryByTestId('content-select')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('content-archive')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('content-menu')).not.toBeInTheDocument();
   });
 
   it('filtra por formato, nombre y archivadas, y los contadores siguen al filtro', async () => {
@@ -222,16 +216,17 @@ describe('Lista de contenidos', () => {
     ];
     const { user } = renderApp(CONTENT);
     await screen.findByTestId('content-list');
-    expect(screen.getByTestId('content-count-idea')).toHaveTextContent('1');
-    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-active')).toHaveTextContent('2');
 
-    await user.selectOptions(screen.getByTestId('content-format-filter'), 'post');
-    await waitFor(() => expect(screen.getByTestId('content-count-idea')).toHaveTextContent('0'));
-    expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('1');
+    // Formato con una ficha de un toque.
+    await user.click(screen.getByTestId('content-format-post'));
+    expect(screen.getByTestId('content-format-post')).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(screen.getByTestId('content-count-active')).toHaveTextContent('1'));
+    expect(screen.getByTestId('content-card')).toHaveTextContent('Menú de otoño');
 
-    await user.selectOptions(screen.getByTestId('content-format-filter'), '');
+    await user.click(screen.getByTestId('content-format-all'));
     await user.type(screen.getByTestId('content-search'), 'terraza');
-    await waitFor(() => expect(screen.getByTestId('content-count-preparing')).toHaveTextContent('0'));
+    await waitFor(() => expect(screen.getByTestId('content-count-active')).toHaveTextContent('1'));
     expect(within(screen.getByTestId('content-list')).getByTestId('content-card')).toHaveTextContent(
       'Vídeo de la terraza',
     );
@@ -273,7 +268,7 @@ describe('Lista de contenidos', () => {
     ];
     const { user } = renderApp(CONTENT);
     await screen.findByTestId('content-list');
-    expect(screen.getByTestId('content-count-ready')).toHaveTextContent('1');
+    expect(screen.getByTestId('content-count-active')).toHaveTextContent('1');
     expect(screen.getByTestId('content-count-scheduled')).toHaveTextContent('1');
     expect(screen.getByTestId('content-count-published')).toHaveTextContent('1');
     await user.click(screen.getByTestId('content-tab-scheduled'));
@@ -298,6 +293,10 @@ describe('Lista de contenidos', () => {
     });
     const { user } = renderApp(CONTENT);
     await screen.findByTestId('content-list');
+    // Sin casillas a la vista: «Elegir varias» está en «⋯».
+    expect(screen.queryByTestId('content-select')).not.toBeInTheDocument();
+    await chooseMoreAction(user, 'content-more', 'content-select-many');
+    expect(screen.getByTestId('content-selection')).toHaveTextContent('Toca las piezas');
     await user.click(within(screen.getAllByTestId('content-card')[0]!).getByTestId('content-select'));
     await user.click(within(screen.getAllByTestId('content-card')[1]!).getByTestId('content-select'));
     expect(screen.getByTestId('content-selection')).toHaveTextContent('2 elegidas');
@@ -318,26 +317,27 @@ describe('Lista de contenidos', () => {
   });
 });
 
-describe('Crear una idea', () => {
+describe('Crear una idea («¿Qué quieres crear?»)', () => {
   // Una prueba abre el editor de reels, que se carga aparte: se paga aquí (ver src/test/preload.ts).
   beforeAll(preloadReelEditor, PRELOAD_TIMEOUT_MS);
 
-  it('elige el formato con una tarjeta y abre el editor que toca (un reel, el de reels)', async () => {
+  it('un paso: se toca el formato y «En blanco» crea la pieza y abre el editor que toca (un reel, el de reels)', async () => {
     seedWorkspace({ orgRole: 'member', brandRole: 'editor' });
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-empty-new'));
-    const dialog = within(await screen.findByRole('dialog'));
-    await user.type(dialog.getByTestId('create-content-title'), 'Reel del vermut');
-    await user.click(dialog.getByTestId('create-content-format-reel'));
+    const dialog = within(await screen.findByRole('dialog', { name: '¿Qué quieres crear?' }));
+    // Ni nombre, ni «Cancelar», ni «Crear y abrir», ni el aviso viejo del vídeo.
+    expect(dialog.queryByTestId('create-content-title')).not.toBeInTheDocument();
+    expect(dialog.queryByRole('button', { name: 'Cancelar' })).not.toBeInTheDocument();
     expect(dialog.queryByText(/llegará más adelante/)).not.toBeInTheDocument();
-    await user.click(dialog.getByTestId('create-content-submit'));
+    await user.click(dialog.getByTestId('create-content-format-reel'));
+    await user.click(await screen.findByTestId('create-content-blank'));
 
     // Un reel se abre en el editor de reels (línea de tiempo y vista previa), no en el de imagen.
-    expect(await screen.findByTestId('reel-editor', {}, SLOW)).toHaveTextContent('Reel del vermut');
-    expect(fake.callsTo('content_items', 'insert')[0]?.payload).toEqual({
+    expect(await screen.findByTestId('reel-editor', {}, SLOW)).toHaveTextContent(/Reel · /);
+    expect(fake.callsTo('content_items', 'insert')[0]?.payload).toMatchObject({
       brand_id: BRAND_ID,
       organization_id: ORG_ID,
-      title: 'Reel del vermut',
       network: 'instagram',
       format: 'reel',
     });
@@ -348,13 +348,13 @@ describe('Crear una idea', () => {
     expect(screen.queryByRole('button', { name: /IA/ })).not.toBeInTheDocument();
   });
 
-  it('sin nombre se llama como el formato y el día, no «Reel nuevo» a secas', async () => {
+  it('el nombre se pone solo: el formato y el día, no «Reel nuevo» a secas', async () => {
     seedWorkspace({ orgRole: 'owner' });
     const { user } = renderApp(CONTENT);
     await user.click(await screen.findByTestId('content-empty-new'));
     const dialog = within(await screen.findByRole('dialog'));
     await user.click(dialog.getByTestId('create-content-format-carousel'));
-    await user.click(dialog.getByTestId('create-content-submit'));
+    await user.click(await screen.findByTestId('create-content-blank'));
     await waitFor(() => expect(fake.callsTo('content_items', 'insert')).toHaveLength(1));
     const payload = fake.callsTo('content_items', 'insert')[0]!.payload as { title: string; format: string };
     expect(payload.format).toBe('carousel');

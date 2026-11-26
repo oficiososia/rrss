@@ -62,7 +62,7 @@ for (const size of SIZES) {
       await create.click();
       const items = page.getByTestId('create-menu-items');
       await expect(items).toBeVisible();
-      for (const id of ['post', 'carousel', 'reel', 'story', 'upload', 'plan'])
+      for (const id of ['post', 'carousel', 'reel', 'story', 'menus', 'upload', 'plan'])
         await expect(page.getByTestId(`create-menu-${id}`)).toBeVisible();
       for (const item of await items.getByRole('menuitem').all()) await expectReachable(item, size);
       await page.keyboard.press('Escape');
@@ -88,7 +88,9 @@ for (const size of SIZES) {
       await page.getByTestId('create-menu-carousel').click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
-      await expect(page.getByTestId('create-content-format-carousel').locator('input')).toBeChecked();
+      // Se abre directamente la galería del carrusel, con «En blanco» la primera.
+      await expect(dialog.getByRole('heading', { name: 'Carrusel' })).toBeVisible();
+      await expect(page.getByTestId('create-content-blank')).toBeVisible();
       const box = (await dialog.boundingBox())!;
       expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
     });

@@ -82,14 +82,23 @@ class EstimateOnly extends Error {
   }
 }
 
-/** Un servicio que no genera: al pedir una generación devuelve (lanzando) lo que se reservaría. */
-function estimatingService(service: AiService): AiService {
+/**
+ * Un servicio que no genera: al pedir una generación devuelve (lanzando) lo que se reservaría.
+ * Lleva la cuenta de todas las que se pidan: un plan largo se pide por tramos (campaign-plan.ts)
+ * y su coste máximo es la suma.
+ */
+function estimatingService(service: AiService): { service: AiService; total: () => number } {
+  let total = 0;
   return {
-    ...(service.capabilities ? { capabilities: service.capabilities } : {}),
-    async generate(params) {
-      if (!service.estimate) throw new AiError('not_configured', 'No se puede calcular el coste de esta tarea.');
-      throw new EstimateOnly(service.estimate(params));
+    service: {
+      ...(service.capabilities ? { capabilities: service.capabilities } : {}),
+      async generate(params) {
+        if (!service.estimate) throw new AiError('not_configured', 'No se puede calcular el coste de esta tarea.');
+        total += service.estimate(params);
+        throw new EstimateOnly(total);
+      },
     },
+    total: () => total,
   };
 }
 
@@ -302,10 +311,11 @@ export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request
         const innerData = inner as Record<string, unknown>;
         const sector = sectorFromInput(innerData.brandSector);
         const estimateProfile = effectiveBrandProfile(lookup.profile, lookup.brand ?? null, sector).profile;
+        const estimator = estimatingService(deps.service);
         try {
-          await runTask(target as EstimableAction, innerData, estimateProfile, estimatingService(deps.service), actor);
+          await runTask(target as EstimableAction, innerData, estimateProfile, estimator.service, actor);
         } catch (error) {
-          if (error instanceof EstimateOnly) return json(200, { action, for: target, costMicros: error.micros });
+          if (error instanceof EstimateOnly) return json(200, { action, for: target, costMicros: estimator.total() });
           throw error;
         }
         return fail(500, 'internal', 'No se ha podido calcular el coste.', { retryable: true });

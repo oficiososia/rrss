@@ -167,6 +167,55 @@ describe('estado de un trabajo', () => {
     });
   });
 
+  it('un fallo del montaje se cuenta en claro, con qué hacer y sin rutas ni nombres internos', () => {
+    // La prueba real del 24/11: un trabajador anterior al papel de los textos.
+    const old = describeJob(
+      job('failed', { last_error: 'Carga del trabajo inválida: plan.texts.2: Unrecognized key: "role"' }),
+    ).detail!;
+    expect(old).toMatch(/pendiente de actualizar/);
+    expect(old).toMatch(/Probar otra vez/);
+    expect(old).not.toMatch(/plan\.texts|Unrecognized|role/);
+    expect(
+      describeJob(job('failed', { last_error: 'Carga del trabajo inválida: plan.clips: Too big' })).detail,
+    ).toMatch(/no ha aceptado algún ajuste/);
+    // El trabajador se cortó (Fly apaga la máquina): se dice que el reel está guardado y cómo reintentar.
+    const stalled = describeJob(
+      job('failed', { attempts: 3, last_error: 'El trabajador dejó de responder y no quedan intentos' }),
+    ).detail!;
+    expect(stalled).toMatch(/se cortó a medias/);
+    expect(stalled).toMatch(/El reel está guardado: pulsa «Probar otra vez»/);
+    expect(stalled).not.toMatch(/trabajador|intentos/);
+    // Mientras se reintenta solo, no se pide que se pulse nada.
+    expect(
+      describeJob(
+        job('queued', { attempts: 1, last_error: 'El trabajo superó el tiempo máximo de un intento (600 s)' }),
+      ).detail,
+    ).toBe('El intento anterior se cortó a medias; se vuelve a probar solo.');
+    // Un error de FFmpeg no enseña su salida (rutas temporales incluidas).
+    const ffmpeg = describeJob(
+      job('failed', { last_error: '«ffmpeg» terminó con código 1: /tmp/job-1/in-0.jpg: Invalid data found' }),
+    ).detail!;
+    expect(ffmpeg).not.toMatch(/tmp|ffmpeg/);
+    expect(ffmpeg).toMatch(/Probar otra vez/);
+    expect(
+      describeJob(job('failed', { last_error: 'La tipografía «Marca» no está instalada en el trabajador' })).detail,
+    ).toMatch(/Elige otra en «Estilo»/);
+    // Lo que no se reconoce sale como antes, sin rutas.
+    expect(describeJob(job('failed', { last_error: 'El reel pesa 61 MB' })).detail).toBe('El reel pesa 61 MB');
+  });
+
+  it('un montaje que lleva mucho en cola sin empezar lo dice', () => {
+    const created = Date.parse('2026-11-18T10:00:00Z');
+    expect(describeJob(job('queued'), created + 60_000)).toMatchObject({ label: 'En cola', detail: null });
+    expect(describeJob(job('queued'), created + 11 * 60_000)).toMatchObject({
+      label: 'En cola, esperando al servicio de montaje',
+      tone: 'progress',
+      detail: expect.stringMatching(/está tardando en empezar/),
+    });
+    // Ya empezado, no.
+    expect(describeJob(job('running', { attempts: 1 }), created + 11 * 60_000)).toMatchObject({ label: 'Montando' });
+  });
+
   it('nombre de la plantilla y número de piezas', () => {
     expect(jobTemplateName(job('queued'), REEL_TEMPLATES)).toBe('Fundido suave');
     expect(jobTemplateName(job('queued', { payload: { template: { id: 'retirada' } } }), REEL_TEMPLATES)).toBe(

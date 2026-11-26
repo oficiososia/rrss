@@ -16,6 +16,7 @@ import {
   sinErrores,
   sql,
   irAAjuste,
+  tarjetaDeArchivo,
 } from './apoyo';
 
 test.describe.configure({ mode: 'serial' });
@@ -190,8 +191,9 @@ test('un logotipo subido en el editor y no guardado no se queda en la biblioteca
   await page.getByTestId('nav-biblioteca').click();
   await expect(page.getByRole('heading', { name: 'Biblioteca' })).toBeVisible();
   await expect.poll(() => logosEnBd('logo-descartado.png')).toEqual({ filas: 0, objetos: 0, cola: 0 });
-  await expect(page.getByTestId('library-grid')).toContainText('logo-espiga.png');
-  await expect(page.getByTestId('library-grid')).not.toContainText('logo-descartado.png');
+  // La tarjeta enseña un nombre legible («Logo espiga»); el nombre del archivo va en su `title`.
+  await expect(tarjetaDeArchivo(page, 'logo-espiga.png')).toBeVisible();
+  await expect(tarjetaDeArchivo(page, 'logo-descartado.png')).toHaveCount(0);
 
   sinErrores(s);
   await s.context.close();
@@ -210,7 +212,7 @@ test('un logotipo subido en el editor y guardado sí se conserva', async ({ brow
   await aviso(page, 'Perfil guardado (versión 5)');
 
   await page.getByTestId('nav-biblioteca').click();
-  await expect(page.getByTestId('library-grid')).toContainText('logo-negativo.png');
+  await expect(tarjetaDeArchivo(page, 'logo-negativo.png')).toBeVisible();
   // Se da margen a una limpieza indebida antes de mirar la base de datos.
   await page.waitForTimeout(1500);
   expect(await logosEnBd('logo-negativo.png')).toEqual({ filas: 1, objetos: 1, cola: 0 });

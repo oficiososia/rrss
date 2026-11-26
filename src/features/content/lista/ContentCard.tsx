@@ -1,7 +1,8 @@
-import { Archive, ArchiveRestore, CalendarClock, Copy, ExternalLink, Repeat } from 'lucide-react';
-import type { ReactNode } from 'react';
+import * as Dropdown from '@radix-ui/react-dropdown-menu';
+import { Archive, ArchiveRestore, CalendarClock, CheckSquare, Copy, ExternalLink, MoreHorizontal, Repeat } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge } from '@/components/ui';
+import { Badge, MenuContent, MenuItem } from '@/components/ui';
 import { networkLabel } from '../labels';
 import { cn } from '@/lib/utils';
 import { FormatIcon } from './FormatIcon';
@@ -23,6 +24,8 @@ export interface PieceActions {
   onRestore: (item: BoardItem) => void;
   /** «Publicar otra vez» (solo en las ya publicadas): avisa del duplicado y hace una copia. */
   onRepublish?: (item: BoardItem) => void;
+  /** «Elegir»: empieza a elegir varias con esta ya elegida. */
+  onSelect?: (item: BoardItem) => void;
 }
 
 interface CommonProps {
@@ -32,51 +35,120 @@ interface CommonProps {
   actions: PieceActions;
   selected: boolean;
   onToggle: (item: BoardItem) => void;
-  /** Se enseñan las casillas de selección (quien puede editar). */
-  selectable: boolean;
+  /** Se está eligiendo varias: tocar la pieza la elige en vez de abrirla. */
+  selecting: boolean;
 }
 
-function QuickActions({ item, actions }: { item: BoardItem; actions: PieceActions }) {
-  const buttons: { id: string; label: string; icon: typeof Copy; onClick: () => void }[] = [];
+interface Entry {
+  id: string;
+  label: string;
+  icon: typeof Copy;
+  onSelect: () => void;
+}
+
+/** Lo que se puede hacer con una pieza: todo en su «⋯» (y, en el móvil, con una pulsación larga). */
+function entriesFor(item: BoardItem, actions: PieceActions): Entry[] {
+  const entries: Entry[] = [];
+  if (!actions.canEdit) return entries;
   if (item.archived_at) {
-    if (actions.canEdit)
-      buttons.push({ id: 'restore', label: 'Recuperar', icon: ArchiveRestore, onClick: () => actions.onRestore(item) });
-  } else {
-    // Lo publicado no se vuelve a programar: como mucho, «Publicar otra vez», que avisa y hace una copia.
-    if (actions.canSchedule && item.stage !== 'published')
-      buttons.push({ id: 'schedule', label: 'Programar', icon: CalendarClock, onClick: () => actions.onSchedule(item) });
-    if (actions.canEdit && item.stage === 'published' && actions.onRepublish) {
-      const republish = actions.onRepublish;
-      buttons.push({ id: 'republish', label: 'Publicar otra vez', icon: Repeat, onClick: () => republish(item) });
-    }
-    if (actions.canEdit) {
-      buttons.push({ id: 'duplicate', label: 'Duplicar', icon: Copy, onClick: () => actions.onDuplicate(item) });
-      buttons.push({ id: 'archive', label: 'Archivar', icon: Archive, onClick: () => actions.onArchive(item) });
-    }
+    entries.push({ id: 'restore', label: 'Recuperar', icon: ArchiveRestore, onSelect: () => actions.onRestore(item) });
+    return entries;
   }
-  if (buttons.length === 0) return null;
+  // Lo publicado no se vuelve a programar: como mucho, «Publicar otra vez», que avisa y hace una copia.
+  if (actions.canSchedule && item.stage !== 'published')
+    entries.push({ id: 'schedule', label: 'Programar', icon: CalendarClock, onSelect: () => actions.onSchedule(item) });
+  if (item.stage === 'published' && actions.onRepublish) {
+    const republish = actions.onRepublish;
+    entries.push({ id: 'republish', label: 'Publicar otra vez', icon: Repeat, onSelect: () => republish(item) });
+  }
+  entries.push({ id: 'duplicate', label: 'Duplicar', icon: Copy, onSelect: () => actions.onDuplicate(item) });
+  if (actions.onSelect) {
+    const select = actions.onSelect;
+    entries.push({ id: 'select-start', label: 'Elegir', icon: CheckSquare, onSelect: () => select(item) });
+  }
+  entries.push({ id: 'archive', label: 'Archivar', icon: Archive, onSelect: () => actions.onArchive(item) });
+  return entries;
+}
+
+/** Abre el «⋯» al mantener pulsada la pieza con el dedo, y evita que ese toque la abra. */
+function useLongPress(onLongPress: () => void) {
+  const timer = useRef<number | null>(null);
+  const fired = useRef(false);
+  const clear = () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+  };
+  useEffect(() => clear, []);
+  return {
+    onPointerDown: (event: React.PointerEvent) => {
+      fired.current = false;
+      if (event.pointerType !== 'touch') return;
+      clear();
+      timer.current = window.setTimeout(() => {
+        fired.current = true;
+        onLongPress();
+      }, 500);
+    },
+    onPointerUp: clear,
+    onPointerMove: clear,
+    onPointerCancel: clear,
+    onContextMenu: (event: React.MouseEvent) => {
+      // El menú del sistema (copiar enlace…) no: con el dedo, la pulsación larga es el «⋯».
+      if (fired.current || timer.current !== null) event.preventDefault();
+    },
+    onClickCapture: (event: React.MouseEvent) => {
+      if (fired.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        fired.current = false;
+      }
+    },
+  };
+}
+
+function PieceMenu({
+  item,
+  entries,
+  open,
+  onOpenChange,
+  className,
+}: {
+  item: BoardItem;
+  entries: Entry[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  className?: string;
+}) {
+  if (entries.length === 0) return null;
   return (
-    <span className="flex items-center gap-1">
-      {buttons.map(({ id, label, icon: Icon, onClick }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={onClick}
-          aria-label={`${label} «${item.title}»`}
-          title={label}
-          data-testid={`content-${id}`}
-          className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface/95 text-fg shadow-sm ring-1 ring-border hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          <Icon className="h-4 w-4" aria-hidden />
-        </button>
-      ))}
-    </span>
+    <Dropdown.Root modal={false} open={open} onOpenChange={onOpenChange}>
+      <Dropdown.Trigger
+        aria-label={`Más acciones de «${item.title}»`}
+        title="Más acciones"
+        data-testid="content-menu"
+        className={cn(
+          'flex h-10 w-10 items-center justify-center rounded-lg bg-surface/95 text-fg shadow-sm ring-1 ring-border hover:bg-subtle focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary',
+          className,
+        )}
+      >
+        <MoreHorizontal className="h-4 w-4" aria-hidden />
+      </Dropdown.Trigger>
+      <MenuContent align="end">
+        {entries.map(({ id, label, icon: Icon, onSelect }) => (
+          <MenuItem key={id} onSelect={onSelect} destructive={id === 'archive'} data-testid={`content-${id}`}>
+            <Icon className="h-4 w-4" aria-hidden />
+            {label}
+          </MenuItem>
+        ))}
+      </MenuContent>
+    </Dropdown.Root>
   );
 }
 
-function Check({ item, selected, onToggle }: Pick<CommonProps, 'item' | 'selected' | 'onToggle'>) {
+/** Al elegir varias, toda la pieza es la casilla: un toque la elige o la quita. */
+function SelectOverlay({ item, selected, onToggle }: Pick<CommonProps, 'item' | 'selected' | 'onToggle'>) {
   return (
-    <label className="flex h-10 w-10 cursor-pointer items-center justify-center" data-testid="content-select-label">
+    <label className="absolute inset-0 z-10 flex cursor-pointer items-start justify-end p-2" data-testid="content-select-label">
       <input
         type="checkbox"
         checked={selected}
@@ -128,11 +200,15 @@ function StateLine({ item }: { item: BoardItem }): ReactNode {
   );
 }
 
+/** En pantallas con ratón, el «⋯» de la miniatura sale al pasar por encima (o al llegar con el teclado). */
 const HOVER_ONLY =
-  '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 group-focus-within:!opacity-100';
+  '[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 group-focus-within:!opacity-100 data-[state=open]:!opacity-100';
 
-/** Una pieza en la rejilla: su miniatura, el título, el formato y el estado. */
-export function ContentCard({ item, href, thumb, actions, selected, onToggle, selectable }: CommonProps) {
+/** Una pieza en la rejilla: su miniatura, el título, el formato, el estado y su «⋯». */
+export function ContentCard({ item, href, thumb, actions, selected, onToggle, selecting }: CommonProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const entries = entriesFor(item, actions);
+  const press = useLongPress(() => entries.length > 0 && setMenuOpen(true));
   return (
     <li
       className={cn(
@@ -141,25 +217,30 @@ export function ContentCard({ item, href, thumb, actions, selected, onToggle, se
       )}
       data-testid="content-card"
       data-stage={item.stage}
+      {...(selecting ? {} : press)}
     >
+      {selecting && <SelectOverlay item={item} selected={selected} onToggle={onToggle} />}
       <div className="relative">
-      <Link to={href} className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-label={`Abrir «${item.title}»`} data-testid="content-open">
-        <span className="block aspect-[4/5]">
-          <PieceThumbView thumb={thumb} format={item.format} />
+        <Link
+          to={href}
+          className="block focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+          aria-label={`Abrir «${item.title}»`}
+          data-testid="content-open"
+          tabIndex={selecting ? -1 : undefined}
+        >
+          <span className="block aspect-[4/5]">
+            <PieceThumbView thumb={thumb} format={item.format} />
+          </span>
+        </Link>
+        <span className="pointer-events-none absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white">
+          <FormatIcon format={item.format} className="h-3.5 w-3.5" />
+          {formatName(item.format)}
         </span>
-      </Link>
-      <span className="pointer-events-none absolute left-2 top-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs font-medium text-white">
-        <FormatIcon format={item.format} className="h-3.5 w-3.5" />
-        {formatName(item.format)}
-      </span>
-      {selectable && (
-        <span className="absolute right-0 top-0 rounded-bl-lg bg-surface/90">
-          <Check item={item} selected={selected} onToggle={onToggle} />
-        </span>
-      )}
-      <span className={cn('absolute bottom-2 right-2 transition-opacity', HOVER_ONLY)}>
-        <QuickActions item={item} actions={actions} />
-      </span>
+        {!selecting && (
+          <span className="absolute right-2 top-2">
+            <PieceMenu item={item} entries={entries} open={menuOpen} onOpenChange={setMenuOpen} className={HOVER_ONLY} />
+          </span>
+        )}
       </div>
       <div className="space-y-1.5 p-3">
         <Link
@@ -177,16 +258,25 @@ export function ContentCard({ item, href, thumb, actions, selected, onToggle, se
   );
 }
 
-/** Una pieza en la lista compacta: miniatura pequeña, título, formato, estado y acciones. */
-export function ContentRow({ item, href, thumb, actions, selected, onToggle, selectable }: CommonProps) {
+/** Una pieza en la lista del móvil: miniatura pequeña, título, formato, estado y su «⋯». */
+export function ContentRow({ item, href, thumb, actions, selected, onToggle, selecting }: CommonProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const entries = entriesFor(item, actions);
+  const press = useLongPress(() => entries.length > 0 && setMenuOpen(true));
   return (
     <li
-      className={cn('group flex items-center gap-2 px-2 py-2', selected && 'bg-primary-soft')}
+      className={cn('relative flex items-center gap-2 px-2 py-2', selected && 'bg-primary-soft')}
       data-testid="content-row"
       data-stage={item.stage}
+      {...(selecting ? {} : press)}
     >
-      {selectable && <Check item={item} selected={selected} onToggle={onToggle} />}
-      <Link to={href} className="flex min-w-0 flex-1 items-center gap-3" aria-label={`Abrir «${item.title}»`}>
+      {selecting && <SelectOverlay item={item} selected={selected} onToggle={onToggle} />}
+      <Link
+        to={href}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        aria-label={`Abrir «${item.title}»`}
+        tabIndex={selecting ? -1 : undefined}
+      >
         <span className="block h-14 w-11 shrink-0 overflow-hidden rounded-md">
           <PieceThumbView thumb={thumb} format={item.format} />
         </span>
@@ -206,9 +296,11 @@ export function ContentRow({ item, href, thumb, actions, selected, onToggle, sel
       <span className="shrink-0">
         <PublishedLink item={item} />
       </span>
-      <span className={cn('shrink-0 transition-opacity', HOVER_ONLY)}>
-        <QuickActions item={item} actions={actions} />
-      </span>
+      {!selecting && (
+        <span className="shrink-0">
+          <PieceMenu item={item} entries={entries} open={menuOpen} onOpenChange={setMenuOpen} className="shadow-none ring-0" />
+        </span>
+      )}
     </li>
   );
 }

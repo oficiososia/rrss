@@ -12,7 +12,7 @@ import {
   abrirCompartir,
   cerrarCompartir,
   cajon,
-  nuevaIdea,
+  crearPieza,
 } from './apoyo';
 
 // Aceptación de la Fase 2 (docs/04-plan-por-fases.md) contra el Supabase local,
@@ -87,14 +87,24 @@ async function rellenarPerfil(page: Page, lado: 'A' | 'B') {
 /** Crea una pieza de Instagram y deja abierto su editor. Devuelve su id. */
 async function nuevaPieza(page: Page, lado: 'A' | 'B', titulo: string): Promise<string> {
   await page.goto(`${marca(lado)}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(titulo);
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', titulo);
   await expect(page.getByTestId('editor-title')).toHaveText(titulo);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
   return id;
+}
+
+/**
+ * Plataforma → cupo mensual de IA. Si todas las organizaciones de quien mira son de autogestión
+ * (uso interno), lo comercial va plegado en «Opciones avanzadas: límites de cada organización».
+ */
+async function abrirCuposDeIa(page: Page) {
+  await page.goto('/plataforma');
+  const avanzadas = page.getByTestId('platform-commercial');
+  const cupo = page.getByTestId('ai-quota-org');
+  await expect(avanzadas.or(cupo)).toBeVisible();
+  if (await avanzadas.isVisible()) await avanzadas.locator('summary').click();
+  await expect(cupo).toBeVisible();
 }
 
 /** Abre «Redactar con IA», escribe el encargo y pide variantes. */
@@ -134,7 +144,9 @@ test('sin cupo asignado, la IA no genera, lo explica y no llama al proveedor', a
 
   const ventana = await pedirTexto(page, 'Hogaza de calabaza para el otoño');
   const aviso402 = ventana.getByTestId('ai-quota-error');
-  await expect(aviso402).toContainText('Esta organización no tiene cupo de IA');
+  // La organización A trabaja en autogestión: no se habla de cupos ni de planes, sino de un tope de gasto.
+  await expect(aviso402).toContainText('La IA no tiene un tope de gasto asignado');
+  await expect(aviso402).not.toContainText(/cupo|plan\b/i);
   await expect(aviso402).toContainText('Mientras tanto, puedes seguir escribiendo y editando a mano.');
   await expect(ventana.getByTestId('ai-caption-variant')).toHaveCount(0);
   // Sin reserva no hay generación registrada: el proveedor no se llegó a llamar.
@@ -147,7 +159,7 @@ test('sin cupo asignado, la IA no genera, lo explica y no llama al proveedor', a
 test('la superadministradora asigna el cupo mensual de IA a las dos organizaciones', async ({ browser }) => {
   const s = await abrir(browser, 'ana');
   const { page } = s;
-  await page.goto('/plataforma');
+  await abrirCuposDeIa(page);
   for (const lado of ['A', 'B'] as const) {
     await page.getByTestId('ai-quota-org').selectOption(org(lado));
     await page.getByTestId('ai-quota-amount').fill('5');
@@ -189,12 +201,17 @@ test('generar el texto con IA para dos marcas: cada una respeta su propio perfil
   await expect(a.page.getByTestId('copy-caption')).toHaveValue(new RegExp(`^${PERFIL.A.arranque}: hogaza de calabaza`));
   await expect(a.page.getByTestId('copy-hashtags')).toHaveValue(`#${PERFIL.A.hashtag}`);
   await expect(a.page.getByTestId('editor-dirty')).toBeVisible();
-  // Aplicar es un paso que se deshace.
+  // Aplicar es un paso que se deshace (Deshacer y Rehacer están en la cabecera, detrás de la hoja «Compartir»).
+  await cerrarCompartir(a.page);
   await a.page.getByTestId('undo').click();
+  await abrirCompartir(a.page);
   await expect(a.page.getByTestId('copy-caption')).toHaveValue('');
+  await cerrarCompartir(a.page);
   await a.page.getByTestId('redo').click();
+  await abrirCompartir(a.page);
   await expect(a.page.getByTestId('copy-caption')).toHaveValue(new RegExp(PERFIL.A.mensaje));
   // Se guarda como primera versión de la pieza.
+  await cerrarCompartir(a.page);
   await accionDelMenu(a.page, 'editor-more', 'editor-save-note');
   await a.page.getByTestId('save-note').fill('Texto redactado con IA');
   await a.page.getByTestId('save-confirm').click();
@@ -321,9 +338,18 @@ test('el coste de IA se consulta por organización en «Consumo de IA»', async 
     const { page } = s;
     await page.goto(`/o/${org(lado)}/ajustes/ia`);
     await expect(page.getByTestId('ai-usage-page')).toBeVisible();
-    await expect(page.getByTestId('ai-quota-limit')).toContainText('5');
-    // La cifra en pantalla es la del libro de consumo de ESTA organización (unidad neutra: la moneda no está decidida).
-    await expect(page.getByTestId('ai-quota-consumed')).toHaveText(importe(coste));
+    if (lado === 'B') {
+      // La agencia (B) ve su cupo del mes y lo consumido.
+      await expect(page.getByTestId('ai-quota-limit')).toContainText('5');
+      // La cifra en pantalla es la del libro de consumo de ESTA organización (unidad neutra: la moneda no está decidida).
+      await expect(page.getByTestId('ai-quota-consumed')).toHaveText(importe(coste));
+    } else {
+      // En autogestión (A) no hay tarjeta de cupo: la propietaria ve el gasto del mes.
+      await expect(page.getByTestId('org-spend')).toBeVisible();
+      await expect(page.getByTestId('ai-quota-limit')).toHaveCount(0);
+    }
+    // En las dos, el total del desglose por marca es el del libro de consumo de ESTA organización.
+    await expect(page.getByTestId('ai-usage-brands').locator('tfoot td').last()).toHaveText(importe(coste));
     await expect(page.getByTestId('ai-usage-brands')).toContainText(lado === 'A' ? 'La Espiga' : 'Café Lumen');
     await expect(page.getByTestId('ai-usage-brands')).not.toContainText(lado === 'A' ? 'Café Lumen' : 'La Espiga');
     sinErrores(s);
@@ -336,7 +362,7 @@ test('con el cupo agotado la generación se detiene con un mensaje claro y no ll
 }) => {
   // La plataforma deja a la organización B con un cupo menor que lo ya gastado.
   const ana = await abrir(browser, 'ana');
-  await ana.page.goto('/plataforma');
+  await abrirCuposDeIa(ana.page);
   await ana.page.getByTestId('ai-quota-org').selectOption(org('B'));
   await ana.page.getByTestId('ai-quota-amount').fill('0,000001');
   await ana.page.getByTestId('ai-quota-save').click();

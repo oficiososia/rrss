@@ -13,7 +13,8 @@ import { textEditStyle } from './textEditStyle';
 interface TextEditOverlayProps {
   layer: TextLayer;
   scale: number;
-  onCommit: (text: string) => void;
+  /** `next`: el elemento que se lleva el foco si se termina con un clic fuera (null con el teclado). */
+  onCommit: (text: string, next?: Element | null) => void;
   /** Se conserva por compatibilidad: el teclado ya no cancela. */
   onCancel?: () => void;
 }
@@ -31,10 +32,11 @@ export function TextEditOverlay({ layer, scale, onCommit }: TextEditOverlayProps
     field.select();
   }, []);
 
-  const finish = () => {
+  const finish = (next: Element | null = null) => {
     if (done.current) return;
     done.current = true;
-    onCommit(value);
+    if (next) onCommit(value, next);
+    else onCommit(value);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -55,7 +57,7 @@ export function TextEditOverlay({ layer, scale, onCommit }: TextEditOverlayProps
       spellCheck
       onChange={(event) => setValue(event.target.value)}
       onKeyDown={onKeyDown}
-      onBlur={finish}
+      onBlur={(event) => finish(event.relatedTarget instanceof Element ? event.relatedTarget : null)}
       className="outline outline-2 outline-offset-2 outline-primary"
       style={textEditStyle(layer, scale)}
       data-testid="canvas-text-editor"

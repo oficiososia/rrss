@@ -35,18 +35,29 @@ export const FORMAT_GROUPS: Array<{ words: string[]; formats: string[] }> = [
   { words: ['story', 'stories', 'historia', 'historias'], formats: ['story'] },
 ];
 
-/** La red del catálogo a la que se refiere `value` («Instagram», «ig»…), o null. */
+/**
+ * Un modelo real copia el destino tal como lo ve en el prompt: «instagram/post» en
+ * `network` (y a veces también en `format`). Prueba de calidad del 24/11/2026: las 10
+ * respuestas «que no se pueden usar» de «Preparar el plan» traían así todas las piezas.
+ */
+function targetParts(value: unknown): { network: string; format: string } | null {
+  if (typeof value !== 'string' || !/[/·|>]/.test(value)) return null;
+  const [network = '', ...rest] = value.split(/\s*[/·|>]\s*/);
+  return { network, format: rest.join(' ') };
+}
+
+/** La red del catálogo a la que se refiere `value` («Instagram», «ig», «instagram/post»…), o null. */
 export function resolveNetwork(value: unknown, targets: CampaignTarget[]): string | null {
-  const key = canon(value);
+  const key = canon(targetParts(value)?.network ?? value);
   if (!key) return null;
   const wanted = NETWORK_ALIASES[key] ?? key;
   return targets.find((t) => t.network === wanted)?.network ?? null;
 }
 
-/** El formato del catálogo (de esa red) al que se refiere `value` («Reels», «publicación»…), o null. */
+/** El formato del catálogo (de esa red) al que se refiere `value` («Reels», «publicación», «instagram/reel»…), o null. */
 export function resolveFormat(network: string, value: unknown, targets: CampaignTarget[]): string | null {
   const own = targets.filter((t) => t.network === network);
-  const key = canon(value);
+  const key = canon(targetParts(value)?.format || value);
   if (!key) return null;
   const exact = own.find((t) => canon(t.format) === key);
   if (exact) return exact.format;

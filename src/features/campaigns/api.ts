@@ -266,6 +266,8 @@ export interface GeneratedPlan {
   status: 'proposal';
   plan: CampaignPlan;
   discarded: { index: number; reason: string }[];
+  /** Días que se han quedado sin piezas porque la IA falló con ellos (el resto del plan sí salió). */
+  gaps?: { startDate: string; endDate: string; reason: string }[];
 }
 
 async function textSources(brandId: string) {
@@ -338,7 +340,8 @@ export async function generateCampaignPlan(input: PlanRequestInput): Promise<Gen
   try {
     result = await supabase.functions.invoke('ai-generate', {
       body: { action: 'campaign.plan', brandId: input.brandId, input: body },
-      timeout: 120_000,
+      // El servidor prepara los planes largos por tramos y, si hace falta, repite uno: hasta 125 s.
+      timeout: 140_000,
     });
   } catch (error) {
     throw await toAiError(error);
@@ -373,7 +376,7 @@ export function useCampaignMutations(brandId: string) {
           p_generation_id: generated.generationId,
         }),
       );
-      return { campaign, discarded: generated.discarded };
+      return { campaign, discarded: generated.discarded, gaps: generated.gaps ?? [] };
     },
     onSuccess: refresh,
   });

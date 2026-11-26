@@ -120,6 +120,8 @@ export function NewCampaignDialog({
     }
     setProblem(null);
     setBriefError(null);
+    // Un fallo de «Preparar el plan» de antes no vale para la propuesta nueva (prueba del 24/11, fallo 9).
+    mutations.createWithAi.reset();
     if (brandSector) rememberSector(brandSector);
     try {
       const result: CampaignBriefResult = await briefMutation.mutateAsync({
@@ -177,12 +179,18 @@ export function NewCampaignDialog({
     try {
       if (mode === 'ai') {
         if (brandSector) rememberSector(brandSector);
-        const { campaign, discarded } = await mutations.createWithAi.mutateAsync(input);
-        toast.success(
-          discarded.length
-            ? `Plan listo. Se han descartado ${discarded.length} propuestas que no encajaban (otra red, otras fechas o de más).`
-            : 'Plan listo: revísalo antes de aceptarlo.',
-        );
+        const { campaign, discarded, gaps } = await mutations.createWithAi.mutateAsync(input);
+        if (gaps.length) {
+          toast.warning(
+            `Plan listo, pero sin piezas ${gaps.map((g) => `del ${shortDay(g.startDate)} al ${shortDay(g.endDate)}`).join(' ni ')}: la IA no las ha dado. Añádelas a mano o prepara otro plan para esos días.`,
+          );
+        } else {
+          toast.success(
+            discarded.length
+              ? `Plan listo. Se han descartado ${discarded.length} propuestas que no encajaban (otra red, otras fechas o de más).`
+              : 'Plan listo: revísalo antes de aceptarlo.',
+          );
+        }
         onOpenChange(false);
         navigate(campaignPaths(orgId, brandId).item(campaign.id));
       } else {

@@ -47,6 +47,9 @@ export default defineConfig({
   // Holgados a propósito: con Docker y otros procesos en la misma máquina hay parones de varios segundos.
   timeout: 180_000,
   expect: { timeout: 20_000 },
+  // En CI, un tope para toda la tanda por debajo del del paso de GitHub (ci.yml): si se pasa,
+  // Playwright para, escribe el informe y el trabajo falla con artefactos en vez de cancelarse.
+  globalTimeout: process.env.CI ? 52 * 60_000 : undefined,
   // En CI se añaden las anotaciones de GitHub; el informe HTML se sube como artefacto si falla.
   reporter: process.env.CI
     ? [['list'], ['github'], ['html', { open: 'never' }]]
@@ -57,6 +60,10 @@ export default defineConfig({
     timezoneId: 'Europe/Madrid',
     trace: process.env.E2E_TRAZA === '1' ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
+    // Un clic o un relleno que no encuentra su elemento falla al minuto, no a los 3 min del tope de
+    // la prueba: antes, cada selector viejo se comía la prueba entera y la tanda no cabía en el CI.
+    actionTimeout: 60_000,
+    navigationTimeout: 60_000,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 900 } } }],
   webServer: [

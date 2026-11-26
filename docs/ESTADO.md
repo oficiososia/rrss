@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 23/11/2026 (ramas `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 25/11/2026 (ramas `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1008,6 +1008,118 @@ Ocho fallos: cuatro de la lista de pendientes y cuatro del reel real de «Fotos 
   (`worker-fly.yml`); la aplicación; volver a cargar el catálogo de plantillas en las marcas (`agency/`, en seco
   primero). `social-insights` no cambia de código (sigue igual: la migración le da la lista nueva de publicaciones).
 
+### Contenidos, «¿Qué quieres crear?» y Copiloto más sencillos (rama `f69/contenidos-copiloto`, 24/11/2026)
+
+Apartados 6 y 7 de la simplificación aceptada (`rrss-recursos-comparativa/simplificacion/CAMBIOS.md`). Se cuentan
+las acciones a la vista con `tests/layout/contenidos-copiloto.spec.ts` (375 px táctil y 1366 px, sin abrir menús,
+sin el pie legal ni los enlaces que abren cada pieza).
+
+- **Contenidos** (`ContentListPage.tsx`, `lista/ContentCard.tsx`, `lista/stage.ts`). Antes: cinco pestañas (Ideas,
+  En preparación, Listas, Programadas, Publicadas), desplegable de formato, cambio miniaturas/lista, casilla en cada
+  pieza y, en el móvil, Duplicar y Archivar siempre a la vista (375 px: 9 de la pantalla + 3 por pieza; 1366 px:
+  10 + la casilla). Ahora: buscar, «⋯», tres pestañas (En marcha = ideas, en preparación y listas, con el estado en
+  la tarjeta; Programadas; Publicadas) y fichas de formato (Todo, Reels, Publicaciones, Carruseles, Historias); cada
+  pieza, un «⋯» (siempre a la vista en el móvil, al pasar el ratón en el ordenador; también con pulsación larga) con
+  Programar, Publicar otra vez, Duplicar, Elegir y Archivar (Recuperar en las archivadas). Miniaturas en pantallas
+  anchas y lista en el móvil, sin botón. «Elegir varias», «Ver las archivadas» y «Archivar las vacías» en el «⋯» de
+  la cabecera; al elegir, tocar la pieza la marca. Se quita el aviso fijo «Hay N piezas vacías…» (está en «⋯»).
+  Contadas: 375 px, 10 de la pantalla (las fichas que caben) + 1 por pieza; 1366 px, 10 + 0.
+- **«¿Qué quieres crear?»** (`CreateContentDialog.tsx`, `useStartPiece.ts`). Antes: «Nueva idea» con formato,
+  nombre, «En blanco / Desde una plantilla», «Cancelar» y «Crear y abrir» (10 controles). Ahora un paso: Reel,
+  «Reel como este» (si el servidor puede, con su coste), Publicación, Carrusel, Historia y, en el móvil, «Subir
+  fotos»; al tocar el formato sale su galería con «En blanco» la primera y las plantillas de la marca de ese formato
+  (para Reel, las de reel); al tocar una tarjeta se crea la pieza («Formato · día») y se abre su editor. Desde
+  «＋ Crear» del menú se abre directamente la galería del formato. Una plantilla destacada de la pantalla vacía crea
+  la pieza con un toque. Contados: 6 controles a 375 px (con «Subir fotos») y 5 a 1366 px. «Nueva idea» solo sigue
+  en la pantalla vacía de Contenidos.
+- **Copiloto** (`copilot/VoiceCopilot.tsx`, `PlanCard.tsx`, `voiceEngine.ts`; sin cambios en el servidor ni en el
+  editor). Se mantiene el panel acoplado que no tapa el lienzo, el aviso solo al pulsar el micrófono, las notas de lo
+  que no se hizo y la tarjeta del plan con su coste. Antes: 6 controles (selector «Transcriptor (OpenAI) / Dictado del
+  navegador», cerrar, micrófono, «Elegir foto», campo, enviar), una línea fija de estado y un aviso de 64 palabras
+  con «No volver a mostrar», «Entendido, dictar» y «Ahora no». Ahora: 4 controles (campo, un botón al lado —el
+  micrófono sin texto escrito, enviar con texto—, «⋯» y cerrar); «Elegir foto» y la voz a usar, en «⋯»; el estado
+  solo mientras escucha; el aviso, de una línea (24 palabras con el transcriptor) con «Más» a la política, «Dictar»
+  y «Ahora no», y una vez leído no vuelve con ese motor. La tarjeta del plan, con textos más cortos (el estado de
+  cada paso queda para el lector de pantalla; el coste, «Hasta que digas “sí” no se gasta…» y «lo ya creado queda en
+  la biblioteca» siguen).
+- **Pruebas:** las que comprobaban lo que ya no existe se han borrado (cambio miniaturas/lista, barra «Cancelar /
+  Crear y abrir», campo Nombre, «No volver a mostrar», selector de motor, el aviso «De la agencia» y el «Ver más» del
+  selector de plantillas dentro de «Nueva idea»); las demás, al flujo nuevo. Las e2e crean las piezas con
+  `crearPieza` de `tests/e2e/apoyo.ts` (formato, «En blanco» o la plantilla y, en el editor, «Nombre y red» o
+  «Cambiar el nombre» del reel) **sin ejecutar** (no hay Docker en el PC).
+- **Resultado en local (24/11/2026):** `typecheck` bien; `lint` 0 errores (35 avisos, ninguno de esta
+  rama); `npm test` 2274 de 2276 en la tanda completa: los 2 que fallaron (`cutout/chain.test.ts`, tiempo agotado,
+  y uno de `editorReels.test.tsx`) pasan solos, con el PC cargado por otras ramas; `build` bien; `test:layout`
+  (`--workers=2`) 188 pasan y 2 omitidas. `test:db` no se ha ejecutado (no hay cambios de base de datos).
+- **Sin probar:** la pulsación larga con un dedo de verdad (en Chromium simulado solo se ve el «⋯» sin «hover»); la
+  e2e (CI); el aviso del transcriptor en un navegador real.
+- **Pendiente de la propuesta:** el selector del transcriptor debía pasar a Configuración → Integraciones (K2); queda
+  en el «⋯» del copiloto porque `IntegrationsPage` no entraba en esta rama. K1 a medias: el micrófono flotante ya abre
+  el copiloto, pero el resultado sigue en el panel acoplado (no como aviso corto con «Deshacer»), como se pidió.
+
+### Reels fiables tras la segunda prueba de calidad (rama `f73/reels-fiables`, 25/11/2026)
+
+Arreglos de los fallos de reels del informe `e2e-calidad-2` (24/11/2026).
+
+- **«El vídeo todavía no tiene los últimos cambios» recién montado.** Causa: `renderOfPlan` comparaba el plan
+  del editor con el del trabajo guardado, pero `request_media_job` pasa el encargo por `jsonb_strip_nulls` y un
+  texto sin franja ni contorno (`box: null`, `outline: null`, casi todos) llegaba sin esas claves: nunca
+  coincidía, «Publicar o programar» quedaba desactivado y al reabrir «Exportar» se volvía a montar. Ahora la
+  comparación quita los null como la base de datos (`exportFlow.ts`) y, además, sin cambios vale el vídeo de la
+  versión vigente (`ReelEditor.tsx`). Prueba en `exportFlow.test.ts` (fallaba antes).
+- **Material del reel con IA que no casa con el guion.** `matchShots` (`like/draft.ts`) busca ahora frente al
+  texto de la escena (qué tiene que verse y los rótulos de ese plano) además de las palabras de búsqueda: lo que
+  dicen a la vez la escena y la búsqueda es el protagonista; lo que encaja solo por una palabra de contexto
+  («marisco») vale a medias y nunca si su nombre dice que es otra cosa («Ostras.jpg» para unas zamburiñas). Lo que
+  no encaja queda como hueco y el borrador lo dice («En la biblioteca no hay nada que case con el plano …»). El
+  encargo a la IA (`tasks/reel-like.ts`) pide que la primera palabra de búsqueda sea lo que tiene que verse y que no
+  use una etiqueta parecida ni una categoría.
+- **Errores en crudo.** `jobFailureMessage` (`reels/plan.ts`) traduce los fallos del trabajador y de la cola
+  (carga inválida por un trabajador sin actualizar —el «Unrecognized key: role»—, cortes, tiempo agotado,
+  tipografía, archivos ilegibles o que faltan, FFmpeg, red) a una frase con qué hacer, sin rutas. Lo usan el
+  editor, la lista de reels, «Quitar el fondo» y el análisis de «Hacer un reel como este».
+- **Trabajador cortado (Fly en prueba apaga a los 5 min).** «El trabajador dejó de responder y no quedan intentos»
+  se cuenta como «se cortó a medias… El reel está guardado: pulsa «Probar otra vez»», que vuelve a encargar la
+  misma versión sin rehacer nada. Mientras se reintenta solo, lo dice sin pedir nada. Un montaje que lleva más de
+  10 min en cola sin empezar lo avisa en «Exportar» («esperando al servicio de montaje»). No se ha tocado Fly.
+- **Para llevarlo a staging:** solo la aplicación y la función `ai-reel-like` (por el cambio del encargo). Sin
+  migraciones ni cambios en el trabajador. El «Unrecognized key: role» se arregla del todo desplegando en Fly el
+  trabajador al día (el de la rama ya admite `role`).
+- **Probado:** `typecheck`, `lint` (0 errores), `npm test` (2283) y `build` en verde. **Sin probar:** en staging con
+  el trabajador real; `test:db` y e2e no se han ejecutado en esta rama (no hay cambios de base de datos).
+
+### «Preparar el plan» fiable y copiloto que no pierde lo escrito (rama `f72/campanas-copiloto`, 25/11/2026)
+
+Fallos 1, 6, 8 (en parte) y 9 de la segunda prueba real (`rrss-recursos-comparativa/e2e-calidad-2/INFORME.md`).
+
+- **Causa de «respuesta que no se puede usar»** (10 de 10 en `ai_generations` de staging, 24/11): el modelo copiaba el
+  destino del prompt tal cual y ponía `network: "instagram/post"` en todas las piezas; ninguna casaba con los destinos,
+  el plan quedaba vacío y se rechazaba (sin cobrar). Ahora el prompt da red y formato por separado
+  (`- Destino: network=instagram format=post`), las instrucciones lo piden y el saneado entiende «instagram/post» en la
+  red o en el formato (`tasks/targets.ts`). Reprocesadas en local las 10 respuestas reales de staging: salen los 10 planes.
+- **Causa de «ha tardado demasiado»** (3 de 3): un mes de 16–20 piezas son ~7.000 tokens de salida (más de dos minutos
+  a ~55 tokens/s) y el tope era 60 s. Ahora `campaign.plan` se pide por **tramos** de hasta 5 piezas (semanas enteras
+  si el ritmo lo permite), todos a la vez, cada uno con sus fases del acuerdo, y se juntan (`planChunks`). Tope por
+  llamada 80 s (`AiGenerateParams.timeoutMs`, nuevo) y 125 s en total; la aplicación espera 140 s.
+- **Un segundo intento**: si un tramo no sirve (sin piezas válidas o JSON roto), se pide una vez más diciendo qué
+  corregir; la respuesta mala no se cobra. Si tampoco sirve: «No ha salido un plan utilizable ni al segundo intento…
+  No se ha consumido cupo… Prueba con menos semanas o cuéntalo de otra forma». Si falla un tramo y los demás no, el
+  plan sale con esos días vacíos (`gaps`) y un aviso que los nombra.
+- **Coste máximo**: `cost.estimate` suma todos los tramos.
+- **Error viejo en pantalla** (fallo 9): al pedir otra propuesta se borra el error de «Preparar el plan».
+- **Copiloto: el primer toque no enfocaba el campo** (fallo 6). Causa reproducida en Chromium real: si se estaba
+  escribiendo en un texto del lienzo (o encuadrando una foto), tocar el campo del copiloto terminaba esa edición y el
+  editor devolvía el foco al lienzo, quitándoselo al campo; lo tecleado iba al lienzo. Ahora el foco solo vuelve al
+  lienzo si no se ha pulsado otro campo o botón. Prueba: `tests/layout/copiloto-foco.spec.ts` (falla antes, pasa
+  después, a 1366 px con ratón y a 375 px táctil). **No se ha reproducido** el caso exacto «justo después de una orden»
+  sin tocar el lienzo (ni con órdenes locales, ni con IA simulada, ni con un plan).
+- **Copiloto, diseño**: con el panel abierto ya no sale el botón redondo del micrófono sobre el lienzo (era un segundo
+  micrófono junto al del panel); cada orden se ve igual en cualquier ancho (lo dicho arriba; debajo, estado y «Sin
+  IA»/«Con IA»).
+- **Probado**: `test:db` de campañas, `ai-generate`, servicio y simulado local; componentes de contenidos y campañas;
+  `test:layout` del copiloto y del editor. **Sin probar con el modelo real** (no hay clave en local y no se despliega
+  desde esta rama). **Para llevarlo a staging:** redesplegar `ai-generate` y la aplicación; sin migraciones.
+
 ## Sin probar contra el servicio real
 
 | Servicio                                                                                   | Estado                                                                                                                                                                                                              | Detalle                                    |
@@ -1923,3 +2035,27 @@ Detalle, antes y después por punto, en `docs/editor-reels.md` §12. Sin migraci
 - **Sin probar**: la vista previa en un navegador real con la letra de la marca (las medidas se acercan, no son las
   del archivo de la tipografía); móvil y Safari reales.
 - **Para staging**: lo de f54 (migración `20270113010000` y trabajador nuevo) antes que esta aplicación.
+
+### Plantillas de menús del restaurante (rama `f74/plantillas-menus`, 25/11/2026)
+
+«＋ Crear → Menú o carta del restaurante» (ruta `…/m/:brand/menus`, `src/features/menus/`). Escribir los platos → elegir la
+foto de la biblioteca (o subirla) → vista previa real (mismo motor que la exportación) → «Publicar o programar», que crea la
+pieza (historia, publicación o carrusel) y abre el editor ya en «Compartir» (`?compartir=1`) con el pie escrito.
+
+- **Diarias:** menú del día (primeros, segundos, postre, precio, qué incluye), menú de tapas (foto, nombre y precio por tapa),
+  tapa de la semana, carta o vinos destacados («Nombre | 3,50 €» por línea). **Eventos** (grupo aparte, un solo diseño con
+  marco dorado doble, precio en pastilla y fondo opcional de foto o IA velado): Nochevieja, Navidad, San Valentín y otro.
+  Cada una en historia (1080 × 1920) y publicación (1080 × 1350). Partieron de las historias de tapas y menú del catálogo.
+- **Reglas de diseño:** Libre Baskerville (`@fontsource-variable/libre-baskerville`, SIL OFL, registrada en `appFont.ts`), sin
+  cursivas; todas las líneas de un plato con el mismo color y peso; foto de fondo siempre bajo un velo; nombres propios y
+  cantidades con espacios duros (`medir.ts`); cada plato con su caja medida (lienzo del navegador; estimación en pruebas).
+  Menú largo: la publicación se reparte en carrusel (hasta 10 páginas); la historia, al ser una imagen, avisa y no se publica.
+- **Catálogo (`agency/catalogo/historias.ts`):** quitadas las cursivas de las historias de tapas y menú.
+- **Menú del día automático:** en este repositorio NO hay publicación automática del menú del día; el único automático que
+  existe es la story del jueves de tapas del panel de Casa Tomás (sección Instagram antigua, programada por
+  `instagram-programador`). El menú del día se sube solo a la web (`menus_diarios`), no a Instagram. La plantilla es una
+  función pura (`construirMenu(tipo, datos, formato, tema)`) lista para que una automatización la llame con esos datos.
+- **Probado:** unitarias (`disenos.test.ts`: reglas, sin solapes, zona segura, carrusel), `test:layout` (`menus.spec.ts`: cada
+  plantilla en historia y publicación, corto y largo, textos medidos con Konva real, flujo por la interfaz hasta «Compartir»;
+  `menu.spec.ts`), componentes de `layout/`. **Sin probar:** contra el Supabase de staging (la sesión pide contraseña); publicar
+  de verdad. Capturas en `rrss-recursos-comparativa/plantillas-menus/`.

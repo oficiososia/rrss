@@ -152,14 +152,80 @@ export type MediaJobSummary = Pick<
   'id' | 'kind' | 'status' | 'attempts' | 'max_attempts' | 'last_error' | 'result' | 'payload' | 'created_at'
 >;
 
-export function describeJob(job: MediaJobSummary): JobView {
+/** Un montaje que sigue en cola pasado este tiempo: el servicio de montaje está parado o arrancando. */
+export const QUEUE_STALLED_MS = 10 * 60_000;
+
+const REEL_JOB = 'media.reel.template';
+
+/**
+ * Los fallos que escribe el trabajador (o la cola) traducidos a una frase con qué hacer, sin rutas
+ * ni nombres internos. `retrying`: el trabajo ya ha vuelto a la cola solo (no hay que pulsar nada).
+ * Lo que no se reconoce sale como antes (`cleanMessage`: sin rutas ni identificadores).
+ */
+export function jobFailureMessage(message: string, kind: string, retrying = false): string {
+  const text = message.trim();
+  const reel = kind === REEL_JOB;
+  // La máquina del trabajador se apagó o se cortó a medias (en Fly, por ejemplo, al pasar su tiempo).
+  if (/^El trabajador dejó de responder/i.test(text) || /^El trabajo superó el tiempo/i.test(text)) {
+    if (retrying) return 'El intento anterior se cortó a medias; se vuelve a probar solo.';
+    return reel
+      ? 'El servicio de montaje se cortó a medias y no ha podido terminar. El reel está guardado: pulsa «Probar otra vez» para montarlo de nuevo, sin rehacer nada. Si vuelve a pasar, avisa al equipo.'
+      : 'El servicio se cortó a medias y no ha podido terminar. Vuelve a intentarlo; si vuelve a pasar, avisa al equipo.';
+  }
+  // El trabajador desplegado es más antiguo que la aplicación: no conoce alguna opción del plan.
+  if (/^Carga del trabajo inválida:.*Unrecognized key/i.test(text)) {
+    return reel
+      ? 'El servicio de montaje todavía no conoce alguna opción de este reel (está pendiente de actualizar). El reel está guardado: avisa al equipo y, cuando esté al día, pulsa «Probar otra vez».'
+      : 'El servicio todavía no conoce alguna opción de este trabajo (está pendiente de actualizar). Avisa al equipo.';
+  }
+  if (/^Carga del trabajo inválida/i.test(text)) {
+    return reel
+      ? 'El servicio de montaje no ha aceptado algún ajuste de este reel. Revisa en el editor los textos, las duraciones y la portada, y vuelve a montarlo; si sigue igual, avisa al equipo.'
+      : 'El servicio no ha aceptado los datos de este trabajo. Vuelve a intentarlo; si sigue igual, avisa al equipo.';
+  }
+  if (/no está instalada en el trabajador|el trabajador no tiene ninguna tipografía/i.test(text)) {
+    return 'La tipografía de los textos no está disponible para montar el vídeo. Elige otra en «Estilo» o avisa al equipo.';
+  }
+  if (/^El archivo no es un medio legible|^La pieza \d+ no (tiene imagen|es un vídeo)/i.test(text)) {
+    return 'Alguna foto o vídeo del reel no se puede leer (archivo dañado o de un tipo no admitido). Sustitúyelo en el editor y vuelve a montarlo.';
+  }
+  if (/^No existe (el archivo|el recurso)/i.test(text)) {
+    return 'Algún archivo del reel ya no está guardado. Sustitúyelo en el editor y vuelve a montarlo.';
+  }
+  if (/^«[^»]*» terminó con código|^No se pudo ejecutar «/i.test(text)) {
+    return retrying
+      ? 'El intento anterior falló al procesar el vídeo; se vuelve a probar solo.'
+      : 'No se ha podido procesar el vídeo con este material. Pulsa «Probar otra vez»; si vuelve a fallar, sustituye el último clip o foto que añadiste y avisa al equipo.';
+  }
+  if (/^La cola respondió|^No se pudo bajar|^Google Drive no firmó/i.test(text)) {
+    return retrying
+      ? 'El servicio no pudo leer el material en el intento anterior; se vuelve a probar solo.'
+      : 'El servicio de montaje no pudo leer el material en ese momento. Pulsa «Probar otra vez» dentro de un rato.';
+  }
+  return cleanMessage(text);
+}
+
+/**
+ * Cómo va un trabajo. Con `now` (milisegundos), un trabajo que lleva en cola más de
+ * `QUEUE_STALLED_MS` sin empezar lo dice: el servicio está parado o arrancando.
+ */
+export function describeJob(job: MediaJobSummary, now?: number): JobView {
   const assets = (job.result as { assets?: Array<{ id?: unknown }> } | null)?.assets;
   const assetId = Array.isArray(assets) && typeof assets[0]?.id === 'string' ? assets[0].id : null;
   if (job.status === 'queued' && job.attempts > 0) {
     return {
       label: 'En cola (reintento)',
       tone: 'progress',
-      detail: job.last_error ? cleanMessage(job.last_error) : null,
+      detail: job.last_error ? jobFailureMessage(job.last_error, job.kind, true) : null,
+      assetId: null,
+    };
+  }
+  if (job.status === 'queued' && now !== undefined && now - Date.parse(job.created_at) > QUEUE_STALLED_MS) {
+    return {
+      label: 'En cola, esperando al servicio de montaje',
+      tone: 'progress',
+      detail:
+        'El servicio de montaje está tardando en empezar (puede estar parado o arrancando). El reel está guardado y entrará solo en cuanto vuelva; si en un rato sigue igual, avisa al equipo.',
       assetId: null,
     };
   }
@@ -175,7 +241,12 @@ export function describeJob(job: MediaJobSummary): JobView {
     label: STATUS_LABEL[job.status],
     tone,
     // Sin rutas ni identificadores: el motivo se traduce si es uno conocido (un archivo borrado…).
-    detail: job.status === 'failed' ? (job.last_error ? cleanMessage(job.last_error) : 'Sin motivo registrado') : null,
+    detail:
+      job.status === 'failed'
+        ? job.last_error
+          ? jobFailureMessage(job.last_error, job.kind)
+          : 'Sin motivo registrado'
+        : null,
     assetId: job.status === 'succeeded' ? assetId : null,
   };
 }

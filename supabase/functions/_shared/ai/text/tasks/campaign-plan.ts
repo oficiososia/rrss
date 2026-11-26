@@ -172,12 +172,21 @@ export interface CampaignPlanResult extends TaskMeta {
   plan: CampaignPlan;
   /** Piezas de la respuesta que el producto ha descartado y por qué. */
   discarded: DiscardedPiece[];
+  /** Días que se han quedado sin piezas porque su tramo falló (el resto del plan sí salió). */
+  gaps?: PlanGap[];
+}
+
+export interface PlanGap {
+  startDate: string;
+  endDate: string;
+  reason: string;
 }
 
 export const CAMPAIGN_PLAN_INSTRUCTIONS = [
   'Eres estratega de redes sociales. Preparas un plan de publicaciones para la marca descrita en el material «perfil de marca», a partir de lo que pide el material «instrucción».',
   'Tu respuesta es solo una PROPUESTA que revisará una persona: no apruebas, no programas y no publicas nada, y no puedes pedir que se haga.',
   'Cada pieza va en una de las redes y formatos de la lista «Destinos» y en una fecha entre las fechas indicadas, ambas incluidas. No pases del máximo de piezas.',
+  'En cada pieza, «network» es solo el nombre de la red y «format» solo el formato, copiados tal cual del destino (por ejemplo «instagram» y «reel»; nunca «instagram/reel»).',
   'Reparte las piezas con sentido (no todas el mismo día) y explica en «why» por qué cada una va en esa red y en ese día.',
   'El pie («caption») es un borrador en el tono y el idioma de la marca, sin las etiquetas (van en «hashtags», sin #). No uses expresiones prohibidas ni temas vetados por la marca.',
   'No inventes datos (precios, fechas, promociones, direcciones) que no estén en el perfil, la instrucción o las fuentes.',
@@ -530,7 +539,11 @@ export function sanitizePlan(raw: RawPlan, ctx: SanitizeContext): { plan: Campai
   (Array.isArray(raw.pieces) ? raw.pieces : []).forEach((piece, index) => {
     // Red y formato tal como los escribe un modelo («Instagram», «Reels»): se llevan a los pedidos.
     const network = resolveNetwork(piece.network, ctx.targets) ?? (typeof piece.network === 'string' ? piece.network : '');
-    const format = resolveFormat(network, piece.format, ctx.targets) ?? (typeof piece.format === 'string' ? piece.format : '');
+    const format =
+      resolveFormat(network, piece.format, ctx.targets) ??
+      // «instagram/reel» en la red y nada (o algo raro) en el formato.
+      resolveFormat(network, piece.network, ctx.targets) ??
+      (typeof piece.format === 'string' ? piece.format : '');
     const when = parsePieceDate(piece.date, year);
     const day = when.date === null ? null : dayNumber(when.date);
     const idea = clipText(piece.idea, 300);
@@ -607,26 +620,135 @@ export function sanitizePlan(raw: RawPlan, ctx: SanitizeContext): { plan: Campai
 }
 
 // ── Tarea ────────────────────────────────────────────────────────────────
+//
+// Fiabilidad (prueba de calidad del 24/11/2026: 0 planes en 15 intentos):
+//   * las 10 respuestas «que no se pueden usar» traían en todas las piezas
+//     `network: "instagram/post"`, copiado del destino tal como lo veía en el
+//     prompt: ninguna pieza casaba con los destinos y el plan quedaba vacío.
+//     Ahora el prompt da red y formato por separado y el saneado entiende
+//     «instagram/post» (targets.ts);
+//   * un plan largo (un mes, 16–20 piezas) pide al modelo unos 7.000 tokens de
+//     salida, más de dos minutos a la velocidad del modelo, y se cortaba con el
+//     tiempo máximo de 60 s. Ahora se prepara por TRAMOS de unas pocas piezas
+//     (semanas enteras siempre que se puede), pedidos a la vez, y se juntan;
+//   * cada tramo, si la respuesta no se puede usar, se pide UNA vez más diciendo
+//     qué falló (sin cobrar la que no sirvió), siempre que quede tiempo;
+//   * si un tramo no sale ni al segundo intento pero otros sí, el plan sale con
+//     esos días vacíos y se dice cuáles (`gaps`); si no sale ninguno, el error
+//     dice qué pasó y que no se ha cobrado.
+
+/** Piezas por llamada: unas 400 de salida cada una; 5 caben con holgura en el tiempo de una llamada. */
+export const PIECES_PER_CALL = 5;
+/** Tiempo máximo de una llamada de un tramo. */
+export const PLAN_CALL_TIMEOUT_MS = 80_000;
+/** Tiempo total del plan (intentos incluidos): por debajo de lo que espera la aplicación y del límite de la función. */
+export const PLAN_DEADLINE_MS = 125_000;
+/** Un segundo intento solo se pide si queda al menos este tiempo. */
+export const MIN_RETRY_MS = 30_000;
+
+export interface PlanChunk {
+  startDate: string;
+  endDate: string;
+  maxPieces: number;
+  /** Semanas del plan (0 = la primera) que toca el tramo: para darle sus fases. */
+  firstWeek: number;
+  lastWeek: number;
+}
+
+const dayString = (day: number) => new Date(day * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Parte el plan en tramos de, como mucho, unas `PIECES_PER_CALL` piezas: por semanas
+ * enteras si el ritmo lo permite; si no (más de 5 piezas por semana), en trozos de días.
+ * Las piezas se reparten en proporción a los días de cada tramo (al menos una).
+ */
+export function planChunks(startDate: string, endDate: string, maxPieces: number): PlanChunk[] {
+  const start = dayNumber(startDate)!;
+  const end = dayNumber(endDate)!;
+  const days = end - start + 1;
+  if (maxPieces <= PIECES_PER_CALL) {
+    return [{ startDate, endDate, maxPieces, firstWeek: 0, lastWeek: Math.floor((days - 1) / 7) }];
+  }
+  let span = Math.max(1, Math.floor((PIECES_PER_CALL * days) / maxPieces));
+  if (span >= 7) span = Math.floor(span / 7) * 7;
+  const ranges: Array<[number, number]> = [];
+  for (let from = 0; from < days; from += span) ranges.push([from, Math.min(days - 1, from + span - 1)]);
+  // Un resto muy corto se une al tramo anterior (no merece una llamada propia).
+  const last = ranges[ranges.length - 1]!;
+  if (ranges.length > 1 && last[1] - last[0] + 1 < Math.ceil(span / 2)) {
+    ranges.pop();
+    ranges[ranges.length - 1]![1] = last[1];
+  }
+  // Reparto proporcional con el mayor resto, al menos una pieza por tramo.
+  const shares = ranges.map(([a, b]) => ((b - a + 1) / days) * maxPieces);
+  const counts = shares.map((share) => Math.max(1, Math.floor(share)));
+  let left = maxPieces - counts.reduce((sum, c) => sum + c, 0);
+  const order = shares
+    .map((share, i) => ({ i, rest: share - Math.floor(share) }))
+    .sort((a, b) => b.rest - a.rest || a.i - b.i);
+  for (let k = 0; left > 0; k = (k + 1) % order.length, left -= 1) counts[order[k]!.i]! += 1;
+  return ranges.map(([a, b], i) => ({
+    startDate: dayString(start + a),
+    endDate: dayString(start + b),
+    maxPieces: counts[i]!,
+    firstWeek: Math.floor(a / 7),
+    lastWeek: Math.floor(b / 7),
+  }));
+}
 
 function buildPrompt(
-  startDate: string,
-  endDate: string,
+  chunk: PlanChunk,
+  whole: { startDate: string; endDate: string; parts: number; part: number },
   targets: CampaignTarget[],
-  maxPieces: number,
   perWeek?: number,
+  retryHint?: string,
 ): string {
   // Todo lo de aquí está validado (fechas reales, identificadores con formato
-  // fijo, número entero): ningún texto libre del cliente entra en el prompt.
+  // fijo, número entero) o es texto fijo del producto: ningún texto libre del
+  // cliente entra en el prompt.
   return [
-    `Fechas: del ${startDate} al ${endDate}, ambos incluidos.`,
-    'Destinos (red/formato):',
-    ...targets.map((t) => `- Destino: ${t.network}/${t.format}`),
-    `Máximo de piezas: ${maxPieces}.`,
+    `Fechas: del ${chunk.startDate} al ${chunk.endDate}, ambos incluidos.`,
+    ...(whole.parts > 1
+      ? [
+          `Este es el tramo ${whole.part} de ${whole.parts} de un plan del ${whole.startDate} al ${whole.endDate}; los demás tramos se preparan aparte. Prepara solo las piezas de estas fechas y no repitas la misma idea en todas las semanas.`,
+        ]
+      : []),
+    'Destinos (copia «network» y «format» por separado en cada pieza):',
+    ...targets.map((t) => `- Destino: network=${t.network} format=${t.format}`),
+    `Máximo de piezas: ${chunk.maxPieces}.`,
     ...(perWeek ? [`Ritmo acordado: ${perWeek} piezas por semana.`] : []),
+    ...(retryHint ? ['', `Tu respuesta anterior no se pudo usar: ${retryHint} Corrígelo en esta.`] : []),
     '',
     'Prepara el plan que pide el material «instrucción».',
   ].join('\n');
 }
+
+/** Qué corregir en el segundo intento, según por qué se descartaron las piezas (texto fijo del producto). */
+export function retryHintFor(discarded: DiscardedPiece[], chunk: Pick<PlanChunk, 'startDate' | 'endDate'>): string {
+  const reasons = [...new Set(discarded.map((d) => d.reason))];
+  const fixes = reasons.flatMap((reason) =>
+    reason.startsWith('Red o formato')
+      ? [
+          '«network» debe ser solo el nombre de la red y «format» solo el formato, exactamente como en «Destinos» (por ejemplo network «instagram» y format «reel», nunca «instagram/reel»).',
+        ]
+      : reason.startsWith('Fecha')
+        ? [`«date» debe ser solo el día AAAA-MM-DD, entre el ${chunk.startDate} y el ${chunk.endDate}.`]
+        : reason.startsWith('Pieza sin')
+          ? ['cada pieza necesita «idea» y «caption» con texto.']
+          : [],
+  );
+  return fixes.length ? `ninguna pieza servía. ${fixes.join(' ')}` : 'no traía ninguna pieza utilizable.';
+}
+
+function sumUsage(items: TaskMeta[]): TaskMeta['usage'] {
+  const out: Record<string, number> = {};
+  for (const meta of items) {
+    for (const [unit, amount] of Object.entries(meta.usage)) out[unit] = (out[unit] ?? 0) + amount;
+  }
+  return out;
+}
+
+const uniqueClip = (lists: string[][], max: number) => [...new Set(lists.flat())].slice(0, max);
 
 export async function planCampaign(
   service: AiService,
@@ -650,47 +772,166 @@ export async function planCampaign(
     throw new AiTaskInputError(`El máximo de piezas debe estar entre 1 y ${MAX_PIECES}.`);
   }
 
-  const context = [
+  const chunks = planChunks(request.startDate, request.endDate, maxPieces);
+  const baseContext = [
     brandProfileContext(request.brandProfile),
     // Lo que escribe el cliente (instrucción, fuentes, nombres de archivos) viaja como material.
     { label: 'instrucción', content: instruction },
     { label: 'biblioteca', content: JSON.stringify(assets) },
-    ...(agreement ? [{ label: 'acuerdo previo', content: JSON.stringify(agreement) }] : []),
-    ...sources.map((source) => ({ label: `fuente: ${source.title}`, content: source.text })),
   ];
+  const sourceContext = sources.map((source) => ({ label: `fuente: ${source.title}`, content: source.text }));
+  const assetNames = new Map(assets.filter((a) => a.name).map((a) => [a.id, a.name]));
+  const started = Date.now();
 
-  const sanitizeContext: SanitizeContext = {
-    startDate: request.startDate,
-    endDate: request.endDate,
-    targets,
-    assetIds: assets.map((a) => a.id),
-    assetNames: new Map(assets.filter((a) => a.name).map((a) => [a.id, a.name])),
-    maxPieces,
-    hasPerformanceData: false,
-  };
-  const { data, meta } = await runStructuredTask(service, {
-    actor,
-    purpose: CAMPAIGN_PLAN_PURPOSE,
-    instructions: CAMPAIGN_PLAN_INSTRUCTIONS,
-    context,
-    prompt: buildPrompt(request.startDate, request.endDate, targets, maxPieces, agreement?.perWeek),
-    schema: CAMPAIGN_PLAN_SCHEMA,
-    maxOutputTokens: planOutputTokens(maxPieces),
-    // Un plan sin ninguna pieza utilizable no se cobra.
-    accept: (value) =>
-      sanitizePlan(value as unknown as RawPlan, sanitizeContext).plan.pieces.length === 0
-        ? 'La IA no ha propuesto ninguna pieza válida para esas fechas y redes. Vuelve a probar o cambia la instrucción.'
-        : null,
-  });
-
-  const { plan, discarded } = sanitizePlan(data as unknown as RawPlan, sanitizeContext);
-  if (plan.pieces.length === 0) {
-    // No debería llegar aquí (lo frena `accept`), pero sin piezas no hay plan.
-    throw new AiError(
-      'invalid_output',
-      'La IA no ha propuesto ninguna pieza válida para esas fechas y redes. Vuelve a probar o cambia la instrucción.',
-      { generationId: meta.generationId },
-    );
+  interface ChunkResult {
+    plan: CampaignPlan;
+    discarded: DiscardedPiece[];
+    meta: TaskMeta;
+    rawCount: number;
   }
-  return { ...meta, status: 'proposal', plan, discarded };
+
+  async function runChunk(chunk: PlanChunk, part: number): Promise<ChunkResult> {
+    // Cada tramo lleva las fases de sus semanas (el acuerdo dice «una fase por semana, en orden»).
+    const chunkAgreement =
+      agreement && chunks.length > 1 && agreement.phases
+        ? { ...agreement, phases: agreement.phases.slice(chunk.firstWeek, chunk.lastWeek + 1) }
+        : agreement;
+    const context = [
+      ...baseContext,
+      ...(chunkAgreement ? [{ label: 'acuerdo previo', content: JSON.stringify(chunkAgreement) }] : []),
+      ...sourceContext,
+    ];
+    const ctx: SanitizeContext = {
+      startDate: chunk.startDate,
+      endDate: chunk.endDate,
+      targets,
+      assetIds: assets.map((a) => a.id),
+      assetNames,
+      maxPieces: chunk.maxPieces,
+      hasPerformanceData: false,
+    };
+    let lastDiscarded: DiscardedPiece[] = [];
+    const attempt = (retryHint?: string) =>
+      runStructuredTask(service, {
+        actor,
+        purpose: CAMPAIGN_PLAN_PURPOSE,
+        instructions: CAMPAIGN_PLAN_INSTRUCTIONS,
+        context,
+        prompt: buildPrompt(
+          chunk,
+          { startDate: request.startDate, endDate: request.endDate, parts: chunks.length, part },
+          targets,
+          agreement?.perWeek,
+          retryHint,
+        ),
+        schema: CAMPAIGN_PLAN_SCHEMA,
+        maxOutputTokens: planOutputTokens(chunk.maxPieces),
+        timeoutMs: Math.max(1000, Math.min(PLAN_CALL_TIMEOUT_MS, PLAN_DEADLINE_MS - (Date.now() - started))),
+        // Un plan sin ninguna pieza utilizable no se cobra.
+        accept: (value) => {
+          const result = sanitizePlan(value as unknown as RawPlan, ctx);
+          lastDiscarded = result.discarded;
+          return result.plan.pieces.length === 0
+            ? 'La IA no ha propuesto ninguna pieza válida para esas fechas y redes.'
+            : null;
+        },
+      });
+
+    let outcome: Awaited<ReturnType<typeof attempt>>;
+    try {
+      outcome = await attempt();
+    } catch (error) {
+      // Solo se repite lo que se puede arreglar diciéndolo (una respuesta que no se puede
+      // usar, que no se ha cobrado) y si da tiempo. Un tiempo agotado no se repite: no cabría.
+      if (
+        !(error instanceof AiError) ||
+        error.code !== 'invalid_output' ||
+        PLAN_DEADLINE_MS - (Date.now() - started) < MIN_RETRY_MS
+      ) {
+        throw error;
+      }
+      const details = (error.details ?? {}) as { finish_reason?: string; charged?: boolean };
+      const hint =
+        details.finish_reason === 'length'
+          ? 'se cortó antes de terminar. Escribe ideas, pies y razones más cortos.'
+          : lastDiscarded.length
+            ? retryHintFor(lastDiscarded, chunk)
+            : 'no seguía el formato JSON pedido (campos y tipos).';
+      lastDiscarded = [];
+      try {
+        outcome = await attempt(hint);
+      } catch (second) {
+        if (second instanceof AiError && second.code === 'invalid_output') {
+          throw new AiError(
+            'invalid_output',
+            `No ha salido un plan utilizable ni al segundo intento. ${second.message} Prueba con menos semanas o cuéntalo de otra forma.`,
+            {
+              ...(second.generationId ? { generationId: second.generationId } : {}),
+              retryable: true,
+              ...(second.details !== undefined ? { details: second.details } : {}),
+            },
+          );
+        }
+        throw second;
+      }
+    }
+    const raw = outcome.data as unknown as RawPlan;
+    const { plan, discarded } = sanitizePlan(raw, ctx);
+    return { plan, discarded, meta: outcome.meta, rawCount: Array.isArray(raw.pieces) ? raw.pieces.length : 0 };
+  }
+
+  // Todos los tramos a la vez; se espera a que acaben todos (así el cálculo del coste los cuenta todos).
+  const settled = await Promise.allSettled(chunks.map((chunk, i) => runChunk(chunk, i + 1)));
+  const done = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+  const failed = settled.flatMap((s, i) => (s.status === 'rejected' ? [{ error: s.reason as unknown, chunk: chunks[i]! }] : []));
+  if (done.length === 0) throw failed[0]!.error;
+
+  // Juntar: piezas en orden de fecha y, por encima del máximo, fuera (como en un plan de una llamada).
+  const discarded: DiscardedPiece[] = [];
+  let offset = 0;
+  for (const d of done) {
+    discarded.push(...d.discarded.map((x) => (x.index < 0 ? x : { ...x, index: x.index + offset })));
+    offset += d.rawCount;
+  }
+  const allPieces = done.flatMap((d) => d.plan.pieces).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const pieces = allPieces.slice(0, maxPieces);
+  if (allPieces.length > pieces.length) {
+    discarded.push({ index: -1, reason: `Sobran ${allPieces.length - pieces.length} piezas sobre el máximo de ${maxPieces}.` });
+  }
+  const gaps: PlanGap[] = failed.map(({ error, chunk }) => ({
+    startDate: chunk.startDate,
+    endDate: chunk.endDate,
+    reason:
+      error instanceof AiError && error.code === 'provider_timeout'
+        ? 'La IA ha tardado demasiado con estos días.'
+        : 'La IA no ha dado piezas utilizables para estos días.',
+  }));
+  const firstPlan = done[0]!.plan;
+  const plan: CampaignPlan =
+    done.length === 1
+      ? { ...firstPlan, pieces }
+      : {
+          objective: agreement?.objective ? clipText(agreement.objective, 600) : firstPlan.objective,
+          summary: clipText(done.map((d) => d.plan.summary).filter(Boolean).join(' '), 1500),
+          reasoning: {
+            observed: uniqueClip(done.map((d) => d.plan.reasoning.observed), 10),
+            dataBacked: [],
+            hypotheses: uniqueClip(done.map((d) => d.plan.reasoning.hypotheses), 20),
+            dataNote: firstPlan.reasoning.dataNote,
+          },
+          pieces,
+        };
+  const metas = done.map((d) => d.meta);
+  return {
+    generationId: metas[0]!.generationId,
+    provider: metas[0]!.provider,
+    model: metas[0]!.model,
+    usage: sumUsage(metas),
+    costMicros: metas.reduce((sum, m) => sum + m.costMicros, 0),
+    latencyMs: Math.max(...metas.map((m) => m.latencyMs)),
+    status: 'proposal',
+    plan,
+    discarded,
+    ...(gaps.length ? { gaps } : {}),
+  };
 }

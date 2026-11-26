@@ -1,390 +1,271 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
-import { Sparkles } from 'lucide-react';
+import { ChevronLeft, Images, Loader2, Plus, Sparkles, type LucideIcon } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Dialog, Field, Input } from '@/components/ui';
+import { Dialog, Skeleton } from '@/components/ui';
 import { reelLikeEnabled } from '@/config/app';
 import { costSentence } from '@/features/ai/cupo';
 import { useAiQuota } from '@/features/ai/api';
 import { useOrg } from '@/features/orgs/context';
 import { useWorkMode } from '@/features/orgs/workMode';
-import { describeNeeds } from '@/features/reels/reelTemplate';
 import { TemplateSample } from '@/features/reels/editor/TemplateCards';
-import { useBrandReelTemplates, type BrandReelTemplate } from '@/features/reels/editor/api';
-import { reelLikePaths, useReelLikeOptions, withName } from '@/features/reels/like/api';
+import { useBrandReelTemplates } from '@/features/reels/editor/api';
+import { reelLikePaths, useReelLikeOptions } from '@/features/reels/like/api';
 import { REEL_TEMPLATES } from '@/features/reels/templates';
-import { PUBLISHABLE_TARGETS } from '@/features/social/calendar';
-import { translateError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
-import { useContentMutations } from './api';
-import { contentPaths } from './labels';
-import { FORMAT_CARDS, formatIcon, type FormatCard } from './lista/formats';
-import { defaultTitle } from './lista/stage';
-import { formatsOf, NETWORKS } from './networks';
-import type { BrandTemplate } from './templates/api';
-import { TemplatePicker } from './templates/TemplatePicker';
+import { FORMAT_CARDS, type FormatCard } from './lista/formats';
+import { useBrandTemplates } from './templates/api';
+import { TemplateThumb } from './templates/TemplateThumb';
+import { useTemplatePreviews } from './templates/useTemplatePreviews';
+import { useStartPiece } from './useStartPiece';
+
+// «¿Qué quieres crear?» (simplificación aceptada, apartado 6, N1): un solo paso. Se toca el formato y
+// sale su galería con «En blanco» la primera; al tocar una tarjeta se crea la pieza y se abre su
+// editor. Sin nombre (se pone solo, el formato y el día, y se cambia en el editor) ni botones
+// «Cancelar» / «Crear».
+
+/** Orden de los formatos al crear: lo que más importa (el reel) primero. */
+const ORDER = ['reel', 'post', 'carousel', 'story'];
+const CARDS: FormatCard[] = ORDER.map((format) => FORMAT_CARDS.find((card) => card.format === format)!).filter(Boolean);
 
 interface CreateContentDialogProps {
   organizationId: string;
   brandId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Formato que sale marcado (los accesos directos «Nuevo reel», «Nueva publicación»…). */
+  /** Formato ya elegido (los accesos de «＋ Crear»): se abre directamente su galería. */
   initialFormat?: string;
-  /** Plantilla con la que se empieza (desde la pantalla vacía de Contenidos). */
-  initialTemplate?: BrandTemplate | null;
 }
 
-/** Los formatos de una red como tarjetas: los cuatro de siempre con su proporción, y el resto con su nombre. */
-function cardsFor(network: string): FormatCard[] {
-  return formatsOf(network).map(
-    (spec) =>
-      FORMAT_CARDS.find((card) => card.format === spec.format) ?? {
-        format: spec.format,
-        label: spec.label,
-        ratio: 1,
-        ratioText: '',
-        hint: '',
-        icon: formatIcon(spec.format),
-      },
-  );
-}
-
-/**
- * Nueva idea: se elige el formato con una tarjeta que enseña su proporción, el nombre es opcional (por
- * defecto, el formato y el día) y se abre directamente el editor que le toca. El documento se crea al
- * abrirla en el editor.
- */
-export function CreateContentDialog({
-  organizationId,
-  brandId,
-  open,
-  onOpenChange,
-  initialFormat,
-  initialTemplate,
-}: CreateContentDialogProps) {
+export function CreateContentDialog({ organizationId, brandId, open, onOpenChange, initialFormat }: CreateContentDialogProps) {
+  const valid = CARDS.some((card) => card.format === initialFormat) ? initialFormat! : null;
+  const [format, setFormat] = useState<string | null>(valid);
+  const card = CARDS.find((c) => c.format === format) ?? null;
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (!next) setFormat(valid);
+      }}
       size="lg"
-      // Sin relleno abajo: la barra de botones llega hasta el borde del diálogo.
-      bodyClassName="pb-0"
-      title="Nueva idea"
-      description="Elige qué vas a publicar. Después la diseñas en el editor."
+      title={card ? card.label : '¿Qué quieres crear?'}
     >
-      <CreateForm
-        organizationId={organizationId}
-        brandId={brandId}
-        onClose={() => onOpenChange(false)}
-        initialFormat={initialFormat}
-        initialTemplate={initialTemplate ?? null}
-      />
+      {card ? (
+        <Gallery
+          organizationId={organizationId}
+          brandId={brandId}
+          card={card}
+          onBack={() => setFormat(null)}
+          onClose={() => onOpenChange(false)}
+        />
+      ) : (
+        <Formats organizationId={organizationId} brandId={brandId} onPick={setFormat} onClose={() => onOpenChange(false)} />
+      )}
     </Dialog>
   );
 }
 
-function CreateForm({
+/** Marco con la proporción del formato y su icono. */
+function RatioFrame({ ratio, icon: Icon, active }: { ratio: number; icon: LucideIcon; active?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'flex h-12 shrink-0 items-center justify-center rounded-md border-2 border-dashed',
+        active ? 'border-primary text-primary' : 'border-border text-muted',
+      )}
+      style={{ aspectRatio: String(ratio) }}
+      aria-hidden
+    >
+      <Icon className="h-5 w-5" />
+    </span>
+  );
+}
+
+const TILE =
+  'flex min-h-14 w-full items-center gap-3 rounded-xl border-2 border-border p-3 text-left transition-colors hover:border-primary/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary sm:min-h-[8.5rem] sm:flex-col sm:justify-center sm:text-center';
+
+/** Paso único: los formatos, «Hacer un reel como este» si el servidor puede y, en el móvil, «Subir fotos». */
+function Formats({
   organizationId,
   brandId,
+  onPick,
   onClose,
-  initialFormat,
-  initialTemplate,
 }: {
   organizationId: string;
   brandId: string;
+  onPick: (format: string) => void;
   onClose: () => void;
-  initialFormat?: string;
-  initialTemplate: BrandTemplate | null;
 }) {
-  const navigate = useNavigate();
-  const { create, saveVersion } = useContentMutations(organizationId, brandId);
-  const [fromTemplate, setFromTemplate] = useState(Boolean(initialTemplate));
-  const [template, setTemplate] = useState<BrandTemplate | null>(initialTemplate);
-  const [reelTemplate, setReelTemplate] = useState<BrandReelTemplate | null>(null);
-  const [title, setTitle] = useState('');
-  // Solo Instagram se publica hoy: la red no se pregunta.
-  const network = initialTemplate?.network ?? NETWORKS[0]!.id;
-  const [format, setFormat] = useState<string>(
-    initialTemplate?.format ??
-      (cardsFor(NETWORKS[0]!.id).some((c) => c.format === initialFormat)
-        ? initialFormat!
-        : cardsFor(NETWORKS[0]!.id)[0]!.format),
-  );
-  const [error, setError] = useState<string | null>(null);
-  const isReel = format === 'reel';
   const { isAdmin } = useOrg();
-  const reelTemplates = useBrandReelTemplates(brandId);
-  const like = useReelLikeOptions(brandId, reelLikeEnabled());
   const { selfManaged } = useWorkMode();
+  const like = useReelLikeOptions(brandId, reelLikeEnabled());
   // En autogestión el cupo no se enseña: ni se pregunta.
   const quota = useAiQuota(organizationId, !selfManaged && isAdmin && Boolean(like.data?.available));
   const likeCost = like.data?.estimate
     ? costSentence(like.data.estimate.maxMicros, { selfManaged, limitMicros: quota.data?.limit_value })
     : null;
-  const brandReelTemplates = reelTemplates.data ?? [];
-  const cards = cardsFor(network);
-  const current = cards.find((c) => c.format === format);
-  const suggested = defaultTitle(current?.label ?? 'Pieza');
+  const base = `/o/${organizationId}/m/${brandId}`;
 
-  function changeFormat(next: string) {
-    setFormat(next);
-    // Las plantillas de una pieza y las de un reel son distintas: al cambiar de formato se vuelve a «En blanco».
-    setFromTemplate(false);
-    setTemplate(null);
-    setReelTemplate(null);
-  }
-
-  function chooseTemplate(next: BrandTemplate) {
-    setTemplate(next);
-    // La plantilla manda en el formato: su documento solo vale para él.
-    setFormat(next.format);
-  }
-
-  function toggleTemplate(on: boolean) {
-    setFromTemplate(on);
-    if (!on) {
-      setTemplate(null);
-      setReelTemplate(null);
-    }
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    if (fromTemplate && !template && !(isReel && reelTemplate)) {
-      setError('Elige una plantilla o marca «En blanco».');
-      return;
-    }
-    const target = template ? { network: template.network, format: template.format } : { network, format };
-    try {
-      const item = await create.mutateAsync({ title: title.trim() || suggested, ...target });
-      if (template?.document) {
-        try {
-          await saveVersion.mutateAsync({
-            contentId: item.id,
-            document: template.document,
-            note: `Desde la plantilla «${template.name}»`,
-          });
-          toast.success('Idea creada desde la plantilla');
-        } catch (e) {
-          // La idea existe: se abre sin diseño y se puede reintentar desde el editor.
-          toast.error(`La idea se ha creado, pero no se ha podido aplicar la plantilla. ${translateError(e)}`);
-        }
-      } else {
-        toast.success('Idea creada');
-      }
-      onClose();
-      // Un reel con plantilla de la marca se abre en el editor de reels con ella elegida.
-      const path = contentPaths(organizationId, brandId).item(item.id);
-      navigate(reelTemplate ? `${path}?plantilla=${encodeURIComponent(reelTemplate.key)}` : path);
-    } catch (e) {
-      setError(translateError(e));
-    }
-  }
+  const formatTile = (card: FormatCard) => (
+    <li key={card.format}>
+      <button type="button" className={TILE} onClick={() => onPick(card.format)} data-testid={`create-content-format-${card.format}`}>
+        <RatioFrame ratio={card.ratio} icon={card.icon} active={card.format === 'reel'} />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">{card.label}</span>
+          <span className="block text-xs text-muted">{card.hint}</span>
+        </span>
+      </button>
+    </li>
+  );
 
   return (
-    <form id="create-content" onSubmit={(e) => void submit(e)} className="space-y-4">
-      <fieldset className="space-y-2" disabled={Boolean(template)}>
-        <legend className="mb-2 text-sm font-medium">Formato</legend>
-        <div
-          className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-          role="radiogroup"
-          aria-label="Formato"
-          data-testid="create-content-format"
-        >
-          {cards.map((card) => {
-            const Icon = card.icon;
-            const on = card.format === format;
-            return (
-              <label
-                key={card.format}
-                className={cn(
-                  'flex min-h-[7.5rem] cursor-pointer flex-col items-center justify-between gap-2 rounded-xl border-2 p-3 text-center transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-primary',
-                  on ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary/50',
-                  template && 'cursor-not-allowed opacity-60',
-                )}
-                data-testid={`create-content-format-${card.format}`}
-              >
-                <input
-                  type="radio"
-                  name="create-content-format"
-                  value={card.format}
-                  checked={on}
-                  onChange={() => changeFormat(card.format)}
-                  className="sr-only"
-                />
-                <span
-                  className={cn(
-                    'flex h-14 items-center justify-center rounded-md border-2 border-dashed',
-                    on ? 'border-primary text-primary' : 'border-border text-muted',
-                  )}
-                  style={{ aspectRatio: String(card.ratio) }}
-                  aria-hidden
-                >
-                  <Icon className="h-5 w-5" />
-                </span>
-                <span>
-                  <span className="block text-sm font-medium">{card.label}</span>
-                  {card.ratioText && <span className="block text-xs text-muted">{card.ratioText}</span>}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        {current?.hint && (
-          <p className="text-xs text-muted">
-            {current.hint}.
-            {PUBLISHABLE_TARGETS.has(`${network}:${format}`)
-              ? ''
-              : ' Todavía no se publica sola: se prepara aquí y se sube a mano.'}
-          </p>
-        )}
-      </fieldset>
-
-      <Field label="Nombre" hint={`Opcional, solo lo ve el equipo. Si lo dejas vacío: «${suggested}».`} error={error}>
-        {(props) => (
-          <Input
-            {...props}
-            value={title}
-            maxLength={200}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={suggested}
-            data-testid="create-content-title"
-          />
-        )}
-      </Field>
-
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Cómo quieres empezar</legend>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {(
-            [
-              [
-                false,
-                'En blanco',
-                isReel ? 'Montas el vídeo desde cero.' : 'Diseñas desde cero.',
-                'create-content-blank',
-              ],
-              ...(!isReel || brandReelTemplates.length > 0
-                ? ([
-                    [
-                      true,
-                      'Desde una plantilla',
-                      isReel ? 'Un montaje de la marca: tú pones las fotos.' : 'Un diseño de la marca ya montado.',
-                      'create-content-from-template',
-                    ],
-                  ] as const)
-                : []),
-            ] as const
-          ).map(([on, label, help, testId]) => (
-            <label
-              key={testId}
-              className={cn(
-                'flex min-h-12 cursor-pointer items-start gap-2 rounded-xl border-2 p-3 text-sm',
-                fromTemplate === on ? 'border-primary bg-primary-soft' : 'border-border',
-              )}
-            >
-              <input
-                type="radio"
-                name="create-content-start"
-                className="mt-1"
-                checked={fromTemplate === on}
-                onChange={() => toggleTemplate(on)}
-                data-testid={testId}
-              />
-              <span>
-                <span className="block font-medium">{label}</span>
-                <span className="block text-xs text-muted">{help}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {isReel && like.data?.available && (
-        <Link
-          // El nombre escrito aquí viaja hasta la pieza que se cree con el análisis.
-          to={withName(reelLikePaths(organizationId, brandId).start, title)}
-          onClick={onClose}
-          className="flex min-h-14 items-center gap-3 rounded-xl border-2 border-border p-3 text-sm hover:border-primary/50"
-          data-testid="create-content-reel-like"
-        >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-            <Sparkles className="h-5 w-5" aria-hidden />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block font-medium">Hacer un reel como este</span>
-            <span className="block text-xs text-muted">
-              Sube un vídeo que te guste y lo rehacemos con tu material.
-              {likeCost && <span data-testid="create-content-reel-like-cost"> {likeCost}</span>}
+    <ul className="grid gap-2 sm:grid-cols-3" aria-label="Qué crear" data-testid="create-content-format">
+      {formatTile(CARDS[0]!)}
+      {like.data?.available && (
+        <li>
+          <Link to={reelLikePaths(organizationId, brandId).start} onClick={onClose} className={TILE} data-testid="create-content-reel-like">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary" aria-hidden>
+              <Sparkles className="h-5 w-5" />
             </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Reel como este</span>
+              <span className="block text-xs text-muted">
+                Copia el ritmo de un reel que te guste.
+                {likeCost && <span data-testid="create-content-reel-like-cost"> {likeCost}</span>}
+              </span>
+            </span>
+          </Link>
+        </li>
+      )}
+      {CARDS.slice(1).map(formatTile)}
+      <li className="sm:hidden">
+        <Link to={`${base}/biblioteca`} onClick={onClose} className={TILE} data-testid="create-content-upload">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-subtle text-muted" aria-hidden>
+            <Images className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">Subir fotos</span>
+            <span className="block text-xs text-muted">A la biblioteca</span>
           </span>
         </Link>
+      </li>
+    </ul>
+  );
+}
+
+/** Galería del formato: «En blanco» la primera y, detrás, las plantillas de la marca de ese formato. */
+function Gallery({
+  organizationId,
+  brandId,
+  card,
+  onBack,
+  onClose,
+}: {
+  organizationId: string;
+  brandId: string;
+  card: FormatCard;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const isReel = card.format === 'reel';
+  const { start, busy, error } = useStartPiece(organizationId, brandId, onClose);
+  const pieceTemplates = useBrandTemplates(brandId);
+  const reelTemplates = useBrandReelTemplates(brandId);
+  const templates = useMemo(
+    () => (isReel ? [] : (pieceTemplates.data ?? []).filter((t) => t.document && t.format === card.format)),
+    [isReel, pieceTemplates.data, card.format],
+  );
+  const { previewOf, fallbackOf } = useTemplatePreviews(brandId, templates);
+  const loading = isReel ? reelTemplates.isPending : pieceTemplates.isPending;
+
+  const spinner = (key: string) =>
+    busy === key ? <Loader2 className="absolute right-2 top-2 h-4 w-4 animate-spin text-primary" aria-hidden /> : null;
+  const tile = 'relative flex h-full w-full flex-col gap-2 rounded-xl border-2 border-border p-2 text-left transition-colors hover:border-primary/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-wait disabled:opacity-60';
+
+  return (
+    <div className="space-y-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="-ml-1 inline-flex min-h-9 items-center gap-1 rounded-md px-1 text-sm text-muted hover:text-fg"
+        data-testid="create-content-back"
+      >
+        <ChevronLeft className="h-4 w-4" aria-hidden />
+        Otro formato
+      </button>
+      {error && (
+        <p role="alert" className="text-sm text-danger" data-testid="create-content-error">
+          {error}
+        </p>
       )}
-      {fromTemplate && isReel && (
-        <div className="space-y-2" data-testid="create-content-reel-templates">
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3" aria-label="Plantillas de reel de la marca">
-            {brandReelTemplates.map((entry) => {
+      <ul
+        className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+        aria-label={`Empezar ${card.label.toLowerCase()}`}
+        aria-busy={Boolean(busy)}
+        data-testid={isReel ? 'create-content-reel-templates' : 'create-content-templates'}
+      >
+        <li>
+          <button
+            type="button"
+            className={tile}
+            disabled={Boolean(busy)}
+            onClick={() => void start({ kind: 'blank', format: card.format }, 'blank')}
+            data-testid="create-content-blank"
+          >
+            {spinner('blank')}
+            <span
+              className="flex w-full items-center justify-center rounded-md border-2 border-dashed border-border text-muted"
+              style={{ aspectRatio: String(card.ratio) }}
+              aria-hidden
+            >
+              <Plus className="h-6 w-6" />
+            </span>
+            <span className="block text-sm font-medium">En blanco</span>
+          </button>
+        </li>
+        {loading &&
+          Array.from({ length: 3 }, (_, i) => (
+            <li key={`s${i}`} aria-hidden>
+              <Skeleton className={cn('w-full', card.ratio < 0.7 ? 'aspect-[9/16]' : 'aspect-[4/5]')} />
+            </li>
+          ))}
+        {isReel
+          ? (reelTemplates.data ?? []).map((entry) => {
               const style = REEL_TEMPLATES.find((t) => t.id === entry.template.style.id);
-              const selected = reelTemplate?.id === entry.id;
               return (
                 <li key={entry.id} className="min-w-0">
                   <button
                     type="button"
-                    aria-pressed={selected}
-                    onClick={() => setReelTemplate(entry)}
-                    className={cn(
-                      'flex h-full w-full flex-col gap-2 rounded-xl border-2 p-2 text-left transition-colors',
-                      selected ? 'border-primary bg-primary-soft' : 'border-border hover:border-primary/50',
-                    )}
+                    className={tile}
+                    disabled={Boolean(busy)}
+                    onClick={() => void start({ kind: 'reel-template', template: entry }, entry.id)}
                     data-testid="create-content-reel-template"
                     data-template={entry.key}
                   >
-                    {style && <TemplateSample template={style} className="mx-auto w-full max-w-[9rem]" />}
-                    <span className="block text-sm font-medium">{entry.name}</span>
-                    <span className="block text-xs text-muted">{describeNeeds(entry.template)}</span>
+                    {spinner(entry.id)}
+                    {style && <TemplateSample template={style} className="w-full" />}
+                    <span className="block truncate text-sm font-medium">{entry.name}</span>
                   </button>
                 </li>
               );
-            })}
-          </ul>
-        </div>
-      )}
-      {fromTemplate && !isReel && (
-        <div className="space-y-2" data-testid="create-content-templates">
-          <TemplatePicker
-            orgId={organizationId}
-            brandId={brandId}
-            selectedId={template?.id ?? null}
-            onSelect={chooseTemplate}
-            defaultFormat={format}
-          />
-          {template && (
-            <p className="text-xs text-muted">
-              El formato es el de la plantilla. Las fotos son huecos para que pongas las tuyas; el texto, el pie y los
-              hashtags son una guía.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/*
-        Los botones se quedan a la vista aunque la lista de plantillas sea larga. El cuerpo del diálogo va
-        sin relleno abajo (`bodyClassName="pb-0"`): con él, la barra pegada se quedaba 1rem por encima del
-        borde y por esa franja asomaban las miniaturas de las plantillas.
-      */}
-      <div
-        className="sticky bottom-0 -mx-5 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3"
-        data-testid="create-content-actions"
-      >
-        <Button variant="secondary" onClick={onClose} disabled={create.isPending}>
-          Cancelar
-        </Button>
-        <Button type="submit" loading={create.isPending || saveVersion.isPending} data-testid="create-content-submit">
-          Crear y abrir
-        </Button>
-      </div>
-    </form>
+            })
+          : templates.map((template) => (
+              <li key={template.id} className="min-w-0">
+                <button
+                  type="button"
+                  className={tile}
+                  disabled={Boolean(busy)}
+                  onClick={() => void start({ kind: 'template', template }, template.id)}
+                  data-testid="create-content-template"
+                  data-template-key={template.key}
+                >
+                  {spinner(template.id)}
+                  <TemplateThumb canvas={template.document!.canvas} preview={previewOf(template)} fallback={fallbackOf(template)} />
+                  <span className="block truncate text-sm font-medium">{template.name}</span>
+                </button>
+              </li>
+            ))}
+      </ul>
+    </div>
   );
 }

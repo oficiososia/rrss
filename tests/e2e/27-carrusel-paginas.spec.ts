@@ -9,7 +9,7 @@ import {
   abrirCompartir,
   guardarVersion,
   cajon,
-  nuevaIdea,
+  crearPieza,
 } from './apoyo';
 
 // Carrusel de varias páginas de extremo a extremo, contra el Supabase LOCAL y la
@@ -36,10 +36,7 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   const { page } = s;
 
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill(TITULO);
-  await page.getByTestId('create-content-format-carousel').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'carousel', TITULO);
   await expect(page.getByTestId('editor-title')).toHaveText(TITULO);
   const id = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
   if (!id) throw new Error(`No se ve el id de la pieza en ${page.url()}`);
@@ -74,6 +71,9 @@ test('un carrusel de 3 páginas se exporta, se aprueba y se publica con sus hijo
   await accionDelMenu(page, 'editor-share', 'editor-export');
   await expect(page.getByTestId('export-pages-notice')).toContainText('3 páginas');
   await page.getByTestId('export-download').uncheck();
+  // «Guardar en la biblioteca» ya no viene marcado (se recuerda por navegador y uno nuevo empieza sin él):
+  // sin descargar ni guardar, «Exportar» queda deshabilitado (ExportImageDialog).
+  await page.getByTestId('export-library').check();
   await page.getByTestId('export-confirm').click();
   await expect(page.getByTestId('export-done')).toContainText('3 imágenes', { timeout: 60_000 });
   await page.getByTestId('export-close').click();

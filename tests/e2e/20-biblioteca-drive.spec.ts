@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, aviso, dato, sinErrores, sql, accionDelMenu, guardarVersion, nuevaIdea } from './apoyo';
+import { abrir, aviso, dato, sinErrores, sql, accionDelMenu, guardarVersion, crearPieza, tarjetaDeArchivo } from './apoyo';
 
 // Biblioteca con Google Drive de extremo a extremo, contra el Supabase LOCAL y
 // Google Drive SIMULADO (supabase/functions/_shared/drive/local-test.ts,
@@ -54,7 +54,7 @@ test('añadir una foto de Drive a la biblioteca: se ve y no ocupa Storage', asyn
   await page.getByTestId('drive-import-submit').click();
   await aviso(page, '1 foto añadida desde Google Drive');
 
-  const tarjeta = page.getByTestId('library-asset').filter({ hasText: FOTO });
+  const tarjeta = tarjetaDeArchivo(page, FOTO);
   await expect(tarjeta.getByTestId('library-asset-drive')).toBeVisible();
   // La miniatura llega de Drive por la dirección firmada de drive-media.
   await expect(tarjeta.locator('img')).toHaveJSProperty('naturalWidth', 96);
@@ -75,10 +75,7 @@ test('usar la foto de Drive en el editor y exportar la pieza', async ({ browser 
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marca()}/contenidos`);
-  await nuevaIdea(page);
-  await page.getByTestId('create-content-title').fill('Pieza con foto de Drive');
-  await page.getByTestId('create-content-format-post').click();
-  await page.getByTestId('create-content-submit').click();
+  await crearPieza(page, 'post', 'Pieza con foto de Drive');
   await expect(page.getByTestId('editor-title')).toHaveText('Pieza con foto de Drive');
   const contenido = /\/contenidos\/([0-9a-f-]{36})/.exec(page.url())?.[1];
 

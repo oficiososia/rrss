@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 // Inicio de la marca y lista de Contenidos en un navegador real, sin Supabase (banco de
 // tests/layout/inicio-contenidos.tsx): sin scroll lateral a 375 px ni en tablet y portátil, con títulos
-// larguísimos, miniaturas dibujadas de verdad, accesos que se pueden tocar y la ventana «Nueva idea» entera.
+// larguísimos, miniaturas dibujadas de verdad, accesos que se pueden tocar y «¿Qué quieres crear?» entera.
 
 const SIZES = [
   { name: 'móvil 375×812', width: 375, height: 812 },
@@ -32,11 +32,11 @@ const overflow = (page: Page) =>
   });
 
 for (const size of SIZES) {
-  /** «Nueva idea»: desde «＋ Crear» del menú (la cabecera de Contenidos ya no la repite). */
-async function newIdea(page: Page, width: number) {
-  await page.getByTestId(width < 1024 ? 'create-menu-mobile' : 'create-menu').click();
-  await page.getByTestId('create-menu-post').click();
-}
+  /** Un formato desde «＋ Crear» del menú (la cabecera de Contenidos no lo repite): abre su galería. */
+  async function createFrom(page: Page, width: number, format: string) {
+    await page.getByTestId(width < 1024 ? 'create-menu-mobile' : 'create-menu').click();
+    await page.getByTestId(`create-menu-${format}`).click();
+  }
 
 test.describe(size.name, () => {
     test.beforeEach(async ({ page }) => {
@@ -61,24 +61,21 @@ test.describe(size.name, () => {
       expect((await page.getByTestId('home-published-link').boundingBox())!.height).toBeGreaterThanOrEqual(40);
     });
 
-    test('contenidos: rejilla con miniaturas reales, pestañas con contador y sin scroll lateral', async ({ page }) => {
+    test('contenidos: miniaturas reales (lista en el móvil), tres pestañas con contador y sin scroll lateral', async ({ page }) => {
       await open(page, 'vista=contenidos&largos=1');
       await expect(page.getByTestId('content-list')).toBeVisible();
-      await expect(page.getByTestId('content-count-ready')).toBeVisible();
+      await expect(page.getByRole('tab')).toHaveCount(3);
+      await expect(page.getByTestId('content-count-active')).toBeVisible();
       await page.getByTestId('content-tab-scheduled').click();
-      await expect(page.getByTestId('content-card').first()).toBeVisible();
+      // En el móvil, lista; en lo demás, rejilla. Sin botón para cambiarlo.
+      await expect(page.getByTestId(size.width < 640 ? 'content-row' : 'content-card').first()).toBeVisible();
+      await expect(page.getByTestId('content-view-list')).toHaveCount(0);
       // Las piezas con diseño se dibujan con el motor del lienzo (no el esquema ni el icono).
       await expect(page.locator('[data-testid="piece-thumb"][data-thumb="image"]').first()).toBeVisible();
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
-      for (const id of ['content-search', 'content-format-filter']) {
+      for (const id of ['content-search', 'content-format-all', 'content-format-story']) {
         expect((await page.getByTestId(id).boundingBox())!.height).toBeGreaterThanOrEqual(40);
       }
-    });
-
-    test('contenidos en lista compacta: cabe con títulos largos', async ({ page }) => {
-      await open(page, 'vista=contenidos&largos=1&lista=1');
-      await expect(page.getByTestId('content-row').first()).toBeVisible();
-      expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
     });
 
     test('contenidos vacíos: invita a «Nueva idea»', async ({ page }) => {
@@ -87,82 +84,38 @@ test.describe(size.name, () => {
       expect(await overflow(page)).toEqual({ horizontal: 0, spilling: [] });
     });
 
-    test('«Nueva idea»: las cuatro tarjetas de formato caben y se elige con un toque', async ({ page }) => {
-      await open(page, 'vista=contenidos');
-      await newIdea(page, size.width);
-      const dialog = page.getByRole('dialog');
+    test('«¿Qué quieres crear?»: los formatos caben, se tocan con el dedo y abren su galería', async ({ page }) => {
+      await open(page, 'vista=vacia');
+      await page.getByTestId('content-empty-new').click();
+      const dialog = page.getByRole('dialog', { name: '¿Qué quieres crear?' });
       await expect(dialog).toBeVisible();
-      for (const format of ['post', 'carousel', 'reel', 'story']) {
-        await expect(page.getByTestId(`create-content-format-${format}`)).toBeVisible();
+      for (const format of ['reel', 'post', 'carousel', 'story']) {
+        const tile = page.getByTestId(`create-content-format-${format}`);
+        await expect(tile).toBeVisible();
+        expect((await tile.boundingBox())!.height).toBeGreaterThanOrEqual(40);
       }
+      // «Subir fotos» solo en el móvil (en el ordenador está en la Biblioteca).
+      await expect(page.getByTestId('create-content-upload')).toBeVisible({ visible: size.width < 640 });
       const box = (await dialog.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
-      await page.getByTestId('create-content-format-reel').click();
-      await expect(page.getByTestId('create-content-format-reel').locator('input')).toBeChecked();
-      expect((await page.getByTestId('create-content-submit').boundingBox())!.height).toBeGreaterThanOrEqual(40);
+      await page.getByTestId('create-content-format-post').click();
+      await expect(page.getByRole('dialog', { name: 'Publicación' })).toBeVisible();
+      await expect(page.getByTestId('create-content-blank')).toBeVisible();
+      await expect(page.getByTestId('create-content-submit')).toHaveCount(0);
     });
 
-    test('«Nueva idea → Reel»: plantillas de la marca con muestra grande y el botón de crear siempre a la vista', async ({
-      page,
-    }) => {
+    test('«Crear → Reel»: «En blanco» y las plantillas de reel de la marca, con muestra grande', async ({ page }) => {
       await open(page, 'vista=contenidos');
-      await newIdea(page, size.width);
-      await page.getByTestId('create-content-format-reel').click();
-      await page.getByTestId('create-content-from-template').check();
+      await createFrom(page, size.width, 'reel');
+      await expect(page.getByTestId('create-content-blank')).toBeVisible();
       await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);
       await expect(page.getByText(/llegará más adelante/)).toHaveCount(0);
       // La muestra del montaje no es una miniatura de 96 px.
       const sample = (await page.getByTestId('reel-template-sample').first().boundingBox())!;
       expect(sample.width).toBeGreaterThanOrEqual(size.width < 500 ? 100 : 120);
-      // Aunque la lista sea larga, «Crear y abrir» se ve sin bajar.
-      const submit = (await page.getByTestId('create-content-submit').boundingBox())!;
-      expect(submit.y + submit.height).toBeLessThanOrEqual(size.height);
-      expect(submit.height).toBeGreaterThanOrEqual(40);
       const box = (await page.getByRole('dialog').boundingBox())!;
       expect(box.x + box.width).toBeLessThanOrEqual(size.width + 1);
-    });
-
-    test('«Nueva idea → Reel»: la barra de «Cancelar / Crear y abrir» tapa hasta el borde de abajo', async ({
-      page,
-    }) => {
-      await open(page, 'vista=contenidos');
-      await newIdea(page, size.width);
-      await page.getByTestId('create-content-format-reel').click();
-      await page.getByTestId('create-content-from-template').check();
-      await expect(page.getByTestId('create-content-reel-template')).toHaveCount(6);
-      /** Hueco (px) entre la barra y el borde de abajo de la zona que se desplaza, y qué asoma por él. */
-      const gap = () =>
-        page.evaluate(() => {
-          const bar = document.querySelector('[data-testid="create-content-actions"]')!;
-          let area = bar.parentElement!;
-          while (getComputedStyle(area).overflowY !== 'auto') area = area.parentElement!;
-          const barBox = bar.getBoundingClientRect();
-          const bottom = area.getBoundingClientRect().bottom;
-          // Lo que se ve en la última fila de píxeles de la zona, a lo ancho.
-          const under = [0.2, 0.5, 0.8].map((f) => {
-            const el = document.elementFromPoint(barBox.left + barBox.width * f, bottom - 2);
-            return el !== null && bar.contains(el);
-          });
-          return {
-            px: Math.round(bottom - barBox.bottom),
-            barOnTop: under.every(Boolean),
-            scrollable: area.scrollHeight > area.clientHeight + 1,
-          };
-        });
-      const scrollTo = (fraction: number) =>
-        page.evaluate((f) => {
-          let area = document.querySelector('[data-testid="create-content-actions"]')!.parentElement!;
-          while (getComputedStyle(area).overflowY !== 'auto') area = area.parentElement!;
-          area.scrollTop = (area.scrollHeight - area.clientHeight) * f;
-        }, fraction);
-      // Arriba, a media lista y al final: nunca queda una franja por la que asomen las plantillas.
-      for (const fraction of [0, 0.5, 1]) {
-        await scrollTo(fraction);
-        const seen = await gap();
-        expect(seen.px, `hueco bajo la barra al ${fraction * 100} %`).toBeLessThanOrEqual(0);
-        expect(seen.barOnTop, `la barra tapa el borde al ${fraction * 100} %`).toBe(true);
-      }
     });
   });
 }

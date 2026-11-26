@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { abrir, archivoPng, dato, png, sinErrores, sql } from './apoyo';
+import { abrir, archivoPng, dato, png, sinErrores, sql, tarjetaDeArchivo } from './apoyo';
 
 // Cambiar el fondo con IA de punta a punta (docs/edicion-fotos.md): con la
 // edición SIMULADA de pruebas locales (`simulated-image-edit`, que se carga con
@@ -24,7 +24,9 @@ test.beforeAll(async () => {
   ]);
 });
 
-test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el plato original', async ({ browser }) => {
+test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el plato original', async ({
+  browser,
+}) => {
   const s = await abrir(browser, 'ana');
   const { page } = s;
   await page.goto(`${marcaA()}/biblioteca`);
@@ -38,7 +40,7 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   );
   expect(original).toBeTruthy();
 
-  await page.getByTestId('library-asset').filter({ hasText: 'plato-cocina.png' }).click();
+  await tarjetaDeArchivo(page, 'plato-cocina.png').click();
   await page.getByTestId('asset-edit-photo').click();
   const editor = page.getByTestId('photo-edit');
   await expect(editor.getByTestId('photo-edit-preview')).toBeVisible();
@@ -46,7 +48,7 @@ test('cambiar el fondo con IA crea un recurso nuevo con el encargo y no toca el 
   await editor.getByRole('radio', { name: 'Cambiar con IA' }).click();
   const ia = editor.getByTestId('photo-edit-ai-replace_background');
   // Con recorte en el navegador: ofrece proteger el plato (marcado); sin texto: no se puede lanzar; el coste se ve antes.
-  await expect(ia.getByText(/No hay recorte del plato/)).toHaveCount(0);
+  await expect(ia.getByText(/No hay recorte de la foto/)).toHaveCount(0);
   await expect(ia.getByTestId('photo-edit-ai-protect')).toBeChecked();
   await expect(ia.getByTestId('photo-edit-ai-run-replace_background')).toBeDisabled();
   await expect(ia.getByTestId('photo-edit-ai-cost')).toContainText('Coste máximo');

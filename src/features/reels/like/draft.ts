@@ -3,8 +3,9 @@
 //
 //   1. `matchShots`  busca para cada plano del guion una foto o un clip de la
 //      biblioteca que encaje, SIN IA: por tipo (foto o vídeo), etiquetas,
-//      carpeta y nombre, con las palabras de búsqueda que trae el guion. Cada
-//      recurso se usa una sola vez. Lo que no encaja queda como hueco.
+//      carpeta y nombre, frente al texto de la escena (qué tiene que verse y
+//      sus rótulos) y las palabras de búsqueda del guion. Cada recurso se usa
+//      una sola vez. Lo que no encaja queda como hueco, y se dice.
 //   2. `buildDraft`  monta el proyecto del editor: los planos con material, en
 //      orden, con la duración y la transición de la plantilla; los textos en
 //      pantalla sobre los planos que ya existen; y el guion (`guide`) con lo
@@ -110,22 +111,77 @@ export function words(text: string): string[] {
 }
 
 const WEIGHT = { tag: 3, folder: 2, name: 1, kind: 1, tooShort: -1 } as const;
+/** Lo que encaja solo por contexto («marisco») cuenta la mitad que lo que encaja con lo que tiene que verse. */
+const CONTEXT_ONLY = 0.5;
 
-/** Cuánto encaja un recurso con un plano y por qué. 0 = no encaja (ninguna palabra coincide). */
-export function scoreAsset(
-  shot: { media: 'foto' | 'video'; seconds: number; search: string[] },
-  asset: LibraryAsset,
-): { score: number; reasons: string[] } {
+/**
+ * Palabras que no dicen QUÉ tiene que verse: de rodaje («primer plano», «toma»), los tipos de
+ * plano del análisis, nombres de cámara («IMG», «DSC»…) y relleno. Lo que lleva cifras tampoco.
+ */
+const GENERIC_WORDS = new Set(
+  words(
+    'de del la las el los un una unos unas lo al a y o e en con sin por para su sus que se muy mas ' +
+      'plano primer primero cerrado abierto medio detalle general persona texto toma foto fotografia ' +
+      'video clip imagen camara grabar grabado grabando encuadre cerca lejos lento rapido movimiento ' +
+      'img dsc pxl mvimg vid whatsapp screenshot captura copia final editada recorte',
+  ),
+);
+
+/** Palabras que dicen qué se ve (sin las genéricas ni las que llevan cifras). */
+function meaningful(text: string): string[] {
+  return words(text).filter((w) => !GENERIC_WORDS.has(w) && !/\d/.test(w));
+}
+
+/** Lo que pide un plano del guion para elegir su material. */
+export interface ShotWanted {
+  media: 'foto' | 'video';
+  seconds: number;
+  /** Palabras de búsqueda que trae el guion. */
+  search: string[];
+  /**
+   * El texto de la escena: qué tiene que verse («what») y los rótulos que van solo sobre ese
+   * plano. Sus palabras también cuentan y, con las de búsqueda, dicen cuál es el protagonista.
+   */
+  scene?: string;
+}
+
+/**
+ * Lo que tiene que verse en el plano, en palabras: las que el guion dice a la vez en la escena y
+ * en la búsqueda («Zamburiñas a la plancha» + «zamburiñas, marisco» → «zamburiña»). Si no
+ * coinciden, la primera palabra de búsqueda y las de la escena. Las demás («marisco») solo dan
+ * contexto.
+ */
+export function shotSubject(shot: Pick<ShotWanted, 'search' | 'scene'>): string[] {
+  const scene = new Set(meaningful(shot.scene ?? ''));
+  const search = [...new Set(shot.search.flatMap(meaningful))];
+  const agreed = search.filter((w) => scene.has(w));
+  if (agreed.length > 0) return agreed;
+  return [...new Set([...meaningful(shot.search[0] ?? ''), ...scene])];
+}
+
+/**
+ * Cuánto encaja un recurso con un plano y por qué. 0 = no encaja.
+ *
+ * Encaja si alguna palabra (etiqueta, carpeta o nombre) coincide con lo que tiene que verse
+ * (`shotSubject`). Si solo coincide una de contexto («marisco»), vale a medias y únicamente si su
+ * nombre no dice que es otra cosa: «Ostras.jpg» no sirve para un plano de zamburiñas aunque esté
+ * etiquetada como marisco; «IMG_0001.mp4» con la etiqueta «Panes», sí para «la hogaza».
+ */
+export function scoreAsset(shot: ShotWanted, asset: LibraryAsset): { score: number; reasons: string[] } {
   if (asset.kind !== 'image' && asset.kind !== 'video') return { score: 0, reasons: [] };
-  const terms = [...new Set(shot.search.flatMap(words))];
+  const subject = new Set(shotSubject(shot));
+  const terms = [...new Set([...shot.search.flatMap(meaningful), ...subject])];
   if (terms.length === 0) return { score: 0, reasons: [] };
   const tagWords = new Map<string, string>();
   for (const tag of asset.tags) for (const w of words(tag)) tagWords.set(w, tag);
   const folderWords = new Set(words(asset.folder));
-  const nameWords = new Set(words(asset.file_name.replace(/\.[^.]*$/, '')));
+  const name = asset.file_name.replace(/\.[^.]*$/, '');
+  const nameWords = new Set(words(name));
   let score = 0;
+  let onSubject = false;
   const reasons: string[] = [];
   for (const term of terms) {
+    const before = score;
     if (tagWords.has(term)) {
       score += WEIGHT.tag;
       reasons.push(`etiqueta «${tagWords.get(term)}»`);
@@ -136,8 +192,15 @@ export function scoreAsset(
       score += WEIGHT.name;
       reasons.push('nombre del archivo');
     }
+    if (score > before && subject.has(term)) onSubject = true;
   }
   if (score === 0) return { score: 0, reasons: [] };
+  if (!onSubject) {
+    // Solo por contexto: si el nombre del archivo dice que es otra cosa, no se usa.
+    const known = new Set(terms);
+    if (meaningful(name).some((w) => !known.has(w))) return { score: 0, reasons: [] };
+    score *= CONTEXT_ONLY;
+  }
   // El tipo solo desempata entre lo que ya coincide por palabras.
   const wanted = shot.media === 'video' ? 'video' : 'image';
   if (asset.kind === wanted) score += WEIGHT.kind;
@@ -151,22 +214,41 @@ export function scoreAsset(
 /** Cuánto pesa la calidad (de 0 a 100, `reelAssetScore`) frente a las palabras: desempata y aparta lo flojo. */
 const QUALITY_WEIGHT = 0.04;
 
+/** El texto de la escena de un plano: qué tiene que verse y los rótulos que van solo sobre él. */
+function sceneOf(result: ReelLikeResult, index: number): string {
+  const shot = result.template.shots[index];
+  const values = new Map(result.texts.onScreen.map((entry) => [entry.text, entry.value]));
+  const labels = result.template.texts
+    .filter(
+      (t) =>
+        shot !== undefined &&
+        t.fromShot === shot.id &&
+        t.toShot === shot.id &&
+        t.role !== 'gancho' &&
+        t.role !== 'llamada',
+    )
+    .map((t) => values.get(t.id) ?? '');
+  return [result.script.shots[index]?.what ?? '', ...labels].join(' ');
+}
+
 /**
- * Para cada plano, el recurso que mejor encaja (cada uno, una sola vez, y nunca
- * dos veces el mismo archivo). Se reparte por orden de plano; cuenta lo que
- * encaja por palabras y, además, la calidad de la foto (resolución, nitidez,
- * proporción y que no sea un recorte o una captura): entre dos que encajan
- * igual, gana la mejor; a igualdad, la más reciente.
+ * Para cada plano, el recurso que mejor encaja con su escena (cada uno, una sola
+ * vez, y nunca dos veces el mismo archivo). Se reparte por orden de plano; cuenta
+ * lo que encaja por palabras (sobre todo con lo que tiene que verse) y, además,
+ * la calidad de la foto (resolución, nitidez, proporción y que no sea un recorte
+ * o una captura): entre dos que encajan igual, gana la mejor; a igualdad, la más
+ * reciente. Lo que no encaja queda como hueco: nunca se pone uno cualquiera.
  */
 export function matchShots(result: ReelLikeResult, assets: LibraryAsset[]): ShotMatch[] {
   const used = new Set<string>();
   const recent = [...assets].sort((a, b) => b.created_at.localeCompare(a.created_at));
   return result.template.shots.map((shot, index) => {
     const search = result.script.shots[index]?.search ?? [];
+    const wanted: ShotWanted = { media: shot.media, seconds: shot.seconds, search, scene: sceneOf(result, index) };
     let best: { asset: LibraryAsset; score: number; rank: number; reasons: string[] } | null = null;
     for (const asset of recent) {
       if (used.has(asset.id) || used.has(asset.storage_path)) continue;
-      const scored = scoreAsset({ media: shot.media, seconds: shot.seconds, search }, asset);
+      const scored = scoreAsset(wanted, asset);
       if (scored.score <= 0) continue;
       const rank = scored.score + reelAssetScore(asset) * QUALITY_WEIGHT;
       if (!best || rank > best.rank) best = { asset, rank, ...scored };
@@ -498,6 +580,16 @@ export function buildDraft(result: ReelLikeResult, matches: ShotMatch[], options
     notes.push(
       'En la biblioteca no hay nada que encaje todavía: el borrador empieza con el guion de lo que hay que grabar.',
     );
+  else if (gaps > 0) {
+    // Se dice qué planos no tienen material que case con el guion, en vez de poner uno cualquiera.
+    const missing = shots.filter((s) => !s.clipId).map((s) => `«${s.label}»`);
+    const listed = missing.slice(0, 3).join(', ') + (missing.length > 3 ? ` y ${missing.length - 3} más` : '');
+    notes.push(
+      missing.length === 1
+        ? `En la biblioteca no hay nada que case con el plano ${listed}: queda como hueco para grabarlo o elegirlo a mano.`
+        : `En la biblioteca no hay nada que case con ${missing.length} planos (${listed}): quedan como huecos para grabarlos o elegirlos a mano.`,
+    );
+  }
   return { project, template, filled, gaps, notes };
 }
 

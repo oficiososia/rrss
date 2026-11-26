@@ -17,7 +17,8 @@ interface FrameAdjustOverlayProps {
   /** Proporción (ancho / alto) de la foto tal como se dibuja; null si aún no se ha cargado. */
   imageAspect: () => number | null;
   onChange: (patch: LayerPatch) => void;
-  onDone: () => void;
+  /** `next`: lo que se ha pulsado fuera para terminar (un campo, un botón…), si lo hay. */
+  onDone: (next?: Element | null) => void;
 }
 
 const ZOOM_STEP = 0.25;
@@ -41,7 +42,9 @@ export function FrameAdjustOverlay({ layer, scale, imageAspect, onChange, onDone
   // Un clic fuera de la foto (en otra capa, en el margen, en un panel) termina.
   useEffect(() => {
     const onDown = (event: PointerEvent) => {
-      if (root.current && !root.current.contains(event.target as Node)) onDone();
+      if (root.current && !root.current.contains(event.target as Node)) {
+        onDone(event.target instanceof Element ? event.target : null);
+      }
     };
     window.document.addEventListener('pointerdown', onDown, true);
     return () => window.document.removeEventListener('pointerdown', onDown, true);
@@ -186,7 +189,7 @@ export function FrameAdjustOverlay({ layer, scale, imageAspect, onChange, onDone
         <button
           type="button"
           className="flex h-9 shrink-0 items-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-primary-fg hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          onClick={onDone}
+          onClick={() => onDone()}
           data-testid="frame-adjust-done"
         >
           <Check className="h-4 w-4" aria-hidden />

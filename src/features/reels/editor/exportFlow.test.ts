@@ -90,4 +90,74 @@ describe('exportar un reel', () => {
     expect(renderOfPlan([job(stored)], { ...withClip, template: { id: other } })).toBeNull();
     expect(renderOfPlan([job(stored, 'running')], withClip)).toBeNull();
   });
+
+  it('un montaje que tarda en empezar lo cuenta mientras espera', () => {
+    expect(exportState(input({ rendering: true, renderLabel: 'En cola', renderDetail: 'Tarda' }))).toEqual({
+      kind: 'rendering',
+      label: 'En cola',
+      detail: 'Tarda',
+    });
+    expect(exportState(input({ rendering: true, renderLabel: 'En cola' }))).toEqual({
+      kind: 'rendering',
+      label: 'En cola',
+    });
+  });
+
+  it('un reel recién montado con un texto sin franja ni contorno cuenta como montado', () => {
+    // La base de datos pasa el encargo por jsonb_strip_nulls: `box: null` y `outline: null` no llegan al
+    // trabajo guardado. Antes eso hacía que el vídeo recién montado pareciera de otro montaje.
+    const project = emptyProject(REEL_TEMPLATES[0]!);
+    const withText = {
+      ...project,
+      plan: {
+        ...project.plan,
+        clips: [{ id: 'c1', type: 'photo' as const, path: 'o/m/media/a.jpg', seconds: 2 }],
+        texts: [
+          {
+            id: 't1',
+            text: 'Chuletón',
+            start: 0,
+            end: 2,
+            position: 'bottom' as const,
+            style: {
+              sizeRatio: 0.05,
+              color: '#FFFFFF',
+              marginRatio: 0.2,
+              maxWidthRatio: 0.84,
+              lineHeight: 1.2,
+              box: null,
+              outline: null,
+              fadeSeconds: 0.2,
+            },
+          },
+        ],
+      },
+    };
+    const request = buildRenderRequest(withText, { id: 'x', version: 1 }) as {
+      template: unknown;
+      plan: Record<string, unknown>;
+    };
+    const stripNulls = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(stripNulls)
+        : value && typeof value === 'object'
+          ? Object.fromEntries(
+              Object.entries(value as Record<string, unknown>)
+                .filter(([, v]) => v !== null)
+                .map(([k, v]) => [k, stripNulls(v)]),
+            )
+          : value;
+    const job = {
+      id: 'j1',
+      kind: 'media.reel.template',
+      status: 'succeeded',
+      attempts: 1,
+      max_attempts: 3,
+      last_error: null,
+      created_at: '2026-11-24T17:33:51Z',
+      result: { assets: [{ id: 'video-1' }] },
+      payload: { content: { id: 'x', version: 1 }, plan: stripNulls(request.plan), template: request.template },
+    } as unknown as MediaJobSummary;
+    expect(renderOfPlan([job], withText)).toBe('video-1');
+  });
 });

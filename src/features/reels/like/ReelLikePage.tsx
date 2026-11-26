@@ -66,7 +66,9 @@ import {
   type ReelLikeResult,
   type ReelStructure,
 } from '../../../../supabase/functions/_shared/reels/like';
+import { jobFailureMessage } from '../plan';
 import {
+  ANALYZE_KIND,
   closedNetwork,
   fetchLibraryVideo,
   isWorking,
@@ -725,7 +727,7 @@ function ReferenceScreen({ referenceId, options }: { referenceId: string; option
             {closed && (
               <div className="space-y-3" data-testid="reel-like-failed">
                 <div role="alert" className="rounded-lg bg-danger-soft px-3.5 py-3 text-sm text-danger">
-                  {row.error ?? 'No se ha podido estudiar el vídeo.'}
+                  {row.error ? jobFailureMessage(row.error, ANALYZE_KIND) : 'No se ha podido estudiar el vídeo.'}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Link

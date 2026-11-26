@@ -130,7 +130,7 @@ describe('qué material de la biblioteca encaja con cada plano', () => {
     // Cada recurso, una sola vez: con dos planos que piden lo mismo, el segundo se queda sin él.
     const twice = buildReelLikeResult(
       measurement,
-      { ...ai, shots: ai.shots.map((s) => ({ ...s, search: ['pan'] })) },
+      { ...ai, shots: ai.shots.map((s) => ({ ...s, what: 'Pan', search: ['pan'] })) },
       { transcriptUsed: false },
     );
     expect(matchShots(twice, assets).map((m) => m.asset?.file_name ?? null)).toEqual(['IMG_0001.mp4', null, null, null]);
@@ -139,12 +139,68 @@ describe('qué material de la biblioteca encaja con cada plano', () => {
     const newer = asset('image', 'nuevo.jpg', { tags: ['obrador'], created_at: '2026-11-21T00:00:00Z' });
     expect(matchShots(result, [older, newer])[1]!.asset!.file_name).toBe('nuevo.jpg');
   });
+
+  it('sigue el guion: lo que no es lo que dice la escena se queda fuera, y lo dice', () => {
+    // La prueba real del 24/11: chuletón → cámara de maduración, mojama → jamón, zamburiñas → ostras.
+    const dishes = buildReelLikeResult(
+      { ...measurement, shots: measurement.shots.slice(0, 3) },
+      {
+        ...ai,
+        shots: [
+          { index: 1, kind: 'detalle', media: 'foto', description: '', what: 'El chuletón a la brasa', tip: '', search: ['chuletón', 'carne', 'maduración'] },
+          { index: 2, kind: 'detalle', media: 'foto', description: '', what: 'La mojama con almendras', tip: '', search: ['mojama', 'jamón', 'embutido'] },
+          { index: 3, kind: 'detalle', media: 'foto', description: '', what: 'Zamburiñas a la plancha', tip: '', search: ['zamburiñas', 'marisco'] },
+        ],
+        texts: [{ role: 'dato', position: 'bottom', size: 'normal', fromShot: 3, toShot: 3, value: 'Zamburiñas' }],
+      },
+      { transcriptUsed: false },
+    );
+    const wrong = [
+      asset('image', 'local-camara-maduracion.jpg', { tags: ['local'] }),
+      asset('image', 'Jamón 100% bellota.jpg', { tags: ['embutidos'] }),
+      asset('image', 'Ostras.jpg', { tags: ['marisco'] }),
+    ];
+    expect(matchShots(dishes, wrong).map((m) => m.asset)).toEqual([null, null, null]);
+    const draft = buildDraft(dishes, matchShots(dishes, wrong), options);
+    expect(draft.filled).toBe(0);
+    expect(draft.notes[0]).toMatch(/no hay nada que encaje todavía/);
+
+    // Con el material bueno en la biblioteca, cada plano lleva el suyo, aunque haya otros del mismo tipo.
+    const right = [
+      ...wrong,
+      asset('image', 'IMG_2231.jpg', { tags: ['chuletón'] }),
+      asset('image', 'mojama.jpg', { folder: 'Carta' }),
+      asset('image', 'zamburinas-plancha.jpg'),
+    ];
+    expect(matchShots(dishes, right).map((m) => m.asset?.file_name ?? null)).toEqual([
+      'IMG_2231.jpg',
+      'mojama.jpg',
+      'zamburinas-plancha.jpg',
+    ]);
+
+    // Si solo falta uno, se dice cuál, en vez de poner uno cualquiera.
+    const partial = buildDraft(dishes, matchShots(dishes, [...wrong, right[3]!, right[4]!]), options);
+    expect(partial).toMatchObject({ filled: 2, gaps: 1 });
+    expect(partial.notes).toEqual([
+      'En la biblioteca no hay nada que case con el plano «Zamburiñas a la plancha»: queda como hueco para grabarlo o elegirlo a mano.',
+    ]);
+  });
+
+  it('lo que encaja solo por contexto vale si su nombre no dice que es otra cosa, y cuenta menos', () => {
+    const shot = { media: 'foto' as const, seconds: 2, search: ['zamburiñas', 'marisco'], scene: 'Zamburiñas a la plancha' };
+    // Una foto sin nombre que diga nada, etiquetada como marisco: vale a medias.
+    expect(scoreAsset(shot, asset('image', 'IMG_0042.jpg', { tags: ['marisco'] })).score).toBe(2.5);
+    // Con el nombre de otra cosa, no.
+    expect(scoreAsset(shot, asset('image', 'ostras.jpg', { tags: ['marisco'] })).score).toBe(0);
+    // Lo que dice la escena manda: etiqueta del plato + el tipo.
+    expect(scoreAsset(shot, asset('image', 'IMG_0043.jpg', { tags: ['Zamburiñas'] })).score).toBe(4);
+  });
 });
 
 describe('el borrador del reel', () => {
   it('monta los planos con material en su orden, con la duración y la transición de la plantilla', () => {
     const draft = buildDraft(result, matchShots(result, library()), options);
-    expect(draft).toMatchObject({ filled: 3, gaps: 1, notes: [] });
+    expect(draft).toMatchObject({ filled: 3, gaps: 1 });
     // Casi todo son cortes: el estilo de partida es el de cortes secos.
     expect(draft.template.id).toBe('corte-ritmico');
     expect(draft.project.template).toEqual({ id: 'corte-ritmico' });

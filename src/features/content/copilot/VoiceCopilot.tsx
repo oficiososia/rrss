@@ -2,7 +2,7 @@ import { CheckCircle2, ImagePlus, Loader2, Mic, MicOff, SendHorizontal, X, Zap }
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui';
+import { Button, MoreMenu, type MoreMenuItem } from '@/components/ui';
 import { legalPath } from '@/features/legal/legal';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { requestEditorCopilot, toAiError } from '@/features/ai/api';
@@ -26,7 +26,7 @@ import {
   type PlacedCopilotOperation,
 } from './apply';
 import { alignWithOrder, trustedNotes } from './intent';
-import { interpretLocally, LOCAL_COMMAND_EXAMPLES } from './localCommands';
+import { interpretLocally } from './localCommands';
 import { MicLevel } from './MicLevel';
 import {
   COPILOT_MAX_PLAN_PHOTOS,
@@ -806,14 +806,14 @@ export function VoiceCopilot({
   const engine = resolveVoiceEngine(available, preferred);
   const engines = VOICE_ENGINES.filter((option) => voiceEngineAvailable(option, available));
 
-  // Antes del primer dictado con cada motor se avisa de adónde va el audio. El
-  // aviso sale al pulsar el micrófono por primera vez, no al abrir el copiloto:
-  // para escribir órdenes no hace falta. Sin aceptarlo no se escucha nada.
+  // Antes del primer dictado con cada motor se avisa, en una línea, de adónde va
+  // el audio. Sale al pulsar el micrófono por primera vez, no al abrir el
+  // copiloto (para escribir no hace falta), y una vez leído no vuelve. Sin
+  // aceptarlo no se escucha nada.
   const [seen, setSeen] = useState<Record<VoiceEngine, boolean>>(() => ({
     browser: voiceNoticeHidden('browser'),
     transcriber: voiceNoticeHidden('transcriber'),
   }));
-  const [dontShowAgain, setDontShowAgain] = useState(false);
   /** Se ha pulsado el micrófono sin haber leído aún el aviso de ese motor. */
   const [asking, setAsking] = useState(false);
   const dictation = engine === 'transcriber' ? recorded : browser;
@@ -832,7 +832,8 @@ export function VoiceCopilot({
 
   function acceptNotice() {
     if (!engine) return;
-    if (dontShowAgain) hideVoiceNotice(engine);
+    // Una vez leído, no vuelve a salir con este motor (en este navegador).
+    hideVoiceNotice(engine);
     setSeen((current) => ({ ...current, [engine]: true }));
     setAsking(false);
     dictation.start();
@@ -843,7 +844,6 @@ export function VoiceCopilot({
     recorded.cancel();
     writeVoiceEngine(next);
     setPreferred(next);
-    setDontShowAgain(false);
     setAsking(false);
   }
 
@@ -886,13 +886,17 @@ export function VoiceCopilot({
       data-status={order.status}
       data-source={order.local ? 'local' : 'ai'}
     >
-      <p className="flex flex-wrap items-start gap-x-2 gap-y-0.5">
+      {/* Siempre igual, en cualquier ancho: arriba lo dicho; debajo, cómo ha ido y si ha usado IA. */}
+      <p className="flex items-start gap-2">
         {order.status === 'sending' || order.status === 'pending' || order.status === 'running' ? (
           <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
         ) : order.status === 'applied' ? (
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
         ) : null}
-        <span className="min-w-0 flex-1 basis-40 break-words">«{order.transcript}»</span>
+        <span className="min-w-0 flex-1 break-words">«{order.transcript}»</span>
+      </p>
+      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted" data-testid="copilot-order-meta">
+        <span>{STATUS_LABEL[order.status]}</span>
         {order.spentMicros !== undefined ? (
           // Ha gastado IA de pago (el fondo de un plan): se dice cuánto, nunca «Sin IA».
           <span
@@ -922,7 +926,6 @@ export function VoiceCopilot({
             </span>
           )
         )}
-        <span className="shrink-0 text-xs text-muted">{STATUS_LABEL[order.status]}</span>
       </p>
       {order.changes && order.changes.length > 0 && (
         <ul className="mt-1 list-disc pl-5 text-xs" data-testid="copilot-changes">
@@ -946,6 +949,59 @@ export function VoiceCopilot({
     </li>
   );
 
+  // Lo secundario, en «⋯»: elegir una foto para la orden y, si hay dos maneras de dictar, cuál usar.
+  const moreItems: MoreMenuItem[] = [
+    {
+      id: 'photo',
+      label: 'Elegir foto',
+      icon: ImagePlus,
+      onSelect: () => {
+        pickingFor.current = 'copilot';
+        setPickerOpen(true);
+      },
+      testId: 'copilot-pick-photo',
+    },
+    ...(engines.length > 1
+      ? [
+          null,
+          ...engines.map(
+            (option): MoreMenuItem => ({
+              id: `voice-${option}`,
+              label: `${option === engine ? '✓ ' : ''}Voz: ${voiceEngineLabel(option)}`,
+              hint: quotaText(voiceEngineHint(option)),
+              onSelect: () => chooseEngine(option),
+              testId: `copilot-voice-engine-${option}`,
+            }),
+          ),
+        ]
+      : []),
+  ];
+  const listening = dictation.listening;
+  const busyRecording = engine === 'transcriber' && recorded.busy;
+  // Un solo botón junto al campo: el micrófono mientras no hay nada escrito; con texto, enviar.
+  const showMic = engine !== null && (listening || busyRecording || !typed.trim());
+  const micLabel =
+    engine === 'transcriber'
+      ? recorded.busy
+        ? 'Transcribiendo…'
+        : recorded.listening
+          ? 'Parar y enviar'
+          : 'Pulsar para hablar'
+      : browser.listening
+        ? 'Parar'
+        : 'Dictar';
+  // Solo se dice algo mientras se escucha: lo demás ya lo cuenta el campo.
+  const status =
+    engine === 'transcriber'
+      ? recorded.busy
+        ? 'Transcribiendo…'
+        : recorded.listening
+          ? 'Grabando. Al callarte se envía.'
+          : null
+      : listening
+        ? 'Escuchando. Cada frase es una orden.'
+        : null;
+
   // Panel estrecho y acoplado: columna junto al lienzo en escritorio, hoja baja en
   // móvil (lo coloca el editor: `data-copilot-dock`). Su contenido hace scroll por
   // dentro; la página, nunca, y el lienzo sigue a la vista.
@@ -955,30 +1011,13 @@ export function VoiceCopilot({
       aria-label="Copiloto del editor"
       data-testid="copilot-panel"
     >
-      <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">Copiloto</h2>
-        {engines.length > 1 && (
-          <label className="flex min-w-0 items-center gap-1 text-xs text-muted">
-            Voz
-            <select
-              className="h-8 min-w-0 rounded-md border border-border bg-surface px-1 text-xs"
-              value={engine ?? ''}
-              title={engine ? quotaText(voiceEngineHint(engine)) : undefined}
-              onChange={(event) => chooseEngine(event.target.value as VoiceEngine)}
-              data-testid="copilot-voice-engine"
-            >
-              {engines.map((option) => (
-                <option key={option} value={option}>
-                  {voiceEngineLabel(option)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+      <div className="flex items-center gap-1">
+        <h2 className="mr-auto text-sm font-semibold">Copiloto</h2>
+        <MoreMenu items={moreItems} label="Más del copiloto" testId="copilot-more" size="sm" />
         <Button
           variant="ghost"
           size="icon"
-          className="ml-auto shrink-0"
+          className="shrink-0"
           aria-label="Cerrar el copiloto"
           onClick={onClose}
           data-testid="copilot-close"
@@ -987,66 +1026,77 @@ export function VoiceCopilot({
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {engine && (
+      {/* Órdenes por teclado o por voz: mismo camino. Sin micrófono, solo teclado. */}
+      <form className="flex items-center gap-2" onSubmit={submitTyped} data-testid="copilot-text-form">
+        <label htmlFor="copilot-text" className="sr-only">
+          Escribe una orden
+        </label>
+        <input
+          id="copilot-text"
+          className="h-10 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-sm"
+          value={typed}
+          maxLength={2000}
+          autoComplete="off"
+          placeholder={engine ? 'Escribe o dicta una orden' : 'Escribe una orden'}
+          onChange={(event) => setTyped(event.target.value)}
+          data-testid="copilot-text-input"
+        />
+        {showMic ? (
           <Button
-            size="sm"
-            variant={dictation.listening ? 'primary' : 'secondary'}
-            aria-pressed={dictation.listening}
-            disabled={engine === 'transcriber' && recorded.busy}
+            size="icon"
+            variant={listening ? 'primary' : 'secondary'}
+            className="shrink-0"
+            aria-pressed={listening}
+            aria-label={micLabel}
+            title={micLabel}
+            disabled={busyRecording}
             onClick={pressMic}
             data-testid="copilot-mic"
           >
-            {dictation.listening ? <MicOff className="h-4 w-4" aria-hidden /> : <Mic className="h-4 w-4" aria-hidden />}
-            {engine === 'transcriber'
-              ? recorded.busy
-                ? 'Transcribiendo…'
-                : recorded.listening
-                  ? 'Parar y enviar'
-                  : 'Pulsar para hablar'
-              : browser.listening
-                ? 'Parar'
-                : 'Dictar'}
+            {busyRecording ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : listening ? (
+              <MicOff className="h-4 w-4" aria-hidden />
+            ) : (
+              <Mic className="h-4 w-4" aria-hidden />
+            )}
+            <span className="sr-only">{micLabel}</span>
+          </Button>
+        ) : (
+          <Button
+            size="icon"
+            type="submit"
+            className="shrink-0"
+            disabled={!typed.trim()}
+            aria-label="Enviar la orden"
+            title="Enviar (Intro)"
+            data-testid="copilot-text-send"
+          >
+            <SendHorizontal className="h-4 w-4" aria-hidden />
+            <span className="sr-only">Enviar</span>
           </Button>
         )}
-        {engine === 'transcriber' && recorded.listening && <MicLevel level={recorded.level} active />}
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => {
-            pickingFor.current = 'copilot';
-            setPickerOpen(true);
-          }}
-          data-testid="copilot-pick-photo"
-        >
-          <ImagePlus className="h-4 w-4" aria-hidden />
-          Elegir foto
-        </Button>
-      </div>
+      </form>
 
-      {/* Aviso previo al dictado: solo al pulsar el micrófono por primera vez. Para escribir no hace falta. */}
+      {engine === 'transcriber' && recorded.listening && <MicLevel level={recorded.level} active />}
+      {status && (
+        <p className="text-xs text-muted" aria-live="polite" data-testid="copilot-voice-status">
+          {status}
+        </p>
+      )}
+
+      {/* Aviso previo al dictado: una línea, solo la primera vez que se pulsa el micrófono con cada motor. */}
       {asking && engine && (
         <div className="space-y-1.5 rounded-md bg-subtle px-2.5 py-2 text-xs" role="group" aria-label="Antes de dictar">
           <p data-testid="copilot-voice-notice">
             {quotaText(voiceNoticeText(engine))}{' '}
-            <Link to={legalPath('privacy')} target="_blank" className="text-primary underline">
-              Política de privacidad
+            <Link to={legalPath('privacy')} target="_blank" className="text-primary underline" aria-label="Política de privacidad">
+              Más
             </Link>
           </p>
-          <label className="flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={dontShowAgain}
-              onChange={(e) => setDontShowAgain(e.target.checked)}
-              data-testid="copilot-voice-notice-hide"
-            />
-            No volver a mostrar
-          </label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-2">
             <Button size="sm" onClick={acceptNotice} data-testid="copilot-voice-notice-ok">
-              <Mic className="h-4 w-4" aria-hidden />
-              Entendido, dictar
+              Dictar
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setAsking(false)} data-testid="copilot-voice-notice-cancel">
               Ahora no
@@ -1054,47 +1104,6 @@ export function VoiceCopilot({
           </div>
         </div>
       )}
-
-      <p className="text-xs text-muted" data-testid="copilot-voice-status">
-        {engine === null
-          ? 'Este navegador no puede dictar: escribe la orden.'
-          : engine === 'transcriber'
-            ? recorded.listening
-              ? 'Grabando. Al callarte se envía.'
-              : 'Escribe la orden o pulsa para hablar.'
-            : browser.listening
-              ? 'Escuchando. Cada frase es una orden; se deshace con Ctrl+Z.'
-              : 'Escribe la orden o pulsa «Dictar».'}
-      </p>
-
-      {/* Órdenes por teclado: mismo camino que las dictadas. Sirve sin micrófono. */}
-      <form className="flex items-center gap-2" onSubmit={submitTyped} data-testid="copilot-text-form">
-        <label htmlFor="copilot-text" className="sr-only">
-          Escribe una orden
-        </label>
-        <input
-          id="copilot-text"
-          className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-sm"
-          value={typed}
-          maxLength={2000}
-          autoComplete="off"
-          placeholder={`«${LOCAL_COMMAND_EXAMPLES[0] ?? 'deshaz'}», «pon el título arriba»…`}
-          onChange={(event) => setTyped(event.target.value)}
-          data-testid="copilot-text-input"
-        />
-        <Button
-          size="sm"
-          type="submit"
-          className="shrink-0"
-          disabled={!typed.trim()}
-          aria-label="Enviar la orden"
-          title="Enviar (Intro)"
-          data-testid="copilot-text-send"
-        >
-          <SendHorizontal className="h-4 w-4" aria-hidden />
-          <span className="sr-only">Enviar</span>
-        </Button>
-      </form>
 
       {photos.length > 0 && (
         <ul className="flex flex-wrap gap-1.5 text-xs" aria-label="Fotos para el copiloto" data-testid="copilot-photos">

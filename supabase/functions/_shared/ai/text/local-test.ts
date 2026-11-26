@@ -203,7 +203,8 @@ function campaignPlan(request: AiProviderRequest): string {
   const prompt = request.input.prompt;
   const range = /Fechas: del (\d{4}-\d{2}-\d{2}) al (\d{4}-\d{2}-\d{2})/.exec(prompt);
   const max = Number(/Máximo de piezas: (\d+)\./.exec(prompt)?.[1] ?? '1');
-  const targets = [...prompt.matchAll(/- Destino: ([a-z0-9_]+)\/([a-z0-9_]+)/g)].map((m) => ({
+  // «- Destino: network=instagram format=post» (campaign.plan) o «- Destino: instagram/post».
+  const targets = [...prompt.matchAll(/- Destino: (?:network=)?([a-z0-9_]+)(?:\/| format=)([a-z0-9_]+)/g)].map((m) => ({
     network: m[1]!,
     format: m[2]!,
   }));

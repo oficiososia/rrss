@@ -6,7 +6,7 @@ import {
   simulatedMediaValue,
 } from '../../supabase/functions/_shared/analytics/simulated-insights';
 import { SIMULATED_IG_USER_ID } from '../../supabase/functions/_shared/social/simulated-graph';
-import { abrir, dato, LOCAL, sinErrores, sql } from './apoyo';
+import { abrir, dato, elegirCarpeta, LOCAL, sinErrores, sql, tarjetaDeArchivo } from './apoyo';
 
 // Analítica de extremo a extremo (Fase 5), contra el Supabase LOCAL y la Graph
 // API de Meta SIMULADA (supabase/functions/e2e.env): se capturan las métricas
@@ -136,7 +136,9 @@ test('el panel enseña las cifras, separa dato de hipótesis y dice lo que no se
   // Por defecto, «Últimos 28 días»: días completos, sin hoy. Ahí están las
   // cifras diarias (de ayer hacia atrás), no lo capturado o publicado hoy.
   const kpis = page.getByTestId('analytics-kpis');
-  await expect(kpis.getByTestId('kpi-instagram.account.reach')).toContainText('Estimación de Meta');
+  await expect(kpis.getByTestId('kpi-instagram.account.reach')).toContainText('Personas alcanzadas');
+  // «Estimación de Meta» ya no va en cada cifra: una sola nota al pie lo dice (el alcance es una estimación).
+  await expect(page.getByTestId('analytics-footnote')).toContainText('Algunas son estimaciones.');
   await expect(page.getByTestId('analytics-chart')).toBeVisible();
   await expect(page.getByTestId('analytics-sentence')).toContainText('llegaste a');
   // Lo demás está plegado en «Más detalle».
@@ -210,9 +212,11 @@ test('el informe mensual se genera sin intervención y se abre desde el panel', 
   expect(respuesta.headers()['content-type']).toContain('application/pdf');
   expect((await respuesta.body()).subarray(0, 5).toString('latin1')).toBe('%PDF-');
 
-  // Y está en la biblioteca, carpeta «Informes».
+  // Y está en la biblioteca, carpeta «Informes» (dentro de «Hechas aquí»). La tarjeta enseña un
+  // nombre legible («Informe 2026 11»); el del archivo va en su `title`.
   await page.goto(`${marca()}/biblioteca`);
-  await expect(page.getByText(/informe-\d{4}-\d{2}\.pdf/).first()).toBeVisible();
+  await elegirCarpeta(page, 'Informes');
+  await expect(tarjetaDeArchivo(page, `informe-${mesActual().slice(0, 7)}.pdf`)).toBeVisible();
   sinErrores(s);
   await s.context.close();
 });

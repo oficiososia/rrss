@@ -421,17 +421,43 @@ export async function accionDelMenu(page: Page, menu: string, accion: string): P
 }
 
 /**
- * Contenidos → nueva idea: el botón de la pantalla vacía o, con piezas, «＋ Crear» del menú (la
- * cabecera de Contenidos ya no repite «Nueva idea»). Abre la ventana «Nueva idea».
+ * «¿Qué quieres crear?»: con la marca vacía, el botón de su pantalla vacía y el formato; con piezas,
+ * «＋ Crear» del menú con el formato (abre directamente su galería). Después toca «En blanco» (o la
+ * plantilla con ese nombre) y, ya en el editor, le pone el nombre: la pieza nace como «Formato · día»
+ * y el nombre se cambia en el editor (ya no se pregunta al crear).
  */
-export async function nuevaIdea(page: Page): Promise<void> {
+export async function crearPieza(
+  page: Page,
+  formato: 'post' | 'carousel' | 'reel' | 'story',
+  titulo: string,
+  plantilla?: string,
+): Promise<void> {
   const vacia = page.getByTestId('content-empty-new');
+  await expect(vacia.or(page.getByTestId('content-list'))).toBeVisible();
   if (await vacia.isVisible()) {
     await vacia.click();
+    await page.getByRole('dialog').getByTestId(`create-content-format-${formato}`).click();
+  } else {
+    await page.getByTestId('create-menu').click();
+    await page.getByTestId(`create-menu-${formato}`).click();
+  }
+  const galeria = page.getByRole('dialog');
+  if (plantilla) await galeria.getByTestId('create-content-template').filter({ hasText: plantilla }).click();
+  else await galeria.getByTestId('create-content-blank').click();
+  if (formato === 'reel') {
+    await expect(page.getByTestId('reel-editor')).toBeVisible();
+    await accionDelMenu(page, 'reel-more', 'reel-rename');
+    const ventana = page.getByRole('dialog', { name: 'Cambiar el nombre' });
+    await ventana.getByLabel('Nombre').fill(titulo);
+    await ventana.getByTestId('reel-rename-save').click();
+    await expect(ventana).toHaveCount(0);
     return;
   }
-  await page.getByTestId('create-menu').click();
-  await page.getByTestId('create-menu-post').click();
+  await expect(page.getByTestId('editor-title')).toBeVisible();
+  await accionDelMenu(page, 'editor-more', 'editor-settings');
+  await page.getByTestId('piece-title').fill(titulo);
+  await page.getByTestId('piece-settings-save').click();
+  await expect(page.getByTestId('editor-title')).toHaveText(titulo);
 }
 
 /** Nombres de antes (menú «Publicar o compartir») → los de la hoja «Compartir». */
@@ -440,6 +466,36 @@ const SALIDAS: Record<string, string> = {
   'editor-schedule': 'share-schedule',
   'editor-publish-now': 'share-publish-now',
 };
+
+// ── Biblioteca ───────────────────────────────────────────────────────────
+
+/**
+ * Tarjeta de la biblioteca de un archivo, por su nombre de archivo exacto. La tarjeta enseña un
+ * nombre legible («Logo espiga», no «logo-espiga.png»); el nombre del archivo va en su `title`.
+ */
+export function tarjetaDeArchivo(page: Page, nombreDeArchivo: string) {
+  return page.locator(`[data-testid="library-asset"][title=${JSON.stringify(nombreDeArchivo)}]`);
+}
+
+/** Carpetas que la aplicación rellena sola: van plegadas dentro del grupo «Hechas aquí». */
+const CARPETAS_HECHAS_AQUI = ['Ediciones', 'Exportaciones', 'IA', 'Reels', 'Informes'];
+
+/**
+ * Elige una carpeta del árbol de la biblioteca (escritorio). Las subcarpetas van plegadas: se
+ * pulsa cada carpeta del camino («Instagram» y luego «Instagram / Publicadas»). Las que hace la
+ * aplicación (Reels, Exportaciones…) están dentro de «Hechas aquí», que se despliega antes.
+ */
+export async function elegirCarpeta(page: Page, ruta: string): Promise<void> {
+  const partes = ruta.split(' / ');
+  if (CARPETAS_HECHAS_AQUI.includes(partes[0]!)) {
+    const grupo = page.getByTestId('library-made-here-toggle');
+    await expect(grupo).toBeVisible();
+    if ((await grupo.getAttribute('aria-expanded')) !== 'true') await grupo.click();
+  }
+  for (let i = 1; i <= partes.length; i += 1) {
+    await page.getByTestId(`library-folder-${partes.slice(0, i).join(' / ')}`).click();
+  }
+}
 
 /** Editor de piezas: abre la hoja «Compartir» (vista previa, texto de la publicación y salidas). */
 export async function abrirCompartir(page: Page) {
