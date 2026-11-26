@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { STORAGE_BUCKET } from '@/config/app';
+import { campaignReelsAutoEnabled, STORAGE_BUCKET } from '@/config/app';
 import { AiRequestError, aiErrorMessage, toAiError } from '@/features/ai/api';
 import { parseProfile } from '@/features/brand/profile';
 import { contentKeys } from '@/features/content/api';
@@ -461,9 +461,12 @@ export function useCampaignMutations(brandId: string) {
         }),
       );
       // El plan ya está aceptado: si preparar algún reel falla, esa pieza se queda como antes (vacía).
-      const reels = await prepareCampaignReels(brandId, accepted, built.plan, { mount: mountReels }).catch(
-        (): PreparedReels => ({ total: 0, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 }),
-      );
+      // Con los reels de IA apagados (config/flags.ts) no se preparan ni se montan: quedan como borrador a mano.
+      const reels = campaignReelsAutoEnabled()
+        ? await prepareCampaignReels(brandId, accepted, built.plan, { mount: mountReels }).catch(
+            (): PreparedReels => ({ total: 0, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 }),
+          )
+        : { total: 0, prepared: 0, withoutMaterial: 0, failed: 0, mounted: 0 };
       return { campaign: accepted, reels };
     },
     onSuccess: async () => {

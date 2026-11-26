@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 26/11/2026 (ramas `f75/campanas-duracion-repetidos`, `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 26/11/2026 (ramas `f76/ocultar-reels-ia`, `f75/campanas-duracion-repetidos`, `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -2078,3 +2078,12 @@ pieza (historia, publicación o carrusel) y abre el editor ya en «Compartir» (
   plantilla en historia y publicación, corto y largo, textos medidos con Konva real, flujo por la interfaz hasta «Compartir»;
   `menu.spec.ts`), componentes de `layout/`. **Sin probar:** contra el Supabase de staging (la sesión pide contraseña); publicar
   de verdad. Capturas en `rrss-recursos-comparativa/plantillas-menus/`.
+
+## Reels con IA ocultos (rama `f76/ocultar-reels-ia`, 26/11/2026)
+
+Decisión del dueño: los reels hechos por la IA salen mal; de momento se hacen a mano (plantilla de reel, fotos y vídeos propios, editor, exportar y «Terminar en Instagram»).
+
+- **Interruptor:** `REELS_IA_VISIBLE` en `src/config/flags.ts`, en `false`. Para reactivarlo, ponerlo en `true` (siguen mandando `VITE_REEL_LIKE_ENABLED` y el trabajador de medios). No se ha borrado código ni funciones del servidor.
+- **Ocultado:** «Hacer un reel como este» en «＋ Crear», en «Crear contenido» y en Reels (todos pasan por `reelLikeEnabled()`); la ruta `biblioteca/reels/como-este[/:id]` redirige a Reels. En campañas, al aceptar un plan ya no se preparan ni se montan solos los reels (`campaignReelsAutoEnabled()`): quedan como borrador para montar a mano, y el aviso de aceptar lo dice. El copiloto, Inicio y Contenidos no tenían otra entrada para hacer un reel con IA.
+- **Sin cambios:** editor de reels, plantillas de reel, subtítulos y la IA de fondos/imágenes.
+- **Pruebas:** borrada `reelLike.test.tsx` (pantallas de «como este») y dos de `listaContenidos.test.tsx` (coste de «como este»); añadida `src/features/reels/like/reelsIaOculto.test.tsx` (sin entradas y la ruta redirige).
