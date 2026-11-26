@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge, Button, ConfirmDialog, Dialog, ErrorState, Notice, Skeleton, Spinner } from '@/components/ui';
-import { mediaWorkerEnabled } from '@/config/app';
+import { campaignReelsAutoEnabled, mediaWorkerEnabled } from '@/config/app';
 import { contentPaths, networkLabel } from '@/features/content/labels';
 import { useBrandTemplates } from '@/features/content/templates/api';
 import { useAssetsByIds } from '@/features/library/api';
@@ -88,7 +88,8 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
   }
 
   const reelCount = draft ? reelIndexes(draft).length : 0;
-  const canMount = mediaWorkerEnabled() && reelCount > 0;
+  const autoReels = campaignReelsAutoEnabled();
+  const canMount = autoReels && mediaWorkerEnabled() && reelCount > 0;
 
   async function accept() {
     try {
@@ -363,7 +364,13 @@ function CampaignDetail({ campaign }: { campaign: CampaignRow }) {
           </>
         }
       >
-        {reelCount > 0 && (
+        {reelCount > 0 && !autoReels && (
+          <p className="text-sm" data-testid="campaign-accept-reels-manual">
+            {reelCount === 1 ? 'El reel queda' : `Los ${reelCount} reels quedan`} como borrador para montar a mano en
+            el editor de reels, con una plantilla y tus fotos o vídeos.
+          </p>
+        )}
+        {reelCount > 0 && autoReels && (
           <div className="space-y-2 text-sm" data-testid="campaign-accept-reels">
             <p>
               {reelCount === 1 ? 'El reel se prepara' : `Los ${reelCount} reels se preparan`} con una plantilla de reel

@@ -1,3 +1,5 @@
+import { REELS_IA_VISIBLE } from './flags';
+
 // Único sitio donde vive el nombre del producto y los límites compartidos.
 export const APP_NAME = 'RRSS';
 
@@ -67,14 +69,24 @@ export function mediaWorkerEnabled(): boolean {
 }
 
 /**
+ * ¿Las campañas preparan y montan solas los reels del plan (plantilla + fotos
+ * elegidas por tema + montaje)? Va con el interruptor `REELS_IA_VISIBLE`: apagado,
+ * los reels de una campaña quedan como borrador para montar a mano.
+ */
+export function campaignReelsAutoEnabled(): boolean {
+  return REELS_IA_VISIBLE;
+}
+
+/**
  * ¿Se ofrece «Hacer un reel como este» (estudiar un vídeo de referencia y
  * rehacerlo para la marca)? Interruptor propio, `VITE_REEL_LIKE_ENABLED=true`, y
  * necesita el trabajador de medios (que mide el vídeo). Además, el servidor
  * tiene que tener un modelo con visión para la marca (`ai-reel-like`, acción
- * `options`): sin él, el botón no sale (docs/reel-como-este.md).
+ * `options`): sin él, el botón no sale (docs/reel-como-este.md). Todo ello solo
+ * si `REELS_IA_VISIBLE` (flags.ts) está encendido.
  */
 export function reelLikeEnabled(): boolean {
-  return mediaWorkerEnabled() && import.meta.env.VITE_REEL_LIKE_ENABLED === 'true';
+  return REELS_IA_VISIBLE && mediaWorkerEnabled() && import.meta.env.VITE_REEL_LIKE_ENABLED === 'true';
 }
 
 /**
