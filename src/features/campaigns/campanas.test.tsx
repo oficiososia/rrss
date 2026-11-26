@@ -119,10 +119,35 @@ describe('la sección Campañas', () => {
   it('con IA: «prepara la semana que viene» → plan explicado → quitar una pieza → aceptar crea borradores', async () => {
     vi.stubEnv('VITE_AI_TEXT_ENABLED', 'true');
     seed();
-    fake.fn('ai-generate', () => ({
-      status: 200,
-      body: { action: 'campaign.plan', generationId: GENERATION, status: 'proposal', plan: plan(), discarded: [] },
-    }));
+    // Sin tocar «Detalles», «Preparar el plan» pide antes la propuesta (la semana que viene) y luego el plan.
+    fake.fn('ai-generate', (body) =>
+      (body as { action: string }).action === 'campaign.brief'
+        ? {
+            status: 200,
+            body: {
+              action: 'campaign.brief',
+              generationId: GENERATION,
+              status: 'proposal',
+              question: null,
+              notes: [],
+              proposal: {
+                title: 'Semana',
+                objective: '',
+                networks: ['instagram'],
+                startDate: week.start,
+                endDate: week.end,
+                perWeek: 2,
+                mix: [{ network: 'instagram', format: 'post', perWeek: 2 }],
+                weeks: [],
+                why: 'Te propongo una semana.',
+              },
+            },
+          }
+        : {
+            status: 200,
+            body: { action: 'campaign.plan', generationId: GENERATION, status: 'proposal', plan: plan(), discarded: [] },
+          },
+    );
     fake.rpc('create_campaign', (args) => {
       const row = campaignRow({ title: args.p_title as string });
       seed({}, [row]);
@@ -156,7 +181,11 @@ describe('la sección Campañas', () => {
     expect(screen.getByTestId('campaign-plan-pieces')).not.toHaveTextContent('Arrancamos la semana');
     expect(screen.queryByTestId('campaign-piece-panel')).not.toBeInTheDocument();
 
-    const sent = fake.callsTo('ai-generate', 'function')[0]!.payload as {
+    expect(fake.callsTo('ai-generate', 'function').map((c) => (c.payload as { action: string }).action)).toEqual([
+      'campaign.brief',
+      'campaign.plan',
+    ]);
+    const sent = fake.callsTo('ai-generate', 'function')[1]!.payload as {
       action: string;
       input: { instruction: string; startDate: string; endDate: string; targets: { network: string }[] };
     };

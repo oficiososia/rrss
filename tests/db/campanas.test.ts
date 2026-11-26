@@ -28,6 +28,7 @@ import {
   planCampaign,
   type CampaignPlanRequest,
 } from '../../supabase/functions/_shared/ai/text/tasks/campaign-plan.ts';
+import { similarTitles } from '../../supabase/functions/_shared/ai/text/tasks/plan-variety.ts';
 import { validateJson } from '../../supabase/functions/_shared/ai/schema.ts';
 import { ENGINE_ACTIONS, planToDrafts, type EngineAsset } from '../../src/features/campaigns/engine.ts';
 import { campaignPlanSchema, validatePlan } from '../../src/features/campaigns/plan.ts';
@@ -1042,6 +1043,63 @@ describe('«Preparar el plan» fiable (prueba del 24/11)', () => {
     expect(result.plan.pieces).toHaveLength(16);
     expect(result.plan.pieces.map((p) => p.date)).toEqual([...result.plan.pieces.map((p) => p.date)].sort());
     expect(result.gaps).toBeUndefined();
+    expect(campaignPlanSchema.safeParse(result.plan).success).toBe(true);
+  });
+
+  it('cada semana recibe ángulos distintos y, al juntar, los títulos repetidos se renombran sin otra llamada (26/11)', async () => {
+    // Como en staging: cada tramo, sin ver a los demás, titula igual su primera pieza.
+    const t = await setup({
+      respond: (req) => {
+        const [, from] = datesOf(req.input.prompt);
+        const day = (offset: number) => new Date(Date.parse(`${from}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+        const weeks: Record<string, string> = { '2026-11-30': 'primera', '2026-12-07': 'segunda', '2026-12-14': 'tercera' };
+        const week = weeks[from!] ?? from!;
+        return answer([
+          {
+            ...stagingPiece(day(0)),
+            title: from === '2026-12-07' ? 'Un espacio para empezar' : 'Tu sitio para empezar',
+            idea: (
+              {
+                primera: 'Foto de la sala vacía a primera hora, lista para entrenar.',
+                segunda: 'Reel del vestuario reformado y las taquillas nuevas.',
+                tercera: 'Foto de la recepción con el horario de clases a la vista.',
+              } as Record<string, string>
+            )[week]!,
+            headline: '',
+          },
+          { ...stagingPiece(day(2)), title: 'Empieza a tu nivel', idea: `Carrusel con tres ejercicios de la ${week} semana para principiantes.`, headline: '' },
+          { ...stagingPiece(day(4)), title: `Semana ${from}`, headline: '' },
+        ]);
+      },
+    });
+    const result = await planCampaign(
+      t.service,
+      { userId: t.editor.id, brandId: t.brand },
+      request(t, { startDate: '2026-11-30', endDate: '2026-12-20', agreement: { perWeek: 3 } }),
+    );
+    // Tres tramos (una semana cada uno), cada uno con sus ángulos, distintos de los de los demás.
+    expect(t.provider.calls).toHaveLength(3);
+    const own = t.provider.calls.map((c) => /Ángulos de este tramo[^:]*\): (.*)\.$/m.exec(c.input.prompt)![1]!.split('; '));
+    expect(own.map((a) => a.length)).toEqual([3, 3, 3]);
+    expect(new Set(own.flat()).size).toBe(9);
+    expect(t.provider.calls[0]!.input.prompt).toContain(`Los otros tramos ya tratan: ${own[1]![0]}`);
+    // El plan junto no repite ningún título (ni casi igual), y dice qué ha cambiado.
+    const titles = result.plan.pieces.map((p) => p.title!);
+    expect(titles).toHaveLength(9);
+    for (let i = 0; i < titles.length; i += 1) {
+      for (let j = i + 1; j < titles.length; j += 1) expect(similarTitles(titles[i]!, titles[j]!)).toBe(false);
+    }
+    // Cuatro de «sitio/espacio para empezar» y «Empieza a tu nivel», y una de «Semana …» casi igual.
+    expect(result.repeats!.filter((r) => r.kind === 'title')).toHaveLength(5);
+    // El caso de staging: «Un espacio para empezar» se parecía a «Tu sitio para empezar»; se renombra con su idea.
+    expect(result.repeats![0]).toMatchObject({
+      kind: 'title',
+      date: '2026-12-07',
+      title: 'Un espacio para empezar',
+      likeDate: '2026-11-30',
+      likeTitle: 'Tu sitio para empezar',
+      renamedTo: 'Vestuario reformado y las taquillas nuevas',
+    });
     expect(campaignPlanSchema.safeParse(result.plan).success).toBe(true);
   });
 

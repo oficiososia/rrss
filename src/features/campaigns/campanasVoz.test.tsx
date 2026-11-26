@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEmptyDocument } from '@/features/content/document';
 import { fake } from '@/test/fakeSupabase';
@@ -15,6 +15,7 @@ import {
   weeksOf,
   type BriefProposal,
 } from './brief';
+import { formatMicros } from '@/features/ai/money';
 import { nextWeek } from './plan';
 import { isVideoPiece, suggestTemplates } from './templateHints';
 
@@ -356,6 +357,117 @@ describe('Preparar un plan con IA: dictar y que la IA rellene los detalles', () 
     });
   });
 
+  // Staging, 26/11/2026: «Un mes de publicaciones en diciembre…» y «Preparar el plan» directamente
+  // daba un plan de la semana siguiente con 4 piezas, sin avisar.
+  const DECEMBER: BriefProposal = {
+    ...PROPOSAL,
+    title: 'Diciembre',
+    startDate: '2026-12-01',
+    endDate: '2026-12-28',
+    perWeek: 4,
+    mix: [
+      { network: 'instagram', format: 'reel', perWeek: 2 },
+      { network: 'instagram', format: 'post', perWeek: 2 },
+    ],
+    weeks: ['Uno', 'Dos', 'Tres', 'Cuatro'].map((title) => ({ title, focus: title })),
+    why: 'Te propongo 4 semanas: todo diciembre.',
+  };
+  const actions = () =>
+    fake.callsTo('ai-generate', 'function').map((c) => (c.payload as { action: string }).action);
+
+  it('sin pedir la propuesta ni tocar «Detalles», «Preparar el plan» pide antes la propuesta y el plan sale con ella', async () => {
+    seed();
+    fake.fn('ai-generate', (body) =>
+      (body as { action: string }).action === 'campaign.brief' ? briefReply(DECEMBER) : planReply(),
+    );
+    fake.fn('ai-generate:estimate', (body) => {
+      const { input } = body as { input: { action: string } };
+      return {
+        status: 200,
+        body: { action: 'cost.estimate', for: input.action, costMicros: input.action === 'campaign.brief' ? 3_000 : 90_000 },
+      };
+    });
+    fake.rpc('create_campaign', () => campaignRow());
+    const { user, dialog } = await openDialog();
+    await user.type(dialog.getByTestId('campaign-instruction'), 'Un mes de publicaciones en diciembre para que se apunten');
+    // El coste máximo enseñado es el de la propuesta más el del plan más largo que puede salir de ella.
+    const cost = await dialog.findByTestId('campaign-plan-cost');
+    await waitFor(() => expect(cost).toHaveTextContent(/la propuesta y el plan \(hasta 9 semanas\)/));
+    await waitFor(() => expect(cost).toHaveTextContent(formatMicros(93_000)));
+    const estimates = fake.estimates as { input: { action: string; input: Record<string, unknown> } }[];
+    const planEstimate = estimates.filter((e) => e.input.action === 'campaign.plan').at(-1)!;
+    expect(planEstimate.input.input).toMatchObject({ startDate: week.start, endDate: addDays(week.start, 62) });
+    expect(planEstimate.input.input.agreement).toMatchObject({ perWeek: 14 });
+    expect(estimates.some((e) => e.input.action === 'campaign.brief')).toBe(true);
+
+    await user.click(dialog.getByTestId('campaign-submit'));
+    await waitFor(() => expect(lastCall('campaign.plan')).toBeDefined());
+    // Un solo paso para la persona: la propuesta y, con ella, el plan.
+    expect(actions()).toEqual(['campaign.brief', 'campaign.plan']);
+    expect(lastCall('campaign.plan')!.input).toMatchObject({
+      startDate: '2026-12-01',
+      endDate: '2026-12-28',
+      agreement: { perWeek: 4, mix: DECEMBER.mix, phases: DECEMBER.weeks },
+    });
+    expect(fake.callsTo('create_campaign', 'rpc')[0]!.payload).toMatchObject({
+      p_title: 'Diciembre',
+      p_starts_on: '2026-12-01',
+      p_ends_on: '2026-12-28',
+    });
+  });
+
+  it('si se tocaron los «Detalles» a mano, el plan sale con lo suyo y sin propuesta', async () => {
+    seed();
+    fake.fn('ai-generate', () => planReply());
+    fake.rpc('create_campaign', () => campaignRow());
+    const { user, dialog } = await openDialog();
+    await user.type(dialog.getByTestId('campaign-instruction'), 'Un mes de publicaciones en diciembre');
+    await user.click(dialog.getByTestId('campaign-details-toggle'));
+    fireEvent.change(dialog.getByTestId('campaign-ends'), { target: { value: addDays(week.start, 13) } });
+    expect(dialog.getByTestId('campaign-brief-optional')).toHaveTextContent('con lo que has puesto en «Detalles»');
+    expect(await dialog.findByTestId('campaign-plan-cost')).toHaveTextContent('Coste máximo de este plan');
+    await user.click(dialog.getByTestId('campaign-submit'));
+    await waitFor(() => expect(lastCall('campaign.plan')).toBeDefined());
+    expect(actions()).toEqual(['campaign.plan']);
+    expect(lastCall('campaign.plan')!.input).toMatchObject({ startDate: week.start, endDate: addDays(week.start, 13) });
+    expect(lastCall('campaign.plan')!.input).not.toHaveProperty('agreement');
+  });
+
+  it('si la propuesta trae una pregunta, el plan espera a la respuesta y sale con lo propuesto', async () => {
+    seed();
+    let briefs = 0;
+    fake.fn('ai-generate', (body) => {
+      if ((body as { action: string }).action !== 'campaign.brief') return planReply();
+      briefs += 1;
+      return briefs === 1 ? briefReply(null) : briefReply(DECEMBER);
+    });
+    fake.rpc('create_campaign', () => campaignRow());
+    const { user, dialog } = await openDialog();
+    await user.type(dialog.getByTestId('campaign-instruction'), 'Un mes de publicaciones');
+    await user.click(dialog.getByTestId('campaign-submit'));
+    expect(await dialog.findByTestId('campaign-brief-question')).toBeInTheDocument();
+    expect(dialog.getByTestId('campaign-plan-after-answer')).toHaveTextContent('Cuando respondas, preparo el plan');
+    expect(actions()).toEqual(['campaign.brief']);
+    await user.type(dialog.getByTestId('campaign-answer'), 'Las clases de diciembre{Enter}');
+    await waitFor(() => expect(lastCall('campaign.plan')).toBeDefined());
+    expect(actions()).toEqual(['campaign.brief', 'campaign.brief', 'campaign.plan']);
+    expect(lastCall('campaign.plan')!.input).toMatchObject({ startDate: '2026-12-01', endDate: '2026-12-28' });
+  });
+
+  it('si la propuesta falla, no sale un plan con lo de por defecto: se explica y no se pide', async () => {
+    seed();
+    fake.fn('ai-generate', (body) =>
+      (body as { action: string }).action === 'campaign.brief'
+        ? { status: 502, body: { error: { code: 'provider_unavailable', message: 'x', retryable: true } } }
+        : planReply(),
+    );
+    const { user, dialog } = await openDialog();
+    await user.type(dialog.getByTestId('campaign-instruction'), 'Un mes de publicaciones en diciembre');
+    await user.click(dialog.getByTestId('campaign-submit'));
+    expect(await dialog.findByTestId('ai-error')).toBeInTheDocument();
+    expect(actions()).toEqual(['campaign.brief']);
+  });
+
   it('sin IA (sin proveedor o sin cupo) el formulario funciona a mano y el error se explica', async () => {
     seed();
     fake.fn('ai-generate', (body) =>
@@ -375,6 +487,7 @@ describe('Preparar un plan con IA: dictar y que la IA rellene los detalles', () 
     // A mano: cambiar una fecha en Detalles y pedir el plan (sin acuerdo previo, como siempre).
     await user.click(dialog.getByTestId('campaign-details-toggle'));
     expect(dialog.getByTestId('campaign-starts')).toHaveValue(week.start);
+    fireEvent.change(dialog.getByTestId('campaign-ends'), { target: { value: addDays(week.start, 13) } });
     await user.click(dialog.getByTestId('campaign-submit'));
     await waitFor(() => expect(lastCall('campaign.plan')).toBeDefined());
     expect(lastCall('campaign.plan')!.input).not.toHaveProperty('agreement');

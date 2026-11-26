@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CampaignRow } from '@/lib/database.types';
 import { REEL_TEMPLATES } from '@/features/reels/templates';
@@ -90,17 +90,27 @@ describe('marca sin perfil: la IA funciona y avisa', () => {
     expect(within(hint).getByRole('link', { name: 'Completar el perfil' })).toHaveAttribute('href', `${BRAND_BASE}/marca`);
     // Coste máximo antes de pulsar.
     await user.type(dialog.getByTestId('campaign-instruction'), 'Reto Fuerza de 30 días, que se apunten');
-    expect(await dialog.findByTestId('campaign-plan-cost')).toHaveTextContent(/Coste máximo de este plan/);
+    expect(await dialog.findByTestId('campaign-plan-cost')).toHaveTextContent(/Coste máximo de la propuesta y el plan \(hasta 9 semanas\)/);
     // Sin sector no se gasta nada.
     await user.click(dialog.getByTestId('campaign-submit'));
     expect(await dialog.findByText(/a qué se dedica la marca/)).toBeInTheDocument();
     expect(fake.callsTo('ai-generate', 'function')).toHaveLength(0);
-    // Con el sector, va en la petición.
+    // Con el sector, va en la petición: primero la propuesta (no se ha pedido ni se han tocado los «Detalles»).
     await user.type(dialog.getByTestId('ai-brand-sector'), 'Gimnasio');
     await user.click(dialog.getByTestId('campaign-submit'));
     await waitFor(() => expect(fake.callsTo('ai-generate', 'function')).toHaveLength(1));
     const sent = fake.callsTo('ai-generate', 'function')[0]!.payload as { action: string; input: Record<string, unknown> };
-    expect(sent).toMatchObject({ action: 'campaign.plan', input: { brandSector: 'Gimnasio' } });
+    expect(sent).toMatchObject({ action: 'campaign.brief', input: { brandSector: 'Gimnasio' } });
+    // La propuesta ha fallado: el plan no sale con lo de por defecto; se explica el error.
+    expect(await dialog.findByTestId('ai-error')).toBeInTheDocument();
+    expect(fake.callsTo('ai-generate', 'function')).toHaveLength(1);
+    // Con «Detalles» tocados a mano, el plan sale con lo suyo y lleva el sector.
+    await user.click(dialog.getByTestId('campaign-details-toggle'));
+    fireEvent.change(dialog.getByTestId('campaign-ends'), { target: { value: week.start } });
+    await user.click(dialog.getByTestId('campaign-submit'));
+    await waitFor(() => expect(fake.callsTo('ai-generate', 'function')).toHaveLength(2));
+    const plan = fake.callsTo('ai-generate', 'function')[1]!.payload as { action: string; input: Record<string, unknown> };
+    expect(plan).toMatchObject({ action: 'campaign.plan', input: { brandSector: 'Gimnasio', endDate: week.start } });
   });
 
   it('con sector y sin perfil, no pide nada más: avisa en una línea y prepara', async () => {
@@ -123,8 +133,13 @@ describe('plan con detalles a mano', () => {
     fake.fn('ai-generate', () => new Promise((resolve) => (answer = resolve)));
     const { user, dialog } = await openDialog();
     await user.type(dialog.getByTestId('campaign-instruction'), 'Semana del arroz: 3 posts y 1 reel, el 24, 26 y 27');
+    // Fechas puestas a mano en «Detalles»: el plan sale con ellas, sin propuesta antes.
+    await user.click(dialog.getByTestId('campaign-details-toggle'));
+    const later = new Date(Date.parse(`${week.end}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+    fireEvent.change(dialog.getByTestId('campaign-ends'), { target: { value: later } });
     await user.click(dialog.getByTestId('campaign-submit'));
     expect(await dialog.findByTestId('campaign-plan-pending')).toHaveTextContent('Preparando el plan');
+    expect((fake.callsTo('ai-generate', 'function')[0]!.payload as { action: string }).action).toBe('campaign.plan');
     answer({
       status: 502,
       body: {
