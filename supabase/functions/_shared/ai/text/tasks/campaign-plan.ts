@@ -31,6 +31,7 @@
 // sanea: se recorta, se normaliza o se descarta la pieza. Si al final no queda
 // ninguna pieza, la respuesta no se cobra (`accept` → ai_waive_generation).
 import { AiError, type AiOutputSchema, type AiService, type Json, type JsonSchema } from '../../contract.ts';
+import { anglesPrompt, assignAngles, dedupePieces, type PlanRepeat } from './plan-variety.ts';
 import { resolveFormat, resolveNetwork } from './targets.ts';
 import {
   AiTaskInputError,
@@ -41,6 +42,8 @@ import {
   type TaskActor,
   type TaskMeta,
 } from './shared.ts';
+
+export type { PlanRepeat };
 
 export const CAMPAIGN_PLAN_PURPOSE = 'campaign.plan';
 export const MAX_INSTRUCTION_CHARS = 2000;
@@ -174,6 +177,11 @@ export interface CampaignPlanResult extends TaskMeta {
   discarded: DiscardedPiece[];
   /** Días que se han quedado sin piezas porque su tramo falló (el resto del plan sí salió). */
   gaps?: PlanGap[];
+  /**
+   * Títulos o ideas que se parecían a los de otra pieza (los tramos se piden a la
+   * vez y no se ven entre sí). Los títulos ya vienen renombrados; las ideas, solo avisadas.
+   */
+  repeats?: PlanRepeat[];
 }
 
 export interface PlanGap {
@@ -702,6 +710,7 @@ function buildPrompt(
   targets: CampaignTarget[],
   perWeek?: number,
   retryHint?: string,
+  angles?: { own: string[]; others: string[] },
 ): string {
   // Todo lo de aquí está validado (fechas reales, identificadores con formato
   // fijo, número entero) o es texto fijo del producto: ningún texto libre del
@@ -713,6 +722,8 @@ function buildPrompt(
           `Este es el tramo ${whole.part} de ${whole.parts} de un plan del ${whole.startDate} al ${whole.endDate}; los demás tramos se preparan aparte. Prepara solo las piezas de estas fechas y no repitas la misma idea en todas las semanas.`,
         ]
       : []),
+    // Ángulos de este tramo y de los demás: texto fijo del producto (plan-variety.ts).
+    ...(angles ? anglesPrompt(angles.own, angles.others) : []),
     'Destinos (copia «network» y «format» por separado en cada pieza):',
     ...targets.map((t) => `- Destino: network=${t.network} format=${t.format}`),
     `Máximo de piezas: ${chunk.maxPieces}.`,
@@ -773,6 +784,8 @@ export async function planCampaign(
   }
 
   const chunks = planChunks(request.startDate, request.endDate, maxPieces);
+  // Con varios tramos, cada uno lleva sus ángulos y sabe los de los demás (que no se repitan).
+  const chunkAngles = chunks.length > 1 ? assignAngles(chunks.map((chunk) => chunk.maxPieces)) : [];
   const baseContext = [
     brandProfileContext(request.brandProfile),
     // Lo que escribe el cliente (instrucción, fuentes, nombres de archivos) viaja como material.
@@ -823,6 +836,9 @@ export async function planCampaign(
           targets,
           agreement?.perWeek,
           retryHint,
+          chunkAngles.length
+            ? { own: chunkAngles[part - 1]!, others: chunkAngles.filter((_, i) => i !== part - 1).flat() }
+            : undefined,
         ),
         schema: CAMPAIGN_PLAN_SCHEMA,
         maxOutputTokens: planOutputTokens(chunk.maxPieces),
@@ -894,10 +910,12 @@ export async function planCampaign(
     offset += d.rawCount;
   }
   const allPieces = done.flatMap((d) => d.plan.pieces).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const pieces = allPieces.slice(0, maxPieces);
-  if (allPieces.length > pieces.length) {
-    discarded.push({ index: -1, reason: `Sobran ${allPieces.length - pieces.length} piezas sobre el máximo de ${maxPieces}.` });
+  const kept = allPieces.slice(0, maxPieces);
+  if (allPieces.length > kept.length) {
+    discarded.push({ index: -1, reason: `Sobran ${allPieces.length - kept.length} piezas sobre el máximo de ${maxPieces}.` });
   }
+  // Títulos repetidos o casi iguales (entre tramos o dentro de uno): se renombran sin otra llamada.
+  const { pieces, repeats } = dedupePieces(kept);
   const gaps: PlanGap[] = failed.map(({ error, chunk }) => ({
     startDate: chunk.startDate,
     endDate: chunk.endDate,
@@ -933,5 +951,6 @@ export async function planCampaign(
     plan,
     discarded,
     ...(gaps.length ? { gaps } : {}),
+    ...(repeats.length ? { repeats } : {}),
   };
 }

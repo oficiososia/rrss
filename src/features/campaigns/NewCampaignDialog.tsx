@@ -3,7 +3,7 @@ import { useId, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button, Dialog, Field, Input, Notice } from '@/components/ui';
-import { AiRequestError, useAiCostEstimate } from '@/features/ai/api';
+import { AiRequestError, aiErrorMessage, useAiCostEstimate } from '@/features/ai/api';
 import { AiErrorNotice } from '@/features/ai/AiErrorNotice';
 import { MaxCostLine, ProfileHint, SectorField } from '@/features/ai/BrandAiReadiness';
 import { useBrandAiReadiness, useRememberSector, useSettled } from '@/features/ai/brandReadiness';
@@ -17,7 +17,10 @@ import { cn } from '@/lib/utils';
 import { planInput, useCampaignMutations, validatePlanRequest, type PlanRequestInput } from './api';
 import {
   agreementFor,
+  briefInput,
   durationText,
+  longestAgreement,
+  longestPlanEnd,
   onlyLabel,
   onlyNetwork,
   rhythmText,
@@ -28,7 +31,7 @@ import {
   type BriefProposal,
   type CampaignBriefResult,
 } from './brief';
-import { campaignPaths } from './labels';
+import { campaignPaths, repeatsText } from './labels';
 import { MAX_INSTRUCTION_CHARS, nextWeek, shortDay } from './plan';
 import { useWorkMode } from '@/features/orgs/workMode';
 
@@ -38,6 +41,11 @@ import { useWorkMode } from '@/features/orgs/workMode';
  * razonada, ritmo, nombre y objetivo— y lo RELLENA en «Detalles», donde la
  * persona lo corrige. Con la IA, el plan se genera al momento y queda por
  * revisar; en modo agencia, se crea un encargo para la agencia.
+ *
+ * Si se pulsa «Preparar el plan» sin haber pedido la propuesta ni tocado
+ * «Detalles» (redes o fechas), se pide antes la propuesta y el plan sale con
+ * ella: «un mes en diciembre» no puede acabar en «la semana que viene, 4 piezas»
+ * (staging, 26/11/2026). Si la persona tocó «Detalles», vale lo suyo.
  */
 export function NewCampaignDialog({
   orgId,
@@ -70,6 +78,16 @@ export function NewCampaignDialog({
   const [moreNetworks, setMoreNetworks] = useState(false);
   const [startsOn, setStartsOn] = useState(week.start);
   const [endsOn, setEndsOn] = useState(week.end);
+  // ¿Ha cambiado la persona redes o fechas a mano? Entonces el plan sale con lo suyo, sin propuesta.
+  const [detailsTouched, setDetailsTouched] = useState(false);
+  // «Preparar el plan» pidió antes la propuesta: en cuanto llegue (también tras la pregunta), el plan.
+  const planAfterBrief = useRef(false);
+  const [waitingToPlan, setWaitingToPlan] = useState(false);
+  const planWaits = (value: boolean) => {
+    planAfterBrief.current = value;
+    setWaitingToPlan(value);
+  };
+  const [autoStep, setAutoStep] = useState(false);
   const [useSources, setUseSources] = useState(true);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -96,6 +114,7 @@ export function NewCampaignDialog({
   const hints = [brand.name];
 
   function toggle(network: string) {
+    setDetailsTouched(true);
     setPickedNetworks(networks.includes(network) ? networks.filter((n) => n !== network) : [...networks, network]);
   }
 
@@ -109,14 +128,17 @@ export function NewCampaignDialog({
     if (next.networks.some((n) => !brandNetworks.networks.includes(n))) setMoreNetworks(true);
   }
 
-  async function askBrief(extra: { adjust?: BriefAdjustment; answer?: { question: string; text: string } } = {}) {
+  /** Pide la propuesta (o la pregunta). Devuelve la propuesta si ha llegado una. */
+  async function askBrief(
+    extra: { adjust?: BriefAdjustment; answer?: { question: string; text: string } } = {},
+  ): Promise<BriefProposal | null> {
     if (!instruction.trim()) {
       setProblem('Cuenta primero qué quieres preparar (puedes dictarlo).');
-      return;
+      return null;
     }
     if (readiness.needsSector && !sector.trim()) {
       setProblem('Di antes a qué se dedica la marca: la IA lo necesita para proponer algo con sentido.');
-      return;
+      return null;
     }
     setProblem(null);
     setBriefError(null);
@@ -140,10 +162,29 @@ export function NewCampaignDialog({
         setQuestion(null);
         fill(result.proposal);
         setBriefMeta({ costMicros: result.costMicros ?? null, notes: result.notes ?? [], adjusted: null });
+        return result.proposal;
+      } else {
+        // Ni pregunta ni propuesta: no se queda en silencio (y el plan no sale con lo de por defecto).
+        throw new AiRequestError('internal', aiErrorMessage('internal'), { retryable: true });
       }
     } catch (error) {
       setBriefError(error);
+      // Sin propuesta no se prepara el plan con los «Detalles» por defecto: se explica el fallo y se espera.
+      planWaits(false);
     }
+    return null;
+  }
+
+  /** «Que la IA proponga…» y sus ajustes: la persona revisa la propuesta antes de pedir el plan. */
+  function askBriefToReview(extra: Parameters<typeof askBrief>[0] = {}) {
+    planWaits(false);
+    void askBrief(extra);
+  }
+
+  /** Contestar la pregunta: si venía de «Preparar el plan», con la propuesta se prepara el plan. */
+  async function answerQuestion(asked: string) {
+    const next = await askBrief({ answer: { question: asked, text: answer } });
+    if (next && planAfterBrief.current) await preparePlan(next);
   }
 
   function keepOnly(network: string) {
@@ -154,18 +195,50 @@ export function NewCampaignDialog({
     setBriefMeta((meta) => ({ ...meta, adjusted: `${onlyLabel(network)}: he quitado las demás redes del reparto.` }));
   }
 
+  // Sin propuesta y sin «Detalles» tocados, «Preparar el plan» pide antes la propuesta.
+  const autoBrief = mode === 'ai' && !proposal && !detailsTouched;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (autoBrief && instruction.trim()) {
+      planWaits(true);
+      setAutoStep(true);
+      try {
+        const next = await askBrief();
+        // Con una pregunta, el plan espera a la respuesta (answerQuestion); con un fallo, no sale.
+        if (next && planAfterBrief.current) await preparePlan(next);
+      } finally {
+        setAutoStep(false);
+      }
+      return;
+    }
+    planWaits(false);
+    await preparePlan(null);
+  }
+
+  /**
+   * Prepara el plan. Con `fresh` (la propuesta que acaba de llegar), con sus redes,
+   * fechas y nombre, sin esperar a que «Detalles» se ponga al día; si no, con lo que
+   * hay en «Detalles» y lo acordado.
+   */
+  async function preparePlan(fresh: BriefProposal | null) {
+    planWaits(false);
+    const nets = fresh ? fresh.networks : networks;
+    const from = fresh ? fresh.startDate : startsOn;
+    const to = fresh ? fresh.endDate : endsOn;
+    const name = (fresh && !titleTouched && fresh.title ? fresh.title : title).trim();
+    // El sector escrito en el diálogo sigue yendo aunque, tras la propuesta, ya se esté guardando en la marca.
+    const sectorToSend = brandSector ?? (sector.trim() || undefined);
     const input: PlanRequestInput = {
       brandId,
-      title: title.trim() || `Plan del ${shortDay(startsOn)} al ${shortDay(endsOn)}`,
+      title: name || `Plan del ${shortDay(from)} al ${shortDay(to)}`,
       instruction,
-      networks: NETWORKS.map((n) => n.id).filter((id) => networks.includes(id)),
-      startsOn,
-      endsOn,
+      networks: NETWORKS.map((n) => n.id).filter((id) => nets.includes(id)),
+      startsOn: from,
+      endsOn: to,
       useSources: useSources && textSourceCount > 0,
-      ...(mode === 'ai' ? { agreement: agreementFor(proposal, networks, startsOn, endsOn) } : {}),
-      ...(mode === 'ai' && brandSector ? { brandSector } : {}),
+      ...(mode === 'ai' ? { agreement: agreementFor(fresh ?? proposal, nets, from, to) } : {}),
+      ...(mode === 'ai' && sectorToSend ? { brandSector: sectorToSend } : {}),
     };
     const invalid =
       validatePlanRequest(input) ??
@@ -179,17 +252,18 @@ export function NewCampaignDialog({
     try {
       if (mode === 'ai') {
         if (brandSector) rememberSector(brandSector);
-        const { campaign, discarded, gaps } = await mutations.createWithAi.mutateAsync(input);
+        const { campaign, discarded, gaps, repeats } = await mutations.createWithAi.mutateAsync(input);
+        const repeated = repeatsText(repeats);
         if (gaps.length) {
+          const missing = gaps.map((g) => `del ${shortDay(g.startDate)} al ${shortDay(g.endDate)}`).join(' ni ');
           toast.warning(
-            `Plan listo, pero sin piezas ${gaps.map((g) => `del ${shortDay(g.startDate)} al ${shortDay(g.endDate)}`).join(' ni ')}: la IA no las ha dado. Añádelas a mano o prepara otro plan para esos días.`,
+            `Plan listo, pero sin piezas ${missing}: la IA no las ha dado. Añádelas a mano o prepara otro plan para esos días.${repeated ? ` ${repeated}` : ''}`,
           );
         } else {
-          toast.success(
-            discarded.length
-              ? `Plan listo. Se han descartado ${discarded.length} propuestas que no encajaban (otra red, otras fechas o de más).`
-              : 'Plan listo: revísalo antes de aceptarlo.',
-          );
+          const base = discarded.length
+            ? `Plan listo. Se han descartado ${discarded.length} propuestas que no encajaban (otra red, otras fechas o de más).`
+            : 'Plan listo: revísalo antes de aceptarlo.';
+          toast.success(repeated ? `${base} ${repeated}` : base);
         }
         onOpenChange(false);
         navigate(campaignPaths(orgId, brandId).item(campaign.id));
@@ -207,25 +281,57 @@ export function NewCampaignDialog({
 
   // Coste máximo del plan antes de pulsar: lo que cambia el coste son las redes, las fechas, el ritmo
   // acordado, las fuentes y (algo) la instrucción.
+  // Si antes va la propuesta (autoBrief), aún no se sabe qué duración saldrá: el máximo es el de la
+  // propuesta más el del plan más largo y denso que puede salir de ella (redes de la marca, 9 semanas).
   const settledInstruction = useSettled(instruction.trim());
+  const estimateNetworks = autoBrief ? brandNetworks.networks : networks;
   const estimateInput: PlanRequestInput = {
     brandId,
     title: 'Plan',
     instruction: settledInstruction || 'Plan de publicaciones',
-    networks: NETWORKS.map((n) => n.id).filter((id) => networks.includes(id)),
+    networks: NETWORKS.map((n) => n.id).filter((id) => estimateNetworks.includes(id)),
     startsOn,
-    endsOn,
+    endsOn: autoBrief ? longestPlanEnd(startsOn) : endsOn,
     useSources: useSources && textSourceCount > 0,
-    ...(mode === 'ai' ? { agreement: agreementFor(proposal, networks, startsOn, endsOn) } : {}),
+    ...(mode === 'ai'
+      ? { agreement: autoBrief ? longestAgreement() : agreementFor(proposal, networks, startsOn, endsOn) }
+      : {}),
   };
   const planEstimate = useAiCostEstimate(
     brandId,
     'campaign.plan',
-    [settledInstruction, estimateInput.networks, startsOn, endsOn, estimateInput.useSources, estimateInput.agreement],
+    [
+      settledInstruction,
+      estimateInput.networks,
+      startsOn,
+      estimateInput.endsOn,
+      estimateInput.useSources,
+      estimateInput.agreement,
+    ],
     mode === 'ai' && estimateInput.networks.length > 0 && !validatePlanRequest(estimateInput)
       ? () => planInput(estimateInput)
       : null,
   );
+  const briefEstimate = useAiCostEstimate(
+    brandId,
+    'campaign.brief',
+    [settledInstruction, brandNetworks.networks, brandSector ?? ''],
+    autoBrief && settledInstruction
+      ? () =>
+          Promise.resolve(
+            briefInput({
+              instruction: settledInstruction,
+              networks: brandNetworks.networks,
+              ...(brandSector ? { brandSector } : {}),
+            }),
+          )
+      : null,
+  );
+  const maxCost = !autoBrief
+    ? planEstimate.data
+    : planEstimate.data !== undefined && briefEstimate.data !== undefined
+      ? planEstimate.data + briefEstimate.data
+      : undefined;
 
   const otherNetworks = NETWORKS.filter((n) => !brandNetworks.networks.includes(n.id));
   const shownNetworks = [
@@ -250,7 +356,13 @@ export function NewCampaignDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button type="submit" form="new-campaign-form" loading={pending} data-testid="campaign-submit">
+          <Button
+            type="submit"
+            form="new-campaign-form"
+            loading={pending || autoStep}
+            disabled={thinking && !autoStep}
+            data-testid="campaign-submit"
+          >
             <Sparkles className="h-4 w-4" aria-hidden />
             {mode === 'ai' ? 'Preparar el plan' : 'Pedir el plan'}
           </Button>
@@ -288,17 +400,21 @@ export function NewCampaignDialog({
                 size="sm"
                 loading={thinking}
                 disabled={!instruction.trim() || pending}
-                onClick={() => void askBrief()}
+                onClick={() => askBriefToReview()}
                 data-testid="campaign-brief-ask"
               >
                 <Wand2 className="h-4 w-4" aria-hidden />
                 {proposal ? 'Proponer otra vez' : 'Que la IA proponga duración, redes y ritmo'}
               </Button>
               {!proposal && !question && (
-                <span className="text-xs text-muted">Opcional: también puedes rellenar «Detalles» a mano.</span>
+                <span className="text-xs text-muted" data-testid="campaign-brief-optional">
+                  {detailsTouched
+                    ? 'Opcional: el plan saldrá con lo que has puesto en «Detalles».'
+                    : 'Opcional: si no, la IA lo propone al pulsar «Preparar el plan». También puedes rellenar «Detalles» a mano.'}
+                </span>
               )}
             </div>
-            {briefError !== null && <AiErrorNotice error={briefError} onRetry={() => void askBrief()} />}
+            {briefError !== null && <AiErrorNotice error={briefError} onRetry={() => askBriefToReview()} />}
           </div>
         )}
 
@@ -324,7 +440,7 @@ export function NewCampaignDialog({
                   onKeyDown={(event) => {
                     if (event.key !== 'Enter') return;
                     event.preventDefault();
-                    if (answer.trim()) void askBrief({ answer: { question, text: answer } });
+                    if (answer.trim()) void answerQuestion(question);
                   }}
                   voiceTestId="campaign-answer"
                   data-testid="campaign-answer"
@@ -336,7 +452,7 @@ export function NewCampaignDialog({
                 className="h-11"
                 loading={thinking}
                 disabled={!answer.trim()}
-                onClick={() => void askBrief({ answer: { question, text: answer } })}
+                onClick={() => void answerQuestion(question)}
                 data-testid="campaign-answer-send"
               >
                 Responder
@@ -385,7 +501,7 @@ export function NewCampaignDialog({
                 variant="secondary"
                 loading={thinking}
                 disabled={weeksOf(proposal.startDate, proposal.endDate) <= 1}
-                onClick={() => void askBrief({ adjust: 'shorter' })}
+                onClick={() => askBriefToReview({ adjust: 'shorter' })}
                 data-testid="campaign-brief-shorter"
               >
                 Más corta
@@ -396,7 +512,7 @@ export function NewCampaignDialog({
                 variant="secondary"
                 loading={thinking}
                 disabled={weeksOf(proposal.startDate, proposal.endDate) >= 9}
-                onClick={() => void askBrief({ adjust: 'longer' })}
+                onClick={() => askBriefToReview({ adjust: 'longer' })}
                 data-testid="campaign-brief-longer"
               >
                 Más larga
@@ -489,7 +605,10 @@ export function NewCampaignDialog({
                     {...props}
                     type="date"
                     value={startsOn}
-                    onChange={(e) => setStartsOn(e.target.value)}
+                    onChange={(e) => {
+                      setStartsOn(e.target.value);
+                      setDetailsTouched(true);
+                    }}
                     data-testid="campaign-starts"
                   />
                 )}
@@ -500,7 +619,10 @@ export function NewCampaignDialog({
                     {...props}
                     type="date"
                     value={endsOn}
-                    onChange={(e) => setEndsOn(e.target.value)}
+                    onChange={(e) => {
+                      setEndsOn(e.target.value);
+                      setDetailsTouched(true);
+                    }}
                     data-testid="campaign-ends"
                   />
                 )}
@@ -539,7 +661,26 @@ export function NewCampaignDialog({
         </div>
 
         {mode === 'ai' && (
-          <MaxCostLine micros={planEstimate.data} testId="campaign-plan-cost" what="este plan" />
+          <MaxCostLine
+            micros={maxCost}
+            testId="campaign-plan-cost"
+            what={autoBrief ? 'la propuesta y el plan (hasta 9 semanas)' : 'este plan'}
+          />
+        )}
+        {autoStep && thinking && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-lg bg-subtle px-3 py-2 text-sm"
+            data-testid="campaign-plan-brief-first"
+          >
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            Primero, la duración, las redes y el ritmo de lo que pides; después, el plan. No cierres esta ventana.
+          </div>
+        )}
+        {question && waitingToPlan && (
+          <p className="text-xs text-muted" data-testid="campaign-plan-after-answer">
+            Cuando respondas, preparo el plan con la propuesta.
+          </p>
         )}
         {mutations.createWithAi.isPending && (
           <div

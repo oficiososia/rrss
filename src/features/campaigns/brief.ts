@@ -4,7 +4,7 @@ import { networkLabel, targetLabel } from '@/features/content/labels';
 import { NETWORKS, formatsOf, getFormatSpec } from '@/features/content/networks';
 import { useBrandTemplates } from '@/features/content/templates/api';
 import { useSocialAccounts } from '@/features/social/api';
-import { daysInclusive, isoDay, shortDay } from './plan';
+import { daysInclusive, isoDay, MAX_PLAN_DAYS, shortDay } from './plan';
 
 // «La IA rellena el formulario contigo» (acción `campaign.brief` de
 // ai-generate): de lo que la persona cuenta propone redes, fechas, ritmo,
@@ -75,9 +75,9 @@ export function briefTargets(networks: readonly string[]) {
   return networks.flatMap((network) => formatsOf(network).map((spec) => ({ network, format: spec.format })));
 }
 
-/** Pide la propuesta (o la pregunta) a la IA. No guarda nada. */
-export function requestCampaignBrief(request: BriefRequest): Promise<CampaignBriefResult> {
-  return invokeAiGenerate<CampaignBriefResult>('campaign.brief', request.brandId, {
+/** Lo que viaja a `campaign.brief` (también para calcular su coste antes). */
+export function briefInput(request: Omit<BriefRequest, 'brandId'>) {
+  return {
     instruction: request.instruction.trim(),
     today: isoDay(new Date()),
     targets: briefTargets(request.networks),
@@ -85,7 +85,36 @@ export function requestCampaignBrief(request: BriefRequest): Promise<CampaignBri
     ...(request.adjust ? { adjust: request.adjust } : {}),
     ...(request.answer ? { answer: request.answer } : {}),
     ...(request.brandSector ? { brandSector: request.brandSector } : {}),
-  });
+  };
+}
+
+/** Pide la propuesta (o la pregunta) a la IA. No guarda nada. */
+export function requestCampaignBrief(request: BriefRequest): Promise<CampaignBriefResult> {
+  return invokeAiGenerate<CampaignBriefResult>('campaign.brief', request.brandId, briefInput(request));
+}
+
+// ── Lo más que puede salir de una propuesta ──────────────────────────────
+// «Preparar el plan» sin propuesta ni «Detalles» tocados pide primero la propuesta y,
+// con ella, el plan. Antes de pulsar no se sabe qué duración propondrá la IA: el coste
+// máximo cierto es el de la propuesta más el del plan más largo y denso que puede
+// salir de ella (9 semanas, el máximo de piezas, una fase por semana con textos largos).
+
+/** Último día del plan más largo que admite la aplicación, empezando en `start`. */
+export function longestPlanEnd(start: string): string {
+  const day = new Date(`${start}T00:00:00Z`);
+  day.setUTCDate(day.getUTCDate() + MAX_PLAN_DAYS - 1);
+  return day.toISOString().slice(0, 10);
+}
+
+/** Acuerdo con todo al máximo (solo para calcular el coste máximo; nunca se envía para generar). */
+export function longestAgreement(): PlanAgreement {
+  const weeks = Math.ceil(MAX_PLAN_DAYS / 7);
+  return {
+    objective: 'x'.repeat(600),
+    // El ritmo más alto que admite el acuerdo: en 9 semanas da el máximo de piezas del plan (30).
+    perWeek: 14,
+    phases: Array.from({ length: weeks }, () => ({ title: 'x'.repeat(80), focus: 'x'.repeat(240) })),
+  };
 }
 
 export function useCampaignBrief(brandId: string) {

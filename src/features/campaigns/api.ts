@@ -268,6 +268,20 @@ export interface GeneratedPlan {
   discarded: { index: number; reason: string }[];
   /** Días que se han quedado sin piezas porque la IA falló con ellos (el resto del plan sí salió). */
   gaps?: { startDate: string; endDate: string; reason: string }[];
+  /**
+   * Piezas cuyo título o idea se parecía a la de otra (un plan largo se pide por tramos a la vez).
+   * Los títulos ya vienen renombrados (`renamedTo`); las ideas, solo avisadas.
+   */
+  repeats?: PlanRepeat[];
+}
+
+export interface PlanRepeat {
+  kind: 'title' | 'idea';
+  date: string;
+  title: string;
+  likeDate: string;
+  likeTitle: string;
+  renamedTo?: string;
 }
 
 async function textSources(brandId: string) {
@@ -376,7 +390,12 @@ export function useCampaignMutations(brandId: string) {
           p_generation_id: generated.generationId,
         }),
       );
-      return { campaign, discarded: generated.discarded, gaps: generated.gaps ?? [] };
+      return {
+        campaign,
+        discarded: generated.discarded,
+        gaps: generated.gaps ?? [],
+        repeats: generated.repeats ?? [],
+      };
     },
     onSuccess: refresh,
   });

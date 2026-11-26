@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 25/11/2026 (ramas `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
+Última actualización: 26/11/2026 (ramas `f75/campanas-duracion-repetidos`, `f72/campanas-copiloto`, `f69/contenidos-copiloto`, `f67/pendientes-reels`, `f56/copiloto-fiable`, `f65/historia-arreglos`, `f64/calidad-en-editor`, `f62/terminar-en-instagram`, `f61/historias-tapas-menu`, `f54/reels-calidad`, `f53/editor-piezas-simple`, `f60/arranque-rapido`, `f57/estados-calendario`, `f59/inicio-resultados`, `f58/integraciones-simple`, `f55/ia-campanas`, `f52/reels-capcut`, `f50/menu-simple`, `f51/editar-foto-simple`, `f49/medios-borrados`, `f48/copiloto-ajustes`, `f46/pulido`, `f44/editor-canva`, `f47/cutout-lento`, `f37/copiloto-herramientas`, `f39/reels-editor-movil` y `f45/fotos-ia`; antes, `f43/biblioteca-analitica`, `f42/inicio-contenidos`, `f41/calendario` y `f40/campanas-voz`).
 Rama de trabajo: `claude/focused-noether-hk502p` (PR abierto a `staging`; `main` y `staging`
 existen desde el 16/11/2026). Lo que falta para lanzar, por área y con responsable, está en
 `docs/PENDIENTES.md`.
@@ -1096,6 +1096,48 @@ Fallos 1, 6, 8 (en parte) y 9 de la segunda prueba real (`rrss-recursos-comparat
 - **Probado**: `test:db` de campañas, `ai-generate`, servicio y simulado local; componentes de contenidos y campañas;
   `test:layout` del copiloto y del editor. **Sin probar con el modelo real** (no hay clave en local y no se despliega
   desde esta rama). **Para llevarlo a staging:** redesplegar `ai-generate` y la aplicación; sin migraciones.
+
+### «Preparar el plan» respeta la duración pedida y no repite títulos (rama `f75/campanas-duracion-repetidos`, 26/11/2026)
+
+Dos fallos vistos en staging con llamadas reales en «Preparar un plan con IA».
+
+- **Fallo 1, causa:** con «Un mes de publicaciones en diciembre…» y «Preparar el plan» directamente (sin «Que la IA
+  proponga duración, redes y ritmo»), el diálogo mandaba los «Detalles» por defecto (la semana siguiente; 4 piezas) y
+  no avisaba: la propuesta solo se pedía con su botón. **Ahora** (`NewCampaignDialog.tsx`), si no hay propuesta y la
+  persona no ha tocado redes ni fechas de «Detalles», al pulsar «Preparar el plan» se pide antes la propuesta
+  (`campaign.brief`) y el plan sale con sus fechas, redes, ritmo, fases y nombre, en un solo paso («Primero, la
+  duración, las redes y el ritmo…; después, el plan»). Si la propuesta trae una pregunta, el plan espera a la respuesta
+  y sale solo al contestar. Si la propuesta falla (o la respuesta no trae ni pregunta ni propuesta), se explica el error
+  y **no** sale un plan con lo de por defecto. Si la persona tocó redes o fechas, vale lo suyo, sin propuesta (el texto
+  junto al botón lo dice). Tocar solo el nombre no cuenta como «Detalles».
+- **Coste máximo enseñado:** en ese caso, antes de pulsar aún no se sabe qué duración saldrá, así que la línea dice
+  «Coste máximo de la propuesta y el plan (hasta 9 semanas)» = estimación de `campaign.brief` + la de `campaign.plan`
+  en el caso más largo y denso que puede salir de una propuesta (redes de la marca, 63 días, 14 a la semana → 30
+  piezas, 9 fases con textos largos: `longestPlanEnd`, `longestAgreement` en `brief.ts`). Con propuesta o «Detalles»
+  tocados, como antes («Coste máximo de este plan»).
+- **Fallo 2, causa:** los tramos de un plan largo se piden a la vez y ninguno ve lo que escriben los demás; la única
+  indicación era «no repitas la misma idea en todas las semanas». Salían «Empieza a tu nivel» dos veces, o «Tu sitio
+  para empezar» y «Un espacio para empezar». **Ahora** (`tasks/plan-variety.ts`, nuevo):
+  - antes de pedirlos, cada tramo recibe sus **ángulos** (lista fija y genérica de 12, repartida por rondas: ninguno se
+    repite entre tramos mientras alcance la lista y nunca dentro de un tramo) y la lista de los que llevan los demás,
+    con la regla de no repetir palabras clave en los títulos (`assignAngles`, `anglesPrompt`; solo con más de un tramo);
+  - al juntar, se buscan **títulos repetidos o casi iguales** (sin tildes ni palabras vacías, plurales y género, y
+    sinónimos corrientes: sitio/espacio/lugar, empieza/comienza/arranca…) y se renombran sin otra llamada: con el
+    titular de la pieza, o el principio de su idea, o su formato, o un número como último recurso. Las **ideas** casi
+    iguales (5 palabras clave o más, 3 de cada 5 en común) solo se avisan. El resultado lleva `repeats` y el aviso de
+    «Plan listo» lo dice («He cambiado el nombre de 2 piezas…», «Una idea se parece a otra (12/12): revísala»).
+- **Coste y tiempo:** sin llamadas de más ni cambios de plazos (80 s por llamada, 125 s en total). Lo reservado (tokens
+  de entrada + salida máximos, `estimateTextUsage`) sube un 4,1–4,6 % en planes de 4–9 tramos (35.440 → 36.968 en un
+  mes de 4 por semana); el coste real sube menos (la salida, que es lo caro, no cambia).
+- **Probado:** `typecheck`, lint de lo tocado, `npm test` y `test:db` de campañas, `ai-generate`, reparto de la
+  propuesta, tareas de texto y la nueva `tests/db/ia-campanas-variedad.test.ts` (reparto de ángulos y detección de
+  repetidos). `npm test`: 2316 de 2317 en tres pasadas; en cada una se agotó el tiempo (10 s) de una prueba
+  distinta de `editorReels.test.tsx`, que no usa nada de lo tocado y pasa entera (44/44) ejecutada sola. Las pruebas nuevas del diálogo (`campanasVoz.test.tsx`) y la de tramos (`campanas.test.ts`) fallan con el
+  código de antes y pasan con el nuevo. Se han adaptado tres pruebas de componentes que pulsaban «Preparar el plan» sin
+  propuesta. **Sin probar** con el modelo real ni en navegador; e2e 14 no se ha ejecutado (toca «Detalles», así que no
+  cambia su recorrido).
+- **Para llevarlo a staging:** redesplegar `ai-generate` (lleva `campaign-plan.ts` y `plan-variety.ts`) y la
+  aplicación; sin migraciones.
 
 ## Sin probar contra el servicio real
 
