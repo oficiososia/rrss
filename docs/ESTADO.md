@@ -68,6 +68,29 @@ en CI desde antes; el CI no estaba a la vista porque el trabajo `e2e` no bloquea
 Las pruebas siguen sin poder ejecutarse en el PC de desarrollo (no hay Docker): el CI es el único
 lugar donde corre la e2e completa.
 
+**Pruebas estables con la máquina cargada** (rama `f70/pruebas-estables`, 24/11/2026). Medido con
+dos tandas a la vez (dos `npm test`, `test:db`, dos maquetaciones en 5418 y 5419 y `worker/`), y
+con las tandas de otros trabajos en el mismo PC. Causas y arreglos:
+- **Dos fallos reales de los reels**, con su prueba: el guardado automático dejaba un reloj vivo al
+  salir del editor con un guardado en marcha (podía pisar el borrador al volver a abrir el reel; en
+  las pruebas caía en la prueba siguiente y la hoja «Exportar» decía «El vídeo todavía no tiene los
+  últimos cambios»), y el pie propuesto por «Hacer un reel como este» no llegaba si la hoja
+  «Publicar o programar» ya estaba abierta.
+- **Maquetación**: todas las ramas usaban el puerto 5391 y se reutilizaba el servidor que hubiera,
+  así que unas pruebas se pasaban contra el código de otra carpeta (y su servidor se cerraba a mitad).
+  Ahora cada copia tiene su puerto (sale de la carpeta; `LAYOUT_PORT` lo fija) y no se reutiliza
+  (`LAYOUT_REUSE=1` para uno arrancado a mano).
+- Esperas con límite propio MÁS CORTO que el general (5 s frente a 10 s en componentes; 10–20 s
+  frente a 30 s en Playwright): quitadas o subidas.
+- Primera prueba de un archivo que abre el editor de reels: se precarga en `beforeAll`
+  (`src/test/preload.ts`); con carga, transformarlo tardaba más de 20 s.
+- Carreras en las pruebas: el borrador del asistente de marca (se esperaba a cualquiera, no al del
+  paso 2), el fetch simulado de Vertex (no rechazaba una señal ya cancelada), las medidas de
+  «Plantillas de la marca» (tomadas en momentos distintos).
+- Límites propios donde el trabajo es lento de verdad: FFmpeg del trabajador (300 s), el
+  diagnóstico de onnxruntime del recorte y el desenfoque del modo retrato.
+Sin reintentos nuevos en ninguna configuración.
+
 ## Hecho
 
 ### Fase 1 · Núcleo multiempresa
