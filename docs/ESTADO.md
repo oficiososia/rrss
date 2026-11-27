@@ -90,6 +90,11 @@ con las tandas de otros trabajos en el mismo PC. Causas y arreglos:
 - Límites propios donde el trabajo es lento de verdad: FFmpeg del trabajador (300 s), el
   diagnóstico de onnxruntime del recorte y el desenfoque del modo retrato.
 Sin reintentos nuevos en ninguna configuración.
+Resultado (dos tandas completas a la vez: `npm test` → `test:db` → maquetación → `worker/`): tras
+unir `claude/focused-noether-hk502p` (294b2ed), una pasada entera en verde en las dos tandas
+(2316 + 1314 + 215 + 192 pasan en cada una); la anterior, también en verde salvo el trabajador, que
+fallaba por haberse suspendido el PC a mitad (pruebas de «15 horas»). La tercera la cortó otra
+suspensión. Repetido diez veces a la vez, `editorReels.test.tsx` ya no falla (antes, 2 de 10).
 
 ## Hecho
 
