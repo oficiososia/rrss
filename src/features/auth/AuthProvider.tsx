@@ -1,8 +1,10 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { useQueryClient } from '@tanstack/react-query';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Spinner } from '@/components/ui';
+import { prefetchStartup } from '@/features/orgs/startup';
+import { ShellSkeleton } from '@/layout/Skeletons';
 import { supabase } from '@/lib/supabase';
 
 interface AuthValue {
@@ -57,7 +59,16 @@ export function useUser(): User {
 export function RequireAuth() {
   const { user, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <Spinner className="min-h-dvh" />;
+  const queryClient = useQueryClient();
+  const prefetchedFor = useRef<string | null>(null);
+  // En cuanto se sabe quién es, se piden a la vez todas las consultas del arranque (una vez por usuario).
+  useEffect(() => {
+    if (!user || prefetchedFor.current === user.id) return;
+    prefetchedFor.current = user.id;
+    prefetchStartup(queryClient, user.id, location.pathname);
+  }, [user, queryClient, location.pathname]);
+  // Mientras se lee la sesión se pinta ya el armazón con siluetas.
+  if (loading) return <ShellSkeleton />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   return <Outlet />;
 }

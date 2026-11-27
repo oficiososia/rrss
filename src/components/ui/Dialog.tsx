@@ -12,9 +12,24 @@ interface DialogProps {
   children?: ReactNode;
   footer?: ReactNode;
   size?: 'md' | 'lg';
+  /**
+   * Clases de más para la zona que se desplaza. Con `pb-0`, una barra de botones pegada abajo
+   * (`sticky bottom-0`) llega hasta el borde: con el relleno de siempre se queda encima de él y
+   * por esa franja asoma lo que hay debajo.
+   */
+  bodyClassName?: string;
 }
 
-export function Dialog({ open, onOpenChange, title, description, children, footer, size = 'md' }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+  footer,
+  size = 'md',
+  bodyClassName,
+}: DialogProps) {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
@@ -26,6 +41,16 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
             size === 'lg' ? 'sm:max-w-2xl' : 'sm:max-w-md',
           )}
           {...(description ? {} : { 'aria-describedby': undefined })}
+          // Al abrirse, el foco cae por defecto en el primer control, que es «Cerrar»: quien pulsa
+          // Intro cierra sin hacer nada. Un diálogo puede marcar con `data-autofocus` dónde debe caer
+          // (el campo que hay que rellenar o el botón principal).
+          onOpenAutoFocus={(event) => {
+            const target = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>('[data-autofocus]');
+            if (target) {
+              event.preventDefault();
+              target.focus();
+            }
+          }}
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">
@@ -40,7 +65,7 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
               </Button>
             </RadixDialog.Close>
           </div>
-          {children && <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>}
+          {children && <div className={cn('min-h-0 flex-1 overflow-y-auto px-5 py-4', bodyClassName)}>{children}</div>}
           {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-4">{footer}</div>}
         </RadixDialog.Content>
       </RadixDialog.Portal>

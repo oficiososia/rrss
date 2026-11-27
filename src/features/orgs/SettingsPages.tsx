@@ -26,7 +26,8 @@ import { ActivityList } from '@/features/audit/ActivityList';
 import { useUser } from '@/features/auth/AuthProvider';
 import { InviteDialog } from '@/features/invitations/InviteDialog';
 import { assignableOrgRoles, BRAND_ROLE_LABEL, canRemoveMember, ORG_ROLE_LABEL } from '@/features/permissions/roles';
-import type { OrgKind, OrgRole } from '@/lib/database.types';
+import { useFeature } from '@/features/platform/integrations/useFeature';
+import type { OrgKind, OrgRole, OrgWorkMode } from '@/lib/database.types';
 import { translateError } from '@/lib/errors';
 import { cn, formatDate } from '@/lib/utils';
 import {
@@ -40,14 +41,24 @@ import {
   type Member,
 } from './api';
 import { useOrg } from './context';
+import { useWorkMode, WORK_MODE_OPTIONS } from './workMode';
 
 export function SettingsLayout() {
   const { org, isAdmin } = useOrg();
+  const { selfManaged } = useWorkMode();
   const base = `/o/${org.id}/ajustes`;
+  const drive = useFeature('drive');
   const tabs = [
     { to: `${base}/general`, label: 'General' },
     { to: `${base}/equipo`, label: 'Equipo' },
     ...(isAdmin ? [{ to: `${base}/actividad`, label: 'Actividad' }] : []),
+    ...(isAdmin ? [{ to: `${base}/ia`, label: 'Consumo de IA' }] : []),
+    // Planes de pago: en autogestión no pintan nada (el gasto real está en «Consumo de IA»).
+    ...(isAdmin && !selfManaged ? [{ to: `${base}/plan`, label: 'Plan' }] : []),
+    // Biblioteca con Google Drive: solo si el entorno la tiene y está configurada.
+    ...(drive ? [{ to: `${base}/drive`, label: 'Google Drive' }] : []),
+    // RGPD: exportar y borrar la organización, solo propietarios.
+    ...(org.role === 'owner' ? [{ to: `${base}/datos`, label: 'Datos' }] : []),
   ];
   return (
     <>
@@ -76,21 +87,117 @@ export function SettingsLayout() {
 export function GeneralSettingsPage() {
   const { org } = useOrg();
   // La clave reinicia el formulario cuando los datos guardados cambian.
-  return <GeneralSettingsForm key={`${org.name}|${org.kind}`} />;
+  return (
+    <div className="space-y-6">
+      <GeneralSettingsForm key={`${org.name}|${org.kind}`} />
+      <WorkModeCard />
+    </div>
+  );
+}
+
+/** «Cómo trabajáis»: autogestión o agencia. Lo cambian los administradores de la organización. */
+function WorkModeCard() {
+  const { org, isAdmin } = useOrg();
+  const { mode } = useWorkMode();
+  const update = useUpdateOrganization(org.id);
+  const [choice, setChoice] = useState<OrgWorkMode>(mode);
+  const [confirming, setConfirming] = useState(false);
+  const dirty = choice !== mode;
+  const help = WORK_MODE_OPTIONS.find((o) => o.value === choice)?.help;
+
+  function save() {
+    update.mutate(
+      { work_mode: choice },
+      {
+        onSuccess: () => {
+          setConfirming(false);
+          toast.success('Cambios guardados');
+        },
+        onError: (e) => {
+          setConfirming(false);
+          toast.error(translateError(e));
+        },
+      },
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Cómo trabajáis"
+        description={
+          isAdmin
+            ? 'Cambia qué ven y qué pueden hacer en todas las marcas.'
+            : 'Solo los administradores pueden cambiarlo.'
+        }
+      />
+      <CardBody>
+        <fieldset className="max-w-lg space-y-3" disabled={!isAdmin}>
+          <legend className="sr-only">Cómo trabajáis</legend>
+          {WORK_MODE_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className={cn(
+                'flex cursor-pointer gap-3 rounded-xl border p-4 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary',
+                choice === option.value ? 'border-primary bg-primary-soft' : 'border-border hover:bg-subtle',
+              )}
+            >
+              <input
+                type="radio"
+                name="work-mode"
+                value={option.value}
+                checked={choice === option.value}
+                onChange={() => setChoice(option.value)}
+                className="mt-1"
+                data-testid={`work-mode-${option.value}`}
+              />
+              <span>
+                <span className="block text-sm font-medium">{option.title}</span>
+                <span className="block text-xs text-muted">{option.help}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {isAdmin && (
+          <Button
+            className="mt-4"
+            disabled={!dirty}
+            loading={update.isPending && !confirming}
+            onClick={() => (choice === 'self' ? setConfirming(true) : save())}
+            data-testid="work-mode-save"
+          >
+            Guardar cambios
+          </Button>
+        )}
+      </CardBody>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="¿Pasar a «Lo llevamos nosotros»?"
+        description={`${help ?? ''} Las marcas que estaban en modo agencia pasan a usar la IA directamente. Los encargos que haya abiertos se conservan, pero dejan de verse mientras tanto.`}
+        confirmLabel="Pasar a autogestión"
+        destructive={false}
+        loading={update.isPending}
+        onConfirm={save}
+      />
+    </Card>
+  );
 }
 
 function GeneralSettingsForm() {
   const { org, isAdmin } = useOrg();
+  const { selfManaged } = useWorkMode();
   const update = useUpdateOrganization(org.id);
   const [name, setName] = useState(org.name);
   const [kind, setKind] = useState<OrgKind>(org.kind);
 
-  const dirty = name.trim() !== org.name || kind !== org.kind;
+  const dirty = name.trim() !== org.name || (!selfManaged && kind !== org.kind);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     update.mutate(
-      { name: name.trim(), kind },
+      // En autogestión el «tipo» (empresa o agencia) no se enseña ni se toca.
+      selfManaged ? { name: name.trim() } : { name: name.trim(), kind },
       { onSuccess: () => toast.success('Cambios guardados'), onError: (e) => toast.error(translateError(e)) },
     );
   }
@@ -116,14 +223,16 @@ function GeneralSettingsForm() {
               />
             )}
           </Field>
-          <Field label="Tipo" hint="Solo cambia cómo se presenta la organización; no afecta a los permisos.">
-            {(p) => (
-              <Select {...p} disabled={!isAdmin} value={kind} onChange={(e) => setKind(e.target.value as OrgKind)}>
-                <option value="business">Empresa</option>
-                <option value="agency">Agencia</option>
-              </Select>
-            )}
-          </Field>
+          {!selfManaged && (
+            <Field label="Tipo" hint="Solo cambia cómo se presenta la organización; no afecta a los permisos.">
+              {(p) => (
+                <Select {...p} disabled={!isAdmin} value={kind} onChange={(e) => setKind(e.target.value as OrgKind)}>
+                  <option value="business">Empresa</option>
+                  <option value="agency">Agencia</option>
+                </Select>
+              )}
+            </Field>
+          )}
           {isAdmin && (
             <Button
               type="submit"
@@ -212,17 +321,19 @@ export function TeamSettingsPage() {
 
   function confirmRemove() {
     if (!removing) return;
-    remove.mutate(removing.user_id, {
-      onSuccess: () => {
+    // Con la promesa y no con los avisos de `mutate`: al salir uno mismo, la organización desaparece de la
+    // lista y esta pantalla se desmonta antes de que la mutación termine; los avisos de `mutate` no se ejecutarían.
+    remove.mutateAsync(removing.user_id).then(
+      () => {
         setRemoving(null);
         if (removingSelf) navigate('/', { replace: true });
         else toast.success('Miembro quitado');
       },
-      onError: (e) => {
+      (e: unknown) => {
         setRemoving(null);
         toast.error(translateError(e));
       },
-    });
+    );
   }
 
   return (

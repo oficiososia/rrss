@@ -27,6 +27,12 @@ export interface Db {
   /** Ejecuta una sentencia como superusuario. */
   query<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T[]>;
   close(): Promise<void>;
+  /**
+   * Otra sesión contra la misma base de datos, para probar bloqueos entre
+   * transacciones simultáneas. Solo existe con Postgres (DATABASE_URL): PGlite
+   * tiene una única conexión.
+   */
+  connect?: () => Promise<Db>;
 }
 
 async function openPglite(): Promise<Db> {
@@ -50,16 +56,25 @@ async function openPostgres(adminUrl: string): Promise<Db> {
   await admin.query(`create database ${name}`);
   const url = new URL(adminUrl);
   url.pathname = `/${name}`;
-  const client = new pgLib.Client({ connectionString: url.toString() });
-  await client.connect();
+  const session = async (): Promise<Db> => {
+    const client = new pgLib.Client({ connectionString: url.toString() });
+    await client.connect();
+    return {
+      engine: 'postgres',
+      exec: async (sql) => {
+        await client.query(sql);
+      },
+      query: async <T extends Row>(sql: string, params: unknown[] = []) =>
+        (await client.query(sql, params)).rows as T[],
+      close: () => client.end(),
+    };
+  };
+  const main = await session();
   return {
-    engine: 'postgres',
-    exec: async (sql) => {
-      await client.query(sql);
-    },
-    query: async <T extends Row>(sql: string, params: unknown[] = []) => (await client.query(sql, params)).rows as T[],
+    ...main,
+    connect: session,
     close: async () => {
-      await client.end();
+      await main.close();
       await admin.query(`drop database if exists ${name} with (force)`);
       await admin.end();
     },
@@ -70,12 +85,24 @@ export async function migrationFiles(): Promise<string[]> {
   return (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith('.sql')).sort();
 }
 
-/** Base de datos nueva con el andamiaje de Supabase y todas las migraciones aplicadas. */
-export async function createDb(): Promise<Db> {
+/**
+ * Base de datos nueva con el andamiaje de Supabase y todas las migraciones aplicadas.
+ *
+ * Por defecto, las organizaciones nuevas nacen en el plan «Heredado» (sin
+ * límites de marcas, personas ni almacenamiento, todas las funciones y sin
+ * cupo de IA del plan): es como funcionaba todo antes de los planes, y así las
+ * pruebas de cada función no dependen de los límites comerciales. Las pruebas
+ * de planes piden `{ plans: 'real' }` para tener el plan por defecto de verdad.
+ */
+export async function createDb(options: { plans?: 'legacy' | 'real' } = {}): Promise<Db> {
   const db = process.env.DATABASE_URL ? await openPostgres(process.env.DATABASE_URL) : await openPglite();
   await db.exec(await readFile(SCAFFOLD, 'utf8'));
   for (const file of await migrationFiles()) {
     await db.exec(await readFile(path.join(MIGRATIONS_DIR, file), 'utf8'));
+  }
+  if ((options.plans ?? 'legacy') === 'legacy') {
+    await db.exec(`update public.plans set is_default = false where is_default;
+                   update public.plans set is_default = true where code = 'legacy';`);
   }
   return db;
 }
@@ -101,6 +128,24 @@ export async function as<T extends Row = Row>(
 ): Promise<T[]> {
   const role = user ? 'authenticated' : 'anon';
   const claims = user ? { sub: user.id, email: user.email, role } : { role };
+  return runAs<T>(db, role, claims, sql, params);
+}
+
+/**
+ * Ejecuta una sentencia como lo haría el servidor con la clave de servicio:
+ * rol `service_role`, sin usuario.
+ */
+export async function asService<T extends Row = Row>(db: Db, sql: string, params: unknown[] = []): Promise<T[]> {
+  return runAs<T>(db, 'service_role', { role: 'service_role' }, sql, params);
+}
+
+async function runAs<T extends Row>(
+  db: Db,
+  role: 'anon' | 'authenticated' | 'service_role',
+  claims: Row,
+  sql: string,
+  params: unknown[],
+): Promise<T[]> {
   await db.exec('begin');
   try {
     await db.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify(claims)]);
@@ -133,13 +178,74 @@ export async function denied(
   if (!pattern.test(message)) throw new Error(`Rechazo inesperado («${message}») en: ${sql}`);
 }
 
-export async function createOrg(db: Db, user: TestUser, name: string, kind = 'business'): Promise<string> {
+/**
+ * Sentencia que llama a una función de `public` con argumentos por nombre y
+ * devuelve el resultado como JSON, igual que lo entrega la API (los bigint
+ * como números, las fechas como texto). Los objetos viajan como JSON.
+ */
+export function rpcStatement(fn: string, args: Record<string, unknown>): { sql: string; params: unknown[] } {
+  const names = Object.keys(args).filter((name) => args[name] !== undefined);
+  const params = names.map((name) => {
+    const value = args[name];
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? JSON.stringify(value) : value;
+  });
+  const list = names.map((name, i) => `${name} => $${i + 1}`).join(', ');
+  return { sql: `select to_jsonb(r) as data from public.${fn}(${list}) r`, params };
+}
+
+/** Llama a una función con la clave de servicio y devuelve su fila como JSON. */
+export async function serviceRpc<T = Row>(db: Db, fn: string, args: Record<string, unknown>): Promise<T> {
+  const { sql, params } = rpcStatement(fn, args);
+  const rows = await asService<{ data: T }>(db, sql, params);
+  return rows[0]!.data;
+}
+
+/** Fija el cupo mensual de IA de una organización (lo hace un superadministrador). */
+/** Lo que `ai-media` pregunta de la marca con la identidad de quien pide (`ai_brand_access`); null si no la ve. */
+export async function aiBrandAccess(
+  db: Db,
+  user: TestUser,
+  brandId: string,
+): Promise<{ aiMode: 'api' | 'agency'; agencyStaff: boolean } | null> {
+  const [row] = await as<{ access: { ai_mode: string; agency_staff: boolean } | null }>(
+    db,
+    user,
+    `select public.ai_brand_access($1) as access`,
+    [brandId],
+  );
+  const access = row?.access;
+  return access
+    ? { aiMode: access.ai_mode === 'agency' ? 'agency' : 'api', agencyStaff: access.agency_staff === true }
+    : null;
+}
+
+export async function setAiQuota(db: Db, platformAdmin: TestUser, orgId: string, limitMicros: number): Promise<void> {
+  await as(db, platformAdmin, `select public.admin_set_ai_quota($1, $2)`, [orgId, limitMicros]);
+}
+
+/**
+ * Crea una organización. Las pruebas anteriores a la autogestión cuentan con que
+ * cualquier organización admite el modo agencia en sus marcas, así que por
+ * defecto se deja en `agency`; las pruebas de autogestión piden `'self'`
+ * (como nace una organización de verdad) o `'default'` (lo que decide
+ * `create_organization` según el tipo).
+ */
+export async function createOrg(
+  db: Db,
+  user: TestUser,
+  name: string,
+  kind = 'business',
+  workMode: 'self' | 'agency' | 'default' = 'agency',
+): Promise<string> {
   const [row] = await as<{ id: string }>(
     db,
     user,
     `select id from public.create_organization($1, $2::public.org_kind)`,
     [name, kind],
   );
+  if (workMode !== 'default') {
+    await db.query(`update public.organizations set work_mode = $2 where id = $1`, [row!.id, workMode]);
+  }
   return row!.id;
 }
 

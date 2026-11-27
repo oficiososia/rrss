@@ -14,13 +14,30 @@ export default defineConfig({
           name: 'unit',
           environment: 'jsdom',
           globals: true,
-          include: ['src/**/*.test.{ts,tsx}'],
+          include: ['src/**/*.test.ts'],
           setupFiles: ['src/test/setup.ts'],
         },
       },
       {
+        // Pruebas de componentes: la aplicación real en jsdom con el cliente de
+        // Supabase simulado (src/test/fakeSupabase.ts). Cualquier *.test.tsx cae aquí.
+        plugins: [react()],
+        resolve: { alias },
+        test: {
+          name: 'components',
+          environment: 'jsdom',
+          globals: true,
+          include: ['src/**/*.test.tsx'],
+          setupFiles: ['src/test/setup.components.ts'],
+          testTimeout: 40_000,
+          hookTimeout: 40_000,
+        },
+      },
+      {
         // Pruebas de base de datos: aplican las migraciones reales a un
-        // Postgres en memoria (PGlite) o al de DATABASE_URL.
+        // Postgres en memoria (PGlite) o al de DATABASE_URL. El alias hace falta
+        // para las pruebas que ejecutan código del editor (el banco del copiloto).
+        resolve: { alias },
         test: {
           name: 'db',
           environment: 'node',

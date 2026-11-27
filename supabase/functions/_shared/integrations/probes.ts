@@ -1,0 +1,1197 @@
+// «Probar conexión» de cada integración: una llamada inocua y gratuita a cada
+// servicio con la configuración efectiva (base de datos y, si no, entorno).
+// Nunca publica ni cobra nada, y los mensajes nunca citan un valor secreto (ni
+// partes de él). La ÚNICA que genera algo es la de IA de texto: una generación
+// mínima real por modelo (ver más abajo «generación mínima real»), con un coste
+// despreciable pero no nulo, que se dice en el resultado y en la pantalla.
+//
+//   meta      GET /{app-id}?fields=id,name con el token de aplicación
+//             (App ID|App Secret): Meta dice si reconoce la aplicación.
+//   comfyui   GET {base}/system_stats: ComfyUI responde con su versión y GPU.
+//   ai_text   por cada adaptador elegido: Anthropic, Mistral y OpenAI, listar modelos;
+//             Vertex, pedir un token de acceso con la cuenta de servicio;
+//             Bedrock, listar los modelos de Anthropic de la región.
+//             Y, si eso va bien, por cada par adaptador/modelo distinto de las
+//             tareas: UNA generación de 1 token de salida con el mismo adaptador
+//             que usará la tarea (misma dirección, cabeceras y autenticación).
+//   ai_image  Vertex, pedir un token; Black Forest Labs, consultar el saldo
+//             (/v1/credits). Ideogram no documenta ninguna llamada gratuita:
+//             se dice así, sin gastar.
+//   stripe    GET /v1/account con la clave secreta. El secreto del webhook no
+//             se puede comprobar desde aquí: lo comprueba el primer aviso.
+//   google_drive  Google no tiene una llamada gratuita que valide un cliente
+//             OAuth sin una persona que lo autorice: se comprueba que la
+//             configuración está completa y se dice que el cliente se
+//             comprueba al conectar (como Ideogram, sin gastar nada).
+//   r2        HeadBucket sobre el cubo con la clave (una operación de clase B,
+//             dentro de las 10 M gratuitas al mes): dice si el cubo existe y
+//             si la clave puede usarlo. No sube ni baja nada.
+//   media_worker  GET /v1/apps/{app}/machines/{id} en la API de máquinas de
+//             Fly: si la máquina existe, su estado y su región, y si el token
+//             vale. No la arranca (arrancar es cosa de la base de datos).
+//
+// ⚠ Escrito contra la documentación de cada servicio y probado solo con
+// servicios simulados (tests/db/integraciones-funciones.test.ts).
+import { AiProviderFailure, type AiProvider } from '../ai/contract.ts';
+import { parseServiceAccountKey, createGoogleTokenSource, GOOGLE_TOKEN_URL } from '../ai/text/google-auth.ts';
+import { field, type FetchLike } from '../ai/text/http.ts';
+import { signAwsRequest } from '../ai/text/sigv4.ts';
+import { ANTHROPIC_API_VERSION } from '../ai/text/anthropic-messages.ts';
+import { loadAiTextConfig } from '../ai/text/config.ts';
+import { normalizeOpenAiBaseUrl } from '../ai/text/openai.ts';
+import { loadLocalTestTextConfig } from '../ai/text/local-test.ts';
+import { BFL_DEFAULT_BASE_URL, isBflBaseUrl } from '../ai/media/bfl-image.ts';
+import { isComfyUiBaseUrl } from '../ai/media/comfyui-image.ts';
+import { MEDIA_ENV } from '../ai/media/config.ts';
+import { DEFAULT_GRAPH_API_VERSION, META_GRAPH_HOST } from '../social/meta-graph.ts';
+import { loadSocialConfig } from '../social/config.ts';
+import { loadDriveConfig } from '../drive/config.ts';
+import { DRIVE_LOCAL_TEST_FLAG } from '../drive/local-test.ts';
+import { loadMediaStorageConfig } from '../storage/config.ts';
+import { createS3Storage } from '../storage/s3.ts';
+import { FLY_APP_PATTERN, FLY_MACHINE_PATTERN, type IntegrationId } from './catalog.ts';
+import type { Env } from './settings.ts';
+
+export type ProbeFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+export interface ProbeCheck {
+  name: string;
+  /** null = no se puede comprobar desde aquí (se dice por qué). */
+  ok: boolean | null;
+  message: string;
+  /** Arreglo de un clic que ofrece la pantalla (p. ej. usar el servidor general de OpenAI). */
+  fix?: ProbeFix;
+}
+
+/** Arreglos que la pantalla sabe ofrecer. */
+export type ProbeFix = 'openai_global';
+
+export interface ProbeResult {
+  ok: boolean;
+  message: string;
+  checks: ProbeCheck[];
+  fix?: ProbeFix;
+}
+
+/**
+ * Tarjetas de la pantalla que comparten integración («IA de texto» son OpenAI
+ * y Claude; «IA de imagen», fal.ai y los demás proveedores): cada una prueba y
+ * enseña SOLO lo suyo. El valor es la fila de `integration_tests` donde queda
+ * su última prueba (la primera de cada integración conserva la de siempre).
+ */
+export const PROBE_SCOPES = {
+  ai_text: { openai: 'ai_text', claude: 'ai_text_claude' },
+  ai_image: { images_other: 'ai_image', fal: 'ai_image_fal' },
+} as const;
+
+export type ProbeScope = 'openai' | 'claude' | 'images_other' | 'fal';
+
+/** Dónde se anota la prueba de esa tarjeta, o `null` si la tarjeta no es de esa integración. */
+export function probeRecordId(id: IntegrationId, scope: unknown): string | null {
+  const scopes = (PROBE_SCOPES as Partial<Record<IntegrationId, Record<string, string>>>)[id];
+  if (!scopes || typeof scope !== 'string' || !Object.hasOwn(scopes, scope)) return null;
+  return scopes[scope]!;
+}
+
+export interface ProbeDeps {
+  fetch: ProbeFetch;
+  /** Graph API para la prueba de Meta (en la prueba local, la simulada). */
+  graphFetch?: ProbeFetch;
+  timeoutMs?: number;
+}
+
+const value = (env: Env, name: string) => {
+  const raw = env[name]?.trim();
+  return raw ? raw : undefined;
+};
+
+async function call(
+  deps: ProbeDeps,
+  url: string,
+  init: RequestInit = {},
+  fetcher: ProbeFetch = deps.fetch,
+): Promise<{ status: number; body: unknown } | { error: 'timeout' | 'network' }> {
+  let response: Response;
+  try {
+    response = await fetcher(url, { ...init, signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000) });
+  } catch (e) {
+    const timeout = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return { error: timeout ? 'timeout' : 'network' };
+  }
+  const text = await response.text().catch(() => '');
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  return { status: response.status, body };
+}
+
+const unreachable = (service: string, r: { error: 'timeout' | 'network' }) =>
+  r.error === 'timeout' ? `${service} no respondió a tiempo.` : `No se pudo llegar a ${service} (red o dirección).`;
+
+const rejected = (service: string, status: number) =>
+  status === 401 || status === 403
+    ? `${service} rechaza la clave (HTTP ${status}).`
+    : `${service} respondió con un error (HTTP ${status}).`;
+
+function summarize(checks: ProbeCheck[], empty: string): ProbeResult {
+  if (checks.length === 0) return { ok: false, message: empty, checks };
+  const failed = checks.filter((c) => c.ok === false);
+  const passed = checks.filter((c) => c.ok === true);
+  const ok = failed.length === 0 && passed.length > 0;
+  const message = ok
+    ? passed.map((c) => c.message).join(' ')
+    : failed.length > 0
+      ? failed.map((c) => c.message).join(' ')
+      : checks.map((c) => c.message).join(' ');
+  const fix = failed.find((c) => c.fix)?.fix;
+  return fix ? { ok, message, checks, fix } : { ok, message, checks };
+}
+
+// ─────────────────────────────── Meta ───────────────────────────────
+
+async function probeMeta(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  const appId = value(env, 'META_APP_ID');
+  const secret = value(env, 'META_APP_SECRET');
+  const version = value(env, 'META_GRAPH_API_VERSION') ?? DEFAULT_GRAPH_API_VERSION;
+  if (!appId || !secret) {
+    checks.push({ name: 'Aplicación de Meta', ok: false, message: 'Faltan el App ID y el App Secret.' });
+  } else if (!/^v\d+\.\d+$/.test(version)) {
+    checks.push({
+      name: 'Aplicación de Meta',
+      ok: false,
+      message: 'La versión de la Graph API no tiene la forma v27.0.',
+    });
+  } else {
+    const u = new URL(`${META_GRAPH_HOST}/${version}/${encodeURIComponent(appId)}`);
+    u.searchParams.set('fields', 'id,name');
+    u.searchParams.set('access_token', `${appId}|${secret}`);
+    const r = await call(deps, u.toString(), { headers: { Accept: 'application/json' } }, deps.graphFetch);
+    if ('error' in r) {
+      checks.push({ name: 'Aplicación de Meta', ok: false, message: unreachable('Meta', r) });
+    } else {
+      const body = (r.body ?? {}) as { id?: unknown; name?: unknown; error?: { code?: unknown } };
+      if (r.status === 200 && String(body.id ?? '') === appId) {
+        const name = typeof body.name === 'string' ? body.name.slice(0, 80) : 'sin nombre';
+        checks.push({ name: 'Aplicación de Meta', ok: true, message: `Meta reconoce la aplicación «${name}».` });
+      } else {
+        const code = typeof body.error?.code === 'number' ? ` (código ${body.error.code})` : '';
+        checks.push({
+          name: 'Aplicación de Meta',
+          ok: false,
+          message: `Meta no reconoce el App ID con ese App Secret${code}.`,
+        });
+      }
+    }
+  }
+  // Cifrado de los tokens: sin claves no se puede conectar ninguna cuenta. Se
+  // cargan igual que en las funciones (en la prueba local, la clave fija de pruebas).
+  try {
+    const social = loadSocialConfig(env, async () => {
+      throw new Error('sin red');
+    });
+    // El botón «Conectar con Meta» necesita además la dirección de vuelta: sin
+    // ella la aplicación solo ofrece conectar con un token (availability.ts).
+    if (social.meta) {
+      checks.push(
+        social.callbackUrl && social.appUrl
+          ? { name: 'Conectar con Meta', ok: true, message: 'Sale el botón «Conectar con Meta».' }
+          : {
+              name: 'Conectar con Meta',
+              ok: false,
+              message: social.appUrl
+                ? 'Falta la dirección de retorno de Meta (SOCIAL_CALLBACK_URL): no sale el botón «Conectar con Meta».'
+                : 'Falta la dirección de la aplicación (SOCIAL_APP_URL): no sale el botón «Conectar con Meta», solo «Conectar con un token».',
+            },
+      );
+    }
+    const keyProblem = social.problems.find((p) => p.includes('SOCIAL_TOKEN_KEY'));
+    checks.push(
+      social.keyRing
+        ? { name: 'Cifrado de los tokens', ok: true, message: 'Las claves de cifrado de los tokens están bien.' }
+        : {
+            name: 'Cifrado de los tokens',
+            ok: false,
+            message: keyProblem ?? 'Faltan las claves de cifrado de los tokens (SOCIAL_TOKEN_KEYS): genera una.',
+          },
+    );
+  } catch {
+    checks.push({
+      name: 'Cifrado de los tokens',
+      ok: false,
+      message: 'La configuración de la publicación no es válida.',
+    });
+  }
+  return summarize(checks, 'Meta no está configurada.');
+}
+
+// ─────────────────────────────── ComfyUI ───────────────────────────────
+
+async function probeComfyUi(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const base = value(env, MEDIA_ENV.comfyUiBaseUrl);
+  if (!base) return summarize([], 'Falta la dirección de ComfyUI.');
+  if (!isComfyUiBaseUrl(base)) {
+    return summarize(
+      [
+        {
+          name: 'ComfyUI',
+          ok: false,
+          message: 'La dirección debe ser https (o http solo en la propia máquina), sin usuario ni contraseña.',
+        },
+      ],
+      '',
+    );
+  }
+  const token = value(env, MEDIA_ENV.comfyUiToken);
+  const r = await call(deps, `${base.replace(/\/+$/, '')}/system_stats`, {
+    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+  });
+  const checks: ProbeCheck[] = [];
+  if ('error' in r) {
+    checks.push({ name: 'ComfyUI', ok: false, message: unreachable('ComfyUI', r) });
+  } else if (r.status !== 200 || !r.body || typeof r.body !== 'object') {
+    checks.push({ name: 'ComfyUI', ok: false, message: rejected('ComfyUI', r.status) });
+  } else {
+    const body = r.body as {
+      system?: { comfyui_version?: unknown };
+      devices?: Array<{ name?: unknown; vram_free?: unknown }>;
+    };
+    const version =
+      typeof body.system?.comfyui_version === 'string' ? ` ${body.system.comfyui_version.slice(0, 20)}` : '';
+    const device = body.devices?.[0];
+    const gpu =
+      device && typeof device.name === 'string'
+        ? `, ${device.name.slice(0, 60)}${typeof device.vram_free === 'number' ? ` con ${(device.vram_free / 1024 ** 3).toFixed(1)} GB libres` : ''}`
+        : '';
+    checks.push({ name: 'ComfyUI', ok: true, message: `ComfyUI${version} responde${gpu}.` });
+  }
+  const region = value(env, MEDIA_ENV.comfyUiDataRegion) ?? 'unknown';
+  if (region === 'unknown') {
+    checks.push({
+      name: 'Región de los datos',
+      ok: null,
+      message:
+        'Región sin declarar: se trata como fuera de la UE (solo se ofrece si se admiten modelos de fuera de la UE).',
+    });
+  }
+  return summarize(checks, '');
+}
+
+// ─────────────────────────────── IA de texto ───────────────────────────────
+
+async function googleToken(json: string, deps: ProbeDeps): Promise<ProbeCheck> {
+  const key = parseServiceAccountKey(json);
+  if (!key) return { name: 'Google Vertex AI', ok: false, message: 'El JSON no es el de una cuenta de servicio.' };
+  try {
+    const source = createGoogleTokenSource({ key, fetch: (u, init) => deps.fetch(u, init) });
+    await source(AbortSignal.timeout(deps.timeoutMs ?? 10_000));
+    return {
+      name: 'Google Vertex AI',
+      ok: true,
+      message: `Google da acceso a la cuenta de servicio ${key.clientEmail.slice(0, 120)}.`,
+    };
+  } catch (e) {
+    const detail = e instanceof Error ? e.message.slice(0, 160) : '';
+    return {
+      name: 'Google Vertex AI',
+      ok: false,
+      message: `Google no da acceso a la cuenta de servicio. ${detail}`.trim(),
+    };
+  }
+}
+
+// ───────────────── IA de texto: generación mínima real ─────────────────
+//
+// Listar modelos o pedir un token no prueba que se pueda GENERAR: el 22/11/2026
+// «Probar conexión» dio «Funciona» con una clave de OpenAI que el servidor
+// europeo (eu.api.openai.com) rechazaba al generar (401). Por eso, por cada par
+// adaptador/modelo distinto que usan las tareas de texto, se hace UNA
+// generación mínima real con el MISMO adaptador que usará la tarea
+// (`provider.generate`: misma dirección, mismas cabeceras, misma autenticación):
+// una palabra de entrada y el mínimo de salida (1 token).
+//
+// Coste: unos pocos tokens de entrada y uno de salida por modelo. Despreciable,
+// pero no cero: se dice en el resultado y en la pantalla. NO pasa por
+// `AiService`: no reserva ni descuenta el cupo de ninguna organización ni queda
+// en `ai_generations` (es una prueba de plataforma de un superadministrador; lo
+// único que queda es el registro de pruebas de la integración).
+//
+// ⚠ Probado solo con proveedores simulados: ninguna llamada real.
+
+/** La palabra que se envía. Una sola, sin datos de nadie. */
+const GENERATION_PROMPT = 'Hola';
+/** Lo mínimo que admiten las API: `max_tokens` / `max_completion_tokens` = 1. */
+const GENERATION_MAX_OUTPUT_TOKENS = 1;
+/** Las tareas de texto son seis, así que nunca hay más pares distintos: el tope es un seguro. */
+const MAX_GENERATION_PROBES = 6;
+
+const TEXT_SERVICE_NAME: Record<string, string> = {
+  anthropic: 'Anthropic',
+  mistral: 'Mistral',
+  openai: 'OpenAI',
+  'anthropic-vertex': 'Google Vertex AI',
+  'anthropic-bedrock': 'Amazon Bedrock',
+};
+
+/**
+ * Lo que se apunta de la respuesta HTTP de una generación de prueba. Nunca el
+ * mensaje del proveedor (puede citar parte de la clave): solo el estado y dos
+ * identificadores cortos del error.
+ */
+interface GenerationTrace {
+  status: number | null;
+  errorCode: string | null;
+  errorParam: string | null;
+}
+/** Cada generación de prueba lleva su propia señal: sirve de llave aunque vayan en paralelo. */
+type GenerationTraces = WeakMap<AbortSignal, GenerationTrace>;
+
+const shortWord = (raw: unknown): string | null =>
+  typeof raw === 'string' && /^[\w.-]{1,60}$/.test(raw) ? raw : null;
+
+/** El `fetch` de los adaptadores, apuntando el estado HTTP de las generaciones de prueba. */
+function tracingFetch(deps: ProbeDeps, traces: GenerationTraces): FetchLike {
+  return async (url, init) => {
+    const response = await deps.fetch(url, init);
+    const trace = traces.get(init.signal);
+    if (trace) {
+      trace.status = response.status;
+      trace.errorCode = null;
+      trace.errorParam = null;
+      if (!response.ok) {
+        let body: unknown = null;
+        try {
+          body = await response.clone().json();
+        } catch {
+          body = null;
+        }
+        // OpenAI: error.code y error.param. Anthropic: error.type. Google: error.status. Mistral: type.
+        const error = field(body, 'error');
+        trace.errorCode =
+          shortWord(field(error, 'code')) ??
+          shortWord(field(error, 'type')) ??
+          shortWord(field(error, 'status')) ??
+          shortWord(field(body, 'type'));
+        trace.errorParam = shortWord(field(error, 'param'));
+      }
+    }
+    return response;
+  };
+}
+
+async function attemptGeneration(
+  provider: AiProvider,
+  model: string,
+  params: Record<string, string | number>,
+  deps: ProbeDeps,
+  traces: GenerationTraces,
+): Promise<{ trace: GenerationTrace; failure: AiProviderFailure | null }> {
+  const signal = AbortSignal.timeout(deps.timeoutMs ?? 10_000);
+  const trace: GenerationTrace = { status: null, errorCode: null, errorParam: null };
+  traces.set(signal, trace);
+  try {
+    await provider.generate({ task: 'text', model, input: { prompt: GENERATION_PROMPT, params }, signal });
+    return { trace, failure: null };
+  } catch (e) {
+    // Un error que no es del adaptador no se copia: puede llevar cualquier cosa.
+    const failure =
+      e instanceof AiProviderFailure ? e : new AiProviderFailure('internal', 'fallo inesperado al preparar la petición');
+    return { trace, failure };
+  }
+}
+
+const MODEL_NOT_FOUND_CODES = new Set(['model_not_found', 'invalid_model', 'not_found_error', 'NOT_FOUND']);
+const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
+/** Una generación mínima real con el adaptador de la tarea, explicada en llano. */
+async function probeGeneration(
+  provider: AiProvider,
+  model: string,
+  env: Env,
+  deps: ProbeDeps,
+  traces: GenerationTraces,
+): Promise<ProbeCheck> {
+  const service = TEXT_SERVICE_NAME[provider.id] ?? provider.id;
+  const shown = `«${model.slice(0, 80)}»`;
+  const name = `Generar con ${provider.id}/${model.slice(0, 80)}`;
+  const isOpenAi = provider.id === 'openai';
+  let host: string | null = null;
+  if (isOpenAi) {
+    try {
+      host = new URL(normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'))).hostname;
+    } catch {
+      host = null;
+    }
+  }
+  const where = host ? ` en ${host}` : '';
+
+  const minimal = { max_output_tokens: GENERATION_MAX_OUTPUT_TOKENS };
+  // OpenAI: en los modelos que razonan, el tope de salida incluye el
+  // razonamiento. Se pide no razonar; si el modelo no admite ese parámetro
+  // (400 que lo nombra), se reintenta UNA vez sin él.
+  let { trace, failure } = await attemptGeneration(
+    provider,
+    model,
+    isOpenAi ? { ...minimal, reasoning_effort: 'none' } : minimal,
+    deps,
+    traces,
+  );
+  if (
+    isOpenAi &&
+    failure &&
+    trace.status === 400 &&
+    (trace.errorParam === 'reasoning_effort' || /reasoning/i.test(failure.message))
+  ) {
+    ({ trace, failure } = await attemptGeneration(provider, model, minimal, deps, traces));
+  }
+
+  if (!failure) {
+    return {
+      name,
+      ok: true,
+      message: `${service} genera con ${shown}${where} (generación mínima real: 1 token de salida).`,
+    };
+  }
+  const status = trace.status;
+  if (status !== null && status >= 200 && status < 300) {
+    // El proveedor aceptó clave, modelo y petición. Una negativa a la palabra de
+    // prueba no dice nada malo de la conexión; una respuesta que el adaptador no
+    // entiende, sí: las tareas usan el mismo adaptador y fallarían igual.
+    return failure.code === 'refused'
+      ? {
+          name,
+          ok: true,
+          message: `${service} acepta generar con ${shown}${where} (generación mínima real; el modelo no contestó a la palabra de prueba).`,
+        }
+      : {
+          name,
+          ok: false,
+          message: `${service} respondió al generar con ${shown}${where}, pero con una forma que la aplicación no entiende: las tareas fallarían igual.`,
+        };
+  }
+  const modelMissing =
+    status === 404 ||
+    (trace.errorCode !== null && MODEL_NOT_FOUND_CODES.has(trace.errorCode)) ||
+    (status === 400 &&
+      /model/i.test(failure.message) &&
+      /(not exist|not found|invalid model|unknown model)/i.test(failure.message));
+  if (status === 401 || status === 403) {
+    if (modelMissing) {
+      return {
+        name,
+        ok: false,
+        message: `${service} acepta la clave, pero no le da acceso al modelo ${shown}${where} (${status}): revisa el nombre del modelo elegido para la tarea o da acceso a ese modelo al proyecto de la clave.`,
+      };
+    }
+    // Sin el detalle del proveedor: en los errores de credenciales puede citar parte de la clave.
+    if (isOpenAi && host === 'eu.api.openai.com') {
+      return {
+        name,
+        ok: false,
+        message: `La clave lista modelos, pero el servidor europeo de OpenAI (${host}) la rechaza al generar con ${shown} (${status}): revisa que la clave sea de un proyecto con región Europa y, si es una clave restringida, que tenga permiso para generar («Model capabilities»). Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).`,
+        fix: 'openai_global',
+      };
+    }
+    if (isOpenAi) {
+      return {
+        name,
+        ok: false,
+        message: `La clave lista modelos, pero OpenAI${host ? ` (${host})` : ''} la rechaza al generar con ${shown} (${status}): revisa que sea la clave del proyecto correcto y, si es una clave restringida, que tenga permiso para generar («Model capabilities»).`,
+      };
+    }
+    if (provider.id === 'anthropic-vertex') {
+      return {
+        name,
+        ok: false,
+        message: `Google da el token de acceso, pero Vertex AI lo rechaza al generar con ${shown} (${status}): revisa que la cuenta de servicio tenga permiso para usar Vertex AI en ese proyecto y que el modelo esté habilitado.`,
+      };
+    }
+    if (provider.id === 'anthropic-bedrock') {
+      return {
+        name,
+        ok: false,
+        message: `Amazon Bedrock lista modelos, pero rechaza las credenciales al generar con ${shown} (${status}): revisa el permiso de IAM para invocar modelos y el acceso a ese modelo en la región.`,
+      };
+    }
+    return {
+      name,
+      ok: false,
+      message: `La clave lista modelos, pero ${service} la rechaza al generar con ${shown} (${status}): revisa los permisos de la clave y el acceso de la cuenta a ese modelo.`,
+    };
+  }
+  if (modelMissing) {
+    const hint = isOpenAi
+      ? ' y que el proyecto de la clave tenga acceso a él'
+      : provider.id === 'anthropic-vertex'
+        ? ' y, en Vertex, el proyecto y la ubicación'
+        : provider.id === 'anthropic-bedrock'
+          ? ' (con su prefijo «anthropic.») y que esté disponible en esa región'
+          : '';
+    return {
+      name,
+      ok: false,
+      message: `${service} no encuentra el modelo ${shown}${where} (${status ?? 'sin respuesta'}): revisa el nombre del modelo elegido para la tarea${hint}.`,
+    };
+  }
+  if (isOpenAi && status === 400 && /(could not finish|output limit|limit was reached)/i.test(failure.message)) {
+    // Algunos modelos que razonan no devuelven un 200 cortado, sino un 400 que
+    // dice que se alcanzó el tope de salida: clave, dirección y modelo valen.
+    return {
+      name,
+      ok: true,
+      message: `${service} acepta generar con ${shown}${where}: la clave y el modelo valen; la respuesta se cortó por el tope de 1 token de la prueba (el modelo razona antes de contestar).`,
+    };
+  }
+  // El mensaje del adaptador ya viene sin secretos (text/http.ts) y recortado.
+  const tip =
+    status === 400
+      ? ' Suele ser el nombre del modelo o un parámetro que ese modelo no admite.'
+      : status === 429
+        ? ' Suele ser falta de saldo o un límite de uso de la cuenta.'
+        : '';
+  return {
+    name,
+    ok: false,
+    message: `${service} no genera con ${shown}${where}: ${sentence(failure.message)}${tip}`,
+  };
+}
+
+type TextScope = 'openai' | 'claude';
+
+/** ¿Es ese adaptador de la tarjeta que se prueba? Sin tarjeta, todos (la prueba completa de siempre). */
+const inTextScope = (providerId: string, scope: TextScope | undefined) =>
+  !scope || (scope === 'openai' ? providerId === 'openai' : providerId !== 'openai');
+
+/** Comprobación gratuita de un adaptador de texto (listar modelos o pedir un token). No genera nada. */
+async function freeTextChecks(providerId: string, env: Env, deps: ProbeDeps): Promise<ProbeCheck[]> {
+  const checks: ProbeCheck[] = [];
+  if (providerId === 'anthropic') {
+    const r = await call(deps, 'https://api.anthropic.com/v1/models?limit=1', {
+      headers: { 'x-api-key': value(env, 'ANTHROPIC_API_KEY') ?? '', 'anthropic-version': ANTHROPIC_API_VERSION },
+    });
+    checks.push(
+      'error' in r
+        ? { name: 'Anthropic', ok: false, message: unreachable('Anthropic', r) }
+        : r.status === 200
+          ? { name: 'Anthropic', ok: true, message: 'Anthropic acepta la clave.' }
+          : { name: 'Anthropic', ok: false, message: rejected('Anthropic', r.status) },
+    );
+  } else if (providerId === 'mistral') {
+    const r = await call(deps, 'https://api.mistral.ai/v1/models', {
+      headers: { Authorization: `Bearer ${value(env, 'MISTRAL_API_KEY') ?? ''}`, Accept: 'application/json' },
+    });
+    checks.push(
+      'error' in r
+        ? { name: 'Mistral', ok: false, message: unreachable('Mistral', r) }
+        : r.status === 200
+          ? { name: 'Mistral', ok: true, message: 'Mistral acepta la clave.' }
+          : { name: 'Mistral', ok: false, message: rejected('Mistral', r.status) },
+    );
+  } else if (providerId === 'openai') {
+    // Listar modelos es gratuito. Con el endpoint de la UE comprueba además
+    // que la clave pertenece a un proyecto con residencia en Europa.
+    const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${value(env, 'OPENAI_API_KEY') ?? ''}`,
+      Accept: 'application/json',
+    };
+    const org = value(env, 'OPENAI_ORGANIZATION');
+    const project = value(env, 'OPENAI_PROJECT');
+    if (org) headers['OpenAI-Organization'] = org;
+    if (project) headers['OpenAI-Project'] = project;
+    const r = await call(deps, `${base}/v1/models`, { headers });
+    checks.push(
+      'error' in r
+        ? { name: 'OpenAI', ok: false, message: unreachable('OpenAI', r) }
+        : r.status === 200
+          ? { name: 'OpenAI', ok: true, message: `OpenAI acepta la clave (${new URL(base).hostname}).` }
+          : r.status !== 200 && new URL(base).hostname === 'eu.api.openai.com'
+            ? {
+                name: 'OpenAI',
+                ok: false,
+                message:
+                  'OpenAI no acepta esta clave en su servidor europeo. Lo más habitual es que la clave no sea de un proyecto con región Europa; también puede estar mal copiada. Si no tienes un proyecto europeo, puedes usar el servidor general (los datos se tratarían fuera de la UE).',
+                fix: 'openai_global',
+              }
+            : { name: 'OpenAI', ok: false, message: rejected('OpenAI', r.status) },
+    );
+    // Edición de fotos con IA: la misma lista dice si la clave ve un modelo de imagen.
+    if (!('error' in r) && r.status === 200) {
+      const ids =
+        typeof r.body === 'object' && r.body !== null && Array.isArray((r.body as { data?: unknown }).data)
+          ? ((r.body as { data: unknown[] }).data as unknown[]).map((m) =>
+              typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string'
+                ? (m as { id: string }).id
+                : '',
+            )
+          : [];
+      const images = ids.filter((id) => id.startsWith('gpt-image'));
+      checks.push(
+        images.length > 0
+          ? {
+              name: 'OpenAI imagen',
+              ok: true,
+              message: `La clave ve ${images.length} modelo(s) de imagen (${images.slice(0, 3).join(', ')}). Editar fotos con IA está disponible.`,
+            }
+          : {
+              name: 'OpenAI imagen',
+              ok: null,
+              message:
+                'La clave funciona, pero no lista ningún modelo de imagen (gpt-image…). Para editar fotos con IA puede hacer falta verificar la organización en OpenAI o dar acceso al proyecto.',
+            },
+      );
+    }
+  } else if (providerId === 'anthropic-vertex') {
+    checks.push(await googleToken(value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON') ?? '', deps));
+  } else if (providerId === 'anthropic-bedrock') {
+    const region = value(env, 'AI_BEDROCK_REGION') ?? '';
+    const url = `https://bedrock.${region}.amazonaws.com/foundation-models?byProvider=anthropic`;
+    const accessKeyId = value(env, 'AI_BEDROCK_ACCESS_KEY_ID');
+    const secretAccessKey = value(env, 'AI_BEDROCK_SECRET_ACCESS_KEY');
+    const headers: Record<string, string> =
+      accessKeyId && secretAccessKey
+        ? await signAwsRequest({
+            method: 'GET',
+            url,
+            headers: { accept: 'application/json' },
+            body: '',
+            region,
+            service: 'bedrock',
+            credentials: { accessKeyId, secretAccessKey },
+          })
+        : { accept: 'application/json', authorization: `Bearer ${value(env, 'AI_BEDROCK_BEARER_TOKEN') ?? ''}` };
+    const r = await call(deps, url, { headers });
+    checks.push(
+      'error' in r
+        ? { name: 'Amazon Bedrock', ok: false, message: unreachable('Amazon Bedrock', r) }
+        : r.status === 200
+          ? { name: 'Amazon Bedrock', ok: true, message: `Amazon Bedrock acepta las credenciales en ${region}.` }
+          : { name: 'Amazon Bedrock', ok: false, message: rejected('Amazon Bedrock', r.status) },
+    );
+  }
+  return checks;
+}
+
+/** Accesos de la tarjeta de Claude que tienen credenciales aunque ninguna tarea los use todavía. */
+function idleClaudeProviders(env: Env): string[] {
+  const out: string[] = [];
+  if (value(env, 'AI_VERTEX_SERVICE_ACCOUNT_JSON')) out.push('anthropic-vertex');
+  if (value(env, 'ANTHROPIC_API_KEY')) out.push('anthropic');
+  const bedrockKeys = value(env, 'AI_BEDROCK_ACCESS_KEY_ID') && value(env, 'AI_BEDROCK_SECRET_ACCESS_KEY');
+  if (value(env, 'AI_BEDROCK_REGION') && (bedrockKeys || value(env, 'AI_BEDROCK_BEARER_TOKEN'))) {
+    out.push('anthropic-bedrock');
+  }
+  if (value(env, 'MISTRAL_API_KEY')) out.push('mistral');
+  return out;
+}
+
+async function probeAiText(env: Env, deps: ProbeDeps, scope?: TextScope): Promise<ProbeResult> {
+  const local = loadLocalTestTextConfig(env);
+  if (local) {
+    return summarize(
+      [{ name: 'Proveedor simulado', ok: true, message: 'Proveedor SIMULADO de pruebas locales: responde.' }],
+      '',
+    );
+  }
+  const traces: GenerationTraces = new WeakMap();
+  const config = loadAiTextConfig(env, { fetch: tracingFetch(deps, traces) });
+  // Con tarjeta (OpenAI o Claude), solo sus adaptadores: ni se llama ni se enseña a los del otro.
+  const providers = config.providers.filter((p) => inTextScope(p.id, scope));
+  const checks: ProbeCheck[] = [];
+  for (const [id, reason] of Object.entries(config.unavailable)) {
+    if (inTextScope(id, scope)) checks.push({ name: id, ok: false, message: reason });
+  }
+  /** Adaptadores cuya comprobación gratuita ha ido bien: solo con esos se prueba a generar. */
+  const ready = new Set<string>();
+  for (const provider of providers) {
+    const found = await freeTextChecks(provider.id, env, deps);
+    checks.push(...found);
+    if (!found.some((c) => c.ok === false)) ready.add(provider.id);
+  }
+
+  // Generación mínima real: una por par adaptador/modelo distinto de las tareas
+  // (ver arriba). Si la comprobación gratuita del adaptador ya falló, no se
+  // gasta nada: ese fallo ya dice qué pasa.
+  const loaded = new Map(providers.map((p) => [p.id, p] as const));
+  const pairs = new Map<string, { provider: AiProvider; model: string }>();
+  for (const spec of config.models) {
+    const provider = loaded.get(spec.provider);
+    if (provider && ready.has(spec.provider)) pairs.set(`${spec.provider}/${spec.model}`, { provider, model: spec.model });
+  }
+  const selected = [...pairs.values()].slice(0, MAX_GENERATION_PROBES);
+  const generated = await Promise.all(
+    selected.map((pair) => probeGeneration(pair.provider, pair.model, env, deps, traces)),
+  );
+  checks.push(...generated);
+  if (generated.length > 0) {
+    checks.push({
+      name: 'Coste de la prueba',
+      ok: null,
+      message: `${
+        generated.length === 1
+          ? 'Se ha hecho 1 generación mínima real'
+          : `Se han hecho ${generated.length} generaciones mínimas reales`
+      } (1 token de salida por cada modelo configurado): coste despreciable, pero no cero. No consume el cupo de ninguna organización.`,
+    });
+  }
+
+  // Un precio que falta es de su adaptador («adaptador/modelo»); los avisos generales valen para todos.
+  const priceProblems = config.problems
+    .filter((p) => p.startsWith('AI_PRICES'))
+    .filter((p) => {
+      const owner = /«([a-z0-9-]+)\/[^»]*»/.exec(p)?.[1];
+      return !owner || inTextScope(owner, scope);
+    });
+  if (priceProblems.length > 0 && providers.length > 0) {
+    checks.push({
+      name: 'Precios',
+      ok: false,
+      message: `${priceProblems.join(' ')} Sin precio completo no se genera.`,
+    });
+  }
+  // Las tareas a medias (adaptador sin modelo o al revés) se eligen en la tarjeta de OpenAI.
+  const routeProblems = scope === 'claude' ? [] : config.problems.filter((p) => p.startsWith('La tarea'));
+  for (const p of routeProblems) checks.push({ name: 'Tareas', ok: false, message: p });
+
+  // Claude con credenciales pero sin ninguna tarea que lo use: se comprueba el
+  // acceso (gratis) y se dice que no se ha probado a generar.
+  if (scope === 'claude' && checks.length === 0) {
+    const idle = idleClaudeProviders(env);
+    for (const id of idle) checks.push(...(await freeTextChecks(id, env, deps)));
+    if (idle.length > 0) {
+      checks.push({
+        name: 'Tareas',
+        ok: null,
+        message:
+          'Ninguna tarea de texto usa todavía este acceso: no se ha probado a generar. Se elige para una tarea en «Opciones avanzadas» de OpenAI.',
+      });
+    }
+  }
+  return summarize(
+    checks,
+    scope === 'openai'
+      ? 'No hay ninguna tarea de texto con OpenAI y un modelo elegidos.'
+      : scope === 'claude'
+        ? 'No hay ningún acceso de Claude configurado: no hay nada que probar.'
+        : 'No hay ninguna tarea de texto con proveedor y modelo elegidos.',
+  );
+}
+
+// ─────────────────────────────── IA de imagen ───────────────────────────────
+
+/** Endpoints de fal.ai para animar fotos (los sembrados en `ai_media_models`). */
+const FAL_ANIMATE_ENDPOINTS = ['minimax/h3/image-to-video', 'fal-ai/kling-video/v3/standard/image-to-video'];
+
+/** «modelo: 0,06 USD por video» a partir de la respuesta de /v1/models/pricing. Nunca cita la clave. */
+function falPrices(body: unknown): string {
+  const prices = typeof body === 'object' && body !== null ? (body as { prices?: unknown }).prices : null;
+  if (!Array.isArray(prices) || prices.length === 0) return 'la respuesta no trae precios';
+  return prices
+    .map((p) => {
+      const row = (p ?? {}) as { endpoint_id?: unknown; unit_price?: unknown; unit?: unknown; currency?: unknown };
+      return `${String(row.endpoint_id).slice(0, 60)} ${Number(row.unit_price)} ${String(row.currency).slice(0, 3)} por ${String(row.unit).slice(0, 20)}`;
+    })
+    .join('; ');
+}
+
+type ImageScope = 'images_other' | 'fal';
+
+async function probeAiImage(env: Env, deps: ProbeDeps, scope?: ImageScope): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  // Con tarjeta, solo lo suyo: fal.ai (animar fotos) o los proveedores de crear imágenes.
+  const others = scope !== 'fal';
+  const vertexJson = others ? value(env, MEDIA_ENV.vertexServiceAccount) : undefined;
+  if (others && (vertexJson || value(env, MEDIA_ENV.vertexProject))) {
+    if (!vertexJson || !value(env, MEDIA_ENV.vertexProject)) {
+      checks.push({
+        name: 'Google Vertex AI',
+        ok: false,
+        message: 'Faltan el proyecto o la cuenta de servicio de Vertex.',
+      });
+    } else {
+      checks.push(await googleToken(vertexJson, deps));
+    }
+  }
+  const bflKey = others ? value(env, MEDIA_ENV.bflKey) : undefined;
+  if (bflKey) {
+    const base = value(env, MEDIA_ENV.bflBaseUrl) ?? BFL_DEFAULT_BASE_URL;
+    if (!isBflBaseUrl(base)) {
+      checks.push({
+        name: 'Black Forest Labs',
+        ok: false,
+        message: 'La dirección de Black Forest Labs no es una de las documentadas.',
+      });
+    } else {
+      const r = await call(deps, `${base}/v1/credits`, { headers: { 'x-key': bflKey, accept: 'application/json' } });
+      checks.push(
+        'error' in r
+          ? { name: 'Black Forest Labs', ok: false, message: unreachable('Black Forest Labs', r) }
+          : r.status === 200
+            ? { name: 'Black Forest Labs', ok: true, message: 'Black Forest Labs acepta la clave.' }
+            : { name: 'Black Forest Labs', ok: false, message: rejected('Black Forest Labs', r.status) },
+      );
+    }
+  }
+  if (others && value(env, MEDIA_ENV.ideogramKey)) {
+    checks.push({
+      name: 'Ideogram',
+      ok: null,
+      message:
+        'Ideogram no documenta ninguna llamada gratuita para comprobar la clave: se comprobará con la primera imagen.',
+    });
+  }
+  const falKey = scope === 'images_other' ? undefined : value(env, MEDIA_ENV.falKey);
+  if (falKey) {
+    // GET /v1/models/pricing (documentado en fal.ai/docs/platform-apis): exige la clave y devuelve el
+    // precio por unidad. No genera nada. La documentación no dice que se cobre la consulta.
+    const ids = FAL_ANIMATE_ENDPOINTS.join(',');
+    const r = await call(deps, `https://api.fal.ai/v1/models/pricing?endpoint_id=${encodeURIComponent(ids)}`, {
+      headers: { Authorization: `Key ${falKey}`, Accept: 'application/json' },
+    });
+    if ('error' in r) {
+      checks.push({ name: 'fal.ai', ok: false, message: unreachable('fal.ai', r) });
+    } else if (r.status === 200) {
+      checks.push({
+        name: 'fal.ai',
+        ok: true,
+        message: `fal.ai acepta la clave. Precio que da hoy: ${falPrices(r.body)}. Contrástalo con el del registro de modelos antes de activarlos.`,
+      });
+    } else {
+      checks.push({ name: 'fal.ai', ok: false, message: rejected('fal.ai', r.status) });
+    }
+  }
+  return summarize(
+    checks,
+    scope === 'fal'
+      ? 'Falta la clave de fal.ai.'
+      : scope === 'images_other'
+        ? 'No hay ningún proveedor de imagen configurado (Google, Black Forest Labs o Ideogram).'
+        : 'No hay ningún proveedor de imagen configurado (ComfyUI se prueba en su propio apartado).',
+  );
+}
+
+// ─────────────────────────────── Stripe ───────────────────────────────
+
+async function probeStripe(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  const key = value(env, 'STRIPE_SECRET_KEY');
+  if (!key) {
+    checks.push({ name: 'Clave secreta', ok: false, message: 'Falta la clave secreta de Stripe.' });
+  } else {
+    const r = await call(deps, 'https://api.stripe.com/v1/account', {
+      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+    });
+    const mode = /_live_/.test(key) ? 'modo real' : 'modo de pruebas';
+    checks.push(
+      'error' in r
+        ? { name: 'Clave secreta', ok: false, message: unreachable('Stripe', r) }
+        : r.status === 200
+          ? { name: 'Clave secreta', ok: true, message: `Stripe acepta la clave (${mode}).` }
+          : { name: 'Clave secreta', ok: false, message: rejected('Stripe', r.status) },
+    );
+  }
+  checks.push(
+    value(env, 'STRIPE_WEBHOOK_SECRET')
+      ? {
+          name: 'Secreto del webhook',
+          ok: null,
+          message: 'El secreto del webhook se comprueba con el primer aviso de Stripe.',
+        }
+      : { name: 'Secreto del webhook', ok: false, message: 'Falta el secreto del webhook (whsec_…).' },
+  );
+  if (!value(env, 'BILLING_APP_URL')) {
+    checks.push({
+      name: 'Dirección de la aplicación',
+      ok: false,
+      message: 'Falta la dirección de la aplicación (BILLING_APP_URL).',
+    });
+  }
+  return summarize(checks, '');
+}
+
+// ─────────────────────────────── Google Drive ───────────────────────────────
+
+function probeGoogleDrive(env: Env): ProbeResult {
+  const checks: ProbeCheck[] = [];
+  const config = loadDriveConfig(env, async () => {
+    throw new Error('Sin red al comprobar la configuración de Drive');
+  });
+  // Los problemas solo nombran variables, nunca valores.
+  const missing = config.problems.filter((p) => !p.startsWith(DRIVE_LOCAL_TEST_FLAG));
+  if (missing.length > 0) {
+    checks.push({
+      name: 'Configuración',
+      ok: false,
+      message: missing.map((p) => (p.endsWith('.') ? p : `${p}.`)).join(' '),
+    });
+  } else {
+    checks.push({
+      name: 'Configuración',
+      ok: true,
+      message: config.simulated
+        ? 'Google Drive simulado de las pruebas locales: configuración completa.'
+        : 'La configuración está completa (cliente, dirección de vuelta y claves de cifrado).',
+    });
+  }
+  checks.push({
+    name: 'Cliente OAuth de Google',
+    ok: null,
+    message:
+      'Google no tiene una llamada gratuita para comprobar el cliente OAuth: se comprueba al conectar Google Drive.',
+  });
+  return summarize(checks, '');
+}
+
+// ─────────────────────────────── Cloudflare R2 ───────────────────────────────
+
+async function probeR2(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  let config: ReturnType<typeof loadMediaStorageConfig>;
+  try {
+    config = loadMediaStorageConfig(env);
+  } catch (e) {
+    return summarize([{ name: 'Configuración', ok: false, message: (e as Error).message }], '');
+  }
+  if (!config.s3) {
+    const missing = config.problems.filter((p) => !p.startsWith('MEDIA_STORAGE_E2E_SIMULATED'));
+    checks.push({
+      name: 'Configuración',
+      ok: false,
+      message: missing.length
+        ? missing.map((p) => (p.endsWith('.') ? p : `${p}.`)).join(' ')
+        : 'Faltan la cuenta, la clave y el cubo de R2.',
+    });
+    return summarize(checks, '');
+  }
+  const storage = createS3Storage(config.s3, (input, init) =>
+    deps.fetch(input, { ...init, signal: AbortSignal.timeout(deps.timeoutMs ?? 10_000) }),
+  );
+  let status: number | null = null;
+  try {
+    status = (await storage.headBucket()).status;
+  } catch {
+    status = null;
+  }
+  const service = config.simulated ? 'El S3 local' : 'Cloudflare R2';
+  if (status === null) {
+    checks.push({ name: 'Cubo', ok: false, message: `No se pudo llegar a ${service} (red o dirección).` });
+  } else if (status === 200) {
+    checks.push({
+      name: 'Cubo',
+      ok: true,
+      message: `${service} responde: el cubo existe y la clave puede usarlo.`,
+    });
+  } else if (status === 404) {
+    checks.push({
+      name: 'Cubo',
+      ok: false,
+      message: 'El cubo no existe con ese nombre (o es de otra jurisdicción: revisa «eu»).',
+    });
+  } else {
+    checks.push({ name: 'Cubo', ok: false, message: rejected(service, status) });
+  }
+  if (config.s3.jurisdiction === 'default') {
+    checks.push({
+      name: 'Jurisdicción',
+      ok: null,
+      message: 'El cubo no está en la jurisdicción UE: los archivos pueden guardarse fuera de la UE.',
+    });
+  }
+  if (config.uploadBackend === 'supabase') {
+    checks.push({
+      name: 'Subidas nuevas',
+      ok: null,
+      message: 'Las subidas nuevas siguen yendo a Supabase Storage (MEDIA_UPLOAD_BACKEND=supabase).',
+    });
+  }
+  return summarize(checks, '');
+}
+
+// ─────────────────────────── Trabajador de medios (Fly.io) ───────────────────────────
+
+/** API de máquinas de Fly (la misma que llama `private.media_worker_wake()`). */
+export const FLY_MACHINES_API = 'https://api.machines.dev';
+
+/** Cabecera de autorización de Fly: los tokens «FlyV1 …» van tal cual; los demás, como Bearer. */
+export const flyAuthorization = (token: string) => (token.startsWith('FlyV1 ') ? token : `Bearer ${token}`);
+
+/** Horas que la máquina del trabajador puede estar encendida antes de avisar (se apaga sola al vaciar la cola). */
+export const WORKER_MAX_UPTIME_HOURS = 3;
+
+/**
+ * Estado de la máquina de Fly y desde cuándo está encendida (el último evento
+ * «start» de su historial). Solo lectura. `problem` explica por qué no se sabe.
+ */
+export async function flyWorkerUptime(
+  env: Env,
+  deps: ProbeDeps,
+): Promise<{ state: string; startedAt: string | null } | { problem: string }> {
+  const token = value(env, 'FLY_API_TOKEN');
+  const app = value(env, 'FLY_APP');
+  const machine = value(env, 'FLY_MACHINE_ID');
+  if (!token || !app || !machine || !FLY_APP_PATTERN.test(app) || !FLY_MACHINE_PATTERN.test(machine)) {
+    return { problem: 'Falta configurar la máquina de Fly en Integraciones.' };
+  }
+  const r = await call(deps, `${FLY_MACHINES_API}/v1/apps/${app}/machines/${machine}`, {
+    headers: { Authorization: flyAuthorization(token), Accept: 'application/json' },
+  });
+  if ('error' in r) return { problem: unreachable('Fly.io', r) };
+  if (r.status !== 200) return { problem: rejected('Fly.io', r.status) };
+  const body = (r.body ?? {}) as { state?: unknown; events?: unknown };
+  const state = typeof body.state === 'string' ? body.state : 'desconocido';
+  let startedAt: string | null = null;
+  if (Array.isArray(body.events)) {
+    const starts = (body.events as { type?: unknown; timestamp?: unknown }[])
+      .filter((e) => e?.type === 'start' && typeof e.timestamp === 'number')
+      .map((e) => e.timestamp as number);
+    if (starts.length > 0) startedAt = new Date(Math.max(...starts)).toISOString();
+  }
+  return { state, startedAt };
+}
+
+async function probeMediaWorker(env: Env, deps: ProbeDeps): Promise<ProbeResult> {
+  const checks: ProbeCheck[] = [];
+  const token = value(env, 'FLY_API_TOKEN');
+  const app = value(env, 'FLY_APP');
+  const machine = value(env, 'FLY_MACHINE_ID');
+  const missing = [
+    !app && 'la app (FLY_APP)',
+    !machine && 'el ID de la máquina (FLY_MACHINE_ID)',
+    !token && 'el token (FLY_API_TOKEN)',
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    return summarize([{ name: 'Configuración', ok: false, message: `Falta ${missing.join(', ')}.` }], '');
+  }
+  if (!FLY_APP_PATTERN.test(app!) || !FLY_MACHINE_PATTERN.test(machine!)) {
+    return summarize(
+      [{ name: 'Configuración', ok: false, message: 'La app o el ID de la máquina no tienen un formato válido.' }],
+      '',
+    );
+  }
+  const r = await call(deps, `${FLY_MACHINES_API}/v1/apps/${app}/machines/${machine}`, {
+    headers: { Authorization: flyAuthorization(token!), Accept: 'application/json' },
+  });
+  if ('error' in r) {
+    checks.push({ name: 'Máquina', ok: false, message: unreachable('Fly.io', r) });
+    return summarize(checks, '');
+  }
+  if (r.status === 404) {
+    checks.push({
+      name: 'Máquina',
+      ok: false,
+      message: 'Fly no encuentra esa máquina en esa app (revisa el nombre de la app y el ID de la máquina).',
+    });
+    return summarize(checks, '');
+  }
+  if (r.status !== 200) {
+    checks.push({ name: 'Máquina', ok: false, message: rejected('Fly.io', r.status) });
+    return summarize(checks, '');
+  }
+  const body = (r.body ?? {}) as {
+    state?: unknown;
+    region?: unknown;
+    config?: { restart?: { policy?: unknown }; services?: unknown };
+  };
+  const state = typeof body.state === 'string' ? body.state : 'desconocido';
+  const region = typeof body.region === 'string' ? body.region : 'desconocida';
+  checks.push({
+    name: 'Máquina',
+    ok: true,
+    message: `Fly responde: la máquina existe (estado «${state}», región ${region}) y el token sirve para esa app.`,
+  });
+  const policy = body.config?.restart?.policy;
+  if (typeof policy === 'string' && policy !== 'no') {
+    checks.push({
+      name: 'Reinicio',
+      ok: null,
+      message: `La máquina se reinicia sola al terminar (política «${policy}»): no se parará al vaciar la cola. Revisa [[restart]] en worker/fly.toml.`,
+    });
+  }
+  if (region !== 'fra' && region !== 'desconocida') {
+    checks.push({
+      name: 'Región',
+      ok: null,
+      message: `La máquina está en «${region}», no en Fráncfort (fra): los medios se procesarían fuera de la región prevista.`,
+    });
+  }
+  if (Array.isArray(body.config?.services) && body.config.services.length > 0) {
+    checks.push({
+      name: 'Puertos',
+      ok: null,
+      message: 'La máquina tiene servicios (puertos) publicados: el trabajador no los necesita.',
+    });
+  }
+  if (!value(env, 'WORKER_GATEWAY_TOKEN')) {
+    checks.push({
+      name: 'Acceso a Supabase',
+      ok: null,
+      message:
+        'Falta el token del trabajador: pulsa «Generar token» y pégalo en Fly como WORKER_GATEWAY_TOKEN. Sin él, el trabajador no puede reclamar trabajos.',
+    });
+  }
+  return summarize(checks, '');
+}
+
+/**
+ * Modelos que lista la cuenta de OpenAI (gratis). `null` si no se puede mirar,
+ * con el motivo. Mismo servidor y mismas cabeceras que «Probar conexión».
+ */
+export async function listOpenAiModels(
+  env: Env,
+  deps: ProbeDeps,
+): Promise<{ models: string[] } | { problem: string }> {
+  const key = value(env, 'OPENAI_API_KEY');
+  if (!key) return { problem: 'Falta la clave de OpenAI.' };
+  const base = normalizeOpenAiBaseUrl(value(env, 'OPENAI_BASE_URL'));
+  const headers: Record<string, string> = { Authorization: `Bearer ${key}`, Accept: 'application/json' };
+  const org = value(env, 'OPENAI_ORGANIZATION');
+  const project = value(env, 'OPENAI_PROJECT');
+  if (org) headers['OpenAI-Organization'] = org;
+  if (project) headers['OpenAI-Project'] = project;
+  const r = await call(deps, `${base}/v1/models`, { headers });
+  if ('error' in r) return { problem: unreachable('OpenAI', r) };
+  if (r.status !== 200) return { problem: rejected('OpenAI', r.status) };
+  const data = typeof r.body === 'object' && r.body !== null ? (r.body as { data?: unknown }).data : null;
+  if (!Array.isArray(data)) return { problem: 'OpenAI no devolvió la lista de modelos.' };
+  return {
+    models: data
+      .map((m) => (typeof m === 'object' && m !== null && typeof (m as { id?: unknown }).id === 'string' ? (m as { id: string }).id : ''))
+      .filter(Boolean),
+  };
+}
+
+/**
+ * `scope` (opcional): la tarjeta que prueba, cuando la integración la comparten
+ * varias (ver PROBE_SCOPES). Sin él, la prueba completa de la integración.
+ */
+export async function probeIntegration(
+  id: IntegrationId,
+  env: Env,
+  deps: ProbeDeps,
+  scope?: ProbeScope,
+): Promise<ProbeResult> {
+  switch (id) {
+    case 'meta':
+      return probeMeta(env, deps);
+    case 'comfyui':
+      return probeComfyUi(env, deps);
+    case 'ai_text':
+      return probeAiText(env, deps, scope === 'openai' || scope === 'claude' ? scope : undefined);
+    case 'ai_image':
+      return probeAiImage(env, deps, scope === 'images_other' || scope === 'fal' ? scope : undefined);
+    case 'stripe':
+      return probeStripe(env, deps);
+    case 'google_drive':
+      return probeGoogleDrive(env);
+    case 'r2':
+      return probeR2(env, deps);
+    case 'media_worker':
+      return probeMediaWorker(env, deps);
+  }
+}
+
+/** Para las pruebas: la dirección del punto de tokens de Google (la simula el fetch de prueba). */
+export { GOOGLE_TOKEN_URL };

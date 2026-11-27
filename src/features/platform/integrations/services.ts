@@ -1,0 +1,471 @@
+// Los servicios de «Plataforma → Integraciones»: una fila por servicio, con lo
+// que hace en palabras del dueño, su estado y una acción; al tocarla, una hoja
+// con el campo o campos imprescindibles y «Guardar y probar». Todo lo demás
+// (cada ajuste del catálogo) cuelga de «Opciones avanzadas» de esa hoja.
+//
+// Lógica pura, sin React: la usan la pantalla y sus pruebas. Cada ajuste del
+// catálogo (catalog.ts) pertenece a UNA tarjeta; una prueba lo comprueba.
+import type { IntegrationAvailability, IntegrationStatus } from './api';
+import { TEXT_TASKS, UI_INTEGRATIONS, type AiTextTask, type IntegrationId, type UiGroup } from './catalog';
+
+/** Parte de una integración compartida que prueba una tarjeta (lo mismo que en el servidor, probes.ts). */
+export type ProbeScope = 'openai' | 'claude' | 'images_other' | 'fal';
+
+export type ServiceId =
+  | 'openai'
+  | 'claude'
+  | 'meta'
+  | 'storage'
+  | 'video'
+  | 'fal'
+  | 'drive'
+  | 'stripe'
+  | 'comfyui'
+  | 'images_other';
+
+/** Lo que una tarjeta sabe de la configuración (sin valores secretos). */
+export interface ServiceCtx {
+  availability: IntegrationAvailability;
+  /** ¿Está el ajuste guardado o en una variable del servidor? */
+  has(key: string): boolean;
+  /** Valor guardado de un ajuste que no es secreto. */
+  value(key: string): string | undefined;
+  /** Última prueba («Guardar y probar») de la integración que prueba esta tarjeta. */
+  lastTest: { ok: boolean; message: string } | null;
+}
+
+export interface ServiceDef {
+  id: ServiceId;
+  /** Título de la hoja (el servicio, con su nombre de siempre). */
+  title: string;
+  /** Lo que hace, en palabras del dueño: el texto de su fila. */
+  does: string;
+  /** Con qué lo hace (el proveedor), debajo, en pequeño. */
+  provider: string;
+  /** `optional`: va en el grupo plegado «Opcionales» de la lista. */
+  tier: 'main' | 'optional';
+  /** Cómo se nombra en el resumen del grupo «Opcionales» (si no, el proveedor). */
+  short?: string;
+  /** Para qué sirve, en una frase. */
+  blurb: string;
+  /** Opcional: sin configurar no es un problema. */
+  optional?: boolean;
+  /** Integración cuya prueba lanza «Guardar y probar». */
+  testIntegration: IntegrationId;
+  /**
+   * Cuando varias tarjetas comparten integración (OpenAI y Claude; fal.ai y las
+   * demás de imagen): qué parte prueba esta. El servidor prueba solo eso.
+   */
+  testScope?: ProbeScope;
+  /** Fila donde queda la última prueba de esta tarjeta, si no es la de la integración. */
+  testRecord?: string;
+  /** Qué hace la prueba, en una frase (y si gasta algo, cuánto). */
+  testHint: string;
+  /** Ajustes de la vista sencilla, en orden. */
+  simple: string[];
+  /** Los imprescindibles (subconjunto de `simple`). */
+  required: string[];
+  /** Todos los ajustes de esta tarjeta. */
+  keys: string[];
+  /** Cómo se llama cada ajuste imprescindible cuando falta. */
+  names?: Record<string, string>;
+  /** Cosas que faltan aunque lo imprescindible esté puesto. */
+  extraMissing?(ctx: ServiceCtx): string[];
+  /** ¿Está configurada por otro camino? (p. ej. por Bedrock en lugar de por Vertex). */
+  configuredAlso?(ctx: ServiceCtx): boolean;
+}
+
+/**
+ * La prueba de la IA de texto es la única que gasta algo: además de listar
+ * modelos, genera de verdad (1 token) con cada modelo configurado, porque una
+ * clave puede listar modelos y aun así ser rechazada al generar. Se dice junto
+ * al botón, tal cual.
+ */
+export const AI_TEXT_TEST_COST =
+  'La prueba hace una generación mínima real (1 token de salida) por cada modelo configurado: coste despreciable, pero no cero.';
+
+const taskKeys = TEXT_TASKS.flatMap((t) => [`${t.prefix}_PROVIDER`, `${t.prefix}_MODEL`]);
+
+export const SERVICES: ServiceDef[] = [
+  {
+    id: 'openai',
+    title: 'OpenAI',
+    does: 'Textos, copiloto, imágenes y subtítulos',
+    provider: 'OpenAI',
+    tier: 'main',
+    blurb: 'Textos, copiloto, imágenes y subtítulos, con una sola clave.',
+    testIntegration: 'ai_text',
+    testScope: 'openai',
+    testHint: AI_TEXT_TEST_COST,
+    simple: ['OPENAI_API_KEY'],
+    required: ['OPENAI_API_KEY'],
+    keys: [
+      'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_PROJECT',
+      'AI_TRANSCRIPTION_MODEL',
+      'AI_TEXT_PROVIDER',
+      'AI_TEXT_MODEL',
+      ...taskKeys,
+      'AI_PRICES',
+      'AI_PRICE_SNAPSHOT',
+      'AI_ALLOW_NON_EU_PROCESSING',
+      'AI_TIMEOUT_MS',
+      'AI_TEXT_EDITOR_COPILOT_MODE',
+      'AI_TEXT_EDITOR_COPILOT_EFFORT',
+      'AI_GLOBAL_MONTHLY_CAP',
+      'AI_MEDIA_IMAGE_MODEL',
+      'AI_MEDIA_ALLOW_NON_EU',
+    ],
+    names: { OPENAI_API_KEY: 'la clave de OpenAI' },
+    extraMissing(ctx) {
+      if (ctx.availability.aiText && ctx.availability.reelSubtitles) return [];
+      const out: string[] = [];
+      if (!ctx.has('OPENAI_BASE_URL') && ctx.value('AI_ALLOW_NON_EU_PROCESSING') !== 'true') out.push('la región');
+      if (!ctx.has('AI_TEXT_MODEL') && !ctx.has('AI_TEXT_PROVIDER')) out.push('el modelo de texto');
+      if (!ctx.has('AI_PRICES')) out.push('los precios');
+      return out;
+    },
+  },
+  {
+    id: 'claude',
+    title: 'Claude (Anthropic / Google Cloud)',
+    does: 'Otra IA para redactar',
+    provider: 'Claude',
+    tier: 'optional',
+    blurb: 'Otra forma de redactar y montar piezas. No hace falta para empezar.',
+    optional: true,
+    testIntegration: 'ai_text',
+    testScope: 'claude',
+    testRecord: 'ai_text_claude',
+    testHint: `No prueba OpenAI. ${AI_TEXT_TEST_COST}`,
+    simple: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
+    required: ['AI_VERTEX_PROJECT_ID', 'AI_VERTEX_LOCATION', 'AI_VERTEX_SERVICE_ACCOUNT_JSON'],
+    keys: [
+      'AI_VERTEX_PROJECT_ID',
+      'AI_VERTEX_LOCATION',
+      'AI_VERTEX_SERVICE_ACCOUNT_JSON',
+      'ANTHROPIC_API_KEY',
+      'MISTRAL_API_KEY',
+      'AI_BEDROCK_REGION',
+      'AI_BEDROCK_ACCESS_KEY_ID',
+      'AI_BEDROCK_SECRET_ACCESS_KEY',
+      'AI_BEDROCK_BEARER_TOKEN',
+    ],
+    names: {
+      AI_VERTEX_PROJECT_ID: 'el proyecto de Google Cloud',
+      AI_VERTEX_LOCATION: 'la región de Google Cloud',
+      AI_VERTEX_SERVICE_ACCOUNT_JSON: 'la cuenta de servicio de Google',
+    },
+    configuredAlso: (c) => c.has('ANTHROPIC_API_KEY') || (c.has('AI_BEDROCK_REGION') && c.has('AI_BEDROCK_BEARER_TOKEN')),
+  },
+  {
+    id: 'meta',
+    title: 'Instagram (Meta)',
+    does: 'Publicar en Instagram',
+    provider: 'Meta',
+    tier: 'main',
+    blurb: 'Conectar cuentas de Instagram para publicar y medir.',
+    testIntegration: 'meta',
+    testHint: 'Pregunta a Meta si reconoce la aplicación. No publica nada.',
+    simple: ['META_APP_ID', 'META_APP_SECRET', 'SOCIAL_APP_URL', 'SOCIAL_TOKEN_KEYS'],
+    required: ['META_APP_ID', 'META_APP_SECRET', 'SOCIAL_APP_URL', 'SOCIAL_TOKEN_KEYS'],
+    keys: [
+      'META_APP_ID',
+      'META_APP_SECRET',
+      'META_LOGIN_CONFIG_ID',
+      'META_GRAPH_API_VERSION',
+      'SOCIAL_APP_URL',
+      'SOCIAL_TOKEN_KEYS',
+      'SOCIAL_TOKEN_KEY_ID',
+    ],
+    names: {
+      META_APP_ID: 'el identificador de la aplicación de Meta',
+      META_APP_SECRET: 'el secreto de la aplicación de Meta',
+      SOCIAL_APP_URL: 'la dirección de la aplicación',
+      SOCIAL_TOKEN_KEYS: 'la clave de cifrado de las cuentas',
+    },
+  },
+  {
+    id: 'storage',
+    title: 'Almacenamiento (Cloudflare R2)',
+    does: 'Guardar fotos y vídeos',
+    provider: 'Cloudflare R2',
+    tier: 'main',
+    blurb: 'Dónde se guardan las fotos, los vídeos y las exportaciones.',
+    optional: true,
+    testIntegration: 'r2',
+    testHint: 'Pregunta a Cloudflare si el cubo existe y la clave puede usarlo. No sube nada.',
+    simple: ['R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'],
+    required: ['R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'],
+    keys: ['R2_ACCOUNT_ID', 'R2_BUCKET', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_JURISDICTION', 'MEDIA_UPLOAD_BACKEND'],
+    names: {
+      R2_ACCOUNT_ID: 'el identificador de la cuenta de Cloudflare',
+      R2_BUCKET: 'el nombre del cubo',
+      R2_ACCESS_KEY_ID: 'la clave de acceso',
+      R2_SECRET_ACCESS_KEY: 'la clave secreta',
+    },
+  },
+  {
+    id: 'video',
+    title: 'Máquina de vídeo (Fly.io)',
+    does: 'Montar los reels',
+    provider: 'Fly.io',
+    tier: 'main',
+    blurb: 'Monta los reels, recorta fondos y genera los informes en PDF.',
+    testIntegration: 'media_worker',
+    testHint: 'Pregunta a Fly si la máquina existe y el token sirve. No la arranca.',
+    simple: ['FLY_API_TOKEN', 'FLY_APP', 'FLY_MACHINE_ID', 'WORKER_GATEWAY_TOKEN'],
+    required: ['FLY_API_TOKEN', 'FLY_APP', 'FLY_MACHINE_ID', 'WORKER_GATEWAY_TOKEN'],
+    keys: ['FLY_API_TOKEN', 'FLY_APP', 'FLY_MACHINE_ID', 'WORKER_GATEWAY_TOKEN', 'MEDIA_JOBS_MONTHLY_PER_BRAND'],
+    names: {
+      FLY_API_TOKEN: 'el token de Fly',
+      FLY_APP: 'el nombre de la app de Fly',
+      FLY_MACHINE_ID: 'el identificador de la máquina',
+      WORKER_GATEWAY_TOKEN: 'el token del trabajador',
+    },
+  },
+  {
+    id: 'fal',
+    short: 'animar fotos',
+    title: 'fal.ai — animar fotos',
+    does: 'Animar fotos',
+    provider: 'fal.ai',
+    tier: 'optional',
+    blurb: 'Convierte una foto en un vídeo corto con IA. Procesa fuera de la UE.',
+    optional: true,
+    testIntegration: 'ai_image',
+    testScope: 'fal',
+    testRecord: 'ai_image_fal',
+    testHint: 'Consulta el precio de sus modelos de animar fotos. No genera nada.',
+    simple: ['FAL_KEY'],
+    required: ['FAL_KEY'],
+    keys: ['FAL_KEY'],
+    names: { FAL_KEY: 'la clave de fal.ai' },
+    extraMissing: (c) =>
+      c.has('FAL_KEY') && c.value('AI_MEDIA_ALLOW_NON_EU') !== 'true' ? ['el permiso de procesar fuera de la UE'] : [],
+  },
+  {
+    id: 'drive',
+    title: 'Google Drive',
+    does: 'Fotos desde Google Drive',
+    provider: 'Google',
+    tier: 'main',
+    blurb: 'Usar las fotos de Drive en la biblioteca sin copiarlas.',
+    optional: true,
+    testIntegration: 'google_drive',
+    testHint: 'Comprueba que la configuración está completa. Google no deja validar el cliente sin conectar una cuenta.',
+    simple: ['GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET'],
+    required: ['GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET'],
+    keys: ['GOOGLE_DRIVE_CLIENT_ID', 'GOOGLE_DRIVE_CLIENT_SECRET', 'DRIVE_APP_URL'],
+    names: {
+      GOOGLE_DRIVE_CLIENT_ID: 'el identificador de cliente de Google',
+      GOOGLE_DRIVE_CLIENT_SECRET: 'el secreto de cliente de Google',
+    },
+    extraMissing: (c) =>
+      c.has('GOOGLE_DRIVE_CLIENT_ID') && c.has('GOOGLE_DRIVE_CLIENT_SECRET') && !c.availability.drive
+        ? ['la dirección de la aplicación o la clave de cifrado de las cuentas']
+        : [],
+  },
+  {
+    id: 'stripe',
+    title: 'Pagos (Stripe)',
+    does: 'Cobrar los planes',
+    provider: 'Stripe',
+    tier: 'main',
+    blurb: 'Cobrar los planes a las organizaciones.',
+    testIntegration: 'stripe',
+    testHint: 'Lee los datos de la cuenta de Stripe. No cobra nada.',
+    simple: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'BILLING_APP_URL'],
+    required: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'BILLING_APP_URL'],
+    keys: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'BILLING_APP_URL'],
+    names: {
+      STRIPE_SECRET_KEY: 'la clave secreta de Stripe',
+      STRIPE_WEBHOOK_SECRET: 'el secreto de los avisos de Stripe',
+      BILLING_APP_URL: 'la dirección de la aplicación',
+    },
+  },
+  {
+    id: 'comfyui',
+    title: 'ComfyUI propio',
+    does: 'Imágenes con tu propio servidor',
+    provider: 'ComfyUI',
+    tier: 'optional',
+    blurb: 'Crear imágenes con modelos abiertos en tu propio servidor.',
+    optional: true,
+    testIntegration: 'comfyui',
+    testHint: 'Pide a ComfyUI su estado. No genera ninguna imagen.',
+    simple: ['COMFYUI_BASE_URL', 'COMFYUI_API_TOKEN'],
+    required: ['COMFYUI_BASE_URL'],
+    keys: ['COMFYUI_BASE_URL', 'COMFYUI_API_TOKEN', 'COMFYUI_DATA_REGION'],
+    names: { COMFYUI_BASE_URL: 'la dirección del servidor' },
+  },
+  {
+    id: 'images_other',
+    short: 'otras imágenes',
+    title: 'Otras imágenes con IA',
+    does: 'Otras imágenes con IA',
+    provider: 'Google, Black Forest Labs e Ideogram',
+    tier: 'optional',
+    blurb: 'Google (Gemini), Black Forest Labs (FLUX) e Ideogram, para crear imágenes. Opcional.',
+    optional: true,
+    testIntegration: 'ai_image',
+    testScope: 'images_other',
+    testHint: 'Pide un token a Google o el saldo a Black Forest Labs. No genera nada.',
+    simple: ['BFL_API_KEY'],
+    required: ['BFL_API_KEY'],
+    keys: [
+      'BFL_API_KEY',
+      'BFL_API_BASE_URL',
+      'IDEOGRAM_API_KEY',
+      'GOOGLE_VERTEX_PROJECT_ID',
+      'GOOGLE_VERTEX_LOCATION',
+      'GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON',
+    ],
+    names: { BFL_API_KEY: 'la clave de Black Forest Labs' },
+    configuredAlso: (c) => c.has('GOOGLE_VERTEX_SERVICE_ACCOUNT_JSON') || c.has('IDEOGRAM_API_KEY'),
+  },
+];
+
+export const SERVICE_BY_ID = Object.fromEntries(SERVICES.map((s) => [s.id, s])) as Record<ServiceId, ServiceDef>;
+
+/** Ajustes del catálogo que no pertenecen a ninguna tarjeta, o que pertenecen a dos. Debe salir vacío. */
+export function catalogCoverageProblems(): string[] {
+  const owners = new Map<string, number>();
+  for (const s of SERVICES) for (const k of s.keys) owners.set(k, (owners.get(k) ?? 0) + 1);
+  const all = UI_INTEGRATIONS.flatMap((i) => i.groups.flatMap((g) => g.fields.map((f) => f.key)));
+  const problems: string[] = [];
+  for (const k of all) if (!owners.has(k)) problems.push(`${k}: sin tarjeta`);
+  for (const [k, n] of owners) {
+    if (n > 1) problems.push(`${k}: en ${n} tarjetas`);
+    if (!all.includes(k)) problems.push(`${k}: no está en el catálogo`);
+  }
+  for (const s of SERVICES) {
+    for (const k of s.simple) if (!s.keys.includes(k)) problems.push(`${s.id}/${k}: sencillo fuera de la tarjeta`);
+    for (const k of s.required) if (!s.simple.includes(k)) problems.push(`${s.id}/${k}: imprescindible fuera de lo sencillo`);
+  }
+  return problems;
+}
+
+/** Los grupos de «Opciones avanzadas»: lo que el catálogo trae para esta tarjeta y no está en la vista sencilla. */
+export function advancedGroups(service: ServiceDef): UiGroup[] {
+  const mine = new Set(service.keys);
+  const simple = new Set(service.simple);
+  const out: UiGroup[] = [];
+  for (const integration of UI_INTEGRATIONS) {
+    for (const group of integration.groups) {
+      const fields = group.fields.filter((f) => mine.has(f.key) && !simple.has(f.key) && !f.hidden);
+      if (fields.length > 0) out.push({ ...group, fields });
+    }
+  }
+  return out;
+}
+
+/** Los campos de la vista sencilla, en el orden de la tarjeta. */
+export function simpleFields(service: ServiceDef) {
+  const all = new Map(UI_INTEGRATIONS.flatMap((i) => i.groups.flatMap((g) => g.fields.map((f) => [f.key, f] as const))));
+  return service.simple.map((k) => all.get(k)!).filter(Boolean);
+}
+
+// ───────────────────────────── estado ─────────────────────────────
+
+export type StatusWord = 'Funciona' | 'Sin probar' | 'No funciona' | 'Falta la clave' | 'Falta algo' | 'Sin configurar';
+export interface ServiceStatus {
+  word: StatusWord;
+  tone: 'success' | 'warning' | 'danger' | 'neutral';
+  /** Qué falta o por qué falla, en una frase. */
+  detail: string | null;
+}
+
+const list = (items: string[]) =>
+  items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} y ${items[items.length - 1]}`;
+
+export function serviceStatus(service: ServiceDef, ctx: ServiceCtx): ServiceStatus {
+  const present = service.required.filter((k) => ctx.has(k));
+  const configuredElsewhere = service.configuredAlso?.(ctx) ?? false;
+  if (present.length === 0 && !configuredElsewhere) {
+    return service.optional
+      ? { word: 'Sin configurar', tone: 'neutral', detail: 'Opcional.' }
+      : { word: 'Falta la clave', tone: 'warning', detail: null };
+  }
+  if (!configuredElsewhere) {
+    const missing = service.required
+      .filter((k) => !ctx.has(k))
+      .map((k) => service.names?.[k] ?? k)
+      .concat(service.extraMissing?.(ctx) ?? []);
+    if (missing.length > 0) return { word: 'Falta algo', tone: 'warning', detail: `Falta ${list(missing)}.` };
+  } else {
+    const extra = service.extraMissing?.(ctx) ?? [];
+    if (extra.length > 0) return { word: 'Falta algo', tone: 'warning', detail: `Falta ${list(extra)}.` };
+  }
+  if (!ctx.lastTest) return { word: 'Sin probar', tone: 'neutral', detail: 'Pulsa «Guardar y probar» para comprobarlo.' };
+  return ctx.lastTest.ok
+    ? { word: 'Funciona', tone: 'success', detail: null }
+    : { word: 'No funciona', tone: 'danger', detail: ctx.lastTest.message };
+}
+
+/** La única acción de la fila, según su estado. */
+export function rowAction(word: StatusWord): string {
+  if (word === 'Falta la clave' || word === 'Sin configurar') return 'Conectar';
+  if (word === 'Falta algo') return 'Completar';
+  return 'Cambiar';
+}
+
+// ───────────────────────────── resumen de arriba ─────────────────────────────
+
+export interface SummaryItem {
+  label: string;
+  on: (a: IntegrationAvailability) => boolean;
+  /** De qué tarjeta depende. */
+  needs: ServiceId;
+}
+
+const live = (a: IntegrationAvailability, task: AiTextTask) => a.aiTextTasks?.[task] ?? a.aiText;
+
+/** «Qué funciona ahora»: las funciones que la gente nota, en lenguaje llano. */
+export const SUMMARY: SummaryItem[] = [
+  { label: 'Escribir pies de foto y textos', on: (a) => live(a, 'post.caption'), needs: 'openai' },
+  { label: 'Copiloto por voz del editor', on: (a) => live(a, 'editor.copilot'), needs: 'openai' },
+  {
+    label: 'Revisar la marca, planear campañas y leer la analítica',
+    on: (a) => live(a, 'brand.check') && live(a, 'campaign.plan') && live(a, 'analytics.summary'),
+    needs: 'openai',
+  },
+  { label: 'Crear y editar imágenes con IA', on: (a) => a.aiImage, needs: 'openai' },
+  { label: 'Subtítulos automáticos de los reels', on: (a) => a.reelSubtitles, needs: 'openai' },
+  { label: 'Publicar en Instagram', on: (a) => a.publishing, needs: 'meta' },
+  { label: 'Fotos desde Google Drive', on: (a) => a.drive, needs: 'drive' },
+  { label: 'Cobrar los planes', on: (a) => a.billing, needs: 'stripe' },
+];
+
+/** La última prueba guardada de ESTA tarjeta (no la de otra tarjeta de la misma integración). */
+export function lastTestOf(service: ServiceDef, status: IntegrationStatus) {
+  const record = service.testRecord ?? service.testIntegration;
+  return status.tests.find((t) => t.integration === record);
+}
+
+/** Cómo se llama en la actividad una prueba anotada en la fila propia de una tarjeta. */
+export const TEST_RECORD_TITLE: Record<string, string> = Object.fromEntries(
+  SERVICES.filter((s) => s.testRecord).map((s) => [s.testRecord!, s.title]),
+);
+
+/** Lo que la tarjeta sabe de la configuración (sin valores secretos). */
+export function buildServiceCtx(service: ServiceDef, status: IntegrationStatus): ServiceCtx {
+  const stored = new Map(status.settings.map((s) => [s.setting_key, s]));
+  const fromEnv = new Set(status.environment);
+  const value = (key: string) => {
+    const row = stored.get(key);
+    return row && !row.is_secret ? (row.value ?? undefined) : undefined;
+  };
+  // Cada tarjeta mira su propia prueba: la de Claude ya no hereda la de OpenAI.
+  const test = lastTestOf(service, status);
+  const lastTest = test ? { ok: test.ok, message: test.message } : null;
+  return {
+    availability: status.availability,
+    has: (key) => stored.has(key) || fromEnv.has(key),
+    value,
+    lastTest,
+  };
+}
+

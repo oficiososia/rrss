@@ -1,0 +1,440 @@
+// Lógica de la Edge Function `ai-generate`, sin nada de Deno: recibe sus
+// dependencias (sesión, lectura del perfil, servicio de IA) y devuelve una
+// `Response`. Así las pruebas la ejecutan en Node con la base de datos real y
+// el proveedor simulado; `index.ts` solo la conecta con Supabase.
+//
+//   1. verifica la sesión (token del usuario);
+//   2. valida la petición;
+//   3. lee el perfil de marca CON LA IDENTIDAD DEL USUARIO (la RLS decide si lo ve);
+//      si la marca redacta «por encargo a la agencia» (`brands.ai_mode = 'agency'`),
+//      rechaza la petición (409 `agency_mode`) antes de tocar el cupo. Única
+//      excepción: el copiloto por voz del editor (`editor.copilot`), que no
+//      redacta texto (decisión provisional, docs/ESTADO.md). Sin perfil, la IA
+//      trabaja con el nombre y el sector de la marca (brand-context.ts); solo si
+//      tampoco hay sector se pide antes de gastar (409 `brand_basics_missing`);
+//   4. llama a la tarea, que pasa por el servicio: reservar cupo → generar → registrar.
+//
+// `cost.estimate` dice el coste máximo de una petición de `post.caption`,
+// `campaign.brief` o `campaign.plan` sin reservar cupo ni llamar a nadie (la
+// interfaz lo enseña antes de pulsar).
+//
+// El permiso de «crear contenido en la marca» lo impone la base de datos al
+// reservar el cupo (`ai_reserve_generation`, error 42501 → 403), antes de
+// llamar a ningún proveedor: no hay forma de generar sin él.
+//
+// Una petición = una llamada al proveedor. Aquí no hay bucles ni reintentos.
+import { AiError, type AiErrorCode, type AiService, type Json } from '../_shared/ai/contract.ts';
+import { summarizeAnalytics, type AnalyticsFactInput } from '../_shared/ai/text/tasks/analytics-summary.ts';
+import { checkBrandCompliance } from '../_shared/ai/text/tasks/brand-check.ts';
+import {
+  runEditorCopilot,
+  type CopilotAssetRef,
+  type CopilotDocumentSummary,
+  type CopilotMode,
+  type EditorCopilotOptions,
+} from '../_shared/ai/text/tasks/editor-copilot.ts';
+import {
+  proposeCampaignBrief,
+  type BriefAdjustment,
+  type BriefProposal,
+  type CampaignBriefRequest,
+} from '../_shared/ai/text/tasks/campaign-brief.ts';
+import {
+  planCampaign,
+  type CampaignAgreement,
+  type CampaignAssetRef,
+  type CampaignSource,
+  type CampaignTarget,
+} from '../_shared/ai/text/tasks/campaign-plan.ts';
+import { generatePostCopy, type NetworkLimits } from '../_shared/ai/text/tasks/post-copy.ts';
+import { proposeBrandProfile, type ProfileSource } from '../_shared/ai/text/tasks/profile-proposal.ts';
+import { AiTaskInputError, type TaskMeta } from '../_shared/ai/text/tasks/shared.ts';
+import {
+  effectiveBrandProfile,
+  needsBrandBasics,
+  sectorFromInput,
+  type BrandBasics,
+} from '../_shared/ai/text/tasks/brand-context.ts';
+
+export const AI_GENERATE_ACTIONS = [
+  'post.caption',
+  'profile.proposal',
+  'brand.check',
+  'campaign.plan',
+  'campaign.brief',
+  'analytics.summary',
+  'editor.copilot',
+  'cost.estimate',
+] as const;
+export type AiGenerateAction = (typeof AI_GENERATE_ACTIONS)[number];
+
+/** Acciones cuyo coste máximo se puede pedir antes (`cost.estimate`). */
+export const ESTIMABLE_ACTIONS = ['post.caption', 'campaign.brief', 'campaign.plan'] as const;
+type EstimableAction = (typeof ESTIMABLE_ACTIONS)[number];
+
+/** Acciones que escriben sobre la marca: sin perfil, necesitan al menos el sector. */
+const NEEDS_BASICS: readonly AiGenerateAction[] = ['post.caption', 'campaign.brief', 'campaign.plan', 'brand.check'];
+
+/** Lo que lanza el servicio «de estimar»: el coste máximo en lugar de generar. */
+class EstimateOnly extends Error {
+  constructor(readonly micros: number) {
+    super('estimate');
+  }
+}
+
+/**
+ * Un servicio que no genera: al pedir una generación devuelve (lanzando) lo que se reservaría.
+ * Lleva la cuenta de todas las que se pidan: un plan largo se pide por tramos (campaign-plan.ts)
+ * y su coste máximo es la suma.
+ */
+function estimatingService(service: AiService): { service: AiService; total: () => number } {
+  let total = 0;
+  return {
+    service: {
+      ...(service.capabilities ? { capabilities: service.capabilities } : {}),
+      async generate(params) {
+        if (!service.estimate) throw new AiError('not_configured', 'No se puede calcular el coste de esta tarea.');
+        total += service.estimate(params);
+        throw new EstimateOnly(total);
+      },
+    },
+    total: () => total,
+  };
+}
+
+export interface BrandProfileLookup {
+  /** ¿Ve el usuario esta marca? Si no, se responde como si no existiera. */
+  brandVisible: boolean;
+  /** Perfil activo (`brand_profiles.data`), o `null` si la marca aún no tiene. */
+  profile: Json | null;
+  /** Cómo se redacta en la marca (`brands.ai_mode`). En `agency` no se usa este servicio. */
+  aiMode: 'api' | 'agency';
+  /** Nombre, sector y web de la marca: la IA los usa siempre, y sin perfil son lo único que sabe. */
+  brand?: BrandBasics;
+}
+
+export interface AiGenerateDeps {
+  /** Valida el token de sesión y devuelve el usuario, o `null` si no vale. */
+  authenticate(accessToken: string): Promise<{ userId: string } | null>;
+  /** Lee la marca y su perfil activo con la identidad del usuario (RLS). */
+  loadBrandProfile(accessToken: string, brandId: string): Promise<BrandProfileLookup>;
+  service: AiService;
+  /**
+   * Analítica (Fase 5): cifras medidas de la marca en el periodo, leídas CON LA
+   * IDENTIDAD DEL USUARIO y redactadas por el analista sin IA, y el modo de IA
+   * de la marca. Sin esta dependencia, la acción no está disponible.
+   */
+  loadAnalyticsFacts?(
+    accessToken: string,
+    brandId: string,
+    period: { from: string; to: string },
+  ): Promise<{ aiMode: string; periodLabel: string; facts: AnalyticsFactInput[] }>;
+  /**
+   * Copiloto por voz: de las fotos que manda el editor, las que el usuario ve
+   * en la marca (RLS) y son imágenes. Sin esta dependencia se aceptan tal cual
+   * llegan (el documento solo se dibuja con lo que la RLS deja ver).
+   */
+  filterVisibleImages?(accessToken: string, brandId: string, ids: string[]): Promise<string[]>;
+  /** Ajustes del copiloto del editor (AI_TEXT_EDITOR_COPILOT_MODE y _EFFORT). */
+  copilot?: EditorCopilotOptions;
+  /** Registro del servidor. Nunca recibe claves ni el contenido de la petición. */
+  log?: (event: string, data: Record<string, unknown>) => void;
+  /** Origen permitido para CORS (por defecto, cualquiera: la sesión va en cabecera, no en cookie). */
+  allowedOrigin?: string;
+}
+
+/**
+ * Acciones que se admiten en marcas en modo agencia. Solo el copiloto por voz:
+ * coloca lo que la persona dicta, literalmente, y no redacta texto. Decisión
+ * PROVISIONAL del producto (docs/ESTADO.md, «Decisiones del dueño pendientes»).
+ */
+export const AGENCY_MODE_ALLOWED_ACTIONS: readonly AiGenerateAction[] = ['editor.copilot'];
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_BODY_BYTES = 1_500_000;
+
+const STATUS: Record<AiErrorCode, number> = {
+  quota_exhausted: 402,
+  quota_missing: 402,
+  ai_paused: 503,
+  forbidden: 403,
+  not_configured: 503,
+  provider_failed: 502,
+  provider_timeout: 504,
+  invalid_output: 502,
+  refused: 422,
+  internal: 500,
+};
+
+/** Lo que la interfaz necesita de la generación; el coste se consulta en `ai_generations`. */
+function strip(result: TaskMeta): Record<string, unknown> {
+  const rest: Record<string, unknown> = { ...result };
+  for (const key of ['provider', 'model', 'usage', 'costMicros', 'latencyMs', 'mode']) delete rest[key];
+  return rest;
+}
+
+export function createAiGenerateHandler(deps: AiGenerateDeps): (request: Request) => Promise<Response> {
+  const cors = {
+    'access-control-allow-origin': deps.allowedOrigin ?? '*',
+    'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+    'access-control-allow-methods': 'POST, OPTIONS',
+  };
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...cors, 'content-type': 'application/json; charset=utf-8' },
+    });
+  const fail = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) =>
+    json(status, { error: { code, message, retryable: false, ...extra } });
+
+  /** Las tareas que se pueden estimar: la misma llamada con el servicio real o con el de estimar. */
+  async function runTask(
+    action: EstimableAction,
+    data: Record<string, unknown>,
+    brandProfile: Json,
+    service: AiService,
+    actor: { userId: string; brandId: string },
+  ): Promise<Record<string, unknown>> {
+    if (action === 'post.caption') {
+      return strip(
+        await generatePostCopy(service, actor, {
+          brandProfile,
+          brief: data.brief as string,
+          network: data.network as NetworkLimits,
+          variants: data.variants === undefined ? 3 : (data.variants as number),
+        }),
+      );
+    }
+    if (action === 'campaign.brief') {
+      // Solo propone los datos del formulario; no crea nada. Mismo cupo y registro que `campaign.plan`.
+      const brief = await proposeCampaignBrief(
+        service,
+        actor,
+        {
+          brandProfile,
+          instruction: data.instruction as string,
+          today: data.today as string,
+          targets: data.targets as CampaignBriefRequest['targets'],
+          current: data.current as BriefProposal | undefined,
+          adjust: data.adjust as BriefAdjustment | undefined,
+          answer: data.answer as CampaignBriefRequest['answer'],
+        },
+        deps.log,
+      );
+      // Aquí sí se dice lo que ha costado: la pantalla lo enseña en pequeño junto a la propuesta.
+      return { ...strip(brief), costMicros: brief.costMicros };
+    }
+    // Solo propone: el plan no se guarda aquí ni crea nada (ver campaign-plan.ts).
+    return strip(
+      await planCampaign(service, actor, {
+        brandProfile,
+        instruction: data.instruction as string,
+        startDate: data.startDate as string,
+        endDate: data.endDate as string,
+        targets: data.targets as CampaignTarget[],
+        assets: data.assets as CampaignAssetRef[] | undefined,
+        sources: data.sources as CampaignSource[] | undefined,
+        maxPieces: data.maxPieces as number | undefined,
+        agreement: data.agreement as CampaignAgreement | undefined,
+      }),
+    );
+  }
+
+  return async (request) => {
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    if (request.method !== 'POST') return fail(405, 'method_not_allowed', 'Esta función solo admite POST.');
+
+    // 1. Sesión.
+    const header = request.headers.get('authorization') ?? '';
+    const accessToken = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim();
+    if (!accessToken) return fail(401, 'unauthenticated', 'Inicia sesión para usar la IA.');
+    let user: { userId: string } | null;
+    try {
+      user = await deps.authenticate(accessToken);
+    } catch {
+      return fail(500, 'internal', 'No se ha podido comprobar la sesión. Inténtalo de nuevo.', { retryable: true });
+    }
+    if (!user) return fail(401, 'unauthenticated', 'La sesión ha caducado. Vuelve a iniciar sesión.');
+
+    // 2. Petición.
+    let body: unknown;
+    try {
+      const raw = await request.text();
+      if (raw.length > MAX_BODY_BYTES) return fail(413, 'too_large', 'La petición es demasiado grande.');
+      body = JSON.parse(raw);
+    } catch {
+      return fail(400, 'invalid_request', 'La petición no es JSON válido.');
+    }
+    const { action, brandId, input } = (typeof body === 'object' && body !== null ? body : {}) as Record<
+      string,
+      unknown
+    >;
+    if (typeof action !== 'string' || !(AI_GENERATE_ACTIONS as readonly string[]).includes(action)) {
+      return fail(400, 'invalid_request', `Indica la acción: ${AI_GENERATE_ACTIONS.join(', ')}.`);
+    }
+    if (typeof brandId !== 'string' || !UUID.test(brandId)) {
+      return fail(400, 'invalid_request', 'Indica la marca (brandId).');
+    }
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return fail(400, 'invalid_request', 'Faltan los datos de la petición (input).');
+    }
+    const data = input as Record<string, unknown>;
+    const actor = { userId: user.userId, brandId };
+
+    try {
+      // 3. Perfil de marca, con la identidad del usuario.
+      const lookup = await deps.loadBrandProfile(accessToken, brandId);
+      if (!lookup.brandVisible) return fail(404, 'brand_not_found', 'No existe esa marca o no tienes acceso a ella.');
+      // Modo agencia: la marca ha decidido que redacta la agencia por encargo.
+      // Se impone aquí (no solo ocultando botones) y antes de reservar cupo.
+      if (lookup.aiMode === 'agency' && !AGENCY_MODE_ALLOWED_ACTIONS.includes(action as AiGenerateAction)) {
+        return fail(
+          409,
+          'agency_mode',
+          action === 'campaign.plan' || action === 'campaign.brief'
+            ? 'Esta marca trabaja por encargo a la agencia: pide el plan de campaña desde «Campañas».'
+            : action === 'analytics.summary'
+              ? 'Esta marca trabaja en modo agencia: la interpretación con IA no está disponible.'
+              : 'Esta marca redacta por encargo a la agencia: pide la pieza desde «Encargos».',
+        );
+      }
+      // Coste máximo antes de pulsar: la misma petición, con un servicio que no genera.
+      if (action === 'cost.estimate') {
+        const target = data.action;
+        if (typeof target !== 'string' || !(ESTIMABLE_ACTIONS as readonly string[]).includes(target)) {
+          return fail(400, 'invalid_request', `Indica qué quieres calcular: ${ESTIMABLE_ACTIONS.join(', ')}.`);
+        }
+        const inner = data.input;
+        if (typeof inner !== 'object' || inner === null || Array.isArray(inner)) {
+          return fail(400, 'invalid_request', 'Faltan los datos de la petición que quieres calcular.');
+        }
+        const innerData = inner as Record<string, unknown>;
+        const sector = sectorFromInput(innerData.brandSector);
+        const estimateProfile = effectiveBrandProfile(lookup.profile, lookup.brand ?? null, sector).profile;
+        const estimator = estimatingService(deps.service);
+        try {
+          await runTask(target as EstimableAction, innerData, estimateProfile, estimator.service, actor);
+        } catch (error) {
+          if (error instanceof EstimateOnly) return json(200, { action, for: target, costMicros: estimator.total() });
+          throw error;
+        }
+        return fail(500, 'internal', 'No se ha podido calcular el coste.', { retryable: true });
+      }
+
+      // Sin perfil, la IA trabaja con el nombre y el sector de la marca; si tampoco hay
+      // sector, se pide antes de gastar (el diálogo lo pregunta y lo manda en `brandSector`).
+      const sector = sectorFromInput(data.brandSector);
+      if (NEEDS_BASICS.includes(action as AiGenerateAction) && needsBrandBasics(lookup.profile, lookup.brand ?? null, sector)) {
+        return fail(
+          409,
+          'brand_basics_missing',
+          'Para escribir sobre la marca, la IA necesita saber al menos a qué se dedica. Dilo en una línea y sigue.',
+        );
+      }
+      // El copiloto del editor recibe el perfil tal cual si existe (no cambia lo que ya hacía).
+      const brandProfile: Json =
+        action === 'editor.copilot' && lookup.profile !== null
+          ? lookup.profile
+          : effectiveBrandProfile(lookup.profile, lookup.brand ?? null, sector).profile;
+
+      // 4. Tarea.
+      let result: Record<string, unknown>;
+      if (action === 'post.caption' || action === 'campaign.brief' || action === 'campaign.plan') {
+        result = await runTask(action, data, brandProfile, deps.service, actor);
+      } else if (action === 'analytics.summary') {
+        const day = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+        if (
+          typeof data.from !== 'string' ||
+          typeof data.to !== 'string' ||
+          !day.test(data.from) ||
+          !day.test(data.to) ||
+          data.from >= data.to
+        ) {
+          return fail(400, 'invalid_request', 'Indica el periodo (from y to, AAAA-MM-DD).');
+        }
+        if (!deps.loadAnalyticsFacts)
+          return fail(503, 'not_configured', 'La interpretación de la analítica no está disponible.');
+        const figures = await deps.loadAnalyticsFacts(accessToken, brandId, { from: data.from, to: data.to });
+        // En modo agencia la marca no usa el servicio de IA: tampoco para interpretar cifras.
+        if (figures.aiMode === 'agency') {
+          return fail(
+            409,
+            'agency_mode',
+            'Esta marca trabaja en modo agencia: la interpretación con IA no está disponible.',
+          );
+        }
+        result = strip(
+          await summarizeAnalytics(deps.service, actor, {
+            brandProfile: lookup.profile,
+            periodLabel: figures.periodLabel,
+            facts: figures.facts,
+          }),
+        );
+      } else if (action === 'editor.copilot') {
+        // Solo devuelve operaciones validadas; las aplica (y las valida otra vez) el editor.
+        let assets = Array.isArray(data.assets) ? (data.assets as CopilotAssetRef[]) : undefined;
+        if (assets && deps.filterVisibleImages) {
+          const ids = assets.map((asset) => (typeof asset?.id === 'string' ? asset.id.toLowerCase() : ''));
+          const visible = new Set(
+            (await deps.filterVisibleImages(accessToken, brandId, ids.filter((id) => UUID.test(id)))).map((id) =>
+              id.toLowerCase(),
+            ),
+          );
+          assets = assets.filter((_, index) => visible.has(ids[index]!));
+        }
+        // `input.mode` (tools | json) deja pedir una ruta para comparar; las dos
+        // devuelven lo mismo y pasan por el mismo saneado. Sin él, la del ajuste.
+        result = strip(
+          await runEditorCopilot(
+            deps.service,
+            actor,
+            {
+              brandProfile,
+              transcript: data.transcript as string,
+              document: data.document as CopilotDocumentSummary,
+              assets,
+              mode: data.mode === 'tools' || data.mode === 'json' ? (data.mode as CopilotMode) : undefined,
+            },
+            deps.copilot,
+          ),
+        );
+      } else if (action === 'brand.check') {
+        result = strip(
+          await checkBrandCompliance(deps.service, actor, { brandProfile, text: data.text as string }),
+        );
+      } else {
+        result = strip(
+          await proposeBrandProfile(deps.service, actor, {
+            sources: data.sources as ProfileSource[],
+            currentProfile: lookup.profile ?? undefined,
+          }),
+        );
+      }
+      return json(200, { action, ...result });
+    } catch (error) {
+      if (error instanceof AiTaskInputError) return fail(400, 'invalid_request', error.message);
+      if (error instanceof AiError) {
+        deps.log?.('ai_error', {
+          action,
+          brandId,
+          code: error.code,
+          generationId: error.generationId,
+          // El motivo exacto (qué variable falta, qué respondió el proveedor) se queda en el servidor.
+          detail: error.code === 'not_configured' ? error.message : error.details,
+        });
+        const message =
+          error.code === 'not_configured'
+            ? 'La IA no está disponible en este momento. Avisa a quien administra la plataforma.'
+            : error.message;
+        // `charged: false`: la respuesta no servía y no se ha cobrado (ai_waive_generation).
+        const details = error.details as { charged?: unknown } | null | undefined;
+        const charged = typeof details?.charged === 'boolean' ? { charged: details.charged } : {};
+        return json(STATUS[error.code], {
+          error: { code: error.code, message, retryable: error.retryable, generationId: error.generationId, ...charged },
+        });
+      }
+      deps.log?.('unexpected_error', { action, brandId });
+      return fail(500, 'internal', 'Algo ha fallado al usar la IA. Inténtalo de nuevo.', { retryable: true });
+    }
+  };
+}

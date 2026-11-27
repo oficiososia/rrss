@@ -5,13 +5,22 @@ import { cn } from '@/lib/utils';
 export const Menu = Dropdown.Root;
 export const MenuTrigger = Dropdown.Trigger;
 
-export function MenuContent({ children, align = 'start' }: { children: ReactNode; align?: 'start' | 'end' }) {
+export function MenuContent({
+  children,
+  align = 'start',
+  side = 'bottom',
+}: {
+  children: ReactNode;
+  align?: 'start' | 'center' | 'end';
+  side?: 'top' | 'right' | 'bottom' | 'left';
+}) {
   return (
     <Dropdown.Portal>
       <Dropdown.Content
         align={align}
+        side={side}
         sideOffset={6}
-        className="z-50 max-h-[70dvh] min-w-[14rem] max-w-[90vw] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-pop"
+        className="z-50 max-h-[min(70dvh,var(--radix-dropdown-menu-content-available-height))] min-w-[14rem] max-w-[90vw] overflow-y-auto rounded-xl border border-border bg-surface p-1.5 shadow-pop"
       >
         {children}
       </Dropdown.Content>
@@ -28,6 +37,8 @@ export function MenuItem({
   children: ReactNode;
   onSelect?: () => void;
   destructive?: boolean;
+  disabled?: boolean;
+  title?: string;
   'data-testid'?: string;
 }) {
   return (
@@ -35,7 +46,7 @@ export function MenuItem({
       onSelect={onSelect}
       className={cn(
         'flex min-h-[2.5rem] cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 text-sm outline-none',
-        'data-[highlighted]:bg-subtle',
+        'data-[highlighted]:bg-subtle data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50',
         destructive ? 'text-danger' : 'text-fg',
       )}
       {...props}

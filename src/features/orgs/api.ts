@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AuditLogRow,
   BrandMemberRow,
@@ -8,6 +8,7 @@ import type {
   OrganizationRow,
   OrgKind,
   OrgRole,
+  OrgWorkMode,
   ProfileRow,
 } from '@/lib/database.types';
 import { unwrap } from '@/lib/errors';
@@ -30,14 +31,19 @@ export const keys = {
   platformAdmin: (userId: string) => ['platform-admin', userId] as const,
   members: (orgId: string) => ['org', orgId, 'members'] as const,
   brands: (orgId: string) => ['org', orgId, 'brands'] as const,
+  brandsElsewhere: (orgIds: string[]) => ['brands-elsewhere', ...orgIds] as const,
   myBrandRoles: (orgId: string, userId: string) => ['org', orgId, 'my-brand-roles', userId] as const,
   invitations: (orgId: string) => ['org', orgId, 'invitations'] as const,
   audit: (orgId: string, brandId: string | null, page: number) => ['org', orgId, 'audit', brandId, page] as const,
   org: (orgId: string) => ['org', orgId] as const,
 };
 
-export function useMyOrganizations(userId: string) {
-  return useQuery({
+// Las consultas del arranque (organizaciones, administración de la plataforma, marcas y permisos por
+// marca) se definen como `queryOptions` para que `prefetchStartup` (./startup.ts) las lance todas a la
+// vez en cuanto se sabe la sesión, con la misma clave y la misma función que los hooks.
+
+export function myOrganizationsQuery(userId: string) {
+  return queryOptions({
     queryKey: keys.orgs(userId),
     queryFn: async (): Promise<MyOrganization[]> => {
       const [orgs, memberships] = await Promise.all([
@@ -53,13 +59,21 @@ export function useMyOrganizations(userId: string) {
   });
 }
 
-export function useIsPlatformAdmin(userId: string) {
-  return useQuery({
+export function useMyOrganizations(userId: string) {
+  return useQuery(myOrganizationsQuery(userId));
+}
+
+export function platformAdminQuery(userId: string) {
+  return queryOptions({
     queryKey: keys.platformAdmin(userId),
     queryFn: async () =>
       unwrap(await supabase.from('platform_admins').select('user_id').eq('user_id', userId)).length > 0,
     staleTime: 5 * 60_000,
   });
+}
+
+export function useIsPlatformAdmin(userId: string) {
+  return useQuery(platformAdminQuery(userId));
 }
 
 export function useCreateOrganization(userId: string) {
@@ -74,11 +88,16 @@ export function useCreateOrganization(userId: string) {
 export function useUpdateOrganization(orgId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { name: string; kind: OrgKind }) => {
+    mutationFn: async (input: { name?: string; kind?: OrgKind; work_mode?: OrgWorkMode }) => {
       const rows = unwrap(await supabase.from('organizations').update(input).eq('id', orgId).select('id'));
       if (rows.length === 0) throw { code: '42501', message: 'permission denied' };
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['orgs'] }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['orgs'] }),
+        // Al pasar a autogestión las marcas vuelven a redactar con IA: se leen de nuevo.
+        queryClient.invalidateQueries({ queryKey: ['org', orgId] }),
+      ]),
   });
 }
 
@@ -108,16 +127,40 @@ export function useOrgMembers(orgId: string) {
   });
 }
 
-export function useBrands(orgId: string) {
-  return useQuery({
+export function brandsQuery(orgId: string) {
+  return queryOptions({
     queryKey: keys.brands(orgId),
     queryFn: async (): Promise<BrandRow[]> =>
       unwrap(await supabase.from('brands').select('*').eq('organization_id', orgId).order('name')),
   });
 }
 
-export function useMyBrandRoles(orgId: string, userId: string) {
+export function useBrands(orgId: string) {
+  return useQuery(brandsQuery(orgId));
+}
+
+/**
+ * Las marcas (sin las archivadas) de las DEMÁS organizaciones a las que se pertenece, para el selector
+ * único de marcas: se cambia de marca sin pasar antes por «cambiar de organización». Las que deja ver
+ * la base de datos (RLS), y solo de las organizaciones pedidas. Con una sola organización no pregunta.
+ */
+export function useBrandsElsewhere(orgIds: string[]) {
   return useQuery({
+    queryKey: keys.brandsElsewhere(orgIds),
+    enabled: orgIds.length > 0,
+    queryFn: async (): Promise<Pick<BrandRow, 'id' | 'name' | 'organization_id' | 'status'>[]> =>
+      unwrap(
+        await supabase
+          .from('brands')
+          .select('id, name, organization_id, status')
+          .in('organization_id', orgIds)
+          .order('name'),
+      ).filter((b) => b.status !== 'archived'),
+  });
+}
+
+export function myBrandRolesQuery(orgId: string, userId: string) {
+  return queryOptions({
     queryKey: keys.myBrandRoles(orgId, userId),
     queryFn: async (): Promise<Map<string, BrandRole>> => {
       const rows = unwrap(
@@ -130,6 +173,10 @@ export function useMyBrandRoles(orgId: string, userId: string) {
       return new Map(rows.map((r) => [r.brand_id, r.role]));
     },
   });
+}
+
+export function useMyBrandRoles(orgId: string, userId: string) {
+  return useQuery(myBrandRolesQuery(orgId, userId));
 }
 
 export function useSetMemberRole(orgId: string) {
