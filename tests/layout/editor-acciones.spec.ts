@@ -238,7 +238,7 @@ test('ordenador: una foto agrandada más allá del lienzo se ve fuera, velada, y
   await page.mouse.down();
   await page.mouse.move(outside.x + 60, outside.y, { steps: 5 });
   await page.mouse.up();
-  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved', { timeout: 15_000 });
+  await expect(page.getByTestId('editor-dirty')).toHaveAttribute('data-state', 'saved');
   const moved = await page.evaluate(() => {
     const rows = (
       window as unknown as { drafts: () => { data: { pages: { layers: { id: string; x: number }[] }[] } }[] }

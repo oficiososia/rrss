@@ -133,7 +133,7 @@ beforeAll(async () => {
   await makePatternPhoto(bucket.file(inBrand('plato.jpg')), 640, 480);
   // Degradado de negro (arriba) a blanco (abajo): se nota hacia dónde mira la cámara.
   await exec(tools.ffmpeg, ['-hide_banner', '-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=gray:s=360x640,format=gray,geq=lum=255*Y/H', '-frames:v', '1', bucket.file(inBrand('gradiente.jpg'))]);
-}, 60_000);
+});
 afterAll(async () => {
   await bucket?.cleanup();
 });

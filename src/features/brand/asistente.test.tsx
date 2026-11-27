@@ -195,7 +195,15 @@ describe('Asistente de alta de marca', () => {
     const first = renderApp(WIZARD);
     await first.user.type(await screen.findByLabelText('Nombre comercial'), 'Casa Nueva');
     await next(first.user);
-    await waitFor(() => expect(window.localStorage.getItem(DRAFT_KEY)).toContain('Casa Nueva'));
+    // Se espera al borrador YA en el paso 2, no a cualquiera con el nombre: el guardado va 400 ms
+    // después del último cambio y, con la máquina cargada, podía colarse uno del paso 1 (escrito el
+    // nombre, antes de «Siguiente»); al desmontar se cancelaba el del paso 2 y se recuperaba el paso 1.
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem(DRAFT_KEY) ?? '{}')).toMatchObject({
+        step: 1,
+        basics: { name: 'Casa Nueva' },
+      }),
+    );
     first.unmount();
 
     const second = renderApp(WIZARD);
@@ -206,7 +214,8 @@ describe('Asistente de alta de marca', () => {
     expect(screen.queryByTestId('wizard-recovered')).not.toBeInTheDocument();
     expect(heading()).toHaveTextContent('1/7');
     expect(screen.getByLabelText('Nombre comercial')).toHaveValue('');
-    expect(window.localStorage.getItem(DRAFT_KEY)).toBeNull();
+    // El borrador anterior ya no está (si ha dado tiempo a guardar el nuevo, vacío, también vale).
+    expect(window.localStorage.getItem(DRAFT_KEY) ?? '').not.toContain('Casa Nueva');
   });
 
   it('un archivo de logotipo no válido se rechaza con un aviso', async () => {

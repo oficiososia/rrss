@@ -54,7 +54,8 @@ export default defineConfig({
     // El banco del calendario enseña «Programar», el «+» de los días y «Por programar».
     'import.meta.env.VITE_SOCIAL_PUBLISHING_ENABLED': JSON.stringify('true'),
   },
-  // Mismo puerto que playwright.layout.config.ts (LAYOUT_PORT para no chocar con otra copia del repositorio).
+  // Arrancado a mano: 5391 o LAYOUT_PORT. Desde playwright.layout.config.ts llega `--port` con el puerto
+  // propio de esta copia del repositorio (ver allí por qué).
   server: { port: Number(process.env.LAYOUT_PORT ?? 5391), strictPort: true },
   optimizeDeps: { exclude: ['onnxruntime-web'] },
 });

@@ -267,7 +267,7 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-}, 120_000);
+});
 
 afterAll(async () => {
   await new Promise((resolve) => server?.close(resolve));
@@ -450,14 +450,14 @@ describe('media.reel.analyze con un vídeo real', () => {
     // El vídeo de referencia no se copia a ningún sitio: en la carpeta solo hay fotogramas y sonido.
     const files = await readdir(bucket.file(DIR));
     expect(files.every((name) => /^(f-\d\d\.jpg|a-\d\d\.m4a)$/.test(name))).toBe(true);
-  }, 120_000);
+  });
 
   it('sin pedirlo no prepara sonido para transcribir', async () => {
     const dir = `${ORG}/${BRAND}/referencias/66666666-6666-4666-8666-666666666666`;
     const result = await analyze({ reference: { id: REFERENCE_ID }, source: { path: SOURCE }, output: { dir } });
     expect(result.audio.speech).toEqual([]);
     expect((await readdir(bucket.file(dir))).every((name) => name.endsWith('.jpg'))).toBe(true);
-  }, 120_000);
+  });
 
   it('desde un enlace: lo baja, lo mide y no lo guarda', async () => {
     routes = { '/v.mp4': send(200, 'video/mp4', sampleBytes) };
@@ -466,7 +466,7 @@ describe('media.reel.analyze con un vídeo real', () => {
     expect(result.source).toMatchObject({ kind: 'link', host: '127.0.0.1', via: 'direct' });
     expect(result.shots).toHaveLength(4);
     expect((await readdir(bucket.file(dir))).sort()).toEqual(['f-01.jpg', 'f-02.jpg', 'f-03.jpg', 'f-04.jpg']);
-  }, 120_000);
+  });
 
   it('un enlace que no deja descargar falla sin reintento y con el motivo', async () => {
     routes = { '/reel/xyz': send(200, 'text/html', '<html><body>Inicia sesión para ver este reel</body></html>') };
@@ -494,7 +494,7 @@ describe('media.reel.analyze con un vídeo real', () => {
     await expect(analyze({ reference: { id: REFERENCE_ID }, source: { path: song }, output: { dir } })).rejects.toThrow(
       /no es un vídeo/,
     );
-  }, 120_000);
+  });
 
   it('no lee ni escribe fuera de la marca del trabajo', async () => {
     const other = `${ORG}/33333333-3333-4333-8333-333333333333/referencias/x`;

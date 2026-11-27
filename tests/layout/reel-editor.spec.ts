@@ -315,10 +315,12 @@ test.describe('lo que solo se ve en un navegador', () => {
         const { data } = canvas.getContext('2d')!.getImageData(canvas.width / 2, 20, 1, 1);
         return data[0]! + data[1]! + data[2]!;
       });
-    await expect.poll(colour, { timeout: 15_000 }).toBeGreaterThan(90);
+    await expect.poll(colour).toBeGreaterThan(90);
 
     await page.getByTestId('reel-play').click();
-    await expect.poll(() => time(page), { timeout: 10_000 }).toBeGreaterThan(4);
+    // Sin límite propio: el reloj solo avanza cuando el vídeo tiene el fotograma, y con la máquina
+    // cargada se midió 0,9 s de reproducción en 10 s. Vale el de playwright.layout.config.ts (30 s).
+    await expect.poll(() => time(page)).toBeGreaterThan(4);
     expect(await scroller.evaluate((el) => el.scrollLeft)).toBeGreaterThan(230);
     await page.getByTestId('reel-play').click();
     const stopped = await time(page);
@@ -374,19 +376,17 @@ test.describe('lo que solo se ve en un navegador', () => {
     // Clip: fotogramas sacados del archivo (píxeles con color en su lienzo).
     const strip = page.getByTestId('reel-clip').nth(1).locator('canvas');
     await expect
-      .poll(
-        () =>
-          strip.evaluate((canvas: HTMLCanvasElement) => {
-            const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
-            let painted = 0;
-            for (let i = 3; i < data.length; i += 4) if (data[i]! > 0) painted += 1;
-            return painted / (data.length / 4);
-          }),
-        { timeout: 20_000 },
+      .poll(() =>
+        strip.evaluate((canvas: HTMLCanvasElement) => {
+          const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+          let painted = 0;
+          for (let i = 3; i < data.length; i += 4) if (data[i]! > 0) painted += 1;
+          return painted / (data.length / 4);
+        }),
       )
       .toBeGreaterThan(0.9);
     // Música: la onda aparece cuando el archivo se ha decodificado.
-    await expect(page.getByTestId('reel-waveform')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('reel-waveform')).toBeVisible();
     // Elegir algo de la línea no mueve el cabezal: ni la música (más ancha que la pantalla) ni un clip a medias.
     await page.getByTestId('reel-timeline').evaluate((el) => {
       el.scrollLeft = 180;
